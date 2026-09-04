@@ -74,6 +74,16 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 ///   SQLCipher every page miss costs a decrypt rather than a `memcpy`.
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
+/// * `auto_vacuum = INCREMENTAL` — pages a delete frees can be handed back to
+///   the filesystem, by [`Database::reclaim_free_pages`], instead of being
+///   kept forever for a future insert. SQLite's default is `NONE`, which is
+///   the right trade for a database of roughly constant size and the wrong
+///   one for a complete mailbox replica (ADR 0016) that a `UIDVALIDITY`
+///   reset can wipe and re-sync from one server-side event. It is **first**
+///   in this batch and it only takes effect on a database with no tables
+///   yet: it is a header field, so on an existing store this line is a
+///   silent no-op and [`Database::adopt_incremental_vacuum`] is what
+///   converts it. #381.
 ///
 /// **`PRAGMA key` is not here.** It has to be the first statement on the
 /// connection, before anything reads a page, so [`configure`] issues it ahead
@@ -85,6 +95,7 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// 0014 priced this as a known casualty and the README's memory numbers were
 /// re-measured rather than adjusted.
 pub const PRAGMAS: &str = "\
+PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
@@ -260,6 +271,12 @@ pub struct AppliedPragmas {
     pub cache_size: i64,
     /// `busy_timeout`, in milliseconds.
     pub busy_timeout: i64,
+    /// `auto_vacuum`: `0` NONE, `1` FULL, `2` INCREMENTAL.
+    ///
+    /// A property of the database rather than of the connection — every
+    /// connection to one store reads the same value — and here anyway,
+    /// because this is where a caller looks to find out what is in force.
+    pub auto_vacuum: i64,
 }
 
 /// Reads back the pragmas in force on `connection`.
@@ -273,6 +290,7 @@ pub fn read_pragmas(connection: &Connection) -> Result<AppliedPragmas> {
         mmap_size: scalar(connection, "PRAGMA mmap_size")?,
         cache_size: scalar(connection, "PRAGMA cache_size")?,
         busy_timeout: scalar(connection, "PRAGMA busy_timeout")?,
+        auto_vacuum: scalar(connection, "PRAGMA auto_vacuum")?,
     })
 }
 
@@ -1020,4 +1038,57 @@ impl Database {
         self.connection()?.execute_batch("PRAGMA optimize")?;
         Ok(())
     }
+
+    /// Hand pages the store no longer needs back to the filesystem. Answers
+    /// how many went.
+    ///
+    /// Cheap and interruptible — `PRAGMA incremental_vacuum` moves free
+    /// pages off the end of the file and stops when the freelist is empty —
+    /// so unlike `VACUUM` it does not rewrite the database and does not need
+    /// room for a second copy of it. On a store with nothing to give back it
+    /// is a single query answering zero.
+    ///
+    /// Answers `0` on a store that has never been converted, because the
+    /// pragma has nothing to work with there. See
+    /// [`adopt_incremental_vacuum`](Self::adopt_incremental_vacuum).
+    pub fn reclaim_free_pages(&self) -> Result<u64> {
+        let connection = self.connection()?;
+        let before = free_pages(&connection)?;
+        connection.execute_batch("PRAGMA incremental_vacuum")?;
+        let after = free_pages(&connection)?;
+        Ok(before.saturating_sub(after))
+    }
+
+    /// Convert a store written before `auto_vacuum` was chosen. Answers
+    /// whether it had to.
+    ///
+    /// `auto_vacuum` lives in the database header and SQLite will only
+    /// change it on a database with no tables in it — or through a `VACUUM`,
+    /// which rewrites every page and is therefore minutes on a mailbox and
+    /// needs room for a second copy. So this is a one-time cost, paid off
+    /// the startup path, and it answers `false` immediately on every store
+    /// that has already had it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Sqlite`] if the `VACUUM` cannot run — most likely because
+    /// another connection is mid-transaction, which is recoverable: nothing
+    /// has changed and the next start tries again.
+    pub fn adopt_incremental_vacuum(&self) -> Result<bool> {
+        let connection = self.connection()?;
+        if scalar(&connection, "PRAGMA auto_vacuum")? == AUTO_VACUUM_INCREMENTAL {
+            return Ok(false);
+        }
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+        Ok(true)
+    }
+}
+
+/// `auto_vacuum = INCREMENTAL`, as SQLite numbers the modes.
+const AUTO_VACUUM_INCREMENTAL: i64 = 2;
+
+/// How many pages are on the freelist right now.
+fn free_pages(connection: &Connection) -> Result<u64> {
+    let count: i64 = connection.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+    Ok(count.max(0) as u64)
 }

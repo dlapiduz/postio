@@ -39,6 +39,7 @@ mod read_receipt_wiring;
 mod reader_loads;
 mod reading;
 mod reading_offline;
+mod reclaim_pages;
 mod reclaim_wiring;
 mod reply_identity;
 mod reply_source;
@@ -202,6 +203,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does",
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
+    ),
+    (
+        "reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application",
+        reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application as fn(),
     ),
     (
         "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",
