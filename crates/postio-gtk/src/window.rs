@@ -731,6 +731,23 @@ impl Window {
         pane
     }
 
+    /// The reader currently drawing a message.
+    ///
+    /// There is more than one, and which one a per-message verb aims at is
+    /// not a fact about the window: the conversation pane builds a reader per
+    /// expanded message, so `View original` in a stacked conversation means
+    /// *the focused message's* reader, not the single-message one behind it.
+    /// Falls back to that one, which is what a folder row that is not a
+    /// conversation puts on screen.
+    fn reader_showing(&self) -> crate::reader::Reader {
+        self.imp()
+            .conversation
+            .get()
+            .and_then(|pane| pane.focused())
+            .and_then(|message| self.conversation().reader_for(message))
+            .unwrap_or_else(|| self.reader())
+    }
+
     pub fn reader(&self) -> crate::reader::Reader {
         if let Some(reader) = self.imp().reader.get() {
             return reader.clone();
@@ -1763,6 +1780,14 @@ impl Window {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
+            // Reader view is per message, so this is per message too: it acts
+            // on whichever reader is currently drawing one, and does nothing
+            // when that reader is already showing the sender's own markup
+            // (#1009).
+            CommandId::ViewOriginal => {
+                self.reader_showing().view_original();
+            }
+
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
