@@ -22,7 +22,10 @@ use postio_gtk::settings::SettingsPanel;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
-use postio_storage::repository::AccountRepository;
+use postio_model::MailboxRole;
+use postio_storage::repository::{
+    AccountRepository, MailboxRepository, MailboxRoleRepository,
+};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
@@ -111,6 +114,31 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
     assert!(
         settle_until(|| read_imap_host(&database, seeded_id) == "imap.new-host.example.com"),
         "editing the IMAP host should have reached the database"
+    );
+
+    // ADR 0025: picking a folder for a role is a command, not a column
+    // write, so this half proves the whole path -- the pane's seam, the
+    // dispatch, the map, and the folder that now wears the role.
+    let folders = folder_paths(&database, seeded_id);
+    let target = folders
+        .iter()
+        .find(|path| !path.eq_ignore_ascii_case("INBOX"))
+        .cloned()
+        .expect("the seeded account has a folder besides its inbox");
+    let dropdown = role_dropdown(&panel, MailboxRole::Archive);
+    let index = folders
+        .iter()
+        .position(|path| *path == target)
+        .expect("the folder is in the list the pane was given");
+    dropdown.set_selected(index as u32 + 1);
+
+    assert!(
+        settle_until(|| mapped_archive(&database, seeded_id).as_deref() == Some(target.as_str())),
+        "picking a folder for Archive should have reached the account's map"
+    );
+    assert!(
+        settle_until(|| archive_folder(&database, seeded_id).as_deref() == Some(target.as_str())),
+        "and the folder wearing the role should be the one that was picked"
     );
 
     bridge.shutdown();
@@ -215,4 +243,52 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
+}
+
+fn folder_paths(
+    database: &postio_storage::Database,
+    account: postio_model::ids::AccountId,
+) -> Vec<String> {
+    let connection = database.connection().expect("a connection");
+    MailboxRepository::new(&connection)
+        .list_for_account(account)
+        .expect("a read")
+        .into_iter()
+        .filter(|mailbox| mailbox.selectable)
+        .map(|mailbox| mailbox.path)
+        .collect()
+}
+
+fn mapped_archive(
+    database: &postio_storage::Database,
+    account: postio_model::ids::AccountId,
+) -> Option<String> {
+    let connection = database.connection().expect("a connection");
+    MailboxRoleRepository::new(&connection)
+        .for_account(account)
+        .expect("a read")
+        .into_iter()
+        .find(|(role, _)| *role == MailboxRole::Archive)
+        .map(|(_, path)| path)
+}
+
+fn archive_folder(
+    database: &postio_storage::Database,
+    account: postio_model::ids::AccountId,
+) -> Option<String> {
+    let connection = database.connection().expect("a connection");
+    MailboxRepository::new(&connection)
+        .by_role(account, MailboxRole::Archive)
+        .expect("a read")
+        .map(|mailbox| mailbox.path)
+}
+
+fn role_dropdown(panel: &SettingsPanel, role: MailboxRole) -> gtk::DropDown {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        &format!("postio-settings-account-detail-role-{}", role.as_str()),
+    )
+    .into_iter()
+    .find_map(|widget| widget.downcast::<gtk::DropDown>().ok())
+    .unwrap_or_else(|| panic!("the detail view has a {role:?} dropdown"))
 }

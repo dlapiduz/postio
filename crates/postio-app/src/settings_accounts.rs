@@ -26,10 +26,13 @@
 //! (`postio_app::reap_pending_accounts`).
 
 use gtk::glib;
-use postio_gtk::settings::{AccountAction, AccountEdit};
+use postio_gtk::feed::Feeds;
+use postio_gtk::settings::{AccountAction, AccountEdit, AccountMailboxes};
 use postio_gtk::window::Window;
 use postio_runtime::AttachmentPolicy;
-use postio_storage::repository::{AccountRepository, MessageRepository};
+use postio_storage::repository::{
+    AccountRepository, MailboxRepository, MailboxRoleRepository, MessageRepository,
+};
 
 use crate::Wiring;
 
@@ -37,7 +40,7 @@ use crate::Wiring;
 /// the enable/disable switch, remove-with-undo, and update-credential
 /// (opened through [`crate::settings_credential::install`], which needs the
 /// runtime and the secret store `wiring` carries alongside the database).
-pub fn install(window: &Window, wiring: &Wiring) {
+pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     refresh(window, wiring);
 
     let panel = window.settings();
@@ -65,11 +68,47 @@ pub fn install(window: &Window, wiring: &Wiring) {
         }
     });
 
+    // A role mapping, a discovery pass, a folder renamed on the server: any
+    // of them changes what the Mailboxes group has to offer, and all of them
+    // say so the same way.
+    feeds.connect_event({
+        let window = window.downgrade();
+        let wiring = wiring.clone();
+        move |event| {
+            if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
+                return;
+            }
+            if let Some(window) = window.upgrade() {
+                refresh(&window, &wiring);
+            }
+        }
+    });
+
     panel.connect_account_edited({
         let window = window.clone();
         let wiring = wiring.clone();
         move |id, edit| {
-            edit_account(&wiring, id, edit);
+            match edit {
+                // A role mapping is not an account column: it re-roles the
+                // account's folders, is undoable, and has to announce itself
+                // so the sidebar relabels -- all of which the command owns
+                // (ADR 0025). Everything else here is a field on the row.
+                AccountEdit::MailboxRole(role, path) => {
+                    window.act(postio_core::Command::MapMailboxRole {
+                        account: Some(id),
+                        role: Some(role),
+                        path,
+                    });
+                    // No refresh here, deliberately. The command announces
+                    // `MailboxesChanged` and the subscription below redraws
+                    // from that -- which is both the local-first order (write,
+                    // emit, repaint) and the only safe one: redrawing now
+                    // would tear down the very dropdown whose signal is still
+                    // being emitted.
+                    return;
+                }
+                edit => edit_account(&wiring, id, edit),
+            }
             refresh(&window, &wiring);
         }
     });
@@ -97,6 +136,8 @@ fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: Account
         AccountEdit::ImapPort(value) => account.incoming.port = value,
         AccountEdit::SmtpHost(value) => account.outgoing.host = value,
         AccountEdit::SmtpPort(value) => account.outgoing.port = value,
+        // Handled as a command before this is reached; it writes no column.
+        AccountEdit::MailboxRole(..) => return,
     }
     if let Err(error) = repository.update(&mut account) {
         tracing::warn!(%error, "could not save an account detail edit");
@@ -198,13 +239,65 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
             }
 
             let panel = window.settings();
+            let mailboxes = accounts
+                .iter()
+                .map(|account| (account.id, account_mailboxes(&connection, account.id)))
+                .collect();
             panel.set_accounts(accounts);
+            panel.set_account_mailboxes(mailboxes);
             panel.set_mail_weights(
                 &weights,
                 wiring.backfill.attachments == AttachmentPolicy::Eager,
             );
         }
         Err(error) => tracing::warn!(%error, "could not read the accounts to show"),
+    }
+}
+
+/// One account's folders and role map, for the detail view's Mailboxes
+/// group (ADR 0025).
+///
+/// Three reads rather than one, because the group answers three questions:
+/// what folders there are to choose from, what the user has already chosen,
+/// and what each role resolves to as things stand. The third is what lets
+/// "Automatic" name the folder it picked, and it comes from `by_role` -- the
+/// same lookup the send path files a copy through, so the label cannot
+/// disagree with where mail actually goes.
+fn account_mailboxes(
+    connection: &rusqlite::Connection,
+    account: postio_model::ids::AccountId,
+) -> AccountMailboxes {
+    let mailboxes = MailboxRepository::new(connection);
+    let folders = mailboxes
+        .list_for_account(account)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|mailbox| mailbox.selectable)
+        .map(|mailbox| mailbox.path)
+        .collect();
+    let chosen = MailboxRoleRepository::new(connection)
+        .for_account(account)
+        .unwrap_or_default();
+    let resolved = [
+        postio_model::MailboxRole::Sent,
+        postio_model::MailboxRole::Archive,
+        postio_model::MailboxRole::Drafts,
+        postio_model::MailboxRole::Trash,
+        postio_model::MailboxRole::Junk,
+    ]
+    .into_iter()
+    .filter_map(|role| {
+        mailboxes
+            .by_role(account, role)
+            .ok()
+            .flatten()
+            .map(|mailbox| (role, mailbox.path))
+    })
+    .collect();
+    AccountMailboxes {
+        folders,
+        chosen,
+        resolved,
     }
 }
 

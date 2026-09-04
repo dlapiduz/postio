@@ -1430,9 +1430,17 @@ impl SettingsPanel {
             group.remove(&child);
         }
 
-        let heading = gtk::Label::new(Some("Mailboxes"));
+        // "Mailbox roles", the phrase the `[sync]` pane already shows for
+        // the same idea -- not "Folders", which is what the sidebar calls its
+        // ordinary section, and not a third word for one thing.
+        let heading = gtk::Label::new(Some("Mailbox roles"));
         heading.set_xalign(0.0);
         heading.add_css_class("postio-settings-account-detail-group");
+        // The same 18px `ui_row` puts either side of a settings row: this
+        // group follows five fields, and flush against the last of them it
+        // reads as a sixth rather than as a heading over what comes next.
+        heading.set_margin_top(18);
+        heading.set_margin_bottom(4);
         group.append(&heading);
 
         let data = imp
