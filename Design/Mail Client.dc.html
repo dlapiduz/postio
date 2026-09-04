@@ -255,7 +255,7 @@ kbd{font:500 10.5px/1 "IBM Plex Mono",monospace;border:1px solid rgba(29,31,32,.
 <div class="dv-olabel"><a class="dv-oid" href="#3e">3e</a>First run — one screen. Type an address, it probes autoconfig, you confirm the store path. Everything else is the config file.</div>
 <div class="blueprint" style="width:640px;background:var(--color-bg)">
   <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-  <div style="display:flex;align-items:center;height:44px;padding:0 18px;border-bottom:1px solid var(--color-divider)"><span style="font:600 12px/1 'Barlow Condensed',sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-700)">Add account</span><div style="flex:1"></div><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">step 1 of 1</span></div>
+  <div style="display:flex;align-items:center;height:44px;padding:0 18px;border-bottom:1px solid var(--color-divider)"><span style="font:600 12px/1 'Barlow Condensed',sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-700)">Add account</span><div style="flex:1"></div><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">step 1 of 2</span></div>
   <div style="padding:22px 26px 26px;display:flex;flex-direction:column;gap:var(--space-4)">
     <div class="field"><label for="fr-addr">Email address</label><input class="input" id="fr-addr" type="email" value="lena@tomlin.dev" readonly="readonly"></div>
     <div class="field"><label for="fr-pw">Password</label><input class="input" id="fr-pw" type="password" value="............" readonly="readonly"></div>
@@ -383,49 +383,8 @@ kbd{font:500 10.5px/1 "IBM Plex Mono",monospace;border:1px solid rgba(29,31,32,.
 </div>
 </div>
 
-<div class="dv-opt" id="3h">
-<div class="dv-olabel"><a class="dv-oid" href="#3h">3h</a>Add account — the method chooser is a fallback, not the default. Autoconfig/SRV/MX discovery (<a class="dv-oid" href="#3e">3e</a>) stays what runs first and silently; this only appears when it can't confidently pick one, so most people never see it. Dropped from the earlier mockup: a maildir/mbox/notmuch format choice and an "existing local store" import, neither of which fit the single SQLite/SQLCipher store every account actually gets (ADR 0014).</div>
-<div class="blueprint" style="width:520px;background:var(--color-bg)">
-  <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-  <div style="display:flex;align-items:center;height:44px;padding:0 18px;border-bottom:1px solid var(--color-divider)"><span style="font:600 12px/1 'Barlow Condensed',sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-700)">Add account</span><div style="flex:1"></div><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">step 1 of 2</span></div>
-  <div style="padding:20px 24px;display:flex;flex-direction:column;gap:var(--space-3)">
-    <div class="blueprint" style="padding:11px 14px;background:var(--color-neutral-100)">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-      <div style="display:flex;align-items:flex-start;gap:9px">
-        <span style="color:var(--color-neutral-600);flex:none;margin-top:1px"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
-        <span style="font:400 12px/1.5 Barlow,sans-serif;color:var(--color-neutral-700)">Couldn't confirm a provider for <b style="font-weight:500;color:var(--color-neutral-800)">contoso.com</b> — no autoconfig document, no SRV records. Pick how to connect.</span>
-      </div>
-    </div>
-    <label class="blueprint" style="padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;border-color:var(--color-accent)">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-      <input type="radio" name="add-account-method" defaultChecked="true" style="flex:none">
-      <span style="color:var(--color-accent);flex:none;display:flex"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 8h18M8 4v4"/></svg></span>
-      <span style="flex:1"><span style="display:block;font:500 13px/1.3 Barlow,sans-serif;color:var(--color-neutral-900)">Outlook / Microsoft 365</span><span style="display:block;font:400 11px/1.4 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">oauth2 · browser sign-in</span></span>
-    </label>
-    <label class="blueprint" style="padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-      <input type="radio" name="add-account-method" style="flex:none">
-      <span style="color:var(--color-neutral-600);flex:none;display:flex"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 7l9 6 9-6"/></svg></span>
-      <span style="flex:1"><span style="display:block;font:500 13px/1.3 Barlow,sans-serif;color:var(--color-neutral-900)">Gmail / Google Workspace</span><span style="display:block;font:400 11px/1.4 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">oauth2 · browser sign-in</span></span>
-    </label>
-    <label class="blueprint" style="padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-      <input type="radio" name="add-account-method" style="flex:none">
-      <span style="color:var(--color-neutral-600);flex:none;display:flex"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="1"/><path d="M7 10h2M7 14h6"/></svg></span>
-      <span style="flex:1"><span style="display:block;font:500 13px/1.3 Barlow,sans-serif;color:var(--color-neutral-900)">IMAP / SMTP</span><span style="display:block;font:400 11px/1.4 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">password or app-specific key</span></span>
-    </label>
-    <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
-      <span class="btn btn-primary" style="white-space:nowrap;flex:none;font-size:13px;display:flex;gap:9px;align-items:center">Continue <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;opacity:.8">Ret</span></span>
-      <span class="btn btn-ghost" style="white-space:nowrap;flex:none;font-size:12.5px;color:var(--color-neutral-600)">Cancel <span style="font-family:'IBM Plex Mono',monospace;font-size:10px">Esc</span></span>
-      <div style="flex:1"></div>
-      <span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">j/k to pick</span>
-    </div>
-  </div>
-</div>
-</div>
-
 <div class="dv-opt" id="3i">
-<div class="dv-olabel"><a class="dv-oid" href="#3i">3i</a>Sync window — the step every add-account path (<a class="dv-oid" href="#3e">3e</a> and <a class="dv-oid" href="#3h">3h</a> alike) ends on before the first sync. Local store's own path and format are not a user decision — every account gets one SQLCipher-encrypted SQLite store (ADR 0014) — so the only real question left is how far back to reach.</div>
+<div class="dv-olabel"><a class="dv-oid" href="#3i">3i</a>Sync window — the step the add-account path (<a class="dv-oid" href="#3e">3e</a>) ends on before the first sync. Local store's own path and format are not a user decision — every account gets one SQLCipher-encrypted SQLite store (ADR 0014) — so the only real question left is how far back to reach.</div>
 <div class="blueprint" style="width:480px;background:var(--color-bg)">
   <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
   <div style="display:flex;align-items:center;height:44px;padding:0 18px;border-bottom:1px solid var(--color-divider)"><span style="font:600 12px/1 'Barlow Condensed',sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-700)">Sync window</span><div style="flex:1"></div><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:var(--color-neutral-600)">step 2 of 2</span></div>
