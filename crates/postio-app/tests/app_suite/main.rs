@@ -67,6 +67,7 @@ mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
 mod unified_select_all;
+mod unsubscribe_wiring;
 mod window_drain;
 mod wiring;
 
@@ -234,6 +235,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
         egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable as fn(),
+    ),
+    (
+        "unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it",
+        unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it
+            as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
