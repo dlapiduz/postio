@@ -173,6 +173,7 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
             changed,
             vanished,
             arrived,
+            ..
         } => {
             assert_eq!(changed, 2, "the flag change and the arrival");
             assert_eq!(vanished, 0);

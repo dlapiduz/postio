@@ -60,7 +60,9 @@ use chrono::Utc;
 use postio_account::backend::{
     BackendError, BackendResult, FetchedMessage, MailBackend, SelectMode, UidSet,
 };
-use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
+use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, MessageId, Uid};
+use postio_search::matcher::Subject;
+use postio_search::rules::{RuleSet, Stage};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
@@ -135,7 +137,7 @@ pub struct Progress {
 }
 
 /// What a completed (or resumed) pass did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
     /// Messages that were not known locally before this pass.
     pub inserted: usize,
@@ -144,6 +146,25 @@ pub struct Report {
     pub updated: usize,
     /// Messages filed into a thread during this pass.
     pub threaded: usize,
+    /// Which rules matched which newly-inserted messages, in the order the
+    /// pass saw them (ADR 0008 Q3, #482).
+    ///
+    /// Reported rather than acted on. Evaluation happens inside the insert
+    /// transaction, which is where ADR 0008 Q3 says a header-only rule
+    /// belongs — "before any event is emitted", so the user never sees the
+    /// mail land in the Inbox first — and carrying the answer out lets the
+    /// action vocabulary land separately (#481) without moving the point at
+    /// which the decision is made.
+    pub fired: Vec<RuleHit>,
+}
+
+/// One rule that selected one message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleHit {
+    /// The message the rule selected.
+    pub message: MessageId,
+    /// The rule's name, as `[[rules]]` spells it.
+    pub rule: String,
 }
 
 /// Enumerates `mailbox`, newest `UID` first, writing headers as they land.
@@ -174,6 +195,40 @@ pub async fn sync_mailbox(
     .await
 }
 
+/// [`sync_mailbox`], evaluating `rules` against each message it inserts.
+///
+/// A separate entry point rather than a parameter on [`sync_mailbox`]
+/// because that function has forty-nine callers and all but one of them have
+/// no rules to evaluate; the same reason
+/// [`sync_mailbox_with_batch_size`] is separate.
+///
+/// Only the rules `rules` files under
+/// [`Stage::OnArrival`](postio_search::rules::Stage::OnArrival) are
+/// considered here. The rest are answered when the body lands — see
+/// [`crate::backfill::fetch_body`] — and a rule belongs to exactly one of
+/// the two, which is what makes "evaluated exactly once" a fact about the
+/// shape rather than something a table has to enforce.
+pub async fn sync_mailbox_with_rules(
+    connection: &PooledConnection,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    cancel: &CancelToken,
+    rules: &RuleSet,
+    on_progress: impl FnMut(Progress),
+) -> Result<Report> {
+    enumerate(
+        connection,
+        backend,
+        mailbox,
+        DEFAULT_BATCH_SIZE,
+        Coverage::Missing,
+        cancel,
+        rules,
+        on_progress,
+    )
+    .await
+}
+
 /// [`sync_mailbox`] with an explicit batch size.
 ///
 /// Exists mostly so a test can force several batches over a handful of
@@ -194,6 +249,7 @@ pub async fn sync_mailbox_with_batch_size(
         batch_size,
         Coverage::Missing,
         cancel,
+        &RuleSet::default(),
         on_progress,
     )
     .await
@@ -217,6 +273,10 @@ pub(crate) enum Coverage {
 }
 
 /// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
+#[allow(clippy::too_many_arguments)]
+// Eight, because the rules are an eighth thing this pass genuinely needs
+// (#482) and folding any of the other seven into a struct would hide which
+// of them a caller is choosing.
 pub(crate) async fn enumerate(
     connection: &PooledConnection,
     backend: &dyn MailBackend,
@@ -224,6 +284,7 @@ pub(crate) async fn enumerate(
     batch_size: usize,
     coverage: Coverage,
     cancel: &CancelToken,
+    rules: &RuleSet,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<Report> {
     let batch_size = batch_size.max(1);
@@ -351,10 +412,18 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages)?;
+        let batch = commit_batch(
+            connection,
+            mailbox,
+            account.as_ref(),
+            &known,
+            rules,
+            &mut messages,
+        )?;
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
+        report.fired.extend(batch.fired);
 
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
@@ -478,6 +547,7 @@ pub fn commit_batch(
     mailbox: &Mailbox,
     account: Option<&Account>,
     known: &BTreeSet<u32>,
+    rules: &RuleSet,
     messages: &mut [Message],
 ) -> Result<Report> {
     let mut report = Report::default();
@@ -510,15 +580,37 @@ pub fn commit_batch(
         // stored (that is its whole point, refreshing what an untrustworthy
         // incremental pull may have missed), and recording those again would
         // count the same correspondent twice for one message.
-        if let Some(account) = account {
-            for message in &written {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known.contains(&uid.get()));
-                if is_new {
-                    crate::contacts::record(connection, account, message)?;
-                }
+        //
+        // The rules below need exactly the same distinction and for a
+        // sharper reason, so the predicate is computed once and shared: a
+        // rule that fired again on every re-enumeration would move mail the
+        // user had since moved back (#482).
+        for message in &written {
+            let is_new = message
+                .server
+                .uid
+                .is_some_and(|uid| !known.contains(&uid.get()));
+            if !is_new {
+                continue;
+            }
+            if let Some(account) = account {
+                crate::contacts::record(connection, account, message)?;
+            }
+            // Inside the transaction, which is where ADR 0008 Q3 puts a
+            // header-only rule: "in the same transaction as the insert,
+            // before any event is emitted", so the user never sees the mail
+            // land in the Inbox first. Only `OnArrival` rules -- a rule
+            // touching the body cannot be answered here and is the backfill's
+            // (`crate::backfill::fetch_body`).
+            //
+            // No body is read to answer these, deliberately: reading one
+            // would be a fetch per arriving message, which is ADR 0016's
+            // lazy backfill undone.
+            for rule in rules.matching(Stage::OnArrival, &Subject::new(message)) {
+                report.fired.push(RuleHit {
+                    message: message.id,
+                    rule: rule.name.clone(),
+                });
             }
         }
 

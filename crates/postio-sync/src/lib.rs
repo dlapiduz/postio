@@ -72,10 +72,11 @@ pub use coalesce::{Plan, Step, coalesce};
 pub use connect::{Blocker, Link, NetworkState, ReconnectPolicy, Supervisor};
 pub use drain::{DrainReport, Drainer, FailedOperation, SyncError};
 pub use initial::{
-    DEFAULT_BATCH_SIZE, Progress, Report, commit_batch, sync_mailbox, sync_mailbox_with_batch_size,
+    DEFAULT_BATCH_SIZE, Progress, Report, RuleHit, commit_batch, sync_mailbox,
+    sync_mailbox_with_batch_size, sync_mailbox_with_rules,
 };
 pub use order::sync_priority;
-pub use resync::{Outcome, resync_mailbox};
+pub use resync::{Outcome, resync_mailbox, resync_mailbox_with_rules};
 pub use retry::RetryPolicy;
 pub use send::SmtpContext;
 pub use status::{StatusTracker, SyncProgress, SyncStatus};

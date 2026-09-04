@@ -2975,6 +2975,7 @@ dependencies = [
  "postio-account",
  "postio-index",
  "postio-model",
+ "postio-search",
  "postio-smtp",
  "postio-storage",
  "rusqlite",

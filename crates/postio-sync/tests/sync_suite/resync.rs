@@ -133,6 +133,7 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
             changed,
             vanished,
             arrived,
+            ..
         } => {
             assert_eq!(changed, 1, "only message 2's flag change was reported");
             assert_eq!(vanished, 1, "message 3 is gone");
@@ -229,6 +230,7 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
             changed,
             vanished,
             arrived,
+            ..
         } => {
             assert_eq!(changed, 1, "UIDNEXT moved, so the gap was fetched");
             assert_eq!(vanished, 0);

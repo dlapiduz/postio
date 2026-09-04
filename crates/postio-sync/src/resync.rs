@@ -73,6 +73,8 @@ use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
 };
+use postio_search::matcher::Subject;
+use postio_search::rules::{RuleSet, Stage};
 use postio_storage::PooledConnection;
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
@@ -80,7 +82,7 @@ use postio_storage::repository::{
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
-use crate::initial::{self, Progress};
+use crate::initial::{self, Progress, RuleHit};
 
 /// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
@@ -123,6 +125,11 @@ pub enum Outcome {
         /// This is what a desktop notification is about; `changed` alone
         /// cannot tell the two apart.
         arrived: Vec<MessageId>,
+        /// Which rules matched which of those arrivals (ADR 0008 Q3, #482).
+        ///
+        /// Only the header-only ones: a rule touching the body cannot be
+        /// answered here, and waits for `backfill::fetch_body`.
+        fired: Vec<RuleHit>,
     },
 }
 
@@ -136,6 +143,35 @@ pub async fn resync_mailbox(
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
+    resync_mailbox_with_rules(
+        connection,
+        backend,
+        mailbox,
+        cancel,
+        &RuleSet::default(),
+        on_progress,
+    )
+    .await
+}
+
+/// [`resync_mailbox`], evaluating `rules` against the mail it finds.
+///
+/// **This is the path ongoing mail arrives on**, not [`sync_mailbox`]: the
+/// engine runs a full enumeration once and resyncs from then on, so a rule
+/// wired only into the first sync would fire on the mail a new account
+/// starts with and on nothing that arrived since. That is the whole
+/// difference between a feature and a demo, and it is why this variant
+/// exists alongside `initial`'s.
+///
+/// [`sync_mailbox`]: crate::sync_mailbox
+pub async fn resync_mailbox_with_rules(
+    connection: &PooledConnection,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    cancel: &CancelToken,
+    rules: &RuleSet,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
     let sync_state = SyncStateRepository::new(connection);
@@ -157,6 +193,7 @@ pub async fn resync_mailbox(
                 mailbox,
                 previous.generation,
                 cancel,
+                rules,
                 on_progress,
             )
             .await;
@@ -204,6 +241,7 @@ pub async fn resync_mailbox(
                     initial::DEFAULT_BATCH_SIZE,
                     coverage,
                     cancel,
+                    rules,
                     on_progress,
                 )
                 .await?
@@ -224,6 +262,7 @@ pub async fn resync_mailbox(
                 since,
                 previous.uid_next,
                 cancel,
+                rules,
             )
             .await;
 
@@ -253,6 +292,7 @@ pub async fn resync_mailbox(
                         mailbox,
                         previous.generation,
                         cancel,
+                        rules,
                         on_progress,
                     )
                     .await
@@ -293,6 +333,7 @@ async fn rebuild(
     mailbox: &Mailbox,
     known_generation: Option<Generation>,
     cancel: &CancelToken,
+    rules: &RuleSet,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
     let selected = backend.select(&mailbox.path, SelectMode::ReadWrite).await?;
@@ -321,6 +362,7 @@ async fn rebuild(
         initial::DEFAULT_BATCH_SIZE,
         coverage,
         cancel,
+        rules,
         on_progress,
     )
     .await?;
@@ -339,6 +381,8 @@ async fn rebuild(
 ///
 /// See the module docs for why vanish detection is conditional on the
 /// arithmetic rather than always run, and why arrivals get a second witness.
+#[allow(clippy::too_many_arguments)]
+// Eight, for the reason `initial::enumerate` gives at its own signature.
 async fn incremental(
     connection: &Connection,
     backend: &dyn MailBackend,
@@ -347,6 +391,7 @@ async fn incremental(
     since: postio_model::ModSeq,
     previous_uid_next: Option<Uid>,
     cancel: &CancelToken,
+    rules: &RuleSet,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
     let known = messages.uids_in(mailbox.id, selected.generation)?;
@@ -376,6 +421,7 @@ async fn incremental(
     let changed_count = changed.len();
 
     let mut arrived: Vec<MessageId> = Vec::new();
+    let mut fired: Vec<RuleHit> = Vec::new();
     if !changed.is_empty() {
         let mut batch: Vec<Message> = changed
             .into_iter()
@@ -411,16 +457,31 @@ async fn incremental(
         // change or similar, not a new correspondent sighting and not new
         // mail to notify about. See `contacts::record`'s docs for the
         // double-counting this also avoids.
-        if let Some(account) = AccountRepository::new(connection).get(mailbox.account_id)? {
-            for message in &batch {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known_set.contains(uid));
-                if is_new {
-                    crate::contacts::record(connection, &account, message)?;
-                    arrived.push(message.id);
-                }
+        //
+        // The rules below turn on exactly the same predicate, and for a
+        // sharper reason: this is the path every message after the first
+        // sync arrives on, and a rule that fired again on each resync would
+        // act on mail the user had already dealt with (#482).
+        let account = AccountRepository::new(connection).get(mailbox.account_id)?;
+        for message in &batch {
+            let is_new = message
+                .server
+                .uid
+                .is_some_and(|uid| !known_set.contains(uid));
+            if !is_new {
+                continue;
+            }
+            if let Some(account) = &account {
+                crate::contacts::record(connection, account, message)?;
+            }
+            arrived.push(message.id);
+            // In the same transaction as the insert, per ADR 0008 Q3, and
+            // only the rules answerable without a body.
+            for rule in rules.matching(Stage::OnArrival, &Subject::new(message)) {
+                fired.push(RuleHit {
+                    message: message.id,
+                    rule: rule.name.clone(),
+                });
             }
         }
         committed.commit().map_err(postio_storage::Error::from)?;
@@ -451,6 +512,7 @@ async fn incremental(
         changed: changed_count,
         vanished: vanished_count,
         arrived,
+        fired,
     })
 }
 

@@ -44,10 +44,13 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
+use crate::initial::RuleHit;
 use chrono::{DateTime, Utc};
 use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
+use postio_search::matcher::Subject;
+use postio_search::rules::{RuleSet, Stage};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
     BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
@@ -1076,21 +1079,70 @@ pub async fn fetch_body(
     inline_cap: Option<u64>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
+    fetch_body_with_rules(
+        connection,
+        blobs,
+        backend,
+        request,
+        inline_cap,
+        &RuleSet::default(),
+        cancel,
+    )
+    .await
+    .map(|fetch| fetch.outcome)
+}
+
+/// What one body fetch did, and which rules it let run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyFetch {
+    /// What became of the body.
+    pub outcome: Outcome,
+    /// The rules that matched now that the body is local (ADR 0008 Q3).
+    ///
+    /// Only [`Stage::OnBody`] ones. A header-only rule already ran in the
+    /// pass that inserted this message and must not run again — which is
+    /// what makes "evaluated exactly once" true without anything having to
+    /// remember what was evaluated.
+    pub fired: Vec<RuleHit>,
+}
+
+/// [`fetch_body`], evaluating the rules that were waiting for this body.
+///
+/// A separate entry point rather than a parameter on [`fetch_body`] for the
+/// reason `initial`'s own pair gives: the one production caller has rules
+/// and the seventeen other call sites do not.
+pub async fn fetch_body_with_rules(
+    connection: &Connection,
+    blobs: &BlobStore,
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    inline_cap: Option<u64>,
+    rules: &RuleSet,
+    cancel: &CancelToken,
+) -> Result<BodyFetch> {
     let messages = MessageRepository::new(connection);
     let Some(mut message) = messages.get(request.message)? else {
         // Deleted, or wiped by a UIDVALIDITY reset, while this sat in the
         // queue. Checked before the fetch so a stale queue costs no bandwidth.
-        return Ok(Outcome::Gone);
+        return Ok(BodyFetch {
+            outcome: Outcome::Gone,
+            fired: Vec::new(),
+        });
     };
 
     match &request.want {
         // The payload axis: named sections, nothing around them.
         Want::Payloads(parts) => {
             let parts = parts.clone();
-            return fetch_payloads(
-                connection, blobs, backend, request, &message, &parts, cancel,
-            )
-            .await;
+            // Payloads are attachment bytes, not the body: nothing a rule
+            // could newly answer, so no evaluation here.
+            return Ok(BodyFetch {
+                outcome: fetch_payloads(
+                    connection, blobs, backend, request, &message, &parts, cancel,
+                )
+                .await?,
+                fired: Vec::new(),
+            });
         }
         // The text axis, when the header sync left us a map of where the words
         // are. `content_type` is what says a `BODYSTRUCTURE` was parsed at all —
@@ -1098,10 +1150,22 @@ pub async fn fetch_body(
         // must still take this path, or the fallback would fetch the payload this
         // exists to avoid.
         Want::Text if message.content_type.is_some() => {
-            return fetch_text_parts(
+            // This path stores a body of its own, so the rules waiting for
+            // one run here too. Missing this is the shape of bug the issue
+            // is about: two evaluation points that are supposed to be in
+            // sync, and one of the two ways a body can land not reaching
+            // either of them.
+            let message_id = request.message;
+            let outcome = fetch_text_parts(
                 connection, blobs, backend, request, message, inline_cap, cancel,
             )
-            .await;
+            .await?;
+            let fired = if matches!(outcome, Outcome::Stored { .. }) {
+                fired_on_body(connection, rules, message_id)?
+            } else {
+                Vec::new()
+            };
+            return Ok(BodyFetch { outcome, fired });
         }
         // The block and nothing else, for a row that can get one no other
         // way. Deliberately does not touch the body: the words are already on
@@ -1112,14 +1176,22 @@ pub async fn fetch_body(
                 // The server would not give it up. Set aside like any other
                 // failed fetch rather than written as an empty block, which
                 // would be a claim that the message has no such header.
-                return Ok(Outcome::Failed {
-                    reason: "the header block could not be fetched".to_owned(),
+                return Ok(BodyFetch {
+                    outcome: Outcome::Failed {
+                        reason: "the header block could not be fetched".to_owned(),
+                    },
+                    fired: Vec::new(),
                 });
             };
             let bytes = block.text.len() as u64;
             messages.set_headers(request.message, Some(&block))?;
             index_the_header_block(connection, request.message, Some(&block));
-            return Ok(Outcome::Stored { bytes });
+            // No rules here: a header block is not a body, and ADR 0025 Q4
+            // is why `header:` waits for one anyway.
+            return Ok(BodyFetch {
+                outcome: Outcome::Stored { bytes },
+                fired: Vec::new(),
+            });
         }
         // Every byte: asked for, or the only answer left for a row whose
         // structure was never recorded.
@@ -1240,7 +1312,56 @@ pub async fn fetch_body(
         );
     }
     index_the_header_block(connection, request.message, block.as_ref());
-    Ok(Outcome::Stored { bytes })
+    // The rules that were waiting for exactly this (ADR 0008 Q3). After the
+    // commit point, for the same reason the index calls above are: the body
+    // has to be local before anything is allowed to answer questions about
+    // it.
+    //
+    // Read back through the repository rather than matched against `parsed`
+    // in memory: what a rule is asked about has to be what the store holds,
+    // or a dry-run and the rule itself would answer from different text.
+    // Skipped entirely when no rule needs a body, which is the ordinary
+    // case and is what `RuleSet::has` is for -- otherwise every backfilled
+    // message would pay a read to match nothing.
+    let fired = fired_on_body(connection, rules, request.message)?;
+
+    Ok(BodyFetch {
+        outcome: Outcome::Stored { bytes },
+        fired,
+    })
+}
+
+/// The rules that were waiting for this message's body, now that it is local.
+///
+/// Read back through the repository rather than matched against the parse
+/// still in hand: what a rule is asked about has to be what the store holds,
+/// or a dry-run and the rule itself would answer from different text.
+///
+/// Skipped entirely when no rule needs a body, which is the ordinary case —
+/// otherwise every backfilled message would pay a read to match nothing
+/// against.
+fn fired_on_body(
+    connection: &Connection,
+    rules: &RuleSet,
+    message: postio_model::MessageId,
+) -> Result<Vec<RuleHit>> {
+    if !rules.has(Stage::OnBody) {
+        return Ok(Vec::new());
+    }
+    let messages = MessageRepository::new(connection);
+    let Some(stored) = messages.get(message)? else {
+        return Ok(Vec::new());
+    };
+    let body = messages.body(message)?;
+    let text = body.as_ref().and_then(|body| body.text.as_deref());
+    Ok(rules
+        .matching(Stage::OnBody, &Subject::new(&stored).with_body(text))
+        .into_iter()
+        .map(|rule| RuleHit {
+            message,
+            rule: rule.name.clone(),
+        })
+        .collect())
 }
 
 /// A stored header block into `message_headers`, after the commit point.
