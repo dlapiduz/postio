@@ -1758,3 +1758,47 @@ button.postio-compose-more {
   color: var(--postio-ink-secondary);
   font-size: 0.8523rem;
 }
+
+/* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)
+   The header names the conversation and the footer carries its verbs; both
+   sit outside the scroller, so a long thread never loses either. Between
+   them the stack, and the dividers that stand in for folded runs. */
+.conversation-header {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+/* The largest type in the pane. This is the one place the conversation is
+   named -- before #1003 there were two and they could disagree. */
+.conversation-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.4318rem;
+  color: var(--postio-ink);
+}
+
+/* `8 messages · Ada, Bo, Site Office · 10-25 Aug`. One line, ellipsised --
+   the participants are the unbounded part and must not grow the header. */
+.conversation-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
+.conversation-divider {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+.conversation-divider-label {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* The conversation's verbs, against the per-message ones inside an entry. */
+.conversation-footer {
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}

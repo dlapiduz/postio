@@ -1788,6 +1788,12 @@ impl Window {
                 self.reader_showing().view_original();
             }
 
+            // The conversation's own, so it goes to the pane rather than out
+            // on the bus: nothing outside this window has anything to do with
+            // how much of a conversation is open (#1004).
+            CommandId::ExpandAll => {
+                self.conversation().expand_all();
+            }
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
