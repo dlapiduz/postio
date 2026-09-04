@@ -479,6 +479,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings_account_detail::test_connection_reports_the_account_and_then_shows_what_happened",
+        gtk_settings_account_detail::test_connection_reports_the_account_and_then_shows_what_happened
+            as fn(),
+    ),
+    (
         "gtk_settings_account_detail::the_back_button_returns_to_the_account_list",
         gtk_settings_account_detail::the_back_button_returns_to_the_account_list as fn(),
     ),

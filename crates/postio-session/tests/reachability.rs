@@ -91,7 +91,6 @@ async fn settings_that_work_are_reported_as_reached() {
 
     assert_eq!(found.incoming, Reachability::Reached, "{found:?}");
     assert_eq!(found.outgoing, Reachability::Reached, "{found:?}");
-    assert!(found.all_reached());
 }
 
 #[tokio::test]
@@ -115,7 +114,6 @@ async fn one_server_working_and_the_other_not_is_two_answers() {
         reason(&found.outgoing).contains("not listening on 465"),
         "the outgoing answer has to carry the outgoing server's words: {found:?}"
     );
-    assert!(!found.all_reached());
 }
 
 fn reason(outcome: &Reachability) -> String {
@@ -138,7 +136,6 @@ async fn each_server_is_reported_in_its_own_words() {
 
     let found = test_connection(&account, &secrets, &incoming, &outgoing).await;
 
-    assert!(!found.all_reached());
     assert!(
         reason(&found.incoming).contains("imap.example.com refused"),
         "the incoming answer has to be about the incoming server: {:?}",

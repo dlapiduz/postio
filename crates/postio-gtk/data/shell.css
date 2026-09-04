@@ -1552,6 +1552,28 @@ button.postio-settings-revert:hover {
   background-color: var(--postio-hover-bg);
 }
 
+
+/* What the last connection test found (#980). Under the servers it is about,
+   because the result is something you read, compare against the fields above,
+   and then edit -- a toast would take it away before either. */
+.postio-settings-account-detail-test-status {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+  font-size: 0.8864rem;
+  line-height: 1.5;
+}
+
+/* A refusal, in the accent's warning cousin rather than a red banner: the
+   same call `.postio-onboarding-failed` makes, for the same reason. Nothing
+   has gone wrong with Postio -- the server said no. */
+.postio-settings-account-detail-test-status.postio-settings-account-detail-test-failed {
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
 /* ── The composer (canvas 2a) ─────────────────────────────────────────
    Compose takes over the reading pane, so it has to read as a different
    plane from the message it replaced: `--postio-surface` rather than

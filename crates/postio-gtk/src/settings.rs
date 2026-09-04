@@ -161,6 +161,62 @@ pub enum AccountEdit {
 /// What to call when a field in the account detail view is committed.
 type AccountEditHandler = Box<dyn Fn(AccountId, AccountEdit)>;
 
+/// Who to tell when somebody asks whether an account's settings work (#980).
+type TestConnectionHandler = Box<dyn Fn(AccountId)>;
+
+/// What the detail view has to say about the last connection test.
+///
+/// Three states and no fourth: #980's acceptance is "a visible result:
+/// success, or a real error message, not a spinner that silently stops", and
+/// a type that can only be these cannot express the spinner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    /// Nothing has been asked yet, so there is nothing to say.
+    Idle,
+    /// A test is running.
+    Testing,
+    /// It finished. Each server answered for itself — `Err` carries what that
+    /// server or its transport said, because "it does not work" sends
+    /// somebody to two screens of settings with nothing to go on.
+    Answered {
+        /// The incoming (IMAP) server.
+        incoming: Result<(), String>,
+        /// The outgoing (SMTP) server.
+        outgoing: Result<(), String>,
+    },
+}
+
+impl ConnectionStatus {
+    /// The sentence the detail view shows, and the one a screen reader is
+    /// given. Empty only for [`Idle`](ConnectionStatus::Idle), which draws
+    /// nothing at all rather than an empty row.
+    pub fn message(&self) -> String {
+        match self {
+            ConnectionStatus::Idle => String::new(),
+            ConnectionStatus::Testing => "Testing…".to_owned(),
+            ConnectionStatus::Answered { incoming, outgoing } => match (incoming, outgoing) {
+                (Ok(()), Ok(())) => "Both servers answered.".to_owned(),
+                (Err(reason), Ok(())) => format!("Incoming: {reason}"),
+                (Ok(()), Err(reason)) => format!("Outgoing: {reason}"),
+                (Err(incoming), Err(outgoing)) => {
+                    format!("Incoming: {incoming}\nOutgoing: {outgoing}")
+                }
+            },
+        }
+    }
+
+    /// Whether this is a state the user should read as a problem, so the row
+    /// can carry the failure styling rather than the widget guessing from the
+    /// text.
+    fn failed(&self) -> bool {
+        matches!(
+            self,
+            ConnectionStatus::Answered { incoming, outgoing }
+                if incoming.is_err() || outgoing.is_err()
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Sections — pure, no GTK
 // ---------------------------------------------------------------------------
@@ -487,6 +543,14 @@ mod imp {
         /// uses on the raw buffer, for the same reason.
         pub account_detail_loading: Cell<bool>,
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
+        /// Who to tell when "Test connection" is pressed (#980). The panel
+        /// never dials anything itself, exactly as it never writes an edit
+        /// itself: `postio-app` owns the store and the network.
+        pub test_connection: RefCell<Vec<TestConnectionHandler>>,
+        /// The control and the line under it, built with the rest of the
+        /// detail fields and then only ever relabelled.
+        pub account_detail_test_button: OnceCell<gtk::Button>,
+        pub account_detail_test_status: OnceCell<gtk::Label>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
         /// raw text view to `[filters]`.
@@ -594,6 +658,9 @@ mod imp {
                 account_detail_signature_ids: RefCell::new(Vec::new()),
                 account_detail_loading: Cell::new(false),
                 account_edited: RefCell::new(Vec::new()),
+                test_connection: RefCell::new(Vec::new()),
+                account_detail_test_button: OnceCell::new(),
+                account_detail_test_status: OnceCell::new(),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
                 filters_empty: gtk::Label::new(Some(
@@ -1578,6 +1645,38 @@ impl SettingsPanel {
         imp.account_detail.append(&signature_row);
         let _ = imp.account_detail_signature_row.set(signature_row);
         let _ = imp.account_detail_signature.set(signature);
+
+        // "Test connection" (#980), under the servers it is about. The
+        // status line lives beside it rather than in a toast: the result is
+        // something a person reads, compares against the fields above, and
+        // then edits, so it has to stay on screen next to them.
+        let test = gtk::Button::with_label("Test connection");
+        test.add_css_class("postio-settings-account-detail-test");
+        // Its own width, not the row's. Every other control here is a field
+        // the value fills; a full-bleed button reads as the primary action of
+        // the whole screen, which this is not.
+        test.set_halign(gtk::Align::Start);
+        test.update_property(&[gtk::accessible::Property::Label(
+            "Test connection to this account's servers",
+        )]);
+        test.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.ask_test_connection()
+        ));
+        imp.account_detail.append(&detail_row("Connection", &test));
+        let _ = imp.account_detail_test_button.set(test);
+
+        let status = gtk::Label::new(None);
+        status.add_css_class("postio-settings-account-detail-test-status");
+        status.set_xalign(0.0);
+        status.set_wrap(true);
+        // A live region: the result arrives a round trip after the press, so
+        // a screen reader has to be told rather than having to be looking.
+        status.update_property(&[gtk::accessible::Property::Label("")]);
+        status.set_visible(false);
+        imp.account_detail.append(&status);
+        let _ = imp.account_detail_test_status.set(status);
     }
 
     /// Closes the detail view and shows the account list again, as the
@@ -1592,6 +1691,77 @@ impl SettingsPanel {
 
     /// Called when a field in the account detail view is committed —
     /// `Enter` in an `Entry`, or any change to a `SpinButton`.
+    /// Called when somebody asks whether an account's stored settings work,
+    /// with the account the detail view is open on (#980).
+    ///
+    /// The panel never connects to anything. Same split as
+    /// [`connect_account_edited`](Self::connect_account_edited): this layer
+    /// may not link SQLite or open a socket, so it reports the gesture and
+    /// `postio-app` runs `postio_session::reachability::test_connection` and
+    /// hands the answer back through
+    /// [`set_connection_status`](Self::set_connection_status).
+    pub fn connect_test_connection(&self, handler: impl Fn(AccountId) + 'static) {
+        self.imp()
+            .test_connection
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires every `test_connection` handler for whichever account the detail
+    /// view is open on, and puts the row into its running state so the press
+    /// is acknowledged even if the answer takes a round trip.
+    fn ask_test_connection(&self) {
+        let Some(id) = *self.imp().account_detail_id.borrow() else {
+            return;
+        };
+        self.set_connection_status(ConnectionStatus::Testing);
+        for handler in self.imp().test_connection.borrow().iter() {
+            handler(id);
+        }
+    }
+
+    /// Show what the last connection test found.
+    pub fn set_connection_status(&self, status: ConnectionStatus) {
+        let Some(label) = self.imp().account_detail_test_status.get() else {
+            return;
+        };
+        let message = status.message();
+        label.set_visible(!message.is_empty());
+        label.set_text(&message);
+        // The same string to the screen reader: a status that is only a
+        // colour is a status somebody cannot read.
+        label.update_property(&[gtk::accessible::Property::Label(&message)]);
+        // Failure is carried as a class rather than inferred from the text,
+        // so the styling cannot disagree with the answer.
+        if status.failed() {
+            label.add_css_class("postio-settings-account-detail-test-failed");
+        } else {
+            label.remove_css_class("postio-settings-account-detail-test-failed");
+        }
+    }
+
+    /// Press the test-connection button, as a pointer would. For tests.
+    #[doc(hidden)]
+    pub fn test_press_test_connection(&self) -> bool {
+        match self.imp().account_detail_test_button.get() {
+            Some(button) => {
+                button.emit_clicked();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the connection status line currently says. For tests.
+    #[doc(hidden)]
+    pub fn test_connection_status_text(&self) -> String {
+        self.imp()
+            .account_detail_test_status
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
     pub fn connect_account_edited(&self, handler: impl Fn(AccountId, AccountEdit) + 'static) {
         self.imp()
             .account_edited

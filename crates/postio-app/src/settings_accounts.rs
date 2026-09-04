@@ -26,7 +26,7 @@
 //! (`postio_app::reap_pending_accounts`).
 
 use gtk::glib;
-use postio_gtk::settings::{AccountAction, AccountEdit};
+use postio_gtk::settings::{AccountAction, AccountEdit, ConnectionStatus};
 use postio_gtk::window::Window;
 use postio_runtime::AttachmentPolicy;
 use postio_storage::repository::{AccountRepository, MessageRepository};
@@ -73,6 +73,108 @@ pub fn install(window: &Window, wiring: &Wiring) {
             refresh(&window, &wiring);
         }
     });
+
+    panel.connect_test_connection({
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move |id| test_connection(&window, &wiring, id)
+    });
+}
+
+/// Try `id`'s stored settings and put the answer on the detail view (#980).
+///
+/// The one thing in this module that leaves the machine, and it does so only
+/// because somebody pressed a button -- `ARCHITECTURE.md` §11's test. Nothing
+/// speculative: no probe on open, none on edit, none on a timer.
+///
+/// The read and the two connections happen off the GTK loop and the answer
+/// comes back over an `async_channel`, the same crossing `search.rs` and
+/// `feed.rs` make: `rusqlite` is blocking and a connect is a round trip, and
+/// the main loop must be inside neither.
+fn test_connection(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
+    let Ok(connection) = wiring.database.connection() else {
+        return;
+    };
+    let account = match AccountRepository::new(&connection).get(id) {
+        Ok(Some(account)) => account,
+        // The row went away between the press and here. The panel is already
+        // showing "Testing…", so it has to be told something.
+        _ => {
+            window
+                .settings()
+                .set_connection_status(ConnectionStatus::Answered {
+                    incoming: Err("this account is no longer in the store".to_owned()),
+                    outgoing: Err("this account is no longer in the store".to_owned()),
+                });
+            return;
+        }
+    };
+    drop(connection);
+
+    let secrets = wiring.secrets.clone();
+    let (sender, receiver) = async_channel::bounded(1);
+    wiring.runtime.spawn(async move {
+        // The real connectors: this is the one path that is supposed to
+        // dial out. Every test of it hands scripted ones in instead.
+        // A connector that will not build is a TLS stack problem, not a
+        // server problem, and it has to say so rather than looking like the
+        // account is misconfigured.
+        let found = match (
+            postio_account::imap::RustlsConnector::new(),
+            postio_smtp::transport::RustlsConnector::new(),
+        ) {
+            (Ok(imap), Ok(smtp)) => {
+                postio_session::reachability::test_connection(&account, &secrets, &imap, &smtp)
+                    .await
+            }
+            (imap, smtp) => {
+                let reason = imap
+                    .err()
+                    .map(|error| error.to_string())
+                    .or_else(|| smtp.err().map(|error| error.to_string()))
+                    .unwrap_or_else(|| "the TLS stack would not start".to_owned());
+                postio_session::reachability::Reachabilities {
+                    incoming: postio_session::reachability::Reachability::Refused {
+                        reason: reason.clone(),
+                    },
+                    outgoing: postio_session::reachability::Reachability::Refused { reason },
+                }
+            }
+        };
+        let _ = sender.send(found).await;
+    });
+
+    glib::spawn_future_local({
+        let window = window.clone();
+        async move {
+            let Ok(found) = receiver.recv().await else {
+                // The task died. Saying so beats the spinner that stops.
+                window
+                    .settings()
+                    .set_connection_status(ConnectionStatus::Answered {
+                        incoming: Err("the test did not finish".to_owned()),
+                        outgoing: Err("the test did not finish".to_owned()),
+                    });
+                return;
+            };
+            window
+                .settings()
+                .set_connection_status(ConnectionStatus::Answered {
+                    incoming: as_result(found.incoming),
+                    outgoing: as_result(found.outgoing),
+                });
+        }
+    });
+}
+
+/// `Reachability` as the panel wants it: the widget layer may not depend on
+/// `postio-session`, so the crossing happens here rather than by giving
+/// `postio-gtk` a type it has no business linking.
+fn as_result(reachability: postio_session::reachability::Reachability) -> Result<(), String> {
+    match reachability {
+        postio_session::reachability::Reachability::Reached => Ok(()),
+        postio_session::reachability::Reachability::Refused { reason } => Err(reason),
+    }
 }
 
 /// Applies one field's new value to `id`'s stored account (#880).

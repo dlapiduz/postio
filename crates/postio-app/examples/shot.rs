@@ -380,7 +380,12 @@ fn show_settings(window: &Window) {
 /// account with none, which is correct and also means the ordinary demo
 /// store cannot show it. Two signatures here, so the row is on screen and
 /// can be looked at.
-fn show_account_detail(window: &Window) {
+/// `tested` also shows what a connection test found (#980) -- set by hand
+/// rather than by pressing the button, and that is the point: pressing it
+/// would dial a real server, and a shot must not. What there is to look at is
+/// the row's *shape*, which has to read as the server having said no rather
+/// than as Postio being broken, in dark and high contrast too.
+fn show_account_detail(window: &Window, tested: bool) {
     let mut account = postio_model::Account::new(
         "Ada Lovelace",
         postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
@@ -402,6 +407,12 @@ fn show_account_detail(window: &Window) {
     panel.set_accounts(vec![account]);
     window.toggle_settings();
     panel.open_account_detail(AccountId::new(1));
+    if tested {
+        panel.set_connection_status(postio_gtk::settings::ConnectionStatus::Answered {
+            incoming: Ok(()),
+            outgoing: Err("could not reach smtp.example.com:587: connection refused".to_owned()),
+        });
+    }
 }
 
 fn show_account_weights(window: &Window) {
@@ -561,6 +572,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "settings",
     "weights",
     "account",
+    "tested",
     "compose",
     "detached",
     "selected",
@@ -872,7 +884,7 @@ fn main() -> glib::ExitCode {
         show_account_weights(&window);
     }
     if flag("account") {
-        show_account_detail(&window);
+        show_account_detail(&window, flag("tested"));
     }
     if flag("compose") {
         show_composer(&window);
