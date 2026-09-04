@@ -136,18 +136,16 @@ pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
 
 /// [`watch_policy_at`], for a `[sync]` section already in hand.
 ///
-/// `Manual` is the one `check_for_mail` value this cannot answer faithfully
-/// yet: `WatchPolicy` has no "do not check automatically at all" state,
-/// only *how* to check, so it gets the closest available answer -- no push
-/// connection, the same interval polling as `Poll` -- rather than a config
-/// value this function silently ignores. Suppressing the periodic poll too
-/// needs a change to the scheduling loop itself
-/// ([`postio_sync::Watcher`]/`postio-runtime`'s engine loop), which
-/// is its own, separately-scoped piece of work.
+/// `Manual` sets [`postio_sync::WatchPolicy::manual`] (#1013): the watcher
+/// answers `Watch::Wait` forever, so nothing in it ever idles or polls on a
+/// timer. The `Refresh` command still reaches the server -- it calls
+/// `Engine::sync` directly and never goes through the watcher -- so manual
+/// mode only silences what would otherwise happen automatically.
 pub fn watch_policy(sync: &postio_config::SyncConfig) -> postio_sync::WatchPolicy {
     postio_sync::WatchPolicy {
         idle: matches!(sync.check_for_mail, postio_config::CheckForMail::Idle),
         poll_interval: std::time::Duration::from_secs(sync.poll_interval_secs),
+        manual: matches!(sync.check_for_mail, postio_config::CheckForMail::Manual),
         ..postio_sync::WatchPolicy::default()
     }
 }

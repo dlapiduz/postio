@@ -82,6 +82,13 @@ pub struct WatchPolicy {
     /// Applies to every mailbox, the watched one included: see the module docs
     /// on why push is never the only evidence.
     pub poll_interval: Duration,
+    /// `[sync] check_for_mail = "manual"` (#1013): never idle and never poll
+    /// on a timer, whatever `idle`/`poll_interval` say — only an explicit
+    /// check-for-mail reaches the server. That command runs
+    /// `Engine::sync` directly (`postio-session`'s `Refresh` handler) rather
+    /// than through this watcher, so setting this true costs that path
+    /// nothing; it only silences the automatic one.
+    pub manual: bool,
 }
 
 impl Default for WatchPolicy {
@@ -99,6 +106,7 @@ impl Default for WatchPolicy {
             idle: true,
             idle_refresh: Duration::from_secs(9 * 60),
             poll_interval: Duration::from_secs(300),
+            manual: false,
         }
     }
 }
@@ -360,7 +368,7 @@ impl Watcher {
     /// [`next_push`](Self::next_push), and checking it from here would be the
     /// duplicate work `IDLE` exists to avoid.
     pub fn next_poll(&mut self, now: DateTime<Utc>) -> Watch {
-        if self.suspended {
+        if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
         }
 
@@ -533,7 +541,7 @@ impl Watcher {
 
     /// Hands out the step `mailbox` is due, marking it outstanding.
     fn step(&mut self, mailbox: MailboxId, now: DateTime<Utc>) -> Watch {
-        if self.suspended {
+        if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
         }
         let can_idle = self.can_idle;
@@ -725,6 +733,27 @@ mod tests {
             "a reclaimed mailbox is *reconciled*, not merely watched again: a \
              delivery during the gap is exactly what the dropped IDLE would \
              have caught, and only a STATUS can find it now"
+        );
+    }
+
+    #[test]
+    fn a_manual_policy_never_idles_or_polls_automatically() {
+        let policy = WatchPolicy {
+            manual: true,
+            ..WatchPolicy::default()
+        };
+        let mut watcher = Watcher::new(policy, &idling());
+        let inbox = MailboxId::new(1);
+        watcher.watch(inbox, "INBOX", Attention::Push);
+        let now = DateTime::<Utc>::MIN_UTC;
+
+        assert!(
+            matches!(watcher.next_push(now), Watch::Wait { until: None }),
+            "manual mode must never idle automatically"
+        );
+        assert!(
+            matches!(watcher.next_poll(now), Watch::Wait { until: None }),
+            "manual mode must never poll automatically either"
         );
     }
 

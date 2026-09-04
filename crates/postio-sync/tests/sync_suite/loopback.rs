@@ -759,6 +759,7 @@ async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
             idle: true,
             idle_refresh: Duration::from_secs(60),
             poll_interval: Duration::from_secs(300),
+            manual: false,
         },
         &backend.capabilities().await.expect("capabilities"),
     );
@@ -828,6 +829,7 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
             idle: true,
             idle_refresh: Duration::from_secs(60),
             poll_interval: Duration::from_secs(300),
+            manual: false,
         },
         &backend.capabilities().await.expect("capabilities"),
     );
