@@ -149,6 +149,46 @@ pub fn every_activation_gets_its_own_row_newest_first() {
     window.destroy();
 }
 
+pub fn the_read_receipt_count_states_zero_rather_than_going_blank() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    panel.set_read_receipt_count(0);
+    pump();
+
+    assert_eq!(
+        panel.read_receipt_count_label(),
+        "No messages have requested a read receipt.",
+        "zero is itself the answer -- CLAUDE.md's privacy section makes this \
+         a fixed policy, so there is nothing to hide behind an empty state"
+    );
+
+    window.destroy();
+}
+
+pub fn the_read_receipt_count_states_the_number_and_says_none_are_sent() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    panel.set_read_receipt_count(3);
+    pump();
+
+    let label = panel.read_receipt_count_label();
+    assert!(
+        label.contains('3'),
+        "the count should be in the text: {label}"
+    );
+    assert!(
+        label.contains("none have been sent"),
+        "CLAUDE.md's privacy section makes never-automatic a fixed policy -- \
+         the line states that fact, it does not offer a switch over it: {label}"
+    );
+
+    window.destroy();
+}
+
 fn panel() -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");

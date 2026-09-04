@@ -553,6 +553,15 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_privacy::every_activation_gets_its_own_row_newest_first as fn(),
     ),
     (
+        "gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank",
+        gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank as fn(),
+    ),
+    (
+        "gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent",
+        gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent
+            as fn(),
+    ),
+    (
         "gtk_settings_sync::the_rows_render_from_a_given_config",
         gtk_settings_sync::the_rows_render_from_a_given_config as fn(),
     ),

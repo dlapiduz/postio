@@ -515,6 +515,12 @@ mod imp {
         /// `window.rs`, the same reason `remote_image_allowlist` is handed
         /// in rather than read here: `postio-gtk` has no SQL of its own.
         pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
+        /// How many messages have asked for a read receipt (#970) — a count,
+        /// not a toggle: Postio never sends one automatically (CLAUDE.md's
+        /// privacy section), so there is nothing here to switch, only a fact
+        /// to state. Always visible, never hidden the way an empty list is:
+        /// zero is itself the answer, not the absence of one.
+        pub read_receipt_count: gtk::Label,
         /// One row per registered command (#881), always present — the same
         /// no-empty-state shape `sync_box`/`ui_box` use, since the registry
         /// is never empty. Scrolled rather than a bare list, unlike those
@@ -587,6 +593,7 @@ mod imp {
                 unsubscribe_scroller: gtk::ScrolledWindow::new(),
                 unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
                 unsubscribe_activations: RefCell::new(Vec::new()),
+                read_receipt_count: gtk::Label::new(None),
                 keys_list: gtk::ListBox::new(),
                 keys_scroller: gtk::ScrolledWindow::new(),
                 capturing: RefCell::new(None),
@@ -997,6 +1004,36 @@ impl SettingsPanel {
     pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
         *self.imp().unsubscribe_activations.borrow_mut() = activations;
         self.redraw_unsubscribe_activations();
+    }
+
+    /// Hands the panel how many messages have asked for a read receipt
+    /// (#970) — `window.rs` reads the count fresh from
+    /// [`postio_storage::repository::MessageRepository::read_receipt_requested_count`]
+    /// every time the pane opens, the same reason the two lists above are
+    /// handed their state rather than reading it themselves.
+    ///
+    /// A count, not a switch: Postio never sends a receipt automatically
+    /// (CLAUDE.md's privacy section calls that fixed policy), so a
+    /// "configurable" default here would already have lost the argument a
+    /// toggle exists to make.
+    pub fn set_read_receipt_count(&self, count: u64) {
+        let text = match count {
+            0 => "No messages have requested a read receipt.".to_owned(),
+            1 => "1 message has requested a read receipt; none have been sent \
+                  automatically."
+                .to_owned(),
+            n => format!(
+                "{n} messages have requested a read receipt; none have been \
+                 sent automatically."
+            ),
+        };
+        self.imp().read_receipt_count.set_label(&text);
+    }
+
+    /// The read-receipt count line's current text. For tests.
+    #[doc(hidden)]
+    pub fn read_receipt_count_label(&self) -> String {
+        self.imp().read_receipt_count.label().to_string()
     }
 
     /// Rebuilds the unsubscribe-log rows from whatever was last handed in.
@@ -2677,6 +2714,14 @@ impl SettingsPanel {
         imp.unsubscribe_empty.set_wrap(true);
         imp.unsubscribe_empty.set_visible(false);
 
+        // ── privacy: the read-receipt count, a fact rather than a toggle
+        // (#970) ───────────────────────────────────────────────────────
+        imp.read_receipt_count
+            .add_css_class("postio-settings-read-receipt-count");
+        imp.read_receipt_count.set_xalign(0.0);
+        imp.read_receipt_count.set_wrap(true);
+        self.set_read_receipt_count(0);
+
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
         imp.keys_list.set_selection_mode(gtk::SelectionMode::None);
@@ -2805,6 +2850,7 @@ impl SettingsPanel {
         column.append(&unsubscribe_title);
         column.append(&imp.unsubscribe_scroller);
         column.append(&imp.unsubscribe_empty);
+        column.append(&imp.read_receipt_count);
         column.append(&imp.keys_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
