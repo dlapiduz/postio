@@ -46,6 +46,15 @@ pub enum Phase {
     Fonts,
     /// The generated tokens are installed on the display.
     Styles,
+    /// The store key is out of the keyring and the database is open.
+    ///
+    /// Blocking I/O, and the only phase that is: a D-Bus round trip to the
+    /// keyring and SQLCipher's key derivation, both before the main loop
+    /// starts. Separated from [`Window`](Phase::Window) by #790, which found
+    /// the two of them sharing one 228 ms phase that `docs/PERFORMANCE.md`
+    /// then attributed to GTK. They want telling apart: this half is I/O and
+    /// could be moved off the main thread, and the other half cannot.
+    Store,
     /// The window and its widget tree exist, but nothing is on screen yet.
     Window,
     /// The compositor has shown the first frame. This is "usable UI".
@@ -54,10 +63,11 @@ pub enum Phase {
 
 impl Phase {
     /// Every phase, in the order they occur.
-    pub const ALL: [Phase; 5] = [
+    pub const ALL: [Phase; 6] = [
         Phase::Init,
         Phase::Fonts,
         Phase::Styles,
+        Phase::Store,
         Phase::Window,
         Phase::FirstFrame,
     ];
@@ -68,6 +78,7 @@ impl Phase {
             Phase::Init => "init",
             Phase::Fonts => "fonts",
             Phase::Styles => "styles",
+            Phase::Store => "store",
             Phase::Window => "window",
             Phase::FirstFrame => "first frame",
         }
@@ -207,6 +218,25 @@ pub fn enabled(var: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_store_is_its_own_phase_between_styles_and_the_window() {
+        // #790: `window` measured 228ms of a 427ms startup and
+        // `docs/PERFORMANCE.md` attributed it to GTK's first-realize cost.
+        // It cannot be that -- `present()` is called *after* `Phase::Window`
+        // is marked, so the shader compile lands in `first frame`. What
+        // actually sits in that gap is the blocking keyring read and the
+        // SQLCipher store open, which is I/O and can move off the main
+        // thread in a way a shader compile never can. It gets its own phase
+        // so the trace says which.
+        assert!(Phase::Styles < Phase::Store);
+        assert!(Phase::Store < Phase::Window);
+        assert_eq!(Phase::Store.label(), "store");
+        assert!(
+            Phase::ALL.contains(&Phase::Store),
+            "a phase nothing reports is a phase nothing measures"
+        );
+    }
 
     #[test]
     fn phases_are_ordered_the_way_startup_happens() {
