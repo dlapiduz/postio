@@ -799,8 +799,14 @@ impl Actions {
                 copy.account_id = target.account_id;
                 copy.mailbox_id = target.id;
                 copy.thread_id = None;
-                copy.server.uid = None;
-                copy.server.uid_validity = None;
+                // All of it, not the fields somebody remembered. A row no
+                // server has seen has no server identity, and
+                // `ServerIdentifiers::default()` says that in one place --
+                // where clearing them field by field said it in two of four,
+                // leaving the copy claiming the `remote_id` and `mod_seq`
+                // account A's server minted (#940). A `MODSEQ` in particular
+                // means nothing outside the mailbox that issued it.
+                copy.server = postio_model::ServerIdentifiers::default();
                 let copy_id = messages.create(&mut copy).map_err(store_failure)?;
                 if let Some(body) = messages.body(row.id).map_err(store_failure)? {
                     messages
@@ -3575,6 +3581,114 @@ mod tests {
             .expect("second account");
         let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
         (account.id, inbox)
+    }
+
+    /// #940: the provisional copy carries no server identity at all.
+    ///
+    /// It is a row account B's server has never seen, so every field naming
+    /// a server's opinion of it has to be empty. Clearing them one at a time
+    /// is what went wrong: `uid` and `uid_validity` were cleared and
+    /// `mod_seq` and `remote_id` were not, so the copy landed in account B
+    /// claiming the identity account A's server had minted.
+    ///
+    /// What that costs, in order of how quickly it bites: `is_known_to_server`
+    /// answers `true` for a message nothing on the target has heard of;
+    /// account B's reconciliation matches fetched mail by
+    /// `find_by_remote_id(mailbox, remote_id)` and this row answers to an id
+    /// from another server's UID space; and #531's inverse saga, driven from
+    /// this row, would send account A's UID to account B's server, where only
+    /// `identity::wire_uid`'s generation check stands between that and
+    /// expunging an unrelated message.
+    ///
+    /// Asserted on the row **as stored**, read back through the repository,
+    /// because that is the only place the bug is visible: the struct is
+    /// correct right up until `create` persists all four fields.
+    #[test]
+    fn the_provisional_copy_carries_no_server_identity() {
+        let world = world();
+        let (_second, second_inbox) = second_account(&world);
+
+        // A source message its own server knows thoroughly — all four
+        // fields, or the copy has nothing to wrongly inherit and the test
+        // cannot fail.
+        let source = {
+            let connection = world.database.connection().expect("a connection");
+            let mut message = Message::new(world.account.id, world.inbox, Utc::now());
+            message.server.uid = Some(4242.into());
+            message.server.uid_validity = Some(9.into());
+            message.server.mod_seq = Some(777.into());
+            message.server.remote_id = Some(postio_model::RemoteId::new("9:4242"));
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message the source server has seen")
+        };
+        world.looking_at(world.inbox, &[], Some(source));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![source]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+
+        // Read back through the repository, not from the struct `create` was
+        // handed: the struct is correct right up until `insert` persists all
+        // four fields, so anything asserted before the round trip cannot see
+        // this bug.
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let stored: Vec<Message> = messages
+            .page(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(second_inbox),
+                limit: 10,
+                after: None,
+            })
+            .expect("a read")
+            .into_iter()
+            .map(|row| {
+                messages
+                    .get(row.id)
+                    .expect("a read")
+                    .expect("the row the page just listed")
+            })
+            .collect();
+        let copy = stored
+            .first()
+            .expect("the provisional copy is in the target mailbox");
+
+        assert!(
+            !copy.server.is_known_to_server(),
+            "the target server has never seen this row and it says otherwise: \
+             uid {:?}, remote_id {:?}",
+            copy.server.uid,
+            copy.server.remote_id
+        );
+        assert_eq!(
+            copy.server,
+            postio_model::ServerIdentifiers::default(),
+            "a row no server has seen has no server identity -- and clearing \
+             the fields one at a time is exactly how two of the four were \
+             missed"
+        );
+
+        // The consequence, stated as itself. Account B's reconciliation
+        // matches fetched mail to existing rows on `(mailbox_id, remote_id)`,
+        // so a foreign id here is a row in B's mailbox answering to an id
+        // A's server minted.
+        let source_remote = messages
+            .get(source)
+            .expect("a read")
+            .expect("the source row")
+            .server
+            .remote_id
+            .expect("the source keeps its own identity");
+        assert!(
+            stored
+                .iter()
+                .all(|row| row.server.remote_id.as_ref() != Some(&source_remote)),
+            "a row in the target mailbox answers to {source_remote}, which is \
+             an id account A's server minted"
+        );
     }
 
     /// #531, first half: nothing has reached either server yet, so undo is
