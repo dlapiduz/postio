@@ -26,6 +26,7 @@
 //! (`postio_app::reap_pending_accounts`).
 
 use gtk::glib;
+use gtk::prelude::*;
 use postio_gtk::feed::Feeds;
 use postio_gtk::settings::{AccountAction, AccountEdit, AccountMailboxes};
 use postio_gtk::window::Window;
@@ -264,7 +265,7 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
 /// same lookup the send path files a copy through, so the label cannot
 /// disagree with where mail actually goes.
 fn account_mailboxes(
-    connection: &rusqlite::Connection,
+    connection: &postio_storage::PooledConnection,
     account: postio_model::ids::AccountId,
 ) -> AccountMailboxes {
     let mailboxes = MailboxRepository::new(connection);
