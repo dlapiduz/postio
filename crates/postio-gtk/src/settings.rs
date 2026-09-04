@@ -164,6 +164,33 @@ type AccountEditHandler = Box<dyn Fn(AccountId, AccountEdit)>;
 /// Who to tell when somebody asks whether an account's settings work (#980).
 type TestConnectionHandler = Box<dyn Fn(AccountId)>;
 
+/// Who to tell when a signature is written or removed (#1086).
+type SignatureSavedHandler = Box<dyn Fn(AccountId, &SignatureDraft)>;
+type SignatureDeletedHandler = Box<dyn Fn(AccountId, SignatureId)>;
+
+/// A signature as the editor has it: what was typed, and which one it is.
+///
+/// `id` is `None` for one that does not exist yet — the store assigns it, the
+/// same way `AccountRepository::create` assigns an account's. Reporting a new
+/// signature with an id would make saving an edit create a second one, which
+/// is the bug this distinction exists to prevent.
+///
+/// No `html`. `Signature` carries an optional rich variant and the composer
+/// uses it when there is one, but a rich editor is the composer's formatting
+/// toolbar's problem (#339) rather than this form's — so this creates
+/// text-only signatures and leaves `html` exactly as it is today, `None`
+/// everywhere and correctly handled, rather than shipping a second half of an
+/// editor (#1086).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureDraft {
+    /// Which signature this is, or `None` for one being created.
+    pub id: Option<SignatureId>,
+    /// What the picker will show.
+    pub name: String,
+    /// The signature itself.
+    pub text: String,
+}
+
 /// What the detail view has to say about the last connection test.
 ///
 /// Three states and no fourth: #980's acceptance is "a visible result:
@@ -550,6 +577,20 @@ mod imp {
         /// The control and the line under it, built with the rest of the
         /// detail fields and then only ever relabelled.
         pub account_detail_test_button: OnceCell<gtk::Button>,
+        /// The signature list on the detail view, and the editor it drills
+        /// into (#1086). A second level of the same show/hide the account
+        /// list and its detail already use.
+        pub signature_saved: RefCell<Vec<SignatureSavedHandler>>,
+        pub signature_deleted: RefCell<Vec<SignatureDeletedHandler>>,
+        pub account_detail_signature_list: OnceCell<gtk::ListBox>,
+        pub account_detail_signature_ids_listed: RefCell<Vec<SignatureId>>,
+        pub signature_editor: gtk::Box,
+        pub signature_editor_name: OnceCell<gtk::Entry>,
+        pub signature_editor_text: OnceCell<gtk::TextView>,
+        pub signature_editor_error: OnceCell<gtk::Label>,
+        pub signature_editor_delete: OnceCell<gtk::Button>,
+        /// Which signature the editor is open on, and for which account.
+        pub signature_editor_on: RefCell<Option<(AccountId, Option<SignatureId>)>>,
         pub account_detail_test_status: OnceCell<gtk::Label>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
@@ -660,6 +701,16 @@ mod imp {
                 account_edited: RefCell::new(Vec::new()),
                 test_connection: RefCell::new(Vec::new()),
                 account_detail_test_button: OnceCell::new(),
+                signature_saved: RefCell::new(Vec::new()),
+                signature_deleted: RefCell::new(Vec::new()),
+                account_detail_signature_list: OnceCell::new(),
+                account_detail_signature_ids_listed: RefCell::new(Vec::new()),
+                signature_editor: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                signature_editor_name: OnceCell::new(),
+                signature_editor_text: OnceCell::new(),
+                signature_editor_error: OnceCell::new(),
+                signature_editor_delete: OnceCell::new(),
+                signature_editor_on: RefCell::new(None),
                 account_detail_test_status: OnceCell::new(),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
@@ -1523,7 +1574,41 @@ impl SettingsPanel {
             .set_value(f64::from(account.outgoing.port));
         imp.account_detail_loading.set(false);
         *imp.account_detail_id.borrow_mut() = Some(id);
+
+        // The account's signatures, rebuilt from what it carries (#1086).
+        // Rebuilt rather than patched for the reason `redraw_filters` is:
+        // the list is small, and a diff is a second description of the same
+        // state free to disagree with the first.
+        if let Some(list) = imp.account_detail_signature_list.get() {
+            while let Some(row) = list.row_at_index(0) {
+                list.remove(&row);
+            }
+            for signature in &account.signatures {
+                let row = gtk::ListBoxRow::new();
+                let label = gtk::Label::new(Some(&signature.name));
+                label.set_xalign(0.0);
+                label.add_css_class("postio-settings-signature-row");
+                row.set_child(Some(&label));
+                row.set_activatable(true);
+                row.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Edit the signature {}",
+                    signature.name
+                ))]);
+                list.append(&row);
+            }
+            *imp.account_detail_signature_ids_listed.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            // "Empty is never blank" -- but the Add button below says what to
+            // do about it, so the list simply goes away rather than drawing a
+            // frame around nothing.
+            list.set_visible(!account.signatures.is_empty());
+        }
+
         imp.account_detail.set_visible(true);
+        // Reopening the account is how the app returns from a save, so the
+        // editor must not be left over it.
+        imp.signature_editor.set_visible(false);
+        *imp.signature_editor_on.borrow_mut() = None;
         imp.accounts_scroller.set_visible(false);
     }
 
@@ -1646,6 +1731,42 @@ impl SettingsPanel {
         let _ = imp.account_detail_signature_row.set(signature_row);
         let _ = imp.account_detail_signature.set(signature);
 
+        // The account's signatures, and the way to make one (#1086). Every
+        // layer under this existed and worked; nothing could feed it, so
+        // both this list and the composer's picker showed nothing for ever.
+        let signatures = gtk::ListBox::new();
+        signatures.add_css_class("postio-settings-signature-list");
+        signatures.set_selection_mode(gtk::SelectionMode::None);
+        signatures.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let index = row.index();
+                let id = panel
+                    .imp()
+                    .account_detail_signature_ids_listed
+                    .borrow()
+                    .get(index as usize)
+                    .copied();
+                if let Some(id) = id {
+                    panel.open_signature_editor(Some(id));
+                }
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Signatures", &signatures));
+        let _ = imp.account_detail_signature_list.set(signatures);
+
+        let add = gtk::Button::with_label("Add signature");
+        add.add_css_class("postio-settings-signature-add");
+        add.set_halign(gtk::Align::Start);
+        add.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.open_signature_editor(None)
+        ));
+        imp.account_detail.append(&add);
+
         // "Test connection" (#980), under the servers it is about. The
         // status line lives beside it rather than in a toast: the result is
         // something a person reads, compares against the fields above, and
@@ -1677,6 +1798,87 @@ impl SettingsPanel {
         status.set_visible(false);
         imp.account_detail.append(&status);
         let _ = imp.account_detail_test_status.set(status);
+
+        self.build_signature_editor();
+    }
+
+    /// The signature editor: a name, a body, and the two verbs that need
+    /// somewhere to live (#1086).
+    ///
+    /// A second drill-in rather than more rows on the detail view. A
+    /// signature is a name *and* a body — a two-field form — and the detail
+    /// view is deliberately one control per line; folding a multi-line text
+    /// box into that row rhythm would make both harder to read. The panel
+    /// already drills in once, so this is the same show/hide one level down.
+    fn build_signature_editor(&self) {
+        let imp = self.imp();
+        if imp.signature_editor_name.get().is_some() {
+            return;
+        }
+
+        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.add_css_class("postio-settings-account-detail-back");
+        back.add_css_class("flat");
+        back.set_halign(gtk::Align::Start);
+        back.set_tooltip_text(Some("Back to the account"));
+        back.update_property(&[gtk::accessible::Property::Label("Back to the account")]);
+        back.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.close_signature_editor()
+        ));
+        imp.signature_editor.append(&back);
+
+        let name = gtk::Entry::new();
+        name.add_css_class("postio-settings-signature-name");
+        name.update_property(&[gtk::accessible::Property::Label("Signature name")]);
+        imp.signature_editor.append(&detail_row("Name", &name));
+        let _ = imp.signature_editor_name.set(name);
+
+        let text = gtk::TextView::new();
+        text.add_css_class("postio-settings-signature-text");
+        text.set_wrap_mode(gtk::WrapMode::WordChar);
+        text.update_property(&[gtk::accessible::Property::Label("Signature text")]);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&text));
+        scroller.set_min_content_height(120);
+        imp.signature_editor
+            .append(&detail_row("Signature", &scroller));
+        let _ = imp.signature_editor_text.set(text);
+
+        // Why a save was refused -- a name already taken, so far. Hidden
+        // until there is something to say, and never a raw store error:
+        // "UNIQUE constraint failed" is not an answer anybody can act on.
+        let error = gtk::Label::new(None);
+        error.add_css_class("postio-settings-signature-error");
+        error.set_xalign(0.0);
+        error.set_wrap(true);
+        error.set_visible(false);
+        imp.signature_editor.append(&error);
+        let _ = imp.signature_editor_error.set(error);
+
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        verbs.set_halign(gtk::Align::Start);
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("postio-settings-signature-save");
+        save.add_css_class("suggested-action");
+        save.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.save_signature()
+        ));
+        verbs.append(&save);
+
+        let delete = gtk::Button::with_label("Delete");
+        delete.add_css_class("postio-settings-signature-delete");
+        delete.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.delete_signature()
+        ));
+        verbs.append(&delete);
+        let _ = imp.signature_editor_delete.set(delete);
+        imp.signature_editor.append(&verbs);
     }
 
     /// Closes the detail view and shows the account list again, as the
@@ -1691,6 +1893,199 @@ impl SettingsPanel {
 
     /// Called when a field in the account detail view is committed —
     /// `Enter` in an `Entry`, or any change to a `SpinButton`.
+    /// Called when a signature is saved, with the account and what was typed
+    /// (#1086).
+    ///
+    /// The panel writes nothing, the same split every other edit here uses:
+    /// this layer may not link SQLite. `postio-app` persists it and hands
+    /// back either a refreshed account list or, when the store refused,
+    /// [`set_signature_error`](Self::set_signature_error).
+    pub fn connect_signature_saved(&self, handler: impl Fn(AccountId, &SignatureDraft) + 'static) {
+        self.imp()
+            .signature_saved
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called when a signature is deleted.
+    pub fn connect_signature_deleted(&self, handler: impl Fn(AccountId, SignatureId) + 'static) {
+        self.imp()
+            .signature_deleted
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Open the signature editor on `id`, or on a new signature.
+    pub fn open_signature_editor(&self, id: Option<SignatureId>) {
+        let imp = self.imp();
+        let Some(account) = *imp.account_detail_id.borrow() else {
+            return;
+        };
+        self.build_signature_editor();
+        let signature = id.and_then(|id| {
+            imp.accounts
+                .borrow()
+                .iter()
+                .find(|candidate| candidate.id == account)
+                .and_then(|candidate| {
+                    candidate
+                        .signatures
+                        .iter()
+                        .find(|signature| signature.id == id)
+                        .cloned()
+                })
+        });
+        let name = imp.signature_editor_name.get().expect("built above");
+        let text = imp.signature_editor_text.get().expect("built above");
+        name.set_text(signature.as_ref().map_or("", |s| s.name.as_str()));
+        text.buffer()
+            .set_text(signature.as_ref().map_or("", |s| s.text.as_str()));
+        // Nothing to delete on one that does not exist yet.
+        imp.signature_editor_delete
+            .get()
+            .expect("built above")
+            .set_visible(id.is_some());
+        self.set_signature_error(None);
+        *imp.signature_editor_on.borrow_mut() = Some((account, id));
+        imp.account_detail.set_visible(false);
+        imp.signature_editor.set_visible(true);
+    }
+
+    /// Close the editor and show the account again.
+    pub fn close_signature_editor(&self) {
+        let imp = self.imp();
+        *imp.signature_editor_on.borrow_mut() = None;
+        imp.signature_editor.set_visible(false);
+        imp.account_detail.set_visible(true);
+    }
+
+    /// Say why a save was refused, or clear it.
+    ///
+    /// The editor stays open on what was typed: a duplicate name is fixed by
+    /// changing one word, and throwing the body away to say so would make the
+    /// fix cost more than the mistake.
+    pub fn set_signature_error(&self, reason: Option<String>) {
+        let Some(label) = self.imp().signature_editor_error.get() else {
+            return;
+        };
+        let reason = reason.unwrap_or_default();
+        label.set_visible(!reason.is_empty());
+        label.set_text(&reason);
+        label.update_property(&[gtk::accessible::Property::Label(&reason)]);
+    }
+
+    fn save_signature(&self) {
+        let Some((account, id)) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        let imp = self.imp();
+        let name = imp.signature_editor_name.get().expect("built").text();
+        let buffer = imp.signature_editor_text.get().expect("built").buffer();
+        let text = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        // An unnamed signature is one the picker cannot offer, so it is
+        // refused here rather than by the store: the picker shows the name.
+        if name.trim().is_empty() {
+            self.set_signature_error(Some("A signature needs a name".to_owned()));
+            return;
+        }
+        let draft = SignatureDraft {
+            id,
+            name: name.to_string(),
+            text,
+        };
+        for handler in imp.signature_saved.borrow().iter() {
+            handler(account, &draft);
+        }
+    }
+
+    fn delete_signature(&self) {
+        let Some((account, Some(id))) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        for handler in self.imp().signature_deleted.borrow().iter() {
+            handler(account, id);
+        }
+    }
+
+    /// Press "Add signature". For tests.
+    #[doc(hidden)]
+    pub fn test_press_add_signature(&self) -> bool {
+        if self.imp().account_detail_id.borrow().is_none() {
+            return false;
+        }
+        self.open_signature_editor(None);
+        true
+    }
+
+    /// Open the editor on a listed signature, as activating its row does.
+    #[doc(hidden)]
+    pub fn test_open_signature(&self, id: SignatureId) -> bool {
+        if !self
+            .imp()
+            .account_detail_signature_ids_listed
+            .borrow()
+            .contains(&id)
+        {
+            return false;
+        }
+        self.open_signature_editor(Some(id));
+        true
+    }
+
+    /// Type into the editor. For tests.
+    #[doc(hidden)]
+    pub fn test_type_signature(&self, name: &str, text: &str) {
+        let imp = self.imp();
+        if let Some(entry) = imp.signature_editor_name.get() {
+            entry.set_text(name);
+        }
+        if let Some(view) = imp.signature_editor_text.get() {
+            view.buffer().set_text(text);
+        }
+    }
+
+    /// What the editor's name field holds. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_name(&self) -> String {
+        self.imp()
+            .signature_editor_name
+            .get()
+            .map(|entry| entry.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// What the editor is refusing to save, if anything. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_error_text(&self) -> String {
+        self.imp()
+            .signature_editor_error
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Press Save. For tests.
+    #[doc(hidden)]
+    pub fn test_press_save_signature(&self) -> bool {
+        let open = self.imp().signature_editor_on.borrow().is_some();
+        if open {
+            self.save_signature();
+        }
+        open
+    }
+
+    /// Press Delete. For tests.
+    #[doc(hidden)]
+    pub fn test_press_delete_signature(&self) -> bool {
+        let deletable = matches!(*self.imp().signature_editor_on.borrow(), Some((_, Some(_))));
+        if deletable {
+            self.delete_signature();
+        }
+        deletable
+    }
+
     /// Called when somebody asks whether an account's stored settings work,
     /// with the account the detail view is open on (#980).
     ///
@@ -2841,6 +3236,9 @@ impl SettingsPanel {
         imp.account_detail
             .add_css_class("postio-settings-account-detail");
         imp.account_detail.set_visible(false);
+        imp.signature_editor
+            .add_css_class("postio-settings-signature-editor");
+        imp.signature_editor.set_visible(false);
 
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
         back.add_css_class("postio-settings-account-detail-back");
@@ -3078,6 +3476,7 @@ impl SettingsPanel {
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&imp.accounts_scroller);
         column.append(&imp.account_detail);
+        column.append(&imp.signature_editor);
         column.append(&imp.egress_scroller);
         column.append(&imp.filters_scroller);
         column.append(&imp.filters_empty);
