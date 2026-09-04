@@ -111,6 +111,12 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -269,6 +275,12 @@ jobs:
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Cache the mdbook binary
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
