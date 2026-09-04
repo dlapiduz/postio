@@ -93,6 +93,33 @@ toll falls between `present()` and the first frame, and it is ~74 ms whether
 the window holds Postio's whole widget tree or a single label. A splash
 screen therefore cannot hide this cost — it pays it.
 
+**And that is why Postio has no splash screen. #1109 settled it; do not
+re-propose it.** The idea arrives every time someone measures startup, so the
+reasoning belongs here rather than only on a closed issue:
+
+- It pays the toll it was meant to hide. The pixels arrive at `init + toll`
+  either way; the only question a splash answers is which window gets them.
+- What is left to hide is a flash. On the release figures above a splash would
+  be on screen from roughly 170 ms to roughly 400 ms, and once #1108 overlaps
+  the store open with the shader compile, that window closes to something like
+  120–150 ms. `PRODUCT.md` §18 allows a transition of ≤ 100 ms **or none**; a
+  whole window that appears and is replaced inside 150 ms is on the wrong side
+  of that, and on a faster machine it is pure flicker. Suppressing it below a
+  threshold only promises branding to the users having the worst day.
+- The desktop already draws it. `dev.postio.Postio.desktop` sets
+  `StartupNotify=true`, so the shell shows launch feedback from `Exec` to first
+  map — earlier than any splash of ours could appear, because it starts before
+  `adw::init` does.
+- It would be the app's first animation. `gtk_accessibility.rs` records that
+  `prefers-reduced-motion` needs no test because the stylesheets carry no
+  transition at all, and `gtk_shell.rs` reads them back to keep it that way. A
+  splash has to hand over: fade and that gate is the first thing it breaks; cut
+  and it is two map/unmap events the compositor animates for us.
+
+What the idea is reaching for is real, and the answer is the same window
+sooner rather than a different one: #1108 realizes the window before the store
+is open, and #1114 is what it shows while it waits.
+
 *The first store reads are not in the `window` phase either.* The keyring
 round trip and the SQLCipher open happen before the main loop starts, and
 used to be folded into the same phase; they are now `store`, and the split
