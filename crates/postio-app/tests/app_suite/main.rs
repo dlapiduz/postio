@@ -68,6 +68,7 @@ mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
+mod unified_search;
 mod unified_select_all;
 mod unsubscribe_wiring;
 mod window_drain;
@@ -249,6 +250,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "search_index::opening_the_window_indexes_local_headers_without_being_asked",
         search_index::opening_the_window_indexes_local_headers_without_being_asked as fn(),
+    ),
+    (
+        "unified_search::a_unified_search_reaches_every_account",
+        unified_search::a_unified_search_reaches_every_account as fn(),
     ),
     (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
