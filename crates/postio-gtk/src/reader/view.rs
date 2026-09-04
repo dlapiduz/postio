@@ -44,7 +44,7 @@ use postio_body::sanitize::RemoteImages;
 // Q6): one implementation for every frontend, re-exported here so existing
 // paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
-    Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html,
+    Absent, DOCUMENT_BASE_URI, HeldBack, Rendering, SCROLL_MARKERS, absent_html, body_html,
     content_security_policy, document_for, reader_ground, wrap_document,
 };
 
@@ -53,6 +53,13 @@ pub use postio_ui::reader::document::{
 struct Open {
     body: MessageBody,
     sender: Option<String>,
+    /// Which of the two ways this message is being drawn.
+    ///
+    /// Per message, and reset by every `render`: `View original` is an answer
+    /// about *this* newsletter, and carrying it to the next one would be the
+    /// reader quietly deciding that a person who wanted one sender's layout
+    /// wants everyone's.
+    rendering: Rendering,
 }
 
 /// Called with how many remote references the pane is currently holding
@@ -72,6 +79,9 @@ pub struct Reader {
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     decode_notice: Rc<DecodeNotice>,
+    /// "Reader view — the sender's HTML layout is hidden", with the way
+    /// back. Shown only while a message is actually drawn reduced.
+    reader_notice: Rc<crate::widgets::NoticeBar>,
     actions: Rc<ActionBar>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
@@ -202,6 +212,11 @@ impl Reader {
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
         let decode_notice = Rc::new(DecodeNotice::new());
+        let reader_notice =
+            crate::widgets::NoticeBar::new("view-reveal-symbolic", "postio-reader-view-notice");
+        reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
+        reader_notice.set_action(Some("View original"));
+        reader_notice.set_action_key(Some("C-o"));
         let actions = super::actions::new();
 
         let chips = crate::parts::Chips::new();
@@ -214,6 +229,7 @@ impl Reader {
         container.append(&header.widget());
         container.append(&banner.widget());
         container.append(&decode_notice.widget());
+        container.append(&reader_notice.widget());
         container.append(&view);
         container.append(&chips.widget());
         container.append(&actions.widget());
@@ -224,6 +240,7 @@ impl Reader {
             header,
             banner,
             decode_notice,
+            reader_notice,
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             open: Rc::new(RefCell::new(None)),
@@ -254,6 +271,7 @@ impl Reader {
             let open = Rc::clone(&reader.open);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let reader_notice = Rc::clone(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             let banner_weak = banner_weak.clone();
@@ -266,6 +284,7 @@ impl Reader {
                             loads: &loads,
                         },
                         &banner,
+                        &reader_notice,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
@@ -280,6 +299,7 @@ impl Reader {
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let reader_notice = Rc::clone(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             reader.banner.connect_always_allow(move || {
@@ -302,6 +322,7 @@ impl Reader {
                             loads: &loads,
                         },
                         &banner,
+                        &reader_notice,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
@@ -436,9 +457,19 @@ impl Reader {
         // people learn to ignore. Callers turn it back on for the message
         // they are showing, through `set_encoding_problems`.
         self.decode_notice.set_visible(false);
+        // Reader view is decided per message, from the message. Bulk mail
+        // opens reduced; correspondence never does. See
+        // `document::suits_reader_view` for why the question is "was this
+        // laid out by a template" rather than "could this be reduced".
+        let rendering = if postio_ui::reader::document::suits_reader_view(body) {
+            Rendering::Reader
+        } else {
+            Rendering::Original
+        };
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
+            rendering,
         });
         self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
@@ -450,6 +481,78 @@ impl Reader {
         render_open(
             &self.canvas(),
             &self.banner,
+            &self.reader_notice,
+            &self.open,
+            &self.highlight,
+            remote,
+            &self.rendered,
+        );
+    }
+
+    /// Draw the sender's own markup for whatever is on screen — `C-o`.
+    ///
+    /// Per message and not sticky: the next message decides for itself. A
+    /// person who wanted to see one newsletter's layout has not said anything
+    /// about the next one, and a reader that remembered would be answering a
+    /// question nobody asked.
+    ///
+    /// A no-op when the pane is empty or already showing the original, so the
+    /// key is safe to press anywhere.
+    pub fn view_original(&self) {
+        {
+            let mut guard = self.open.borrow_mut();
+            let Some(open) = guard.as_mut() else { return };
+            if open.rendering == Rendering::Original {
+                return;
+            }
+            open.rendering = Rendering::Original;
+        }
+        self.rerender();
+    }
+
+    /// Whether the pane is currently drawing a message reduced.
+    ///
+    /// The drawn state, not an intention: a test asking "is reader view on"
+    /// wants to know what a person can see.
+    pub fn is_reader_view(&self) -> bool {
+        self.open
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.rendering == Rendering::Reader)
+    }
+
+    /// Whether the notice offering `View original` is on screen.
+    pub fn reader_notice_visible(&self) -> bool {
+        self.reader_notice.is_visible()
+    }
+
+    /// Press `View original` without a pointer, for a test.
+    pub fn click_view_original(&self) {
+        self.reader_notice.press_action();
+    }
+
+    /// Draw whatever is open again, with its current rendering.
+    ///
+    /// What `View original` needs and `render` cannot give it: the message
+    /// has not changed, only the way it is being drawn, so re-deriving the
+    /// remote-image decision and re-entering `render` would reset the very
+    /// choice that was just made.
+    fn rerender(&self) {
+        let allowed = self
+            .open
+            .borrow()
+            .as_ref()
+            .and_then(|open| open.sender.clone())
+            .is_some_and(|sender| self.allowlist.borrow().is_allowed(&sender));
+        let remote = if allowed {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        };
+        render_open(
+            &self.canvas(),
+            &self.banner,
+            &self.reader_notice,
             &self.open,
             &self.highlight,
             remote,
@@ -749,19 +852,26 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 fn render_open(
     canvas: &Canvas<'_>,
     banner: &RemoteImageBanner,
+    reader_notice: &crate::widgets::NoticeBar,
     open: &Rc<RefCell<Option<Open>>>,
     highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
 ) {
-    let (body, sender) = {
+    let (body, sender, rendering) = {
         let guard = open.borrow();
         let Some(current) = guard.as_ref() else {
             return;
         };
-        (current.body.clone(), current.sender.clone())
+        (
+            current.body.clone(),
+            current.sender.clone(),
+            current.rendering,
+        )
     };
-    let (content, held_back) = body_html(&body, remote);
+    let drawn = body_html(&body, remote, rendering);
+    let held_back = drawn.held_back;
+    let content = drawn.html.clone();
     // After sanitizing and quote-folding, never before: ammonia would strip
     // the `<mark>` as an unknown tag, and there is no point running a matcher
     // over markup that has not been cleaned yet.
@@ -769,6 +879,21 @@ fn render_open(
 
     banner.set_sender(sender.as_deref());
     banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
+
+    // Only while a message is actually drawn reduced. A notice offering to
+    // show an original that is already on screen is a control that does
+    // nothing, which is worse than no control.
+    reader_notice.set_visible(drawn.rendering == Rendering::Reader);
+    if drawn.rendering == Rendering::Reader && drawn.links_dropped > 0 {
+        reader_notice.set_text(&format!(
+            "Reader view — {} link{} kept of {}",
+            drawn.links_kept,
+            if drawn.links_kept == 1 { "" } else { "s" },
+            drawn.links_total()
+        ));
+    } else {
+        reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
+    }
 
     load_document(canvas, &document_for(&content, remote));
 

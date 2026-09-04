@@ -309,6 +309,22 @@ static SPECS: &[CommandSpec] = &[
     },
     // -- Message actions -------------------------------------------------
     CommandSpec {
+        id: CommandId::ViewOriginal,
+        title: "View original",
+        // `ctrl+o`, not a bare letter: it is a rare gesture on a surface
+        // where every bare letter is already a verb people use constantly,
+        // and reader view is the default rather than something to escape.
+        default_binding: "ctrl+o",
+        alternate_bindings: &[],
+        // Wherever a message is drawn. A no-op when nothing is reduced, so
+        // it costs nothing to offer everywhere mail is read rather than
+        // making the key's meaning depend on what happens to be on screen.
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
         default_binding: "e",

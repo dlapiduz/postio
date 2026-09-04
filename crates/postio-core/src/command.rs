@@ -79,6 +79,8 @@ command_ids! {
     Back => "back",
     /// Switch a search's results between ranked and date order.
     ToggleResultOrder => "toggle_result_order",
+    /// Draw the message on screen as its sender wrote it, not reduced.
+    ViewOriginal => "view_original",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -354,6 +356,11 @@ pub enum Command {
     Back,
     /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder,
+    /// Leave reader view for the sender's own markup (#1009).
+    ///
+    /// No payload: it always means the message on screen. Reader view is a
+    /// per-message state, so there is nothing else it could mean.
+    ViewOriginal,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -686,6 +693,7 @@ impl Command {
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
+            Command::ViewOriginal => CommandId::ViewOriginal,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -770,6 +778,7 @@ impl Command {
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
+            CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },
