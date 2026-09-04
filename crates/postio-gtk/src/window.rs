@@ -1780,6 +1780,19 @@ impl Window {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
+            // The conversation's own axis. `j`/`k` move between threads in
+            // the list; these move between the messages of the one that is
+            // open, and both are the window's business rather than the
+            // bus's (#1007).
+            CommandId::NextInConversation => {
+                self.conversation().focus_next();
+            }
+            CommandId::PrevInConversation => {
+                self.conversation().focus_previous();
+            }
+            CommandId::ToggleFold => {
+                self.conversation().toggle_fold();
+            }
             // Reader view is per message, so this is per message too: it acts
             // on whichever reader is currently drawing one, and does nothing
             // when that reader is already showing the sender's own markup

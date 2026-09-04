@@ -394,6 +394,11 @@ fn settle_for(how_long: std::time::Duration) {
 /// handed. A pane that was told about eight messages and drew none would pass
 /// the second kind of test and fail this one.
 pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
+/// `J`/`K` walk the stack, `space` folds, and neither wraps (#1007).
+///
+/// Asserts on which message is focused and whether its body is showing —
+/// what a person sees — rather than on the pane having been told to move.
+pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -497,6 +502,67 @@ pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
     pane.open(Vec::new());
     crate::pump();
     assert!(!footer.is_visible());
+    // Four read messages: focus opens on the newest, per the pane's own
+    // policy, which puts it at the end with nowhere further to go.
+    pane.open((1..=4).map(|id| message(id, true)).collect());
+    crate::pump();
+    assert_eq!(
+        pane.focused_index(),
+        Some(3),
+        "a fully-read conversation opens on its newest"
+    );
+
+    assert!(
+        !pane.focus_next(),
+        "there is nothing after the last message, and `J` says so rather \
+         than wrapping round to the first"
+    );
+    assert_eq!(pane.focused_index(), Some(3), "and nothing moved");
+
+    assert!(pane.focus_previous());
+    assert_eq!(pane.focused_index(), Some(2));
+    assert!(pane.focus_previous());
+    assert!(pane.focus_previous());
+    assert_eq!(pane.focused_index(), Some(0));
+    assert!(
+        !pane.focus_previous(),
+        "and the same at the top: `K` stops at the first message"
+    );
+
+    // Landing expands, so what `J` walks onto is readable rather than a
+    // one-line header you then have to open.
+    let focused = pane.focused().expect("something is focused");
+    assert!(
+        pane.is_expanded(focused),
+        "walking onto a message opens it -- a dead end is not a landing"
+    );
+
+    // `space` is the only way back to collapsed-and-focused.
+    pane.toggle_fold();
+    crate::pump();
+    assert!(
+        !pane.is_expanded(focused),
+        "`space` folds the message the keyboard is on"
+    );
+    assert_eq!(
+        pane.focused(),
+        Some(focused),
+        "and leaves the keyboard where it was"
+    );
+
+    pane.toggle_fold();
+    crate::pump();
+    assert!(
+        pane.is_expanded(focused),
+        "twice returns the pane to where it started"
+    );
+
+    // An empty pane has nowhere to walk, and says so rather than panicking.
+    pane.open(Vec::new());
+    crate::pump();
+    assert!(!pane.focus_next());
+    assert!(!pane.focus_previous());
+    pane.toggle_fold();
 
     window.close();
 }

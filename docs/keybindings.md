@@ -47,12 +47,15 @@ command from inside a text field.
 | `G` | Last message | List, conversation, reader, search |  | `last_message` |
 | `Return` or `l` or `Right` | Open message | List, conversation, search |  | `open_message` |
 | `x` | Toggle selection | List, conversation, reader, search |  | `toggle_selection` |
-| `J` or `shift+Down` | Extend selection down | List, conversation, reader, search |  | `extend_selection_down` |
-| `K` or `shift+Up` | Extend selection up | List, conversation, reader, search |  | `extend_selection_up` |
+| `J` or `shift+Down` | Extend selection down | List, reader, search |  | `extend_selection_down` |
+| `K` or `shift+Up` | Extend selection up | List, reader, search |  | `extend_selection_up` |
 | `ctrl+a` | Select all | List, conversation, reader, search |  | `select_all` |
 | `h` or `Left` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
+| `J` | Next message in conversation | Conversation |  | `next_in_conversation` |
+| `K` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
+| `space` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `O` | Expand all | Conversation |  | `expand_all` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |
@@ -113,5 +116,5 @@ command from inside a text field.
 | `S` | Save all parts | Parts panel |  | `save_all_parts` |
 | `x` | Open part externally | Parts panel |  | `open_part_externally` |
 | `H` | Render part once | Parts panel |  | `render_part_once` |
-| `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
+| `Page_Down` or `space` | Scroll reading pane down | List, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |

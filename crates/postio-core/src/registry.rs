@@ -162,6 +162,14 @@ const PANE_SURFACES: &[Context] = &[
 ];
 
 /// The surfaces that scroll through a list of messages.
+/// Where extending a *row* selection means something.
+///
+/// [`LIST_SURFACES`] minus the conversation pane. Inside a conversation the
+/// keyboard is walking one thread's messages, not a list of threads, so
+/// there is nothing for `J`/`K` to extend — which is exactly what frees them
+/// for the walk itself (#1007).
+const SELECTION_SURFACES: &[Context] = &[Context::List, Context::Reader, Context::Search];
+
 const LIST_SURFACES: &[Context] = &[
     Context::List,
     Context::Conversation,
@@ -248,7 +256,11 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection down",
         default_binding: "J",
         alternate_bindings: &["shift+Down"],
-        contexts: ctx(LIST_SURFACES),
+        // `LIST_SURFACES` minus the conversation: `J` walks the open
+        // conversation's messages there (#1007), and there is no row
+        // selection to extend while the keyboard is inside the pane.
+        // `shift+Down` still reaches this everywhere it ever did.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -258,7 +270,8 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection up",
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
-        contexts: ctx(LIST_SURFACES),
+        // See `ExtendSelectionDown`.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -308,6 +321,42 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     // -- Message actions -------------------------------------------------
+    CommandSpec {
+        id: CommandId::NextInConversation,
+        title: "Next message in conversation",
+        // Shifted `j`, because it is the same verb one level in: `j` walks
+        // the list of conversations, `J` walks the messages of the one that
+        // is open. The pair `a`/`A` already means "this, and this whole
+        // thread" -- the shift is the level, not a different action.
+        default_binding: "J",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::PrevInConversation,
+        title: "Previous message in conversation",
+        default_binding: "K",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleFold,
+        title: "Fold or unfold this message",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        // How much of a conversation is open is view state, not durable
+        // data -- nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
     CommandSpec {
         id: CommandId::ViewOriginal,
         title: "View original",
@@ -1082,7 +1131,13 @@ static SPECS: &[CommandSpec] = &[
         // `ScrollReaderUp` for why the shifted form is its pair rather than
         // a binding of its own.
         alternate_bindings: &["space"],
-        contexts: ctx(MESSAGE_SURFACES),
+        // Not in the conversation pane, where `space` folds the focused
+        // message instead (canvas turn 8a, #1007). A real trade rather than
+        // a free one: a long message inside a stack loses its page-turn key
+        // and keeps `Page_Down`. The canvas is explicit, and folding is the
+        // gesture a stack is *for* -- scrolling is what the scrollbar and
+        // the wheel already do.
+        contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.

@@ -979,6 +979,77 @@ impl ConversationView {
         }
     }
 
+    /// Move focus to the next message in the stack — `J`.
+    ///
+    /// Stops at the end rather than wrapping: a conversation has a first and
+    /// a last message, and wrapping from one to the other makes "am I at the
+    /// end" a question you have to keep answering yourself. Steps *into* a
+    /// folded run rather than over it — the run's messages are messages, and
+    /// walking past five of them because they were drawn as one line would
+    /// be the fold changing what the keyboard does.
+    pub fn focus_next(&self) -> bool {
+        self.step(1)
+    }
+
+    /// Move focus to the previous message in the stack — `K`.
+    pub fn focus_previous(&self) -> bool {
+        self.step(-1)
+    }
+
+    /// Fold or unfold the focused message — `space`.
+    ///
+    /// The only way to collapse the focused message: landing on one expands
+    /// it ([`focus_message`](Self::focus_message)), so collapsed-and-focused
+    /// is a state nothing else reaches.
+    pub fn toggle_fold(&self) {
+        let Some(focused) = self.focused() else {
+            return;
+        };
+        if self.is_expanded(focused) {
+            self.collapse(focused);
+        } else {
+            self.expand(focused);
+        }
+    }
+
+    /// Where the focused message sits in the stack.
+    pub fn focused_index(&self) -> Option<usize> {
+        let focused = self.focused()?;
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .position(|entry| entry.message == focused)
+    }
+
+    /// One step through the stack, in draw order.
+    ///
+    /// Answers whether it moved, so a caller can tell "there was nowhere to
+    /// go" from "the pane is empty" — the first is a no-op the user will
+    /// expect, the second means the key reached the wrong surface.
+    fn step(&self, by: isize) -> bool {
+        let entries = self.imp().entries.borrow();
+        if entries.is_empty() {
+            return false;
+        }
+        let Some(current) = self.focused_index() else {
+            // Nothing focused: `J` starts at the beginning, `K` at the end.
+            let landing = if by > 0 { 0 } else { entries.len() - 1 };
+            let message = entries[landing].message;
+            drop(entries);
+            self.focus_message(message);
+            return true;
+        };
+        let next = current as isize + by;
+        if next < 0 || next as usize >= entries.len() {
+            return false;
+        }
+        let message = entries[next as usize].message;
+        drop(entries);
+        self.focus_message(message);
+        true
+    }
+
     /// Give `message` a body, if it has not got one.
     ///
     /// Idempotent, and the only place the factory is called — which is what
