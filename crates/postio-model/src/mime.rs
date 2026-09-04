@@ -113,6 +113,7 @@ pub struct ParsedMessage {
     /// message carries one — the fact that lets the list be detected with
     /// no configuration, rather than by matching an address by hand.
     pub list_id: Option<String>,
+    // POSTIO-CONSENT: detection only, never sent — see `Message::read_receipt_requested`.
     /// Whether `Disposition-Notification-To` or `Return-Receipt-To` is
     /// present (#970) — Postio never sends one automatically, so this only
     /// counts how often it was asked.
