@@ -366,70 +366,94 @@ impl Actions {
         messages: &[MessageId],
         events: &EventSink,
     ) -> Result<Option<String>, CommandError> {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+
         let (mut connection, _permit) = self.connect()?;
-        let open = postio_storage::repository::CrossAccountMoveRepository::new(&connection)
-            .open_for_sources(messages)
+        // Wider than `open_for_sources`: a move that *finished* is exactly
+        // the one somebody is most likely to take back, and `done` is not
+        // open by any other definition (#531).
+        let sagas = CrossAccountMoveRepository::new(&connection)
+            .for_sources(
+                messages,
+                &[
+                    MovePhase::Copying,
+                    MovePhase::Unconfirmed,
+                    MovePhase::Confirmed,
+                    MovePhase::Done,
+                ],
+            )
             .map_err(store_failure)?;
-        if open.is_empty() {
+        if sagas.is_empty() {
             return Ok(None);
         }
-        if open
-            .iter()
-            .any(|saga| saga.phase != postio_storage::repository::MovePhase::Copying)
-        {
-            return Err(CommandError::rejected(
-                "That move has already reached the other account, and taking it \
-                 back is not something Postio can do yet",
-            ));
-        }
 
-        let mut sources: Vec<MessageId> = Vec::new();
+        let mut undone = 0usize;
+        let mut skipped = 0usize;
         let mut reloaded: BTreeSet<MailboxId> = BTreeSet::new();
         let mut accounts: BTreeSet<postio_model::ids::AccountId> = BTreeSet::new();
+        let at = Utc::now();
         let transaction = connection.transaction().map_err(store_failure)?;
         {
             let repository = MessageRepository::new(&transaction);
             let queue = OperationQueueRepository::new(&transaction);
-            let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&transaction);
-            for saga in &open {
-                // The queue rows first, so a crash between here and the end
-                // cannot leave an operation pointing at a row that is gone.
-                for target in [saga.source_message, saga.target_message]
+            let sagas_repository = CrossAccountMoveRepository::new(&transaction);
+            for saga in &sagas {
+                match saga.phase {
+                    // Nothing has left this machine. Withdraw both queue
+                    // halves, drop the provisional copy, un-hide the source.
+                    MovePhase::Copying => {
+                        cancel_one(&repository, &queue, &sagas_repository, saga)?;
+                        undone += 1;
+                    }
+                    // ADR 0005 Q9's answer to an unprovable copy is stop and
+                    // ask. An inverse saga on an unproven copy would guess in
+                    // the one place the design says never to, so this one is
+                    // left exactly as it is -- and counted, so the sentence
+                    // at the end can say so.
+                    MovePhase::Unconfirmed => skipped += 1,
+                    // The copy is proven and the source has not been removed
+                    // yet. Abort the forward saga **first**: its pending
+                    // removal would otherwise delete the source copy after
+                    // the inverse had restored it.
+                    MovePhase::Confirmed => {
+                        withdraw_pending(&queue, saga.source_message)?;
+                        sagas_repository
+                            .transition(saga.id, MovePhase::Aborted)
+                            .map_err(store_failure)?;
+                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        undone += 1;
+                    }
+                    // The move is complete on both servers. Only the inverse
+                    // saga can undo it.
+                    MovePhase::Done => {
+                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        undone += 1;
+                    }
+                    MovePhase::Aborted => {}
+                }
+                for mailbox in [saga.source_mailbox, saga.target_mailbox]
                     .into_iter()
                     .flatten()
                 {
-                    while let Some(operation) = queue
-                        .pending_for(postio_model::OperationTarget::Message(target))
-                        .map_err(store_failure)?
-                    {
-                        queue.delete(operation.id).map_err(store_failure)?;
-                    }
-                }
-                if let Some(copy) = saga.target_message {
-                    repository.delete(&[copy]).map_err(store_failure)?;
-                }
-                if let Some(source) = saga.source_message {
-                    repository
-                        .set_deleted_locally(&[source], false)
-                        .map_err(store_failure)?;
-                    sources.push(source);
-                }
-                sagas
-                    .transition(saga.id, postio_storage::repository::MovePhase::Aborted)
-                    .map_err(store_failure)?;
-                if let Some(mailbox) = saga.source_mailbox {
                     reloaded.insert(mailbox);
                 }
-                if let Some(mailbox) = saga.target_mailbox {
-                    reloaded.insert(mailbox);
-                }
-                if let Some(account) = saga.source_account {
-                    accounts.insert(account);
-                }
-                if let Some(account) = saga.target_account {
+                for account in [saga.source_account, saga.target_account]
+                    .into_iter()
+                    .flatten()
+                {
                     accounts.insert(account);
                 }
             }
+        }
+
+        // Everything was unprovable: nothing changed, and the refusal is the
+        // whole answer. Rolled back rather than committed, so a partial undo
+        // and a refused one cannot be told apart by what is in the store.
+        if undone == 0 {
+            drop(transaction);
+            return Err(CommandError::rejected(
+                "That move reached the other account but Postio could not confirm it,                  so taking it back would be a guess. Nothing was changed.",
+            ));
         }
         transaction.commit().map_err(store_failure)?;
 
@@ -443,9 +467,18 @@ impl Actions {
             }
         }
 
-        let count = sources.len();
-        let plural = if count == 1 { "message" } else { "messages" };
-        Ok(Some(format!("Cancelled the move of {count} {plural}")))
+        let plural = if undone == 1 { "message" } else { "messages" };
+        // One sentence whatever the phase (ADR 0005 Q9): the user asked for
+        // their mail back and does not know there are two servers. The
+        // skipped count is the exception, because that is mail they still do
+        // not have back and must not believe they do.
+        Ok(Some(match skipped {
+            0 => format!("Moved {undone} {plural} back"),
+            skipped => format!(
+                "Moved {undone} {plural} back; {skipped} could not be confirmed and \
+                 were left where they are"
+            ),
+        }))
     }
 
     // ── The two shapes every verb reduces to ─────────────────────────────
@@ -1821,6 +1854,141 @@ pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
         // task reporting through its own events.
         async move { actions.run(&invocation.command, &invocation.events()) }
     })
+}
+
+/// Withdraw every queue operation still pending for `message`.
+///
+/// Deleting rather than letting them run and be skipped: an operation left
+/// in the queue is one that reaches a server, and the whole point of undoing
+/// at `confirmed` is that the forward removal must never run.
+fn withdraw_pending(
+    queue: &OperationQueueRepository<'_>,
+    message: Option<MessageId>,
+) -> Result<(), CommandError> {
+    let Some(message) = message else {
+        return Ok(());
+    };
+    while let Some(operation) = queue
+        .pending_for(postio_model::OperationTarget::Message(message))
+        .map_err(store_failure)?
+    {
+        queue.delete(operation.id).map_err(store_failure)?;
+    }
+    Ok(())
+}
+
+/// Undo a saga nothing has left the machine for: pure bookkeeping.
+fn cancel_one(
+    messages: &MessageRepository<'_>,
+    queue: &OperationQueueRepository<'_>,
+    sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
+    saga: &postio_storage::repository::CrossAccountMove,
+) -> Result<(), CommandError> {
+    // The queue rows first, so a crash between here and the end cannot leave
+    // an operation pointing at a row that is gone.
+    withdraw_pending(queue, saga.source_message)?;
+    withdraw_pending(queue, saga.target_message)?;
+    if let Some(copy) = saga.target_message {
+        messages.delete(&[copy]).map_err(store_failure)?;
+    }
+    if let Some(source) = saga.source_message {
+        messages
+            .set_deleted_locally(&[source], false)
+            .map_err(store_failure)?;
+    }
+    sagas
+        .transition(saga.id, postio_storage::repository::MovePhase::Aborted)
+        .map_err(store_failure)?;
+    Ok(())
+}
+
+/// Start the inverse of a saga whose copy is proven: the same machine, with
+/// source and target exchanged (ADR 0026, #531).
+///
+/// The local half is immediate and is all the user sees — the message is
+/// back where it came from and gone from where it went, before either server
+/// has heard anything. The two queue halves make the servers agree, in the
+/// same confirm-before-delete order the forward saga walks, so the one
+/// thing that cannot happen is the copy being deleted before the restore is
+/// proven.
+///
+/// **The original row is restored rather than a new one created.** It is
+/// still there, hidden, which is what `set_deleted_locally` means; and phase
+/// 1 is idempotent by Message-ID, so when the source copy is still on the
+/// server (the `confirmed` case) the inverse's append finds it and confirms
+/// without making a second.
+fn invert_one(
+    messages: &MessageRepository<'_>,
+    queue: &OperationQueueRepository<'_>,
+    sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
+    saga: &postio_storage::repository::CrossAccountMove,
+    at: chrono::DateTime<Utc>,
+) -> Result<(), CommandError> {
+    let (Some(copy), Some(original)) = (saga.target_message, saga.source_message) else {
+        // A saga that has lost either end cannot be inverted: there is
+        // nothing to remove, or nowhere to put it back. Left alone rather
+        // than guessed at.
+        return Ok(());
+    };
+    let (Some(from_account), Some(from_mailbox)) = (saga.target_account, saga.target_mailbox)
+    else {
+        return Ok(());
+    };
+    let (Some(to_account), Some(to_mailbox)) = (saga.source_account, saga.source_mailbox) else {
+        return Ok(());
+    };
+
+    let row = messages
+        .get(copy)
+        .map_err(store_failure)?
+        .ok_or_else(|| CommandError::rejected("That message is no longer in the store"))?;
+
+    let inverse = sagas
+        .create(&postio_storage::repository::NewCrossAccountMove {
+            source_message: copy,
+            source_account: from_account,
+            source_mailbox: from_mailbox,
+            target_account: to_account,
+            target_mailbox: to_mailbox,
+            // The row that is coming back, which already exists and is
+            // merely hidden.
+            target_message: Some(original),
+            raw_blob_id: row
+                .raw_blob_id
+                .as_ref()
+                .map(|blob| blob.as_str().to_owned()),
+            rfc_message_id: row.rfc_message_id.as_ref().map(|id| id.as_str().to_owned()),
+        })
+        .map_err(store_failure)?;
+
+    queue
+        .enqueue(
+            to_account,
+            postio_model::OperationTarget::Message(original),
+            &Operation::CrossAccountCopy { saga: inverse },
+            at,
+        )
+        .map_err(store_failure)?;
+    // Enqueued while the copy still carries the identity phase 2 wrote onto
+    // it, which is what `source_remote_id` snapshots — the ordering #289
+    // exists to enforce, and the reason the removal below can name account
+    // B's own coordinate rather than account A's.
+    queue
+        .enqueue(
+            from_account,
+            postio_model::OperationTarget::Message(copy),
+            &Operation::CrossAccountRemove { saga: inverse },
+            at,
+        )
+        .map_err(store_failure)?;
+
+    messages
+        .set_deleted_locally(&[original], false)
+        .map_err(store_failure)?;
+    messages
+        .set_deleted_locally(&[copy], true)
+        .map_err(store_failure)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3691,6 +3859,185 @@ mod tests {
         );
     }
 
+    /// Drive `world`'s single saga to `phase`, the way the drainers would.
+    ///
+    /// The phase walk is `MovePhase::allows`', so this cannot reach a state
+    /// the servers could not have produced — and `confirm` is called with an
+    /// identity because that is what an append proves (ADR 0026).
+    fn advance_saga(
+        world: &World,
+        source: MessageId,
+        phase: postio_storage::repository::MovePhase,
+    ) {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let connection = world.database.connection().expect("a connection");
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        let id = sagas
+            .open_for_sources(&[source])
+            .expect("a read")
+            .first()
+            .expect("a saga")
+            .id;
+        let saga = sagas.get(id).expect("a read").expect("a saga");
+        let queue = OperationQueueRepository::new(&connection);
+
+        // Phase 1-2 ran, so the target account's copy operation is off its
+        // queue. Modelling that matters: a fixture that leaves it there is
+        // asserting against a queue no drainer could produce.
+        if let Some(copy) = saga.target_message {
+            while let Some(operation) = queue
+                .pending_for(postio_model::OperationTarget::Message(copy))
+                .expect("a read")
+            {
+                queue.delete(operation.id).expect("the copy operation ran");
+            }
+        }
+        sagas
+            .confirm(id, Some(&postio_model::RemoteId::new("77:9")))
+            .expect("the target server proved where it landed");
+
+        if phase == MovePhase::Done {
+            // And phase 3 ran too, which is what `done` means.
+            if let Some(source) = saga.source_message {
+                while let Some(operation) = queue
+                    .pending_for(postio_model::OperationTarget::Message(source))
+                    .expect("a read")
+                {
+                    queue.delete(operation.id).expect("the removal ran");
+                }
+            }
+            sagas
+                .transition(id, MovePhase::Done)
+                .expect("the source copy went");
+        }
+    }
+
+    /// The saga the world holds, whatever phase it is in.
+    fn only_saga(world: &World, source: MessageId) -> postio_storage::repository::CrossAccountMove {
+        use postio_storage::repository::MovePhase;
+        let connection = world.database.connection().expect("a connection");
+        let mut all = postio_storage::repository::CrossAccountMoveRepository::new(&connection)
+            .for_sources(
+                &[source],
+                &[
+                    MovePhase::Copying,
+                    MovePhase::Unconfirmed,
+                    MovePhase::Confirmed,
+                    MovePhase::Done,
+                    MovePhase::Aborted,
+                ],
+            )
+            .expect("a read");
+        assert_eq!(all.len(), 1, "the fixture makes exactly one saga");
+        all.remove(0)
+    }
+
+    /// #531: `u` after a completed cross-account move runs the saga backwards.
+    ///
+    /// Not a plain inverse `Move` — between two accounts there is no
+    /// server-side move, which is why the forward path is a saga in the first
+    /// place. The inverse is the same machine with source and target
+    /// exchanged: the copy in account B becomes the thing to remove, the
+    /// original row in account A becomes the thing to restore, and the same
+    /// confirm-before-delete walk applies. Nothing about that is visible to
+    /// the user, who asked for their message back.
+    ///
+    /// Local-first, like every other action: the row is back in the source
+    /// and gone from the target before either server has heard anything.
+    #[test]
+    fn undo_after_the_move_completed_starts_the_inverse_saga() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+        advance_saga(&world, message, MovePhase::Done);
+        let forward = only_saga(&world, message);
+        let copy = forward.target_message.expect("the provisional copy");
+
+        world
+            .run(Command::Undo)
+            .expect("undo starts the inverse saga");
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+
+        // ── what the user sees, immediately ─────────────────────────────
+        assert!(
+            !messages
+                .get(message)
+                .expect("read")
+                .expect("the source row")
+                .sync
+                .deleted_locally,
+            "the message is back in the account it came from, at once"
+        );
+        assert!(
+            messages
+                .get(copy)
+                .expect("read")
+                .expect("the copy is still a row until its server agrees")
+                .sync
+                .deleted_locally,
+            "and gone from the account it went to"
+        );
+
+        // ── and the saga that will make the servers agree ────────────────
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        let inverse = sagas
+            .open_for_sources(&[copy])
+            .expect("a read")
+            .into_iter()
+            .find(|saga| saga.id != forward.id)
+            .expect("undo started an inverse saga from the copy");
+
+        assert_eq!(
+            inverse.source_message,
+            Some(copy),
+            "the inverse removes the copy account B holds"
+        );
+        assert_eq!(
+            inverse.target_account,
+            Some(world.account.id),
+            "and restores it to the account the message came from"
+        );
+        assert_eq!(inverse.target_message, Some(message));
+        assert_eq!(inverse.phase, MovePhase::Copying);
+
+        // Both queue halves, on the right accounts: the copy back to A runs
+        // on A's queue, the removal from B on B's.
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let on_a: Vec<String> = queue
+            .pending(world.account.id, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        let on_b: Vec<String> = queue
+            .pending(second, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        assert_eq!(
+            on_a,
+            vec!["cross_account_copy"],
+            "account A is asked to take the message back"
+        );
+        assert_eq!(
+            on_b,
+            vec!["cross_account_remove"],
+            "account B is asked to give it up -- and only after A confirms"
+        );
+    }
+
     /// #531, first half: nothing has reached either server yet, so undo is
     /// local bookkeeping and can be complete.
     ///
@@ -3754,11 +4101,110 @@ mod tests {
         );
     }
 
-    /// #531, the other half: once the copy is confirmed the message is on
-    /// two servers, and taking it back is the inverse saga rather than
-    /// bookkeeping. Refused, out loud, until that exists.
+    /// #531: undoing at `confirmed` must withdraw the forward removal first.
+    ///
+    /// This is the phase with a live hazard in it. The target has proven its
+    /// copy, so the message really is on both servers — but phase 3 has not
+    /// run, which means the source copy is *still on account A's server* and
+    /// a `CrossAccountRemove` is still sitting on A's queue waiting to
+    /// delete it.
+    ///
+    /// Start the inverse and leave that operation there, and the two race in
+    /// the worst possible order: the inverse restores the message to A, and
+    /// then A's own queue deletes it again — with the copy in B already
+    /// removed by the inverse's own phase 3. That is the one outcome the
+    /// whole saga design exists to prevent, reached by undoing.
+    ///
+    /// `Confirmed → Aborted` is already a legal transition, so aborting the
+    /// forward saga is enough to make the queued removal a no-op even if it
+    /// somehow survived; withdrawing it as well means it never reaches a
+    /// server at all.
     #[test]
-    fn undo_of_a_move_the_other_server_has_already_taken_is_refused_not_faked() {
+    fn undo_at_confirmed_withdraws_the_removal_that_would_delete_the_restored_copy() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+        advance_saga(&world, message, MovePhase::Confirmed);
+        let forward = only_saga(&world, message);
+
+        // The hazard, before the undo: A's queue is holding the removal.
+        {
+            let connection = world.database.connection().expect("a connection");
+            let pending: Vec<String> =
+                postio_storage::repository::OperationQueueRepository::new(&connection)
+                    .pending(world.account.id, Utc::now())
+                    .expect("queue")
+                    .into_iter()
+                    .map(|row| row.operation.op_type().to_owned())
+                    .collect();
+            assert_eq!(
+                pending,
+                vec!["cross_account_remove"],
+                "the forward removal has to be pending, or this test cannot fail"
+            );
+        }
+
+        world.run(Command::Undo).expect("undo inverts the saga");
+
+        let connection = world.database.connection().expect("a connection");
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        assert_eq!(
+            sagas
+                .get(forward.id)
+                .expect("a read")
+                .expect("the forward saga")
+                .phase,
+            MovePhase::Aborted,
+            "the forward saga has to stop, or its removal is still legal"
+        );
+
+        // And nothing on A's queue now points at the message that has just
+        // been restored to A.
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let on_a: Vec<String> = queue
+            .pending(world.account.id, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        assert_eq!(
+            on_a,
+            vec!["cross_account_copy"],
+            "account A's queue still holds the forward removal, which will \
+             delete the message the inverse just put back: {on_a:?}"
+        );
+        assert!(
+            !MessageRepository::new(&connection)
+                .get(message)
+                .expect("read")
+                .expect("the source row")
+                .sync
+                .deleted_locally,
+            "and the message is back in the account it came from"
+        );
+        let _ = second;
+    }
+
+    /// #531 / ADR 0005 Q9: an append nobody could confirm is the one phase
+    /// undo still refuses, and it refuses **out loud**.
+    ///
+    /// Every other phase is now undoable — `copying` by bookkeeping,
+    /// `confirmed` and `done` by the inverse saga. This one is different in
+    /// kind rather than in difficulty: the append ran and nothing proved
+    /// where it landed, so an inverse saga would be removing a copy Postio
+    /// cannot name and restoring a message that may exist twice. The design
+    /// says stop and ask, and this is the asking.
+    #[test]
+    fn undo_of_an_unconfirmable_move_is_refused_not_faked() {
         let world = world();
         let (_second, second_inbox) = second_account(&world);
         let message = world.message(world.inbox, &[]);
@@ -3770,7 +4216,7 @@ mod tests {
             })
             .expect("the move starts");
 
-        // Walk the saga to where the target account genuinely has the mail.
+        // Walk the saga to the one phase that cannot be walked back.
         {
             let connection = world.database.connection().expect("a connection");
             let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&connection);
@@ -3781,15 +4227,15 @@ mod tests {
                 .expect("a saga")
                 .id;
             sagas
-                .confirm(id, Some(&postio_model::ids::RemoteId::new("9".to_owned())))
-                .expect("confirm");
+                .transition(id, postio_storage::repository::MovePhase::Unconfirmed)
+                .expect("the append ran and could not be proven");
         }
 
         let outcome = world.run(Command::Undo);
 
         assert!(
             outcome.is_err(),
-            "a move the other server has taken cannot be undone by bookkeeping"
+            "an unprovable copy cannot be undone by guessing"
         );
         let connection = world.database.connection().expect("a connection");
         let source_row = MessageRepository::new(&connection)
@@ -3805,7 +4251,7 @@ mod tests {
                 row.get(0)
             })
             .expect("the saga row");
-        assert_eq!(phase, "confirmed", "least of all the saga");
+        assert_eq!(phase, "unconfirmed", "least of all the saga");
     }
 
     #[test]
