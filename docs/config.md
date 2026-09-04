@@ -115,30 +115,31 @@ keyed by the thing you mean and valued by its spelling.
 archive = "Archive/2024"
 ```
 
-**This table applies to every account.** That is the right default for the
-ordinary installation, which has one account, and the wrong one the moment
-two accounts disagree about where their sent mail lives -- a fix for iCloud
-that breaks Gmail on the same machine. So it is the *default*, not the
-answer: **each account can map a role itself, in Settings → Accounts, and
-its own choice wins** (ADR 0027).
+**This table applies to every account.** That is the right default for
+the ordinary installation, which has one account, and the wrong one the
+moment two accounts disagree about where their sent mail lives -- a fix
+for iCloud that breaks Gmail on the same machine. So it is the
+*default*, not the answer: **each account can map a role itself, in
+Settings -> Accounts, and its own choice wins** (ADR 0027).
 
 The full precedence, per account and per role:
 
-1. the account's own map, chosen in Settings → Accounts
+1. the account's own map, chosen in Settings -> Accounts
 2. this `[mailboxes]` table
 3. the server's `SPECIAL-USE` attribute
 4. a guess from the folder's name
 
 Two consequences worth knowing:
 
-- **A choice made in settings takes effect on the next sync pass**, because
-  discovery reads the store's map every time. Editing this file needs a
-  restart, because the file is read once at startup.
+- **A choice made in settings takes effect on the next sync pass**,
+because discovery reads the store's map every time. Editing this file
+needs a restart, because the file is read once at startup.
 - **A mapping that names a folder the account no longer has is shown as
-  dangling in Settings → Accounts** rather than silently ignored. A role
-  quietly falling back to a guess is how mail ends up filed somewhere the
-  user did not choose and cannot see they did not choose.
+dangling in Settings -> Accounts** rather than silently ignored. A
+role quietly falling back to a guess is how mail ends up filed
+somewhere the user did not choose and cannot see they did not
+choose.
 
-Nothing here moves mail. Re-pointing a role changes which folder wears the
-label from that moment on; the messages already in the old folder stay
-where they are.
+Nothing here moves mail. Re-pointing a role changes which folder wears
+the label from that moment on; the messages already in the old folder
+stay where they are.

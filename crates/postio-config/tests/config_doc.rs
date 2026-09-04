@@ -316,7 +316,36 @@ fn render() -> String {
          ```toml\n\
          [mailboxes]\n\
          archive = \"Archive/2024\"\n\
-         ```\n",
+         ```\n\
+         \n\
+         **This table applies to every account.** That is the right default for\n\
+         the ordinary installation, which has one account, and the wrong one the\n\
+         moment two accounts disagree about where their sent mail lives -- a fix\n\
+         for iCloud that breaks Gmail on the same machine. So it is the\n\
+         *default*, not the answer: **each account can map a role itself, in\n\
+         Settings -> Accounts, and its own choice wins** (ADR 0027).\n\
+         \n\
+         The full precedence, per account and per role:\n\
+         \n\
+         1. the account's own map, chosen in Settings -> Accounts\n\
+         2. this `[mailboxes]` table\n\
+         3. the server's `SPECIAL-USE` attribute\n\
+         4. a guess from the folder's name\n\
+         \n\
+         Two consequences worth knowing:\n\
+         \n\
+         - **A choice made in settings takes effect on the next sync pass**,\n\
+           because discovery reads the store's map every time. Editing this file\n\
+           needs a restart, because the file is read once at startup.\n\
+         - **A mapping that names a folder the account no longer has is shown as\n\
+           dangling in Settings -> Accounts** rather than silently ignored. A\n\
+           role quietly falling back to a guess is how mail ends up filed\n\
+           somewhere the user did not choose and cannot see they did not\n\
+           choose.\n\
+         \n\
+         Nothing here moves mail. Re-pointing a role changes which folder wears\n\
+         the label from that moment on; the messages already in the old folder\n\
+         stay where they are.\n",
     );
 
     out
