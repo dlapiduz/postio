@@ -16,6 +16,7 @@
 //! that was checked before they were merged rather than assumed. A test that
 //! grows one has to move back out, or it will change what its neighbours see.
 
+mod actions;
 mod accounts;
 mod blob;
 mod blob_encryption;

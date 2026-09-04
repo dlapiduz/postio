@@ -734,37 +734,24 @@ impl Actions {
         }
 
         let at = Utc::now();
+        // The rows and their queue rows are `postio-storage`'s half now
+        // (ADR 0028), so that the rules pass writes them the same way a
+        // keystroke does. This side opens the transaction and commits it;
+        // the sync pass hands over the one it is already inside, which is
+        // what ADR 0008 Q3 requires and why the verb takes a borrow.
         let transaction = connection.transaction().map_err(store_failure)?;
-        {
-            let messages = MessageRepository::new(&transaction);
-            let queue = OperationQueueRepository::new(&transaction);
-            for (source, ids) in &by_source {
-                let operation = match kind {
-                    UndoKind::Delete => Operation::Delete {
-                        from: *source,
-                        trash: destination,
-                    },
-                    _ => Operation::Move {
-                        from: *source,
-                        to: destination,
-                    },
-                };
-                // The local write and its queue row in one transaction: a
-                // queue row without its write tells the server about
-                // something the user never saw, and a write without its row
-                // silently never reaches the server. The queue row comes
-                // FIRST — enqueue snapshots the rows' server coordinates,
-                // and the move nulls them (#289).
-                //
-                // One statement per source mailbox rather than one per
-                // message: a multi-select spanning a handful of folders is a
-                // handful of `enqueue_many` calls, not one `enqueue` per row.
-                queue
-                    .enqueue_many(account, ids, &operation, at)
-                    .map_err(store_failure)?;
-                messages.move_to(ids, destination).map_err(store_failure)?;
-            }
-        }
+        postio_storage::actions::relocate(
+            &transaction,
+            account,
+            &by_source,
+            destination,
+            match kind {
+                UndoKind::Delete => postio_storage::actions::Relocation::Trash,
+                _ => postio_storage::actions::Relocation::Move,
+            },
+            at,
+        )
+        .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
         let removed: Vec<(MailboxId, Vec<MessageId>)> = by_source.into_iter().collect();
