@@ -176,6 +176,11 @@ pub fn run() -> glib::ExitCode {
     let first = postio_session::store_key_blocking(context.secrets.as_ref())
         .map_err(|error| error.to_string())
         .and_then(|key| open_with(&key, &context));
+    // Marked whether or not the store opened: a refused keyring still spent
+    // the time, and a phase that only appears on the happy path measures the
+    // wrong startup. #790 -- this and the widget tree used to share one
+    // phase, and the 228 ms they summed to got attributed to GTK.
+    timeline.mark(Phase::Store);
     let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
     // Whether `open_or_onboard` has already run for this window (#514): a
     // second `activate` -- a second launch of a single-instance app just
