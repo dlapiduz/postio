@@ -13,8 +13,19 @@ use gtk::prelude::*;
 use postio_core::{CommandId, Keymap};
 use postio_gtk::widgets::{Action, ActionBar, KeycapButton, NoticeBar, NoticeMenuItem};
 
+/// Whether there is a display to build widgets on. The suite's own
+/// convention: each case guards, so a headless box skips rather than fails.
+fn ready() -> bool {
+    adw::init().is_ok() && gtk::gdk::Display::default().is_some()
+}
+
 /// A button says which key runs it, and says nothing when no key does.
 pub fn a_keycap_shows_the_key_or_nothing_at_all() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
     let button = Rc::new(KeycapButton::new(None, "Try again", "probe-retry", true));
     KeycapButton::arm(&button);
     assert_eq!(
@@ -56,6 +67,11 @@ const PROBE: [Action; 2] = [
 
 /// A bar runs the command its cap advertises, and re-caps on a rebind.
 pub fn an_action_bar_dispatches_the_command_its_cap_advertises() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
     let bar = ActionBar::new(&PROBE, "probe-bar");
     assert_eq!(
         bar.button(CommandId::Reply)
@@ -95,6 +111,11 @@ pub fn an_action_bar_dispatches_the_command_its_cap_advertises() {
 /// note is about, where an Apple relay address spelled out inline grew the
 /// remote-image banner to three lines and pushed the mail down the pane.
 pub fn a_notice_never_wraps_however_long_the_sentence() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
     // Narrower than the canvas's narrowest reading pane.
     const WIDTH: i32 = 320;
 
@@ -138,6 +159,11 @@ pub fn a_notice_never_wraps_however_long_the_sentence() {
 
 /// The overflow runs what it names, and replaces rather than appends.
 pub fn a_notice_overflow_replaces_rather_than_appends() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
     let notice = NoticeBar::new("image-missing-symbolic", "probe-notice");
 
     let allowed = Rc::new(Cell::new(0));
