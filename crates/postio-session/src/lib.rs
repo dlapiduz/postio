@@ -73,6 +73,39 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
         .unwrap_or_default()
 }
 
+/// `[[rules]]` from the file at `path`, parsed and filed by which of ADR
+/// 0008 Q3's two evaluation points can answer each one.
+///
+/// Read once at startup, like `[mailboxes]` and `[sync]` beside it, and for
+/// the same reason `EngineParts` carries the answer rather than reading it:
+/// an engine that reached for a config file could not be driven by a test.
+///
+/// **A rule that does not parse is dropped here, with a warning.** ADR 0008
+/// Q6 is about the opposite failure — a rule the user believes is running
+/// and is not — and the surface that says so properly is the settings
+/// panel's validity line, which `postio_config::Config::rules` already
+/// carries the reason for. Until #483 puts it there, a log line is the
+/// honest minimum: the alternative is refusing the whole file over one
+/// entry, which would stop the other rules working too.
+pub fn rules_at(path: &std::path::Path) -> postio_search::rules::RuleSet {
+    let Some(config) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+    else {
+        return postio_search::rules::RuleSet::default();
+    };
+    let mut rules = Vec::new();
+    for entry in config.rules() {
+        match entry {
+            Ok(rule) => rules.push(rule),
+            // The name is the user's own text and the reason is the parser's;
+            // neither is mail.
+            Err(error) => tracing::warn!(%error, "a [[rules]] entry is not a rule"),
+        }
+    }
+    postio_search::rules::RuleSet::compile(&rules, chrono::Utc::now().date_naive())
+}
+
 /// `[storage] max_bytes` from the file at `path`, or nothing.
 ///
 /// Unreadable, unparseable, absent and unset all answer `None`, which is the
@@ -332,6 +365,14 @@ pub struct Wiring {
     /// anything that read the file itself could not be driven by a test.
     /// Empty is the ordinary case and resolves exactly as before.
     pub mailbox_roles: postio_model::RoleOverrides,
+    /// The rules this installation has configured, from `[[rules]]`,
+    /// already filed by which evaluation point can answer each one.
+    ///
+    /// A part, like `mailbox_roles`, and for the same reason. Read once at
+    /// startup and carried: a rule edited while Postio is running takes
+    /// effect at the next start, the same limit `with_mailbox_roles`
+    /// records and for the same cause.
+    pub rules: postio_search::rules::RuleSet,
     /// How the engine backfills, from `[sync]`.
     ///
     /// A part, like `mailbox_roles`, and for the same reason: how hard this
@@ -383,6 +424,7 @@ impl Wiring {
             engine: refresh::EngineSlot::default(),
             secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
+            rules: postio_search::rules::RuleSet::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
@@ -399,6 +441,15 @@ impl Wiring {
     /// worth on its own.
     pub fn with_mailbox_roles(mut self, roles: postio_model::RoleOverrides) -> Self {
         self.mailbox_roles = roles;
+        self
+    }
+
+    /// The same wiring, with `[[rules]]` applied.
+    ///
+    /// Same limit as `with_mailbox_roles`, and same reason: the engine is
+    /// spawned with its parts.
+    pub fn with_rules(mut self, rules: postio_search::rules::RuleSet) -> Self {
+        self.rules = rules;
         self
     }
 

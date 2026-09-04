@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
+use postio_search::rules::RuleSet;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -122,6 +123,7 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        rules: RuleSet::default(),
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");

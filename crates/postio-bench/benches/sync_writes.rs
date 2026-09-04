@@ -102,6 +102,7 @@ use postio_core::perf_budget::{SYNC_WRITE_BUDGET, check_budget};
 use postio_model::{
     Account, EmailAddress, Mailbox, MailboxRole, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_search::rules::RuleSet;
 use postio_storage::repository::{ContactRepository, MessageRepository, ThreadingRepository};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support::{self, TempDatabase};
@@ -211,6 +212,9 @@ fn write_one(
         mailbox,
         Some(account),
         &BTreeSet::new(),
+        // No rules: this measures the write, and evaluating a rule set the
+        // benchmark invented would measure the matcher instead (#482).
+        &RuleSet::default(),
         &mut messages,
     )
     .expect("the batch commits");

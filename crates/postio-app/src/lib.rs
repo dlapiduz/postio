@@ -151,6 +151,14 @@ pub fn run() -> glib::ExitCode {
         .map(postio_session::mailbox_roles_at)
         .unwrap_or_default();
 
+    // `[[rules]]`, read once here for the same reason `[mailboxes]` is: the
+    // rules are evaluated inside the sync pass, which runs inside the engine,
+    // and the engine is spawned with its parts (ADR 0008 Q3, #482).
+    let rules = config_path
+        .as_deref()
+        .map(postio_session::rules_at)
+        .unwrap_or_default();
+
     // `[storage] max_bytes`, read once here for the same reason `[mailboxes]`
     // is: `reclaim_disk` is spawned from `feed_the_window`, which runs before
     // anything is watching the file.
@@ -162,6 +170,7 @@ pub fn run() -> glib::ExitCode {
         secrets,
         state,
         mailbox_roles,
+        rules,
         sync_config: sync_config.clone(),
         storage_ceiling,
     });
@@ -827,6 +836,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.events.clone(),
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
+        wiring.rules.clone(),
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
@@ -878,6 +888,7 @@ pub fn attach_account(
         wiring.events.clone(),
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
+        wiring.rules.clone(),
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
@@ -1030,6 +1041,8 @@ struct Installation {
     secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
     state: SharedState,
     mailbox_roles: postio_model::RoleOverrides,
+    /// `[[rules]]`, parsed and staged — see `postio_session::rules_at`.
+    rules: postio_search::rules::RuleSet,
     sync_config: postio_config::SyncConfig,
     /// `[storage] max_bytes`, or `None` for the documented default of
     /// unbounded. Read here beside the other two sections, and for the same
@@ -1099,6 +1112,7 @@ fn open_with(
         engine,
         ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
             .with_mailbox_roles(context.mailbox_roles.clone())
+            .with_rules(context.rules.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
             .with_watch(postio_session::watch_policy(&context.sync_config))
             .with_storage_ceiling(context.storage_ceiling)

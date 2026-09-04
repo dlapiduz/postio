@@ -1016,6 +1016,7 @@ mod interactive_read {
             watch: Default::default(),
             network: NetworkSource::Ignored,
             mailbox_roles: Default::default(),
+            rules: postio_search::rules::RuleSet::default(),
             clock: Arc::new(SystemClock),
         })
         .expect("the engine starts");

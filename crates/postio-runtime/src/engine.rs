@@ -58,7 +58,7 @@ use postio_sync::{
     WatchPolicy, Watcher, backfill, discover, initial, resync,
 };
 // The crate root's `Outcome` is the *resync* one; a body has its own.
-use postio_sync::backfill::Outcome;
+use postio_sync::backfill::{BodyFetch, Outcome};
 
 /// What the connection is doing, and what the operating system says about the
 /// network.
@@ -69,6 +69,10 @@ use postio_sync::backfill::Outcome;
 /// never sees these — this whole module is behind the `runtime` feature, which
 /// `postio-gtk` cannot enable.
 pub use postio_sync::{Blocker, Link, NetworkState};
+// Re-exported for the same reason the three above are: `EngineParts` names
+// this type, so every caller that builds one needs it, and a caller should
+// not have to take a dependency on `postio-search` to say "no rules".
+pub use postio_search::rules::RuleSet;
 
 use postio_core::Event;
 use postio_core::bridge::EventSink;
@@ -213,6 +217,15 @@ pub struct EngineParts {
     /// could not be driven by a test. Empty is the ordinary case and costs
     /// nothing — see [`RoleOverrides`].
     pub mailbox_roles: RoleOverrides,
+    /// The `[[rules]]` this installation has configured, parsed and filed by
+    /// which of ADR 0008 Q3's two evaluation points can answer them.
+    ///
+    /// Carried rather than read here, for the reason `mailbox_roles` gives
+    /// directly above: which rules a user has written is a fact about *this
+    /// installation*, and an engine that reached for a config file itself
+    /// could not be driven by a test. Empty is the ordinary case and costs
+    /// nothing — every point checks `RuleSet::has` before doing any work.
+    pub rules: RuleSet,
     /// Where a sync pass reads "now" from for repaint coalescing.
     ///
     /// [`SystemClock`] for every engine outside a test; see [`Clock`] for
@@ -1707,7 +1720,7 @@ async fn pump_body(
         }
     };
 
-    let fetch = backfill::fetch_body(
+    let fetch = backfill::fetch_body_with_rules(
         &connection,
         &parts.blobs,
         parts.backend.as_ref(),
@@ -1716,6 +1729,7 @@ async fn pump_body(
         // under, so `[sync] max_inline_bytes` reaches the fetch that honours
         // it rather than stopping at a struct field nobody reads (#751).
         state.backfill.policy().max_inline_bytes,
+        &parts.rules,
         &claim.cancel,
     );
     tokio::pin!(fetch);
@@ -1733,27 +1747,48 @@ async fn pump_body(
             fetch.await
         }
     };
-    let outcome = result.unwrap_or_else(|error| {
+    let fetched = result.unwrap_or_else(|error| {
         if let SyncError::Backend(backend) = &error {
             let moved = state.supervisor.observe(backend, Utc::now());
             announce_link(parts, state, moved);
         }
-        Outcome::Failed {
-            reason: error.to_string(),
+        BodyFetch {
+            outcome: Outcome::Failed {
+                reason: error.to_string(),
+            },
+            fired: Vec::new(),
         }
     });
-
-    // The reading pane is waiting on exactly this for whatever the user just
-    // opened, so it is worth saying the moment the bytes are local.
-    if matches!(outcome, Outcome::Stored { .. }) {
-        parts.events.emit(Event::BodyLoaded {
-            account: parts.account,
-            message,
-        });
-    }
+    let BodyFetch { outcome, fired } = fetched;
+    // The body-requiring rules this fetch let run (ADR 0008 Q3, #482).
+    // Reported, not carried out: the action vocabulary is #481, and this is
+    // the seam it attaches to. Names and ids only -- a rule's name is the
+    // user's own config and a message id is not mail (see `logging_privacy`).
+    report_fired(parts, &fired);
     state.backfill.finished(message, outcome);
     announce_backfill(parts, state, std::time::Instant::now());
     true
+}
+
+/// Say which rules matched, without saying anything about the mail.
+///
+/// A rule's name comes from the user's own `config.toml` and a message id is
+/// a row number, so both are safe to log; the message's subject, sender and
+/// body are not, and nothing here reaches for them (ADR 0014, and
+/// `runtime/tests/logging_privacy.rs`).
+///
+/// This is where #481 attaches: it replaces the log with the actions the
+/// rule asked for, at the point ADR 0008 Q3 chose, without having to move
+/// the evaluation.
+fn report_fired(parts: &EngineParts, fired: &[postio_sync::RuleHit]) {
+    for hit in fired {
+        tracing::info!(
+            account = parts.account.get(),
+            message = hit.message.get(),
+            rule = %hit.rule,
+            "a rule matched"
+        );
+    }
 }
 
 /// Say how far the body queue has got.
@@ -2367,11 +2402,12 @@ async fn sync_pass(
     // means nothing already on screen moved or changed under the user.
     let mut only_arrivals = false;
     let result = if synced_before {
-        resync::resync_mailbox(
+        resync::resync_mailbox_with_rules(
             connection,
             parts.backend.as_ref(),
             &record,
             cancel,
+            &parts.rules,
             |progress| committed.batch(progress),
         )
         .await
@@ -2389,11 +2425,12 @@ async fn sync_pass(
             summarise_resync(outcome)
         })
     } else {
-        initial::sync_mailbox(
+        initial::sync_mailbox_with_rules(
             connection,
             parts.backend.as_ref(),
             &record,
             cancel,
+            &parts.rules,
             |progress| committed.batch(progress),
         )
         .await
@@ -2978,6 +3015,7 @@ mod tests {
             watch: WatchPolicy::default(),
             network: NetworkSource::Ignored,
             mailbox_roles: Default::default(),
+            rules: RuleSet::default(),
             clock: Arc::new(SystemClock),
         };
         (parts, events, directory)

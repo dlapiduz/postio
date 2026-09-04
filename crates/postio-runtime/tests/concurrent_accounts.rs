@@ -21,6 +21,7 @@ use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_core::bridge::event_channel;
 use postio_model::AccountId;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
+use postio_search::rules::RuleSet;
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
 use postio_storage::{BlobStore, Database, test_support};
 
@@ -84,6 +85,7 @@ fn engine_for(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        rules: RuleSet::default(),
         clock: Arc::new(SystemClock),
     })
     .expect("an engine per account");

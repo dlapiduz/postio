@@ -78,7 +78,6 @@ len_of                            # crates/postio-storage/src/blob.rs:287
 live_connections                  # crates/postio-storage/src/db.rs:723
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
-matching                          # crates/postio-account/src/backend/message.rs:49
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 next_scope                        # crates/postio-core/src/state.rs:460
 normalized_subject                # crates/postio-model/src/message.rs:313
@@ -132,7 +131,6 @@ vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572
 watch_policy_at                   # crates/postio-session/src/lib.rs:128
 with_blobs                        # crates/postio-sync/src/drain.rs:206
-with_body                         # crates/postio-search/src/matcher.rs:96 -- same: a body-class rule runs at backfill completion (#482)
 with_connect_timeout              # crates/postio-account/src/imap/settings.rs:102
 with_groups                       # crates/postio-search/src/matcher.rs:114 -- same: `group:` is in the language, so the matcher must answer it (#481)
 with_html                         # crates/postio-model/src/account.rs:188

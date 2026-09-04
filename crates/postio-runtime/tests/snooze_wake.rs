@@ -22,6 +22,7 @@ use postio_account::backend::{MockBackend, MockMailbox};
 use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
+use postio_search::rules::RuleSet;
 use postio_storage::repository::MessageRepository;
 use postio_storage::{BlobStore, test_support};
 
@@ -78,6 +79,7 @@ async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        rules: RuleSet::default(),
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");

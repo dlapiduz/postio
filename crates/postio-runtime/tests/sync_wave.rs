@@ -23,6 +23,7 @@ use std::time::Duration;
 use postio_account::backend::{FetchEvent, MockBackend, MockMailbox, MockMessage};
 use postio_core::bridge::event_channel;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
+use postio_search::rules::RuleSet;
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
@@ -104,6 +105,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::Te
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        rules: RuleSet::default(),
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
