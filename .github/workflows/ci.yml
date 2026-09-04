@@ -196,39 +196,29 @@ jobs:
       # reads, and a comment there was a second copy free to disagree.
       # The step below is eight of this job's nine minutes, and what it tests
       # is `scripts/`, not the workspace: each self-test builds its own
-      # sandbox repository and never reads `crates/`. A pull request that
-      # touches only Rust cannot change its outcome, so it should not pay for
+      # sandbox repository and reads only the copy of the tooling it put
+      # there. A pull request that cannot affect `scripts/` should not pay for
       # it. #996 lists this as the cheapest thing to fix here.
       #
-      # It fails safe in all three directions that matter: a push to `main`
-      # runs them, an API call that does not answer runs them, and anything at
-      # all outside `crates/` runs them. Skipping needs a definite answer that
-      # only `crates/` changed.
+      # The rule itself is `scripts/ci-tooling-needed.sh`, and it is a script
+      # rather than fifteen lines of `bash` here because inline workflow steps
+      # cannot be tested -- which was its own small joke, since what it gates
+      # is the suite that keeps the tooling honest.
+      # `scripts/tests/test-ci-tooling-needed.py` is what tests it, including
+      # every direction it has to fail safe in.
       - name: Decide whether the tooling self-tests need to run
         id: tooling
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "not a pull request -- running them"
-            exit 0
-          fi
           files=$(gh api --paginate \
             "repos/${{ github.repository }}/compare/${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
             --jq '.files[].filename' 2>/dev/null) || files=""
-          if [ -z "$files" ]; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "could not read the diff -- running them"
-            exit 0
-          fi
-          if printf '%s\n' "$files" | grep -qvE '^crates/'; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "changes outside crates/ -- running them"
-          else
-            echo "run=no" >> "$GITHUB_OUTPUT"
-            echo "only crates/ changed -- the tooling cannot be affected, skipping"
-          fi
+          answer=$(printf '%s\n' "$files" \
+            | scripts/ci-tooling-needed.sh "${{ github.event_name }}")
+          echo "run=$answer" >> "$GITHUB_OUTPUT"
+          echo "tooling self-tests: $answer"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
 
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
