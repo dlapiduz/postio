@@ -5043,8 +5043,19 @@ shared box with two other sessions compiling:
 
 So `issue-claim.sh` seeds a fresh tree from the newest sibling's
 `target/debug` (or the shared checkout's), `--reflink=auto`, and a plain
-claim run inside a landed worktree reuses it instead. Constraints that
-are load-bearing:
+claim run inside a landed worktree reuses it instead.
+
+**C's 12 s was too good, and the first reused landing said so.** Our own
+crates bake the tree's absolute path in (`env!("CARGO_MANIFEST_DIR")`,
+fourteen files), and cargo does not rebuild on a directory move — verified
+with a two-line crate — so a moved or copied target runs binaries that
+point at the old tree; `postio-session`'s crate-list test failed exactly
+that way. Both paths now drop Postio's own artifacts
+(`scripts/lib/drop-workspace-artifacts.sh`, the same rule CI's cache uses)
+and keep the dependencies. Measured on the shared box: **64 s** to rebuild
+the 20 workspace crates for the sanity tier. That is the honest number for
+a reused or seeded claim, against 1149 s cold. Constraints that are
+load-bearing:
 
 - **Copy, never share.** #76 was two trees writing one target. Each tree
   here owns its copy; cargo's fingerprints are self-consistent inside it.

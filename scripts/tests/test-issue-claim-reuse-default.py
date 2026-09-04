@@ -114,7 +114,43 @@ def landed_worktree(repo: Path, worktrees: Path, number: int) -> Path:
     git("worktree", "add", "--quiet", "-b", f"issue-{number}-done", str(tree), "main", cwd=repo)
     (tree / "target").mkdir()
     (tree / "target" / "warm").write_text("a compiled artifact\n", encoding="utf-8")
+    build_products(tree)
     return tree
+
+
+def build_products(tree: Path) -> None:
+    """What a built target/ holds: a dependency's artifacts, and our own.
+
+    Our own carry the worktree's absolute path baked in (`env!("CARGO_MANIFEST_DIR")`,
+    fourteen files here), and cargo does not notice a directory move -- so a
+    reused or seeded tree has to drop them and keep the rest.
+    """
+    deps = tree / "target" / "debug" / "deps"
+    deps.mkdir(parents=True, exist_ok=True)
+    (deps / "libserde-0123.rlib").write_text("a dependency\n", encoding="utf-8")
+    (deps / "libpostio_core-4567.rlib").write_text("ours, old path baked in\n", encoding="utf-8")
+    (deps / "postio_session-89ab").write_text("a test binary, old path\n", encoding="utf-8")
+    for unit in ("serde-0123", "postio-core-4567", "postio-session-89ab"):
+        (tree / "target" / "debug" / ".fingerprint" / unit).mkdir(parents=True, exist_ok=True)
+        (tree / "target" / "debug" / ".fingerprint" / unit / "lib").write_text("x", encoding="utf-8")
+
+
+def workspace_artifacts_dropped(tree: Path) -> str:
+    """Empty when the tree keeps its dependencies and lost its own crates."""
+    deps = tree / "target" / "debug" / "deps"
+    fp = tree / "target" / "debug" / ".fingerprint"
+    problems = []
+    if not (deps / "libserde-0123.rlib").is_file():
+        problems.append("a dependency's rlib was dropped")
+    if not (fp / "serde-0123").is_dir():
+        problems.append("a dependency's fingerprint was dropped")
+    if (deps / "libpostio_core-4567.rlib").exists():
+        problems.append("our rlib survived, with the old path baked in")
+    if (deps / "postio_session-89ab").exists():
+        problems.append("our test binary survived, with the old path baked in")
+    if (fp / "postio-core-4567").exists() or (fp / "postio-session-89ab").exists():
+        problems.append("our fingerprints survived, so cargo will not rebuild")
+    return "; ".join(problems)
 
 
 def main() -> int:
@@ -135,6 +171,8 @@ def main() -> int:
             fail("implicit", "target/ did not come along", result)
         elif "reused" not in result.stdout:
             fail("implicit", "it did not say the target was reused", result)
+        elif workspace_artifacts_dropped(moved):
+            fail("implicit", workspace_artifacts_dropped(moved), result)
 
         if FAILURES:
             for failure in FAILURES:

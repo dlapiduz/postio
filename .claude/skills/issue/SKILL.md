@@ -33,8 +33,10 @@ build stays warm — and when reuse would strand something (a dirty tree,
 commits not on the base) it says why and claims a fresh tree instead,
 leaving this one exactly as it was (#1102). A fresh tree is not cold either:
 its `target/debug` is reflink-copied from the newest sibling, one second for
-11 GB, and the sanity tier then builds in 12 s. Neither is the sharing #76
-forbids: that is two worktrees writing one target.
+11 GB. In both cases Postio's own crates are dropped and rebuilt — about a
+minute — because they carry the tree's absolute path and cargo does not
+notice a move; the dependencies stay. Neither is the sharing #76 forbids:
+that is two worktrees writing one target.
 
 `--fresh` when you want the old tree kept on purpose; `--reuse` when you
 want to be told rather than helped.
