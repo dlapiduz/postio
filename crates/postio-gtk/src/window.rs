@@ -1357,7 +1357,11 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move |label| {
-                window.close_finder();
+                // Through `press_escape`, not `close_finder` directly, so
+                // that everyone who registered for a dismissal -- this
+                // window's own focus restore, and #1011's search cleanup --
+                // hears about it, whatever picked the finder is closing for.
+                window.finder().press_escape();
                 window.act(postio_core::Command::AddLabel {
                     target: postio_core::MessageTarget::Selection,
                     label: Some(label),
@@ -1805,7 +1809,9 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move |id| {
-                window.close_finder();
+                // Through `press_escape`, for the reason `connect_label`
+                // above gives (#1011).
+                window.finder().press_escape();
                 // Through `run_action`, not straight out: a command the
                 // window answers itself means the same thing chosen from the
                 // palette as it does typed, and the bus must not hear it
@@ -1820,7 +1826,9 @@ impl Window {
         finder.connect_folder(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| window.close_finder()
+            // Through `press_escape`, not `close_finder` directly, for the
+            // reason `CommandId::Back` gives (#1011).
+            move |_| window.finder().press_escape()
         ));
         finder.connect_dismissed(glib::clone!(
             #[weak(rename_to = window)]
@@ -2095,7 +2103,12 @@ impl Window {
             }
             CommandId::Back if self.parts().is_visible() => self.close_parts(),
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
-            CommandId::Back if self.finder().is_open() => self.close_finder(),
+            // Through `press_escape`, not `close_finder` directly (#1011):
+            // this is the path that runs once the keyboard has moved off
+            // the search entry onto the list to read a result, and
+            // `close_finder` alone restores focus and the keymap context
+            // without ever telling `Feed` the search is over.
+            CommandId::Back if self.finder().is_open() => self.finder().press_escape(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
             // Nearer than a selection made before the keyboard went to the
             // folders: `Esc` in the sidebar means "back to the messages".
@@ -2636,8 +2649,10 @@ impl Window {
 
     /// Shows the cheat sheet over the workspace.
     pub fn open_cheatsheet(&self) {
-        // Two overlays at once is one too many.
-        self.close_finder();
+        // Two overlays at once is one too many. Through `press_escape`, not
+        // `close_finder` directly, for the reason `CommandId::Back` above
+        // gives (#1011).
+        self.finder().press_escape();
         let sheet = self.cheatsheet();
         sheet.set_visible(true);
         sheet.grab_focus();
@@ -2660,8 +2675,10 @@ impl Window {
 
     /// Shows the settings panel over the workspace.
     pub fn open_settings(&self) {
-        // Only one overlay at a time.
-        self.close_finder();
+        // Only one overlay at a time. Through `press_escape`, not
+        // `close_finder` directly, for the reason `CommandId::Back` above
+        // gives (#1011).
+        self.finder().press_escape();
         self.close_cheatsheet();
         // Read fresh on every open rather than cached, the same reason
         // `new_reader` loads its own copy each time rather than keeping one
