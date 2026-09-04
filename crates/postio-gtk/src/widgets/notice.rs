@@ -233,8 +233,15 @@ impl NoticeBar {
     }
 
     /// Choose an overflow entry without opening the menu, for a test.
+    ///
+    /// The handler is cloned out before it runs, and the borrow dropped.
+    /// Acting on a notice is very often what makes the notice wrong — the
+    /// reader's "always allow" clears the sender, which rebuilds this very
+    /// menu — so a handler called while the list is still borrowed panics on
+    /// the way back in. `gtk_reader` caught exactly that.
     pub fn press_menu_item(&self, index: usize) {
-        if let Some(handler) = self.handlers.borrow().get(index) {
+        let handler = self.handlers.borrow().get(index).cloned();
+        if let Some(handler) = handler {
             handler();
         }
     }

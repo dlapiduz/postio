@@ -191,3 +191,44 @@ pub fn a_notice_overflow_replaces_rather_than_appends() {
         "a notice with nothing to offer has no overflow at all"
     );
 }
+
+/// Acting on a notice may be what makes the notice wrong, and that must not
+/// panic.
+///
+/// The reader's "always allow" is this shape: choosing it allow-lists the
+/// sender, which clears the sender, which rebuilds this very menu — all
+/// while the handler that started it is still on the stack. The first
+/// version held the handler list borrowed across the call and `gtk_reader`
+/// died on the way back in.
+pub fn a_notice_survives_an_overflow_entry_that_rebuilds_the_menu() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
+    let notice = NoticeBar::new("image-missing-symbolic", "probe-notice");
+    let inner = Rc::new(std::cell::RefCell::new(None::<Rc<NoticeBar>>));
+    *inner.borrow_mut() = Some(notice.clone());
+
+    let reentered = Rc::new(Cell::new(false));
+    let flag = reentered.clone();
+    let target = inner.clone();
+    notice.set_menu(vec![NoticeMenuItem::new(
+        "Always allow this sender",
+        move || {
+            flag.set(true);
+            // What the reader does next: the sender is gone, so the menu that
+            // named it is rebuilt out from under the handler running now.
+            if let Some(notice) = target.borrow().as_ref() {
+                notice.set_menu(Vec::new());
+            }
+        },
+    )]);
+
+    notice.press_menu_item(0);
+    assert!(reentered.get(), "the entry ran");
+    assert!(
+        notice.menu_labels().is_empty(),
+        "and its own rebuild took effect rather than being lost"
+    );
+}

@@ -617,6 +617,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_widgets::a_notice_overflow_replaces_rather_than_appends as fn(),
     ),
     (
+        "gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu",
+        gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu as fn(),
+    ),
+    (
         "gtk_window::the_window_opens_and_wears_the_design",
         gtk_window::the_window_opens_and_wears_the_design as fn(),
     ),
