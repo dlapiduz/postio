@@ -94,14 +94,26 @@ fn sending_never_blocks_the_calling_thread() {
     }))
     .expect("the runtime starts");
 
-    let start = Instant::now();
     for _ in 0..8 {
         bridge.commands().send(Command::Refresh).expect("running");
     }
-    let elapsed = start.elapsed();
+
+    // Asserted as ordering rather than as a stopwatch reading (#1068).
+    //
+    // The claim is that the loop finished before any handler could, and that
+    // is a statement about *sequence*: each handler sleeps 250ms before
+    // emitting, so a `send` that waited for one would have let its event
+    // through before the next send ran. Zero events here is exactly "the
+    // caller did not wait", on every machine, with no number to pick.
+    //
+    // It used to be `elapsed < 50ms`. That measures the machine as much as
+    // the code — this repository routinely has three sessions compiling at
+    // once and `.cargo/config.toml` pins `jobs = 2` because of it — and it
+    // is the class of assertion #100 and #917 removed everywhere else.
     assert!(
-        elapsed < Duration::from_millis(50),
-        "sending eight commands blocked the caller for {elapsed:?}"
+        events.try_next().is_none(),
+        "a handler ran to completion while the caller was still sending, so \
+         `send` is waiting for the backend the UI thread must never await"
     );
 
     // And the work really did happen, off the caller's thread.
