@@ -1313,6 +1313,234 @@ pub fn index_local_headers(database: &Database) -> Result<usize, Box<dyn std::er
     Ok(indexed)
 }
 
+/// How many bodies or header blocks one batch of [`reindex_account`] handles.
+///
+/// Same size and the same reason as [`INDEX_BODY_BATCH`]/
+/// [`INDEX_HEADERS_BATCH`]: this holds a pooled connection and decompresses
+/// a body or parses a block per message, and the rest of the application
+/// shares that pool.
+const REINDEX_ACCOUNT_BATCH: u32 = 200;
+
+/// How long [`reindex_account`] pauses between batches. Same reasoning as
+/// [`INDEX_BODY_BREATHER`]: search still answers while this runs, off an
+/// index that is being refilled, and the disk it reads from has to keep
+/// answering that too.
+const REINDEX_ACCOUNT_BREATHER: Duration = Duration::from_millis(25);
+
+/// Drops `account`'s rows from the local search index and rebuilds them from
+/// mail already on this machine — bodies, then header blocks. Answers how
+/// many rows it rewrote.
+///
+/// #981's "Rebuild search index": the account-detail action for a message
+/// that is in the mailbox and missing from search, which the maintainer's
+/// own decision on that issue names as the thing that actually drifts —
+/// three separate catch-up passes have already shipped to repair it
+/// (#327, #884, and the body-index catch-up this pass shares its shape
+/// with). This is the same repair, reachable on demand and scoped to one
+/// account: clearing first is what makes this account's whole local corpus
+/// the candidate set again, not only the messages that already happened to
+/// be missing.
+///
+/// # No network, ever
+///
+/// Everything here reads what is already local — `messages_missing_body_text_for_account`
+/// only offers a message whose `body_state` says the bytes are already on
+/// this machine, and the header half is windowed to blocks already stored.
+/// A message this account has not downloaded yet is untouched by this pass;
+/// bringing it down is sync's job, not this one's (the maintainer's own "a
+/// re-download is a verb that already exists").
+///
+/// # Progress
+///
+/// `on_progress(done, total)` is called once with `total` fixed at the
+/// start — the candidate count right after clearing — and again after every
+/// batch of either half, `done` accumulating across both. The composition
+/// root turns this into the same [`postio_core::Event::BackfillProgress`] a
+/// real backfill reports (#981's own design: one progress channel, not two),
+/// so a rebuild in progress shows on the account row the way any other
+/// catch-up already does.
+///
+/// # Errors
+///
+/// Errors on one message are logged and skipped rather than abandoning the
+/// pass, for the same reason [`index_local_bodies`]/[`index_local_headers`]
+/// do: one unreadable body or block should cost that message its own search
+/// terms, not every message after it.
+pub fn reindex_account(
+    database: &Database,
+    account: postio_model::ids::AccountId,
+    mut on_progress: impl FnMut(u32, u32),
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let account_id = account.get();
+    let connection = database.connection()?;
+    postio_index::index::clear_account_body_index(&connection, account_id)?;
+    postio_index::index::clear_account_header_index(&connection, account_id)?;
+    let total = postio_index::index::messages_missing_body_text_for_account(
+        &connection,
+        account_id,
+        u32::MAX,
+    )?
+    .len()
+        + postio_index::index::messages_missing_header_rows_for_account(
+            &connection,
+            account_id,
+            u32::MAX,
+        )?
+        .len();
+    drop(connection);
+
+    let mut done = 0usize;
+    on_progress(0, total as u32);
+
+    // -- bodies -------------------------------------------------------------
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates = postio_index::index::messages_missing_body_text_for_account(
+            &connection,
+            account_id,
+            REINDEX_ACCOUNT_BATCH,
+        )?;
+        if candidates.is_empty() {
+            break;
+        }
+        // The no-progress guard #500 recorded the need for, the same as
+        // index_local_bodies' own.
+        if candidates == last_batch {
+            tracing::warn!(
+                account = account_id,
+                batch = candidates.len(),
+                "a reindex body batch made no progress; stopping that half"
+            );
+            break;
+        }
+
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut bodies: Vec<(i64, postio_model::MessageBody)> =
+            Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            let body = match messages.body(message) {
+                Ok(Some(stored)) => postio_model::MessageBody {
+                    text: stored.text,
+                    html: stored.html,
+                },
+                Ok(None) => postio_model::MessageBody::default(),
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a body to reindex");
+                    continue;
+                }
+            };
+            bodies.push((*id, body));
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, body) in &bodies {
+                match postio_index::index::index_body_of(&connection, *id, body) {
+                    Ok(()) => done += 1,
+                    Err(error) => tracing::debug!(message = id, %error, "cannot reindex a body"),
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+        on_progress(done as u32, total as u32);
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < REINDEX_ACCOUNT_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(REINDEX_ACCOUNT_BREATHER);
+    }
+
+    // -- header blocks --------------------------------------------------------
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates = postio_index::index::messages_missing_header_rows_for_account(
+            &connection,
+            account_id,
+            REINDEX_ACCOUNT_BATCH,
+        )?;
+        if candidates.is_empty() {
+            break;
+        }
+        if candidates == last_batch {
+            tracing::warn!(
+                account = account_id,
+                batch = candidates.len(),
+                "a reindex header batch made no progress; stopping that half"
+            );
+            break;
+        }
+
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut blocks: Vec<(i64, postio_model::Headers)> = Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            match messages.headers(message) {
+                Ok(Some(headers)) => blocks.push((*id, headers)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a header block to reindex")
+                }
+            }
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, headers) in &blocks {
+                match postio_index::index::index_headers(&connection, *id, headers) {
+                    Ok(()) => done += 1,
+                    Err(error) => {
+                        tracing::debug!(message = id, %error, "cannot reindex a header block")
+                    }
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+        on_progress(done as u32, total as u32);
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < REINDEX_ACCOUNT_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(REINDEX_ACCOUNT_BREATHER);
+    }
+
+    // `total` is an estimate taken before either pass ran, so a message that
+    // stopped being a candidate between then and now (expunged, or already
+    // swept by a concurrent catch-up) can leave `done` short of it -- and a
+    // caller driving a progress bar off this needs the final call to say
+    // "done" rather than "94 of 100 and nothing more is coming". Skipped
+    // when there was never anything to do at all: the one report already
+    // sent before either loop ran already said so, and a second identical
+    // "(0, 0)" is a call with nothing new to tell a caller.
+    if total > 0 || done > 0 {
+        on_progress(done as u32, done.max(total) as u32);
+    }
+    if done > 0 {
+        // A count and nothing else, the same restraint the two catch-ups
+        // this wraps keep.
+        tracing::info!(
+            account = account_id,
+            reindexed = done,
+            "rebuilt an account's local search index"
+        );
+    }
+    Ok(done)
+}
+
 /// The account to open, if the store holds one.
 ///
 /// Read straight off a connection rather than through [`MailStore`]: which

@@ -230,7 +230,11 @@ pub struct Outcome {
     /// Whether every message in the searched scope had a body to search.
     ///
     /// `false` adds the caveat: the hits come from a corpus that is still
-    /// filling, so the count is a floor for a second reason (#352).
+    /// filling, so the count is a floor for a second reason (#352). Also
+    /// `false` while an account in scope is rebuilding its local search
+    /// index (#981, `postio_session::reindex_account`) — a message can drop
+    /// out of results mid-rebuild the same way one that has not backfilled
+    /// yet does, and it is the same honest caveat either way.
     pub corpus_complete: bool,
     /// Accounts a unified search could not reach, by the name the sidebar
     /// shows, in the sidebar's order.
@@ -270,6 +274,17 @@ impl Outcome {
     /// The same outcome, carrying the accounts a search could not reach.
     pub fn with_unreachable(mut self, unreachable: Vec<String>) -> Self {
         self.unreachable = unreachable;
+        self
+    }
+
+    /// The same outcome, with the corpus caveat also raised when an account
+    /// in scope is mid-rebuild (#981).
+    ///
+    /// Only ever turns `corpus_complete` off, never back on: the executor's
+    /// own answer already accounts for backfill, and a rebuild finishing is
+    /// not proof a backfill did too.
+    pub fn with_reindexing(mut self, reindexing: bool) -> Self {
+        self.corpus_complete &= !reindexing;
         self
     }
 }
@@ -2274,6 +2289,39 @@ mod tests {
         let spoken = spoken_readout(&both);
         assert!(spoken.contains("still syncing"), "{spoken}");
         assert!(spoken.contains("Work"), "{spoken}");
+    }
+
+    // -- the reindex caveat (#981) ------------------------------------------
+
+    #[test]
+    fn a_reindex_in_progress_reads_the_same_as_a_corpus_still_filling() {
+        // #981: a message can drop out of results mid-rebuild the same way
+        // one that has not backfilled yet does, and it is the honest caveat
+        // either way -- so it reuses the exact wording rather than growing
+        // a third.
+        let reindexing = outcome(14, false, 11).with_reindexing(true);
+        assert_eq!(readout(&reindexing), "14 hits · 11 ms · still syncing");
+    }
+
+    #[test]
+    fn with_reindexing_never_turns_the_caveat_back_on() {
+        // A corpus the executor already knows is incomplete stays that way
+        // whether or not a rebuild happens to also be running.
+        let outcome = Outcome {
+            corpus_complete: false,
+            ..outcome(14, false, 11)
+        }
+        .with_reindexing(false);
+        assert!(!outcome.corpus_complete, "false stays false either way");
+    }
+
+    #[test]
+    fn no_reindex_leaves_a_complete_corpus_alone() {
+        let outcome = outcome(14, false, 11).with_reindexing(false);
+        assert!(
+            outcome.corpus_complete,
+            "nothing here should have raised it"
+        );
     }
 
     #[test]

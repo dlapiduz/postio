@@ -1891,6 +1891,12 @@ impl Window {
                     self.settings().toggle_account_enabled(id);
                 }
             }
+            CommandId::RebuildAccountIndex => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings()
+                        .request_account_action(id, crate::settings::AccountAction::RebuildIndex);
+                }
+            }
             // `u` here means the removal toast, never the global stack: the
             // stack never held this removal (#464 wired it straight to
             // AccountRepository::restore), so nothing else could answer it.

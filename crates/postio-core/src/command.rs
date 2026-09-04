@@ -185,6 +185,8 @@ command_ids! {
     RemoveAccount => "remove_account",
     /// Update the focused account's stored credential.
     UpdateCredential => "update_credential",
+    /// Rebuild the focused account's local search index.
+    RebuildAccountIndex => "rebuild_account_index",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -622,6 +624,12 @@ pub enum Command {
     RemoveAccount,
     /// Update the focused account's stored credential.
     UpdateCredential,
+    /// Rebuild the focused account's local search index.
+    ///
+    /// No payload, the same reason as the two above: the target is the row
+    /// with focus. Local mail only -- nothing here reaches the network; see
+    /// `postio_session::reindex_account`'s own doc for why (#981).
+    RebuildAccountIndex,
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -776,6 +784,7 @@ impl Command {
             Command::ToggleAccountEnabled => CommandId::ToggleAccountEnabled,
             Command::RemoveAccount => CommandId::RemoveAccount,
             Command::UpdateCredential => CommandId::UpdateCredential,
+            Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -884,6 +893,7 @@ impl Command {
             CommandId::ToggleAccountEnabled => Command::ToggleAccountEnabled,
             CommandId::RemoveAccount => Command::RemoveAccount,
             CommandId::UpdateCredential => Command::UpdateCredential,
+            CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,
