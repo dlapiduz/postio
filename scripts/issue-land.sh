@@ -13,6 +13,8 @@
 #   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
+#   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
+#   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
 # -m is only for uncommitted work: CLAUDE.md says commit as you go, so the
 # ordinary case is a clean tree with the branch's commits already on it, and
@@ -82,6 +84,56 @@ run_doctests() {
 }
 
 TREE=$(git rev-parse --show-toplevel)
+
+# --detach: run this very script in a session of its own and return (#1129).
+#
+# A landing run from a tool call is killed when the call's cap runs out --
+# two in one day, 79 in the transcript history -- and a killed run commits
+# nothing, then re-pays the push and the CI wait. `setsid` puts the run in
+# its own process group, so the tool giving up on its call cannot reach it;
+# `nohup` alone where there is no setsid (macOS). Output goes to a log in
+# the worktree's private git dir, so `--status` can find it from any shell
+# and it goes away with the worktree. The PreToolUse hook refuses a
+# foreground landing and names this flag.
+LAND_LOG="$(git rev-parse --absolute-git-dir)/postio-land.log"
+LAND_PID="$(git rev-parse --absolute-git-dir)/postio-land.pid"
+case " $* " in
+    *" --status "*)
+        if [ ! -f "$LAND_LOG" ]; then
+            echo "no landing has been detached in this worktree (scripts/issue-land.sh --detach)."
+            exit 0
+        fi
+        if pid=$(cat "$LAND_PID" 2>/dev/null) && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "running (pid $pid), log: $LAND_LOG"
+        else
+            echo "finished, log: $LAND_LOG"
+        fi
+        grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
+        echo "--- last lines ---"
+        tail -n 5 "$LAND_LOG"
+        exit 0
+        ;;
+    *" --detach "*)
+        DETACHED_ARGS=()
+        for arg in "$@"; do
+            [ "$arg" = "--detach" ] || DETACHED_ARGS+=("$arg")
+        done
+        : > "$LAND_LOG"
+        if command -v setsid >/dev/null 2>&1; then
+            setsid bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+                > "$LAND_LOG" 2>&1 < /dev/null &
+        else
+            nohup bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+                > "$LAND_LOG" 2>&1 < /dev/null &
+        fi
+        printf '%s\n' "$!" > "$LAND_PID"
+        echo "detached (pid $!). It lands on its own; nothing you run now can kill it."
+        echo "log:    $LAND_LOG"
+        echo "status: scripts/issue-land.sh --status"
+        exit 0
+        ;;
+esac
+
 # `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than
 # paths, so the compile cache is shared across worktrees (#1101); this is
 # what puts them on PATH. Guarded because the self-tests copy this file into
@@ -102,7 +154,7 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
@@ -110,6 +162,7 @@ while [ $# -gt 0 ]; do
         --gates-only) GATES_ONLY=1; shift ;;
         --no-merge)   MERGE=0;      shift ;;
         --full)       FULL=1;       shift ;;
+        --wait)       WAIT=1;       shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -689,6 +742,30 @@ fi
 LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 
 [ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
+
+# Hand the merge to GitHub and go (#1107). PR open -> merged was p50 10 min
+# and p90 41 across 95 landings, all of it spent by the session that opened
+# the PR sitting in wait-for-checks.sh. A ruleset now requires the CI
+# checks, so `--auto` cannot merge before they are green -- which is the
+# hazard the waiting existed for (#135, #139). Asked of the repository
+# rather than assumed: a repository with auto-merge off (the self-tests'
+# sandboxes, a fork) takes the watching path below, and `--wait` asks for
+# it on purpose. Nobody waits in front of the PR, so a red check has to be
+# found afterwards: the next claim lists the caller's red PRs, /steward
+# sweeps them, and `issue-claim.sh --resume <n>` comes back to the branch.
+# GitHub deletes the head branch on merge; until then it is the PR.
+AUTO_MERGE_ALLOWED=$(gh repo view --json autoMergeAllowed --jq .autoMergeAllowed 2>/dev/null || true)
+if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
+    echo
+    echo "--- auto-merge ---"
+    gh pr merge --auto --rebase
+    echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
+    echo "Nothing waits here. If a check fails, your next claim will say so, and"
+    echo "    scripts/issue-claim.sh --resume $ISSUE"
+    echo "comes back to this branch to fix it on the same PR."
+    echo "Now claim the next issue -- finishing an issue is not finishing a session."
+    exit 0
+fi
 
 # Watch, do not fire and forget. GitHub's own --auto would merge immediately
 # here: it waits for *required* checks, branch protection is what makes a check
