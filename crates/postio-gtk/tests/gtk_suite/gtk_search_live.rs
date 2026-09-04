@@ -105,6 +105,42 @@ pub fn the_readout_answers_the_query_on_screen_and_no_other() {
     pump();
     assert_eq!(readout(&window), "14 hits · 11 ms");
 
+    // -- an account dropping out attaches the caveat, no query asked ------
+    //
+    // #1060: `unreachable` used to be fixed at the moment the answer came
+    // back, so an account that dropped out while the result sat on screen
+    // never showed up. `set_unreachable` replaces the caveat on the
+    // outcome already showing instead of asking the store anything.
+
+    let asked_before_status_moved = asked.borrow().len();
+    live.set_unreachable(vec!["Work".to_owned()]);
+    pump();
+    assert_eq!(
+        readout(&window),
+        "14 hits · 11 ms · Work unreachable",
+        "an account going offline attaches the caveat to the answer on screen"
+    );
+    assert_eq!(
+        asked.borrow().len(),
+        asked_before_status_moved,
+        "attaching the caveat must not ask the query again"
+    );
+
+    // -- the account coming back retracts it, still no query asked --------
+
+    live.set_unreachable(Vec::new());
+    pump();
+    assert_eq!(
+        readout(&window),
+        "14 hits · 11 ms",
+        "the account coming back retracts the caveat"
+    );
+    assert_eq!(
+        asked.borrow().len(),
+        asked_before_status_moved,
+        "retracting the caveat must not ask the query again either"
+    );
+
     // -- a redraw that changes nothing does not cancel a search -----------
 
     finder.set_query(Query {

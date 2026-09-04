@@ -52,6 +52,7 @@ mod search_live;
 mod search_open;
 mod search_results;
 mod search_return_and_tab;
+mod search_unreachable_retraction;
 mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
@@ -271,6 +272,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "unified_search_reach::a_unified_search_names_the_account_it_could_not_reach",
         unified_search_reach::a_unified_search_names_the_account_it_could_not_reach as fn(),
+    ),
+    (
+        "search_unreachable_retraction::an_account_going_away_and_coming_back_updates_the_caveat_without_asking_again",
+        search_unreachable_retraction::an_account_going_away_and_coming_back_updates_the_caveat_without_asking_again
+            as fn(),
     ),
     (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",

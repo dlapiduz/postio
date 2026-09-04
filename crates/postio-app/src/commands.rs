@@ -123,6 +123,23 @@ pub fn apply(
         state.update(quiet, |app_state| {
             app_state.set_connection(*account, *connection)
         });
+        // A unified search's caveat is fixed at the moment its answer comes
+        // back (ADR 0005 Q10, #812) -- so without this, an account dropping
+        // out or coming back while the result sits on screen left the
+        // readout saying something that had stopped being true, until the
+        // query was asked again (#1060). `feeds.apply` above has already
+        // folded this event into `Trackers`, so `unreachable_accounts` reads
+        // the connection state this event caused rather than the one before
+        // it. A no-op when nothing is on screen, or when the caveat has not
+        // changed -- see `Live::set_unreachable`.
+        if let Some(live) = window.finder().live() {
+            let scope = window.scope();
+            live.set_unreachable(crate::search::unreachable_accounts(
+                window,
+                &feeds.folders,
+                scope,
+            ));
+        }
     }
     match event {
         Event::ActionCompleted {
