@@ -35,6 +35,7 @@ mod manual_sync;
 mod onboarding_probe;
 mod orientation;
 mod parts_open_wiring;
+mod read_receipt_wiring;
 mod reader_loads;
 mod reading;
 mod reading_offline;
@@ -253,6 +254,10 @@ const CASES: &[(&str, fn())] = &[
         "unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it",
         unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it
             as fn(),
+    ),
+    (
+        "read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt",
+        read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
