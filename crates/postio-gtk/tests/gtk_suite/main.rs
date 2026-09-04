@@ -94,6 +94,7 @@ mod gtk_onboarding_enter;
 mod gtk_onboarding_guess;
 mod gtk_onboarding_name;
 mod gtk_onboarding_sync_window;
+mod gtk_orientation;
 mod gtk_pane_cycle;
 mod gtk_parts;
 mod gtk_prev_view;
@@ -596,6 +597,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state",
         gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state
+            as fn(),
+    ),
+    (
+        "gtk_orientation::the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none",
+        gtk_orientation::the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none
             as fn(),
     ),
     (
