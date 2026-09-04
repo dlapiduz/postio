@@ -113,7 +113,6 @@ search_query                      # crates/postio-core/src/state.rs:413
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 send_tracked                      # crates/postio-core/src/bridge.rs:212
 set_capabilities                  # crates/postio-sync/src/watch.rs:280
-set_connection                    # crates/postio-core/src/state.rs:639
 set_default                       # crates/postio-storage/src/repository/accounts.rs:378
 set_disk_full                     # crates/postio-sync/src/backfill.rs:499
 set_metered                       # crates/postio-sync/src/backfill.rs:478

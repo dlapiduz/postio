@@ -38,6 +38,7 @@ use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
+use postio_core::state::SharedState;
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -130,8 +131,9 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         wiring.runtime.clone(),
         Default::default(),
     );
+    let state = SharedState::default();
     for stream in [events, replies] {
-        commands::drain(&window, &feeds, stream, notifier.clone());
+        commands::drain(&window, &feeds, stream, notifier.clone(), state.clone());
     }
 
     // ── the list starts on the folder ───────────────────────────────────
