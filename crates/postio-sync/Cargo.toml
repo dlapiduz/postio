@@ -22,6 +22,11 @@ postio-account = { version = "0.2.0", path = "../postio-account", default-featur
 # it lands, and this crate is where it lands -- see `fetch_body` (#327).
 postio-index.workspace = true
 postio-model.workspace = true
+# The rule matcher and its stage classification (ADR 0008 Q3, #482). A pure
+# leaf -- `postio-model` and `chrono` -- and already in this crate's graph
+# through `postio-index`, so naming it directly costs nothing and says where
+# the two evaluation points get their answer from.
+postio-search.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 # Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so

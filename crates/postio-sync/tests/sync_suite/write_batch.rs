@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use postio_model::{
     Account, EmailAddress, Generation, Mailbox, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_search::rules::RuleSet;
 use postio_storage::repository::{ContactRepository, MessageRepository};
 use postio_storage::test_support;
 use postio_sync::commit_batch;
@@ -64,6 +65,7 @@ fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() {
         &inbox,
         Some(&account),
         &BTreeSet::new(),
+        &RuleSet::default(),
         &mut batch,
     )
     .expect("the batch commits");
@@ -125,6 +127,7 @@ fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &inbox,
         Some(&account),
         &BTreeSet::new(),
+        &RuleSet::default(),
         &mut first,
     )
     .expect("the first batch commits");
@@ -139,6 +142,7 @@ fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &inbox,
         Some(&account),
         &BTreeSet::from([1]),
+        &RuleSet::default(),
         &mut again,
     )
     .expect("the second batch commits");
