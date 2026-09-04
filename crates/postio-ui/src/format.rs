@@ -117,6 +117,42 @@ pub fn mail_weight(footprint: &MailFootprint, attachments_included: bool) -> Opt
     ))
 }
 
+/// An address or path, shortened from the middle: `transaction_at_…y.com`.
+///
+/// Both ends carry information and the middle does not: the local part says
+/// who, the domain says where, and the random string between them says only
+/// that a relay generated it. Apple's private-relay addresses are the case
+/// this exists for — 70 characters that turned the reader's remote-image
+/// notice into three lines of chrome above somebody's mail (#1008).
+///
+/// `…` rather than `...`: this goes in a menu, where one glyph is the
+/// difference between an elision and a filename.
+///
+/// A string already at or under `width` is returned unchanged, so a short
+/// address never grows a decoration it does not need.
+pub fn middle_truncate(text: &str, width: usize) -> String {
+    // By characters, not bytes: an address can carry non-ASCII, and slicing
+    // a UTF-8 string at a byte offset is a panic waiting for the first one.
+    let characters: Vec<char> = text.chars().collect();
+    if characters.len() <= width {
+        return text.to_owned();
+    }
+    // Under three there is no room for two ends and a marker, and returning
+    // something misleadingly short would be worse than an ellipsis alone.
+    if width <= 1 {
+        return "…".to_owned();
+    }
+    let keep = width - 1;
+    // The tail is the more identifying half — a domain distinguishes two
+    // relay addresses that share a prefix — so it gets the odd character.
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = characters[..head].iter().collect();
+    out.push('…');
+    out.extend(&characters[characters.len() - tail..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +237,44 @@ mod tests {
             mail_weight(&no_payloads, false).as_deref(),
             Some("890 MB downloaded")
         );
+    }
+
+    #[test]
+    fn a_short_address_is_left_alone() {
+        assert_eq!(middle_truncate("ada@example.com", 40), "ada@example.com");
+        assert_eq!(middle_truncate("ada@example.com", 15), "ada@example.com");
+    }
+
+    #[test]
+    fn a_relay_address_keeps_both_ends() {
+        // The case the notice bar exists to survive: 70 characters, of which
+        // the middle is a machine-generated token that identifies nothing.
+        let relay = "transaction_at_shop_12345@privaterelay.appleid.example";
+        let short = middle_truncate(relay, 30);
+        assert_eq!(short.chars().count(), 30, "{short}");
+        assert!(short.starts_with("transaction"), "{short}");
+        assert!(short.ends_with("appleid.example"), "{short}");
+        assert!(short.contains('…'), "{short}");
+    }
+
+    #[test]
+    fn the_tail_gets_the_odd_character() {
+        // A domain distinguishes two relay addresses that share a prefix, so
+        // when the two halves cannot be equal the far end is the one to keep.
+        let short = middle_truncate("abcdefghij", 6);
+        assert_eq!(short, "ab…hij");
+    }
+
+    #[test]
+    fn a_width_with_no_room_is_just_the_marker() {
+        assert_eq!(middle_truncate("abcdefghij", 1), "…");
+        assert_eq!(middle_truncate("abcdefghij", 0), "…");
+    }
+
+    #[test]
+    fn a_multibyte_address_does_not_split_a_character() {
+        // Slicing at a byte offset would panic here rather than truncate.
+        let short = middle_truncate("ünïcödé_sender@exämple.test", 12);
+        assert_eq!(short.chars().count(), 12, "{short}");
     }
 }

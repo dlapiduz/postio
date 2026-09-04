@@ -385,3 +385,204 @@ fn settle_for(how_long: std::time::Duration) {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
+
+/// The header names the conversation, the dividers fold its middle, and the
+/// footer carries its verbs (#1004, #1005, #1006).
+///
+/// Asserts on what a person would see — the words in the header, the text on
+/// the divider, which rows are on screen — rather than on what the pane was
+/// handed. A pane that was told about eight messages and drew none would pass
+/// the second kind of test and fail this one.
+pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| stub_reader());
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // Eight messages, all read but the last: the shape the canvas draws.
+    // `expanded_on_open` opens the newest and collapses the seven before it.
+    let mut messages: Vec<Row> = (1..=8).map(|id| message(id, true)).collect();
+    messages[7].seen = false;
+    let bo = EmailAddress::new(Some("Bo Ferris"), "bo@example.com");
+    for message in messages.iter_mut().skip(4) {
+        message.from = Some(bo.clone());
+    }
+    pane.open(messages);
+    crate::pump();
+
+    // ── the header ────────────────────────────────────────────────────────
+    assert_eq!(
+        pane.header().subject(),
+        "Tide gate interlock 1",
+        "the subject is the conversation's, taken from its first message"
+    );
+    let meta = pane.header().meta();
+    assert!(
+        meta.starts_with("8 messages · "),
+        "the header counts the stack it sits above: {meta}"
+    );
+    assert!(
+        meta.contains("Ada, Bo"),
+        "and names who is in it, shortened: {meta}"
+    );
+
+    // ── the folded run ────────────────────────────────────────────────────
+    // Seven collapsed in a row, so one divider stands in for all of them.
+    let dividers = pane.divider_labels();
+    assert_eq!(dividers.len(), 1, "one run, one divider: {dividers:?}");
+    assert!(
+        dividers[0].starts_with("7 earlier messages · "),
+        "the divider says how many it is hiding and who they are from: {}",
+        dividers[0]
+    );
+
+    // `Show` puts the individual rows back — still collapsed, not opened.
+    let before = pane.expanded_count();
+    pane.show_run(0..7);
+    crate::pump();
+    assert!(
+        pane.divider_labels().is_empty(),
+        "showing a run replaces its divider with the rows themselves"
+    );
+    assert_eq!(
+        pane.expanded_count(),
+        before,
+        "and opens nothing: `Show` is one step, not two"
+    );
+
+    // ── expand all ────────────────────────────────────────────────────────
+    pane.expand_all();
+    crate::pump();
+    assert_eq!(
+        pane.expanded_count(),
+        8,
+        "`O` opens every message, folded run included"
+    );
+    assert!(
+        pane.divider_labels().is_empty(),
+        "nothing is collapsed, so there is nothing left to fold"
+    );
+
+    // ── the footer ────────────────────────────────────────────────────────
+    let footer = pane.footer();
+    assert!(footer.is_visible(), "a conversation has conversation verbs");
+    assert_eq!(
+        footer
+            .button(postio_core::CommandId::Reply)
+            .expect("reply is in the footer")
+            .key(),
+        "e",
+        "the footer button names the key that does the same thing"
+    );
+    assert_eq!(
+        footer
+            .button(postio_core::CommandId::ArchiveThread)
+            .expect("archive thread is in the footer")
+            .key(),
+        "A"
+    );
+
+    // An empty pane has nothing to name and no verbs to offer.
+    pane.open(Vec::new());
+    crate::pump();
+    assert!(!footer.is_visible());
+
+    window.close();
+}
+
+/// `J`/`K` walk the stack, `space` folds, and neither wraps (#1007).
+///
+/// Asserts on which message is focused and whether its body is showing —
+/// what a person sees — rather than on the pane having been told to move.
+pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| stub_reader());
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // Four read messages: focus opens on the newest, per the pane's own
+    // policy, which puts it at the end with nowhere further to go.
+    pane.open((1..=4).map(|id| message(id, true)).collect());
+    crate::pump();
+    assert_eq!(
+        pane.focused_index(),
+        Some(3),
+        "a fully-read conversation opens on its newest"
+    );
+
+    assert!(
+        !pane.focus_next(),
+        "there is nothing after the last message, and `J` says so rather \
+         than wrapping round to the first"
+    );
+    assert_eq!(pane.focused_index(), Some(3), "and nothing moved");
+
+    assert!(pane.focus_previous());
+    assert_eq!(pane.focused_index(), Some(2));
+    assert!(pane.focus_previous());
+    assert!(pane.focus_previous());
+    assert_eq!(pane.focused_index(), Some(0));
+    assert!(
+        !pane.focus_previous(),
+        "and the same at the top: `K` stops at the first message"
+    );
+
+    // Landing expands, so what `J` walks onto is readable rather than a
+    // one-line header you then have to open.
+    let focused = pane.focused().expect("something is focused");
+    assert!(
+        pane.is_expanded(focused),
+        "walking onto a message opens it -- a dead end is not a landing"
+    );
+
+    // `space` is the only way back to collapsed-and-focused.
+    pane.toggle_fold();
+    crate::pump();
+    assert!(
+        !pane.is_expanded(focused),
+        "`space` folds the message the keyboard is on"
+    );
+    assert_eq!(
+        pane.focused(),
+        Some(focused),
+        "and leaves the keyboard where it was"
+    );
+
+    pane.toggle_fold();
+    crate::pump();
+    assert!(
+        pane.is_expanded(focused),
+        "twice returns the pane to where it started"
+    );
+
+    // An empty pane has nowhere to walk, and says so rather than panicking.
+    pane.open(Vec::new());
+    crate::pump();
+    assert!(!pane.focus_next());
+    assert!(!pane.focus_previous());
+    pane.toggle_fold();
+
+    window.close();
+}

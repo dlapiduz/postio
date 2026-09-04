@@ -176,8 +176,8 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     list.first_row();
-    let cursor = list.cursor_row().expect("a row to drill into");
-    window.open_thread(&cursor);
+    let cursor = list.cursor_row().expect("a row to land on");
+    window.open_conversation(&cursor);
     assert!(
         settle_until(|| window.conversation().len() == 2),
         "opening the thread never filled the reading pane with the \
@@ -185,12 +185,12 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     let first_in_thread = window
-        .thread()
+        .conversation()
         .rows()
         .first()
-        .expect("the thread has a first row")
+        .expect("the conversation has a first message")
         .id;
-    let second_in_thread = window.thread().rows()[1].id;
+    let second_in_thread = window.conversation().rows()[1].id;
 
     // Both messages are unread, so both expand (well under the cap) and
     // both should be checkable.

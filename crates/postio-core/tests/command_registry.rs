@@ -24,7 +24,6 @@ const CONFIG_BINDINGS: &[(&str, &str)] = &[
     ("prev_message", "k"),
     ("open_message", "Return"),
     ("back", "Escape"),
-    ("thread", "t"),
     ("archive", "a"),
     ("archive_thread", "A"),
     ("undo", "u"),
@@ -113,7 +112,6 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
         ("archive", "a"),
         ("archive_thread", "A"),
         ("undo", "u"),
-        ("thread", "t"),
         ("compose", "c"),
         ("search", "/"),
         ("command_palette", "ctrl+k"),
@@ -222,23 +220,6 @@ fn context_filtering_drives_the_palette_and_cheat_sheet() {
             "the command palette must be reachable from {context}"
         );
         assert!(registry::get(CommandId::Back).available_in(*context));
-    }
-}
-
-#[test]
-fn the_thread_view_toggles_are_only_meaningful_in_the_thread() {
-    // postio-yzc: the unread filter and the order toggle are properties of
-    // the thread column itself, so binding them anywhere else would let a
-    // key do something in a context with nothing for it to act on.
-    for id in [CommandId::ToggleThreadUnread, CommandId::ToggleThreadOrder] {
-        for context in Context::ALL {
-            assert_eq!(
-                registry::get(id).available_in(*context),
-                *context == Context::Thread,
-                "{id} should be reachable in Thread and nowhere else, but \
-                 {context} disagrees"
-            );
-        }
     }
 }
 

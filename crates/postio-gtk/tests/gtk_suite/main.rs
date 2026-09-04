@@ -59,7 +59,6 @@ mod gtk_composer_signature_default;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_conversation;
-mod gtk_conversation_index;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
 mod gtk_display_required;
@@ -133,13 +132,11 @@ mod gtk_sidebar_sections;
 mod gtk_sidebar_tree;
 mod gtk_signature_placement;
 mod gtk_style;
-mod gtk_thread;
-mod gtk_thread_dwell_cancel;
-mod gtk_thread_scope;
 mod gtk_toast;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
+mod gtk_widgets;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
@@ -253,16 +250,21 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
     ),
     (
+        "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
+        gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
+            as fn(),
+    ),
+    (
+        "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
+        gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
+    ),
+    (
         "gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader",
         gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
     ),
     (
         "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
         gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
-    ),
-    (
-        "gtk_conversation_index::the_column_and_the_conversation_share_one_current_message",
-        gtk_conversation_index::the_column_and_the_conversation_share_one_current_message as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
@@ -579,8 +581,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
     ),
     (
-        "gtk_settings_ui::the_six_rows_render_from_a_given_config",
-        gtk_settings_ui::the_six_rows_render_from_a_given_config as fn(),
+        "gtk_settings_ui::the_five_rows_render_from_a_given_config",
+        gtk_settings_ui::the_five_rows_render_from_a_given_config as fn(),
     ),
     (
         "gtk_settings_ui::the_default_config_renders_the_default_row_values",
@@ -648,22 +650,33 @@ const CASES: &[(&str, fn())] = &[
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
     ),
     (
-        "gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock",
-        gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock as fn(),
-    ),
-    (
-        "gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly",
-        gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly as fn(),
-    ),
-    (
-        "gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it",
-        gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it
-            as fn(),
-    ),
-    (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
+    ),
+    (
+        "gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all",
+        gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all as fn(),
+    ),
+    (
+        "gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises",
+        gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_never_wraps_however_long_the_sentence",
+        gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
+    ),
+    (
+        "gtk_widgets::the_blocked_images_notice_counts_and_elides",
+        gtk_widgets::the_blocked_images_notice_counts_and_elides as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_overflow_replaces_rather_than_appends",
+        gtk_widgets::a_notice_overflow_replaces_rather_than_appends as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu",
+        gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu as fn(),
     ),
     (
         "gtk_window::the_window_opens_and_wears_the_design",

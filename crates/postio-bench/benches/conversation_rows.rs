@@ -23,7 +23,7 @@
 //! # What is measured, and what is not
 //!
 //! One iteration is **binding and measuring a read-ahead window's worth of
-//! rows** — the work `GtkListView` does when a drill-in hands it a thread.
+//! rows** — the work `GtkListView` does when a conversation is handed to it.
 //! Rasterising is deliberately outside the loop, for the reason
 //! `list_scroll.rs` gives: it happens on the GPU, off this thread, and a
 //! bench cannot attribute it.
@@ -31,7 +31,7 @@
 //! # Running
 //!
 //! ```sh
-//! cargo bench -p postio-gtk --bench thread_drill
+//! cargo bench -p postio-gtk --bench conversation_rows
 //! ```
 //!
 //! It needs a display and skips without one. CI compiles benches but does not
@@ -137,8 +137,8 @@ fn mounted() -> Option<ThreadRowView> {
     Some(row)
 }
 
-/// Bind and measure a read-ahead window's worth of rows, the way a drill-in
-/// into a long thread does.
+/// Bind and measure a read-ahead window's worth of rows, the way opening a
+/// long conversation does.
 fn fill_the_window(row: &ThreadRowView, from: i64) {
     for index in 0..READ_AHEAD {
         row.set_row(Some(message(from + index)), (index + 1) as u32);
@@ -146,14 +146,14 @@ fn fill_the_window(row: &ThreadRowView, from: i64) {
     }
 }
 
-fn bench_thread_drill_in(c: &mut Criterion) {
+fn bench_conversation_rows(c: &mut Criterion) {
     let Some(row) = mounted() else {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     };
 
     let mut from = 0;
-    c.bench_function("thread drill-in, one read-ahead window", |b| {
+    c.bench_function("conversation rows, one read-ahead window", |b| {
         b.iter(|| {
             from += READ_AHEAD;
             fill_the_window(&row, from);
@@ -192,7 +192,7 @@ fn bench_thread_drill_in(c: &mut Criterion) {
     let quiet = load.is_none_or(|load| load < cores * QUIET_ENOUGH);
 
     eprintln!(
-        "thread drill-in: best of {RUNS} was {best:?} against a {INTERACTION_BUDGET:?} \
+        "conversation rows: best of {RUNS} was {best:?} against a {INTERACTION_BUDGET:?} \
          budget, at load {} on {cores} cores",
         load.map(|load| format!("{load:.2}"))
             .unwrap_or_else(|| "unknown".to_string()),
@@ -200,7 +200,7 @@ fn bench_thread_drill_in(c: &mut Criterion) {
 
     if !quiet {
         eprintln!(
-            "thread drill-in: NOT asserting the budget — this machine is too \
+            "conversation rows: NOT asserting the budget — this machine is too \
              busy for the number above to mean anything. Re-run it quiet."
         );
         return;
@@ -211,5 +211,5 @@ fn bench_thread_drill_in(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_thread_drill_in);
+criterion_group!(benches, bench_conversation_rows);
 criterion_main!(benches);

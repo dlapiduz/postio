@@ -9,10 +9,12 @@ extend_selection_up	K | shift+Up
 select_all	ctrl+a
 prev_view	h | Left
 back	Escape
-thread	t
-toggle_thread_unread	n
-toggle_thread_order	o
 toggle_result_order	o
+next_in_conversation	J
+prev_in_conversation	K
+toggle_fold	space
+view_original	ctrl+o
+expand_all	O
 reply	e
 reply_all	E
 forward	f

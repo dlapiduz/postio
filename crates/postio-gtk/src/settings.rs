@@ -2149,12 +2149,6 @@ impl SettingsPanel {
             |ui, value| ui.show_hover_actions = value,
         ));
         imp.ui_box.append(&self.ui_switch_row(
-            "Drill into threads with t",
-            "Let t turn the list column into the focused thread",
-            config.ui.thread_drill,
-            |ui, value| ui.thread_drill = value,
-        ));
-        imp.ui_box.append(&self.ui_switch_row(
             "Show key hints",
             "The focused row's own keyboard hints",
             config.ui.show_key_hints,

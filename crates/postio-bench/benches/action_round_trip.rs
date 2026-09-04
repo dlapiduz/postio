@@ -186,7 +186,7 @@ impl World {
 const SIZES: [usize; 3] = [1, 50, 500];
 
 /// How many times the budget check runs before taking the fastest — the same
-/// tolerance `thread_drill.rs` uses, for the same reason: a single timing on
+/// tolerance `conversation_rows.rs` uses, for the same reason: a single timing on
 /// a machine building something else measures the scheduler, not the code.
 const RUNS: usize = 5;
 

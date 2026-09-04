@@ -1,7 +1,7 @@
 # ADR 0015 — One row per thread, and the conversation pane
 
 - **Status:** Accepted — **GO** (2026-08-25), **Q1 implementation and Q4
-  revised 2026-08-26**
+  revised 2026-08-26**, **Q4's column superseded 2026-09-03** (see §Q4)
 - **Date:** 2026-08-25
 - **Issue:** [#134](https://github.com/dlapiduz/postio/issues/134), decided by
   the maintainer: a single row per thread in the list, and the reading pane
@@ -170,7 +170,30 @@ means.
 - Undo takes the whole unit back, which the `UndoStack` already handles
   — an archive of a six-message thread is one entry carrying its inverse.
 
-## Q4 — The conversation pane, and what the column is for (revised 2026-08-26)
+## Q4 — The conversation pane, and what the column is for (revised 2026-08-26, **superseded 2026-09-03**)
+
+> **Superseded, and it is worth saying why the compromise below did not hold.**
+> Canvas turn 8 (#1000, #1003) removes the drill-in column outright: the list
+> column is only ever the list, and the conversation lives in the reading pane
+> and nowhere else.
+>
+> The "column is an index, pane is the conversation" split below was an honest
+> attempt to keep a surface that already worked. What it bought was a table of
+> contents; what it cost was **two surfaces holding the same conversation and
+> a guarded echo between them** — the pane announcing focus, the column moving
+> its cursor, the column announcing, the pane focusing, with a re-entrancy
+> flag held for the duration of each call to stop it ringing. That is a lot of
+> machinery to keep two lists of the same eight messages agreeing, and the
+> only thing it enabled was jumping, which `J`/`K` in the pane now does
+> without a second surface to keep in step.
+>
+> Everything else in this section stands and is now the pane's alone: the
+> whole conversation across folders, read messages collapsed, one current
+> message, focus on the first unread, `a` never meaning one message. `t`,
+> `n` (unread-only) and `o` (order) are gone with the column, and
+> `Context::Thread` is `Context::Conversation` — the surface it names is the
+> pane.
+
 
 Opening a thread row shows **the whole conversation, across folders** — which
 is what #44 already made the drill-in read; this ADR gives it the Gmail shape

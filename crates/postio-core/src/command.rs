@@ -77,14 +77,18 @@ command_ids! {
     PrevView => "prev_view",
     /// Leave the current overlay, search or composer.
     Back => "back",
-    /// Show the whole thread the focused message belongs to.
-    Thread => "thread",
-    /// Show only unread messages in the open thread, or show everything again.
-    ToggleThreadUnread => "toggle_thread_unread",
-    /// Reverse which end of the open thread comes first.
-    ToggleThreadOrder => "toggle_thread_order",
     /// Switch a search's results between ranked and date order.
     ToggleResultOrder => "toggle_result_order",
+    /// Move to the next message inside the open conversation.
+    NextInConversation => "next_in_conversation",
+    /// Move to the previous message inside the open conversation.
+    PrevInConversation => "prev_in_conversation",
+    /// Fold or unfold the focused message of the open conversation.
+    ToggleFold => "toggle_fold",
+    /// Draw the message on screen as its sender wrote it, not reduced.
+    ViewOriginal => "view_original",
+    /// Open every collapsed message in the conversation.
+    ExpandAll => "expand_all",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -358,17 +362,33 @@ pub enum Command {
     PrevView,
     /// Leave the current overlay, search or composer.
     Back,
-    /// Show a thread, or the focused message's thread when `thread` is `None`.
-    Thread {
-        /// The thread to show; `None` means the focused message's thread.
-        thread: Option<ThreadId>,
-    },
-    /// Toggle the open thread's unread-only filter.
-    ToggleThreadUnread,
-    /// Reverse the open thread's message order.
-    ToggleThreadOrder,
     /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder,
+    /// Walk down the open conversation's stack (#1007).
+    ///
+    /// No payload: `j`/`k` move between *threads* in the list, and these
+    /// move between messages inside the one that is open. Two axes, two
+    /// pairs of keys, and which one you are on is a fact about where the
+    /// keyboard is rather than about what you pressed.
+    NextInConversation,
+    /// Walk up the open conversation's stack (#1007).
+    PrevInConversation,
+    /// Fold or unfold the conversation's focused message (#1007).
+    ///
+    /// The only way to *collapse* the focused message: landing on one
+    /// expands it, so a collapsed-and-focused message is a state only this
+    /// reaches.
+    ToggleFold,
+    /// Leave reader view for the sender's own markup (#1009).
+    ///
+    /// No payload: it always means the message on screen. Reader view is a
+    /// per-message state, so there is nothing else it could mean.
+    ViewOriginal,
+    /// Expand every collapsed message in the open conversation (#1004).
+    ///
+    /// No payload: it means the conversation on screen, which is the only
+    /// one there is.
+    ExpandAll,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -700,10 +720,12 @@ impl Command {
             Command::SelectAll => CommandId::SelectAll,
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
-            Command::Thread { .. } => CommandId::Thread,
-            Command::ToggleThreadUnread => CommandId::ToggleThreadUnread,
-            Command::ToggleThreadOrder => CommandId::ToggleThreadOrder,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
+            Command::NextInConversation => CommandId::NextInConversation,
+            Command::PrevInConversation => CommandId::PrevInConversation,
+            Command::ToggleFold => CommandId::ToggleFold,
+            Command::ViewOriginal => CommandId::ViewOriginal,
+            Command::ExpandAll => CommandId::ExpandAll,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -787,10 +809,12 @@ impl Command {
             CommandId::SelectAll => Command::SelectAll,
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
-            CommandId::Thread => Command::Thread { thread: None },
-            CommandId::ToggleThreadUnread => Command::ToggleThreadUnread,
-            CommandId::ToggleThreadOrder => Command::ToggleThreadOrder,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
+            CommandId::NextInConversation => Command::NextInConversation,
+            CommandId::PrevInConversation => Command::PrevInConversation,
+            CommandId::ToggleFold => Command::ToggleFold,
+            CommandId::ViewOriginal => Command::ViewOriginal,
+            CommandId::ExpandAll => Command::ExpandAll,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },

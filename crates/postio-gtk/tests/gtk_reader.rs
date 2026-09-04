@@ -182,6 +182,53 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "render clears the previous message's banner until the caller sets a new one"
     );
 
+    // ── #1009: a newsletter opens in reader view, and `C-o` leaves it ──────
+    // Rendered above, so the state is whatever `render` decided for it.
+    assert!(
+        reader.is_reader_view(),
+        "a campaign should open reduced; that is what reader view is for"
+    );
+    assert!(
+        reader.reader_notice_visible(),
+        "and it has to say so -- a surface that silently rewrites somebody's \
+         mail is worse than one that does not rewrite it"
+    );
+
+    let finished = track_load_finished(&reader);
+    reader.click_view_original();
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(
+        !reader.is_reader_view(),
+        "`View original` should have gone back to the sender's own markup"
+    );
+    assert!(
+        !reader.reader_notice_visible(),
+        "and the notice goes with it: an offer to show what is already on \
+         screen is a control that does nothing"
+    );
+
+    // Per message, never sticky. Somebody who wanted to see one newsletter's
+    // layout has said nothing at all about the next one.
+    let finished = track_load_finished(&reader);
+    reader.render(&parsed.body, Some("weekly@news.example.org"));
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(
+        reader.is_reader_view(),
+        "the next message decides for itself"
+    );
+
+    // ── and ordinary correspondence is never dragged into it ──────────────
+    let ordinary = test_corpus::load("multipart-alternative");
+    let ordinary = postio_model::mime::parse(ordinary.bytes());
+    let finished = track_load_finished(&reader);
+    reader.render(&ordinary.body, Some("ada.norwood@example.com"));
+    wait_for(&finished, Duration::from_secs(5));
+    assert!(
+        !reader.is_reader_view(),
+        "a person's actual mail must look like the person wrote it"
+    );
+    assert!(!reader.reader_notice_visible());
+
     // ── #319: the header puts sender, subject and date on screen ──────────
     let header = reader.header();
     let ada = EmailAddress::new(Some("Ada Lovelace"), "ada@example.com");

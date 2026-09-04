@@ -44,38 +44,38 @@ use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use postio_core::{CommandId, Keymap};
 use postio_model::address::EmailAddress;
+// The people in a conversation, short and newest-biased. The rule lives in
+// `postio-ui`: the list row and the conversation header both draw this line,
+// and two surfaces shortening the same names two ways is what moving it
+// prevents (#1002).
+use postio_ui::conversation::participants as participants_line;
 
 use crate::list::Row;
 
 /// The commands the focused row hints at, and the labels the canvas gives
 /// them — canvas order, not registry order.
-const HINT_COMMANDS: [(CommandId, &str); 3] = [
-    (CommandId::Reply, "reply"),
-    (CommandId::Archive, "archive"),
-    (CommandId::Thread, "thread"),
-];
+/// Two, not three. `t` used to be here, hinting at the drill-in column that
+/// a thread row could open; the conversation is what the reading pane shows
+/// the moment the cursor lands on the row, so there is no third verb to
+/// announce (#1003).
+const HINT_COMMANDS: [(CommandId, &str); 2] =
+    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
 
-/// The hints for a keymap alone, `Thread` included: the rebinding behaviour
-/// [`hints_for_row`] shares with every entry in [`HINT_COMMANDS`], tested
-/// here without a row to keep that half of the contract separate from the
-/// thread-count filter.
+/// The hints for a keymap alone.
 #[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, true)
+    filtered_hints(keymap)
 }
 
-/// `hints_for`, minus `Thread` when the row has nothing to thread — the
-/// same test the badge uses (`thread_count > 1`, in `build`), so the badge
-/// and the hint can never disagree. A row that has not arrived yet (`None`)
-/// has nothing to thread either.
-fn hints_for_row(keymap: &Keymap, row: Option<&Row>) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, row.is_some_and(|row| row.thread_count > 1))
+/// The hints a row shows. Every hint applies to every row now: none of them
+/// depends on whether the row stands for more than one message.
+fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
+    filtered_hints(keymap)
 }
 
-fn filtered_hints(keymap: &Keymap, threaded: bool) -> Vec<(String, &'static str)> {
+fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
     HINT_COMMANDS
         .iter()
-        .filter(|(command, _)| threaded || *command != CommandId::Thread)
         .filter_map(|(command, label)| {
             keymap
                 .binding(*command)
@@ -1544,98 +1544,6 @@ fn initials_source(row: &Row) -> String {
         .unwrap_or_else(|| "unknown sender".to_string())
 }
 
-/// How many names fit before the line starts eliding.
-const NAMES_SHOWN: usize = 3;
-
-/// The people in a conversation, short and newest-biased.
-///
-/// Short names, because the column is one line beside a subject and a
-/// snippet: a conversation between four people spelled out in full would push
-/// everything else off the row. First name where there is a display name, the
-/// address's local part where there is not — the same information a person
-/// uses to recognise a thread at a glance.
-///
-/// **Newest-biased when it elides.** Participants arrive in first-seen order,
-/// so the interesting end is the far one: who started the conversation still
-/// identifies it, and who spoke most recently is what changed since you last
-/// looked. Both survive; the middle is what goes.
-fn participants_line(participants: &[EmailAddress]) -> String {
-    let short = |address: &EmailAddress| -> String {
-        let display = address.display().to_string();
-        // A display name is "Ada Norwood"; an address falls back to its local
-        // part, which is what a sender without a name has to identify them.
-        // Trailing punctuation goes with the quotes. "Bergstrom, Tove" is
-        // what Exchange and most directories write, and its first token is
-        // `Bergstrom,` -- which the join below then turns into
-        // "Bergstrom,, Jonas" (#826). Trimmed rather than split on, because
-        // the comma is the only part that is noise: the surname before it is
-        // exactly the short name this wants.
-        let name = display
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim_matches(|c: char| c == '"' || c == '\'')
-            .trim_end_matches([',', ';'])
-            .to_string();
-        if name.contains('@') {
-            return name.split('@').next().unwrap_or(&name).to_string();
-        }
-        if !name.is_empty() {
-            return name;
-        }
-        // Nothing usable was left -- a display name that is only punctuation,
-        // or none at all. The local part is what identifies a sender who has
-        // not given a name, which is the same answer the `@` branch above
-        // reaches for; falling back to the raw display here would put the
-        // punctuation straight back into the row.
-        address
-            .local_part()
-            .map(str::to_owned)
-            .unwrap_or_else(|| display.clone())
-    };
-
-    // Distinct first, on the full name: one person writing five times is one
-    // name, and two different people can share a first name.
-    let mut distinct: Vec<&EmailAddress> = Vec::new();
-    for address in participants {
-        if !distinct
-            .iter()
-            .any(|seen| seen.display() == address.display())
-        {
-            distinct.push(address);
-        }
-    }
-
-    // One participant is not a crowd, and shortening it loses information for
-    // nothing: "Site Office" becomes "Site" and an address with no display
-    // name becomes half of itself. A conversation with one voice reads
-    // exactly like the message row it replaced, which is what the canvas
-    // draws.
-    if distinct.len() == 1 {
-        return distinct[0].display().to_string();
-    }
-
-    let mut names: Vec<String> = Vec::new();
-    for address in distinct {
-        let name = short(address);
-        if !name.is_empty() && !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    match names.len() {
-        0 => String::new(),
-        n if n <= NAMES_SHOWN => names.join(", "),
-        _ => {
-            let last = names.len();
-            format!(
-                "{} .. {}",
-                names[0],
-                names[last - (NAMES_SHOWN - 1)..].join(", ")
-            )
-        }
-    }
-}
-
 /// The one number `lay_out` hands back; the layouts stay cached.
 struct Summary {
     height: f32,
@@ -1646,160 +1554,6 @@ mod tests {
     use super::*;
     use chrono::{Local, TimeZone, Utc};
     use postio_model::ids::MessageId;
-
-    // -- the participants line (ADR 0015 Q2, #307) ------------------------
-
-    fn people(names: &[(&str, &str)]) -> Vec<EmailAddress> {
-        names
-            .iter()
-            .map(|(name, address)| EmailAddress::new(Some(*name), *address))
-            .collect()
-    }
-
-    #[test]
-    fn one_participant_keeps_their_whole_name() {
-        // A conversation with one voice has to read exactly like the message
-        // row it replaced — every row in a folder is a thread row now, so
-        // shortening here would shorten the ordinary case. "Site Office"
-        // must not become "Site".
-        assert_eq!(
-            participants_line(&people(&[("Ada Norwood", "ada@example.com")])),
-            "Ada Norwood"
-        );
-        assert_eq!(
-            participants_line(&people(&[("Site Office", "site@example.com")])),
-            "Site Office"
-        );
-    }
-
-    #[test]
-    fn a_last_first_display_name_does_not_leave_its_comma_behind() {
-        // "Bergstrom, Tove" is what Exchange and most directories put in a
-        // display name, and shortening it to the first whitespace token kept
-        // the comma -- so joining the names produced "Bergstrom,, Jonas",
-        // which reads as a rendering fault rather than as two people (#826).
-        assert_eq!(
-            participants_line(&people(&[
-                ("Quinn Abara", "quinn@example.net"),
-                ("Bergstrom, Tove", "tove@example.com"),
-                ("Jonas Vek", "jonas@example.org"),
-            ])),
-            "Quinn, Bergstrom, Jonas"
-        );
-    }
-
-    #[test]
-    fn a_last_first_name_survives_the_elision_too() {
-        // The elided branch joins with ", " as well, so it has the same
-        // problem and needs the same proof -- this is the shape the shot in
-        // #826 actually showed.
-        assert_eq!(
-            participants_line(&people(&[
-                ("Quinn Abara", "quinn@example.net"),
-                ("Ada Norwood", "ada@example.com"),
-                ("Priya Raman", "priya@example.org"),
-                ("Bergstrom, Tove", "tove@example.com"),
-                ("Jonas Vek", "jonas@example.org"),
-            ])),
-            "Quinn .. Bergstrom, Jonas"
-        );
-    }
-
-    #[test]
-    fn a_trailing_comma_is_not_mistaken_for_the_whole_name() {
-        // The trim must not eat a name that is only punctuation, or a sender
-        // whose display name is a stray comma would vanish from the row
-        // rather than being named by their address.
-        assert_eq!(
-            participants_line(&people(&[
-                (",", "odd@example.com"),
-                ("Jonas Vek", "jonas@example.org"),
-            ])),
-            "odd, Jonas"
-        );
-    }
-
-    #[test]
-    fn a_short_conversation_names_everyone_in_it() {
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-                ("Tove Bergstrom", "tove@example.com"),
-            ])),
-            "Ada, Quinn, Tove"
-        );
-    }
-
-    #[test]
-    fn a_long_conversation_keeps_both_ends_and_drops_the_middle() {
-        // Newest-biased: whoever started it still identifies the
-        // conversation, and whoever spoke last is what changed since you
-        // looked. The middle is what nobody scans for.
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-                ("Jonas Vek", "jonas@example.org"),
-                ("Tove Bergstrom", "tove@example.com"),
-                ("Priya Raman", "priya@example.org"),
-            ])),
-            "Ada .. Tove, Priya"
-        );
-    }
-
-    #[test]
-    fn one_person_writing_repeatedly_is_named_once() {
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-            ])),
-            "Ada, Quinn"
-        );
-    }
-
-    #[test]
-    fn one_person_writing_repeatedly_and_alone_is_not_a_crowd() {
-        // Deduplication happens before the "is this one voice" test, or a
-        // thread where one person replied to themselves would read as two.
-        assert_eq!(
-            participants_line(&people(&[
-                ("Site Office", "site@example.com"),
-                ("Site Office", "site@example.com"),
-            ])),
-            "Site Office"
-        );
-    }
-
-    #[test]
-    fn a_lone_sender_with_no_display_name_keeps_their_whole_address() {
-        assert_eq!(
-            participants_line(&[EmailAddress::new(None::<&str>, "ada.norwood@example.com")]),
-            "ada.norwood@example.com"
-        );
-    }
-
-    #[test]
-    fn a_crowd_with_no_display_names_is_named_by_local_parts() {
-        // Several addresses do not fit; their local parts do, and are what
-        // distinguishes them.
-        assert_eq!(
-            participants_line(&[
-                EmailAddress::new(None::<&str>, "ada@example.com"),
-                EmailAddress::new(None::<&str>, "quinn@example.net"),
-            ]),
-            "ada, quinn"
-        );
-    }
-
-    #[test]
-    fn no_participants_is_empty_rather_than_a_placeholder() {
-        // A message row has none, and `initials_source` falls back to the
-        // sender rather than drawing something that looks like a thread.
-        assert_eq!(participants_line(&[]), "");
-    }
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
@@ -1842,11 +1596,7 @@ mod tests {
         let defaults = default_hints();
         assert_eq!(
             defaults,
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
             "the registry's own bindings, canvas order"
         );
 
@@ -1857,11 +1607,7 @@ mod tests {
         let rebound = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             rebound,
-            vec![
-                ("e".to_string(), "reply"),
-                ("x".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
             "a rebind in [keys] must reach the hint, not just the resolver"
         );
     }
@@ -1884,51 +1630,6 @@ mod tests {
     }
 
     #[test]
-    fn a_row_with_no_thread_drops_the_thread_hint() {
-        // Matches the badge's own threshold (`row.rs`'s `build`, filtering
-        // on `thread_count > 1`): the badge and the hint must never disagree
-        // about whether there is a thread here to open.
-        let keymap = Keymap::resolve(&Default::default());
-        let mut row = Row {
-            id: MessageId::new(1),
-            thread: None,
-            from: None,
-            subject: None,
-            preview: None,
-            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
-            seen: true,
-            flagged: false,
-            answered: false,
-            draft: false,
-            has_attachments: false,
-            thread_count: 1,
-            participants: Vec::new(),
-        };
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
-            "one message in the thread is not a thread to open"
-        );
-
-        row.thread_count = 2;
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
-            "more than one message in the thread, so the hint returns"
-        );
-
-        assert_eq!(
-            hints_for_row(&keymap, None),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-            "no row bound yet, nothing to thread either"
-        );
-    }
-
-    #[test]
     fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
         // Taking `a` for something else in the same context leaves Archive
         // with no key at all — reachable only from the palette. A hint that
@@ -1941,7 +1642,7 @@ mod tests {
         let hints = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             hints,
-            vec![("e".to_string(), "reply"), ("t".to_string(), "thread")],
+            vec![("e".to_string(), "reply")],
             "archive lost its key to forward, so its hint disappears rather than lying"
         );
     }

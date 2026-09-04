@@ -902,7 +902,9 @@ impl Session {
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
     pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
+        use postio_ui::reader::document::{
+            Rendering, absent_html, body_html, document_for, suits_reader_view, wrap_document,
+        };
 
         let remote = postio_body::RemoteImages::from(remote);
         // The blob store is not consulted: a body is a compressed column on
@@ -931,8 +933,18 @@ impl Session {
                 body,
                 encoding_problems: _,
             } => {
-                let (content, _held_back) = body_html(&body, remote);
-                document_for(&content, remote)
+                // Reader view is decided per message from the message, the
+                // same rule the GTK reader uses (#1009). This frontend has no
+                // notice surface to offer `View original` through yet — the
+                // same gap `encoding_problems` above names — so what it draws
+                // is what the rule chooses, and nothing can leave it.
+                let rendering = if suits_reader_view(&body) {
+                    Rendering::Reader
+                } else {
+                    Rendering::Original
+                };
+                let drawn = body_html(&body, remote, rendering);
+                document_for(&drawn.html, remote)
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing

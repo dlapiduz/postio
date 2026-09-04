@@ -43,7 +43,8 @@ pub mod message_header;
 pub mod scheme;
 pub mod view;
 
-pub use actions::ReaderActions;
+// The reading pane's bar is a `crate::widgets::ActionBar` now (#1002);
+// `actions` still owns which four verbs it carries.
 pub use allowlist::RemoteImageAllowList;
 pub use message_header::MessageHeader;
 pub use postio_body::{RemoteImages, quote, sanitize};

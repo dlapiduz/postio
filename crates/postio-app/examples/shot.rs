@@ -200,7 +200,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// Block until the list actually holds its first page of mail.
 ///
 /// Every mode after `populate` reads the list back: `selected` picks rows out
-/// of it, `thread` drills into the first one, `open` clicks it. The
+/// of it, `conversation` opens the first one, `open` clicks it. The
 /// hand-rolled source this replaced answered out of a `Vec` and was ready the
 /// instant it was installed; a real `Wiring` crosses to the runtime and
 /// answers on a later turn of the main loop, so without this a mode found an
@@ -350,7 +350,6 @@ fn show_settings(window: &Window) {
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
-         thread_drill = true\n\n\
          [keys]\n\
          archive = \"a\"\n\
          archive_thread = \"A\"\n\
@@ -844,16 +843,16 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
-    // The conversation pane (ADR 0015 Q4): a thread opened into the reading
-    // pane, with the drill-in column indexing it. Driven through
-    // `Window::show_thread`, the same call `t` makes, so the shot is the
-    // arrangement the application actually puts up rather than one staged
-    // for the picture.
-    if flag("thread") {
+    // The conversation pane (ADR 0015 Q4, canvas turn 8a): a thread stacked
+    // in the reading pane, beside a list that is only ever the list. Driven
+    // through `Window::show_conversation`, the same call landing on a thread
+    // row makes, so the shot is the arrangement the application actually
+    // puts up rather than one staged for the picture.
+    if flag("conversation") {
         let list = window.list();
         list.first_row();
-        // The demo's rows are conversations now, so the first one has a
-        // thread to drill into; its own rows stand in for the members.
+        // The demo's rows are conversations, and the first one's own rows
+        // stand in for its members.
         let rows = list.model();
         let mut members = Vec::new();
         for index in 0..rows.n_items().min(6) {
@@ -892,10 +891,8 @@ fn main() -> glib::ExitCode {
                 reader
             }
         });
-        if let Some(first) = members.first().cloned() {
-            let thread = first.thread.unwrap_or(postio_model::ids::ThreadId::new(1));
-            let total = members.len() as u32;
-            window.show_thread(thread, first.subject.as_deref(), members, total);
+        if !members.is_empty() {
+            window.show_conversation(members);
         }
         // The stack's readers load on WebKit's own clock, which the
         // frame-counting `settle` does not wait on.
