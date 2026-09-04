@@ -241,6 +241,8 @@ const CASES: &[(&str, fn())] = &[
         "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
         gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
             as fn(),
+    ),
+    (
         "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
         gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
     ),
