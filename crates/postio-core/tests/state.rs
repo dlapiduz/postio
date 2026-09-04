@@ -128,17 +128,17 @@ fn drilling_into_a_thread_and_back_restores_the_exact_position() {
     let mut state = in_the_inbox();
     let before = selection(&state);
 
-    let opened = state.open_thread(ThreadId::new(42));
+    let opened = state.open_conversation(ThreadId::new(42));
     assert_eq!(
         *state.view(),
-        ViewMode::Thread {
+        ViewMode::Conversation {
             thread: ThreadId::new(42)
         }
     );
-    assert_eq!(state.context(), Context::Thread);
+    assert_eq!(state.context(), Context::Conversation);
     assert!(
         opened.contains(&Event::ContextChanged {
-            context: Context::Thread
+            context: Context::Conversation
         }),
         "{opened:?}"
     );
@@ -163,7 +163,7 @@ fn back_unwinds_one_step_at_a_time() {
     // list -> thread -> message, then Esc, Esc: the reader returns to the
     // thread it was opened from, not all the way out to the list.
     let mut state = in_the_inbox();
-    state.open_thread(ThreadId::new(42));
+    state.open_conversation(ThreadId::new(42));
     state.select(vec![message(11)], Some(message(11)));
     state.open_message(message(11));
 
@@ -172,7 +172,7 @@ fn back_unwinds_one_step_at_a_time() {
     state.back();
     assert_eq!(
         *state.view(),
-        ViewMode::Thread {
+        ViewMode::Conversation {
             thread: ThreadId::new(42)
         }
     );
@@ -204,7 +204,7 @@ fn the_back_stack_is_bounded() {
     // Drill in and out forever without the stack growing forever.
     let mut state = in_the_inbox();
     for id in 0..1_000 {
-        state.open_thread(ThreadId::new(id));
+        state.open_conversation(ThreadId::new(id));
     }
 
     assert!(state.back_depth() <= AppState::MAX_BACK_DEPTH);
@@ -284,10 +284,10 @@ fn the_context_follows_the_view() {
     let cases = [
         (ViewMode::List, Context::List),
         (
-            ViewMode::Thread {
+            ViewMode::Conversation {
                 thread: ThreadId::new(1),
             },
-            Context::Thread,
+            Context::Conversation,
         ),
         (
             ViewMode::Reader {
@@ -319,7 +319,7 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
             state.select(vec![message(2)], Some(message(2)))
         }),
         ("focus", |state| state.focus_on(Some(message(2)))),
-        ("thread", |state| state.open_thread(ThreadId::new(42))),
+        ("thread", |state| state.open_conversation(ThreadId::new(42))),
         ("message", |state| state.open_message(message(2))),
         ("search", |state| state.open_search("from:ana")),
         ("composer", |state| state.open_composer(DraftId::new(5))),
@@ -393,15 +393,15 @@ fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
     // The wiring the application uses: handlers own the state, widgets own
     // nothing, and every repaint comes off the event stream.
     let state = SharedState::new(in_the_inbox());
-    let for_thread = state.clone();
+    let for_open = state.clone();
     let for_back = state.clone();
 
     let dispatcher = Dispatcher::builder()
-        .on(CommandId::Thread, move |invocation| {
-            let state = for_thread.clone();
+        .on(CommandId::OpenMessage, move |invocation| {
+            let state = for_open.clone();
             async move {
                 state.update(&invocation.events(), |state| {
-                    state.open_thread(ThreadId::new(42))
+                    state.open_conversation(ThreadId::new(42))
                 });
                 Ok(())
             }
@@ -420,7 +420,7 @@ fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
 
     let (bridge, events) = Bridge::new(dispatcher).expect("the runtime starts");
     for command in [
-        Command::Thread { thread: None },
+        Command::OpenMessage { message: None },
         Command::Back,
         Command::Back,
     ] {
@@ -431,7 +431,7 @@ fn state_changes_arrive_at_the_ui_as_events_from_the_bus() {
     let seen: Vec<Event> = std::iter::from_fn(|| events.try_next()).collect();
     assert!(
         seen.contains(&Event::ContextChanged {
-            context: Context::Thread
+            context: Context::Conversation
         }),
         "{seen:?}"
     );

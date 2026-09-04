@@ -134,7 +134,7 @@ const fn ctx(contexts: &'static [Context]) -> ContextSet {
 
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
-const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::Reader];
+const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Conversation, Context::Reader];
 /// `MESSAGE_SURFACES` plus the composer.
 ///
 /// Reply, reply-all and forward have to *resolve* while a draft is already
@@ -145,7 +145,7 @@ const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::
 /// silent.
 const REPLY_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Composer,
 ];
@@ -157,14 +157,14 @@ const REPLY_SURFACES: &[Context] = &[
 const PANE_SURFACES: &[Context] = &[
     Context::Sidebar,
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
 ];
 
 /// The surfaces that scroll through a list of messages.
 const LIST_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Search,
 ];
@@ -224,7 +224,7 @@ static SPECS: &[CommandSpec] = &[
         // vim-style open, and both reach the same command.
         default_binding: "Return",
         alternate_bindings: &["l", "Right"],
-        contexts: ctx(&[Context::List, Context::Thread, Context::Search]),
+        contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -290,41 +290,6 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         // Escape always means "get me out of here", in every context.
         contexts: ContextSet::ANY,
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::Thread,
-        title: "Show thread",
-        default_binding: "t",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::List, Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadUnread,
-        title: "Unread only",
-        // `u` is Undo and `U` is Mark unread in every message surface
-        // including this one -- both taken before this command exists, so
-        // neither is available to it.
-        default_binding: "n",
-        alternate_bindings: &[],
-        // Only meaningful with a thread column on screen: there is nothing
-        // else in the application this filter could apply to.
-        contexts: ctx(&[Context::Thread]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadOrder,
-        title: "Toggle order",
-        default_binding: "o",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Thread]),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -1487,7 +1452,7 @@ mod tests {
         for context in [
             Context::Sidebar,
             Context::List,
-            Context::Thread,
+            Context::Conversation,
             Context::Reader,
         ] {
             assert_eq!(

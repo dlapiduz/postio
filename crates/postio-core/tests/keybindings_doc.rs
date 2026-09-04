@@ -32,7 +32,7 @@ fn where_available(contexts: ContextSet) -> String {
         .iter()
         .map(|context| match context {
             Context::List => "list",
-            Context::Thread => "thread",
+            Context::Conversation => "conversation",
             Context::Reader => "reader",
             Context::Composer => "composer",
             Context::Search => "search",

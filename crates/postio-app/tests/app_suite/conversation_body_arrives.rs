@@ -168,7 +168,7 @@ pub fn a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_o
 
     list.first_row();
     let cursor = list.cursor_row().expect("a row to drill into");
-    window.open_thread(&cursor);
+    window.open_conversation(&cursor);
     assert!(
         settle_until(|| window.conversation().len() == 4),
         "opening the thread never filled the conversation pane"

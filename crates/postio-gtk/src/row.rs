@@ -54,33 +54,28 @@ use crate::list::Row;
 
 /// The commands the focused row hints at, and the labels the canvas gives
 /// them — canvas order, not registry order.
-const HINT_COMMANDS: [(CommandId, &str); 3] = [
-    (CommandId::Reply, "reply"),
-    (CommandId::Archive, "archive"),
-    (CommandId::Thread, "thread"),
-];
+/// Two, not three. `t` used to be here, hinting at the drill-in column that
+/// a thread row could open; the conversation is what the reading pane shows
+/// the moment the cursor lands on the row, so there is no third verb to
+/// announce (#1003).
+const HINT_COMMANDS: [(CommandId, &str); 2] =
+    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
 
-/// The hints for a keymap alone, `Thread` included: the rebinding behaviour
-/// [`hints_for_row`] shares with every entry in [`HINT_COMMANDS`], tested
-/// here without a row to keep that half of the contract separate from the
-/// thread-count filter.
+/// The hints for a keymap alone.
 #[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, true)
+    filtered_hints(keymap)
 }
 
-/// `hints_for`, minus `Thread` when the row has nothing to thread — the
-/// same test the badge uses (`thread_count > 1`, in `build`), so the badge
-/// and the hint can never disagree. A row that has not arrived yet (`None`)
-/// has nothing to thread either.
-fn hints_for_row(keymap: &Keymap, row: Option<&Row>) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, row.is_some_and(|row| row.thread_count > 1))
+/// The hints a row shows. Every hint applies to every row now: none of them
+/// depends on whether the row stands for more than one message.
+fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
+    filtered_hints(keymap)
 }
 
-fn filtered_hints(keymap: &Keymap, threaded: bool) -> Vec<(String, &'static str)> {
+fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
     HINT_COMMANDS
         .iter()
-        .filter(|(command, _)| threaded || *command != CommandId::Thread)
         .filter_map(|(command, label)| {
             keymap
                 .binding(*command)
@@ -1601,11 +1596,7 @@ mod tests {
         let defaults = default_hints();
         assert_eq!(
             defaults,
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
             "the registry's own bindings, canvas order"
         );
 
@@ -1616,11 +1607,7 @@ mod tests {
         let rebound = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             rebound,
-            vec![
-                ("e".to_string(), "reply"),
-                ("x".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
             "a rebind in [keys] must reach the hint, not just the resolver"
         );
     }
@@ -1643,51 +1630,6 @@ mod tests {
     }
 
     #[test]
-    fn a_row_with_no_thread_drops_the_thread_hint() {
-        // Matches the badge's own threshold (`row.rs`'s `build`, filtering
-        // on `thread_count > 1`): the badge and the hint must never disagree
-        // about whether there is a thread here to open.
-        let keymap = Keymap::resolve(&Default::default());
-        let mut row = Row {
-            id: MessageId::new(1),
-            thread: None,
-            from: None,
-            subject: None,
-            preview: None,
-            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
-            seen: true,
-            flagged: false,
-            answered: false,
-            draft: false,
-            has_attachments: false,
-            thread_count: 1,
-            participants: Vec::new(),
-        };
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
-            "one message in the thread is not a thread to open"
-        );
-
-        row.thread_count = 2;
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
-            "more than one message in the thread, so the hint returns"
-        );
-
-        assert_eq!(
-            hints_for_row(&keymap, None),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-            "no row bound yet, nothing to thread either"
-        );
-    }
-
-    #[test]
     fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
         // Taking `a` for something else in the same context leaves Archive
         // with no key at all — reachable only from the palette. A hint that
@@ -1700,7 +1642,7 @@ mod tests {
         let hints = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             hints,
-            vec![("e".to_string(), "reply"), ("t".to_string(), "thread")],
+            vec![("e".to_string(), "reply")],
             "archive lost its key to forward, so its hint disappears rather than lying"
         );
     }

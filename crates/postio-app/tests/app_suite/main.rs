@@ -59,7 +59,6 @@ mod signature_default_wiring;
 mod startup_repair;
 mod sync_window;
 mod thread_bulk_keystroke;
-mod thread_cursor_preview;
 mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
@@ -284,10 +283,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it",
         thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it as fn(),
-    ),
-    (
-        "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",
-        thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane as fn(),
     ),
     (
         "thread_bulk_keystroke::marking_two_thread_rows_archives_both_conversations",

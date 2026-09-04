@@ -1,10 +1,10 @@
 //! Render one view-layer surface straight out of GSK to a PNG.
 //!
 //! ```sh
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread dark
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread dark hc
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread 900x700
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation dark
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation dark hc
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation 900x700
 //! cargo run -p postio-gtk --example surface -- /tmp/parts.png parts
 //! ```
 //!
@@ -16,7 +16,7 @@
 //! may not link at any depth, dev-dependencies included.
 //!
 //! This is the other half of that trade. Some surfaces are reached by a
-//! keystroke rather than by data — thread drill-in, the parts panel — and GTK4
+//! keystroke rather than by data — the conversation pane, the parts panel — and GTK4
 //! offers no supported way to synthesize one, so `shot` cannot get to them
 //! without knowing about them. These are also the surfaces that need no store
 //! at all: every row here is a `crate::list::Row`, a type `postio-gtk` owns
@@ -119,16 +119,14 @@ fn conversation() -> Vec<Row> {
     ]
 }
 
-/// Canvas 3a: the list column, drilled in.
+/// Canvas turn 8a: the conversation, stacked in the reading pane.
 ///
-/// Through `ThreadView::open`, which is what `Window::open_thread` calls when
-/// `t` resolves — so this renders the surface the application renders, minus
-/// the keystroke that GTK will not let an example send.
-fn show_thread(window: &Window) {
-    let rows = conversation();
-    let subject = "maildir index rebuild is O(n²)";
+/// Through `Window::show_conversation`, which is what landing on a thread row
+/// calls — so this renders the surface the application renders, minus the
+/// keystroke that GTK will not let an example send.
+fn show_conversation(window: &Window) {
     window.list().set_mailbox("Inbox", 12);
-    window.show_thread(ThreadId::new(1), Some(subject), rows, 6);
+    window.show_conversation(conversation());
 }
 
 /// Canvas 3g's own message: four parts, one of them held back.
@@ -347,8 +345,8 @@ fn main() -> glib::ExitCode {
             window.list().set_density(density);
         }
     }
-    if flag("thread") {
-        show_thread(&window);
+    if flag("conversation") {
+        show_conversation(&window);
     }
     if flag("parts") {
         show_parts(&window);
@@ -372,12 +370,6 @@ fn main() -> glib::ExitCode {
     }
     window.present();
     settle(&window);
-    // The thread column asks for the keyboard on the way in, and the focus
-    // only actually lands once there is a surface to land on.
-    if flag("thread") {
-        window.thread().focus_rows();
-        settle(&window);
-    }
     // Same reason, and the point of the shot: the folder list's focus ring is
     // what says the keyboard is in this pane, and it cannot be looked at
     // without putting it there. `folders` on its own renders the pane at

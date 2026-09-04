@@ -24,8 +24,14 @@ use serde::{Deserialize, Serialize};
 pub enum Context {
     /// The message list: rows, selection, bulk actions.
     List,
-    /// A thread drilled into from the list.
-    Thread,
+    /// The conversation pane: the whole thread stacked beside the list.
+    ///
+    /// Was `Thread`, when a thread meant a column that replaced the list
+    /// (#1003). The conversation moved into the reading pane and the column
+    /// went; the context stayed, because the surface it names still exists
+    /// and still owns the keyboard while you are reading a conversation. Its
+    /// keys walk messages inside the stack rather than rows in a column.
+    Conversation,
     /// The reading pane showing one message.
     Reader,
     /// Compose: the reading pane by default, or a window of its own on ask.
@@ -68,7 +74,7 @@ impl Context {
     /// Every context, in a stable order. The cheat sheet renders in this order.
     pub const ALL: &'static [Context] = &[
         Context::List,
-        Context::Thread,
+        Context::Conversation,
         Context::Reader,
         Context::Composer,
         Context::Search,
@@ -84,7 +90,7 @@ impl Context {
     pub const fn as_str(self) -> &'static str {
         match self {
             Context::List => "list",
-            Context::Thread => "thread",
+            Context::Conversation => "conversation",
             Context::Reader => "reader",
             Context::Composer => "composer",
             Context::Search => "search",
