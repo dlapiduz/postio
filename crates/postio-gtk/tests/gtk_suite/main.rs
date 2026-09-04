@@ -137,6 +137,7 @@ mod gtk_toast;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
+mod gtk_widgets;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
@@ -598,6 +599,22 @@ const CASES: &[(&str, fn())] = &[
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
+    ),
+    (
+        "gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all",
+        gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all as fn(),
+    ),
+    (
+        "gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises",
+        gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_never_wraps_however_long_the_sentence",
+        gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_overflow_replaces_rather_than_appends",
+        gtk_widgets::a_notice_overflow_replaces_rather_than_appends as fn(),
     ),
     (
         "gtk_window::the_window_opens_and_wears_the_design",

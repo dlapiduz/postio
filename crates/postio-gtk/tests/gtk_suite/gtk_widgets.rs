@@ -1,0 +1,167 @@
+//! The shared controls on a real display (#1002).
+//!
+//! What is proven here is the part that needs a widget tree: that a cap
+//! actually appears and disappears, that a notice stays one line under a
+//! sentence far too long for it, and that an overflow entry runs the handler
+//! it was built with. The rules these draw are proven without a display, in
+//! `postio_ui::conversation`.
+
+use std::cell::Cell;
+use std::rc::Rc;
+
+use gtk::prelude::*;
+use postio_core::{CommandId, Keymap};
+use postio_gtk::widgets::{Action, ActionBar, KeycapButton, NoticeBar, NoticeMenuItem};
+
+/// A button says which key runs it, and says nothing when no key does.
+pub fn a_keycap_shows_the_key_or_nothing_at_all() {
+    let button = Rc::new(KeycapButton::new(None, "Try again", "probe-retry", true));
+    KeycapButton::arm(&button);
+    assert_eq!(
+        button.key(),
+        "",
+        "a button given no key shows no cap, rather than an empty one"
+    );
+
+    button.set_key(Some("Ret"));
+    assert_eq!(button.key(), "Ret");
+
+    // The word changes; the key that runs it does not. `set_busy` on the
+    // unavailable screen is exactly this call, and the hand-rolled version it
+    // replaced did it by swapping the button's whole child — which took the
+    // cap with it.
+    button.set_label("Trying…");
+    assert_eq!(button.label(), "Trying…");
+    assert_eq!(button.key(), "Ret", "renaming the verb kept its key");
+
+    button.set_key(None);
+    assert_eq!(
+        button.key(),
+        "",
+        "a cleared binding hides the cap rather than showing a blank one"
+    );
+
+    let pressed = Rc::new(Cell::new(0));
+    let counter = pressed.clone();
+    button.connect_clicked(move || counter.set(counter.get() + 1));
+    button.press();
+    assert_eq!(pressed.get(), 1);
+}
+
+/// The four verbs a bar carries, and the keys it advertises for them.
+const PROBE: [Action; 2] = [
+    Action::new(CommandId::Reply, "Reply", "probe-reply").primary(),
+    Action::new(CommandId::Archive, "Archive", "probe-archive"),
+];
+
+/// A bar runs the command its cap advertises, and re-caps on a rebind.
+pub fn an_action_bar_dispatches_the_command_its_cap_advertises() {
+    let bar = ActionBar::new(&PROBE, "probe-bar");
+    assert_eq!(
+        bar.button(CommandId::Reply)
+            .expect("Reply is in the bar")
+            .key(),
+        "e",
+        "a bar caps itself from the registry defaults the moment it exists"
+    );
+
+    let ran: Rc<Cell<Option<CommandId>>> = Rc::new(Cell::new(None));
+    let seen = ran.clone();
+    bar.connect_command(move |command| seen.set(Some(command.id())));
+    bar.press(CommandId::Archive);
+    assert_eq!(
+        ran.get(),
+        Some(CommandId::Archive),
+        "the button runs the same command the keyboard's binding would"
+    );
+
+    let mut overrides = postio_config::KeyBindings::default();
+    overrides
+        .overrides_mut()
+        .insert("reply".to_string(), "r".to_string());
+    bar.set_keymap(&Keymap::resolve(&overrides));
+    assert_eq!(
+        bar.button(CommandId::Reply).expect("still there").key(),
+        "r",
+        "a rebind reaches the cap, not only the keyboard"
+    );
+}
+
+/// A notice is one line at any width, however much it is asked to say.
+///
+/// The measurement is a comparison rather than a pixel count: two notices at
+/// the same width, one saying four words and one saying a paragraph. If the
+/// long one is taller, it wrapped — which is the bug the canvas's turn-7
+/// note is about, where an Apple relay address spelled out inline grew the
+/// remote-image banner to three lines and pushed the mail down the pane.
+pub fn a_notice_never_wraps_however_long_the_sentence() {
+    // Narrower than the canvas's narrowest reading pane.
+    const WIDTH: i32 = 320;
+
+    let short = NoticeBar::new("image-missing-symbolic", "probe-notice");
+    short.set_visible(true);
+    short.set_text("Images blocked");
+    short.set_action(Some("Show images"));
+    short.set_action_key(Some("H"));
+
+    let long = NoticeBar::new("image-missing-symbolic", "probe-notice");
+    long.set_visible(true);
+    long.set_text(
+        "14 remote images and 1 tracker blocked, from a sender whose address \
+         is long enough that the old banner wrapped to three lines and pushed \
+         the mail down the pane",
+    );
+    long.set_action(Some("Show images"));
+    long.set_action_key(Some("H"));
+
+    let window = gtk::Window::new();
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    holder.append(&short.widget());
+    holder.append(&long.widget());
+    window.set_child(Some(&holder));
+    window.set_default_size(WIDTH, 200);
+    window.present();
+    crate::pump();
+
+    let (_, tall_short, _, _) = short.widget().measure(gtk::Orientation::Vertical, WIDTH);
+    let (_, tall_long, _, _) = long.widget().measure(gtk::Orientation::Vertical, WIDTH);
+    assert!(tall_short > 0, "the notice has to be on screen to measure");
+    assert_eq!(
+        tall_long, tall_short,
+        "a notice is one line whatever it says: {tall_long}px against \
+         {tall_short}px for four words"
+    );
+    assert_eq!(long.action().key(), "H");
+
+    window.close();
+}
+
+/// The overflow runs what it names, and replaces rather than appends.
+pub fn a_notice_overflow_replaces_rather_than_appends() {
+    let notice = NoticeBar::new("image-missing-symbolic", "probe-notice");
+
+    let allowed = Rc::new(Cell::new(0));
+    let count = allowed.clone();
+    notice.set_menu(vec![NoticeMenuItem::new(
+        "Always allow transaction_at_example@relay.example.com",
+        move || count.set(count.get() + 1),
+    )]);
+    assert_eq!(notice.menu_labels().len(), 1);
+    notice.press_menu_item(0);
+    assert_eq!(allowed.get(), 1);
+
+    // A notice describes the message it is reporting on. Leaving the last
+    // message's entries behind would offer to always-allow the wrong sender.
+    notice.set_menu(vec![NoticeMenuItem::new("Always allow this domain", || {})]);
+    assert_eq!(
+        notice.menu_labels(),
+        vec!["Always allow this domain".to_string()],
+        "the overflow was replaced, not appended to"
+    );
+
+    notice.set_menu(Vec::new());
+    assert!(
+        notice.menu_labels().is_empty(),
+        "a notice with nothing to offer has no overflow at all"
+    );
+}

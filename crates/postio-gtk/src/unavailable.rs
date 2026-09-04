@@ -30,6 +30,7 @@
 //! *other* reason arrive at the same surface with its own words.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -43,11 +44,12 @@ mod imp {
     #[derive(Default)]
     pub struct Unavailable {
         pub(super) reason: gtk::Label,
-        pub(super) retry: gtk::Button,
-        /// The word on the button. A handle of its own because `set_label`
-        /// would replace the child, and the child is the word *and* its key
-        /// hint — the same reason `Onboarding` keeps one.
-        pub(super) retry_label: gtk::Label,
+        /// The one action, as the same [`KeycapButton`] every other surface
+        /// draws its verbs with (#1002) — a `OnceCell` because the widget is
+        /// built in `constructed`, and `KeycapButton` has no `Default`.
+        ///
+        /// [`KeycapButton`]: crate::widgets::KeycapButton
+        pub(super) retry: std::cell::OnceCell<Rc<crate::widgets::KeycapButton>>,
         pub(super) busy: Cell<bool>,
         pub(super) on_retry: RefCell<Vec<RetryHandler>>,
     }
@@ -116,9 +118,9 @@ impl Unavailable {
     pub fn set_busy(&self, busy: bool) {
         let imp = self.imp();
         imp.busy.set(busy);
-        imp.retry.set_sensitive(!busy);
-        imp.retry_label
-            .set_text(if busy { "Trying…" } else { "Try again" });
+        let retry = self.retry_button();
+        retry.set_sensitive(!busy);
+        retry.set_label(if busy { "Trying…" } else { "Try again" });
     }
 
     /// Runs `handler` when the user asks to try again.
@@ -141,7 +143,16 @@ impl Unavailable {
 
     /// Puts the keyboard where the only action is.
     pub fn focus_retry(&self) {
-        self.imp().retry.grab_focus();
+        self.retry_button().widget().grab_focus();
+    }
+
+    /// The retry button, built in `constructed` and therefore always there.
+    fn retry_button(&self) -> Rc<crate::widgets::KeycapButton> {
+        self.imp()
+            .retry
+            .get()
+            .expect("built in constructed")
+            .clone()
     }
 
     fn build(&self) {
@@ -187,30 +198,32 @@ impl Unavailable {
         reassurance.set_wrap(true);
         reassurance.set_max_width_chars(56);
 
-        imp.retry_label.set_text("Try again");
-        let hint = gtk::Label::new(Some("Ret"));
-        hint.add_css_class("postio-unavailable-hint");
-        let inside = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        inside.append(&imp.retry_label);
-        inside.append(&hint);
-        imp.retry.set_child(Some(&inside));
-        imp.retry.add_css_class("suggested-action");
-        imp.retry.set_halign(gtk::Align::Start);
-        imp.retry.set_tooltip_text(Some("Read the keyring again"));
-        imp.retry
-            .update_property(&[gtk::accessible::Property::Label("Try again")]);
-        imp.retry.connect_clicked(glib::clone!(
-            #[weak(rename_to = screen)]
-            self,
-            move |_| screen.retry()
+        // `Ret` is written down rather than read from a keymap because
+        // Enter here is not a bound command — it is the default action of
+        // the only button on a screen with one button. Everything else about
+        // the cap is the shared one, so it matches the reader's and the
+        // composer's exactly.
+        let retry = Rc::new(crate::widgets::KeycapButton::new(
+            None,
+            "Try again",
+            "postio-unavailable-retry",
+            true,
         ));
+        crate::widgets::KeycapButton::arm(&retry);
+        retry.set_key(Some("Ret"));
+        let button = retry.widget();
+        button.set_halign(gtk::Align::Start);
+        button.set_tooltip_text(Some("Read the keyring again"));
+        let screen = self.clone();
+        retry.connect_clicked(move || screen.retry());
+        let _ = imp.retry.set(retry);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
         body.add_css_class("postio-unavailable-body");
         body.append(&title);
         body.append(&imp.reason);
         body.append(&reassurance);
-        body.append(&imp.retry);
+        body.append(&button);
 
         let plate = gtk::Box::new(gtk::Orientation::Vertical, 0);
         plate.append(&header);

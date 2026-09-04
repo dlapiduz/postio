@@ -100,4 +100,5 @@ pub mod thread;
 pub mod thread_row;
 pub mod toast;
 pub mod unavailable;
+pub mod widgets;
 pub mod window;

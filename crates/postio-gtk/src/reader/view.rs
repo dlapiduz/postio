@@ -33,7 +33,7 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
-use super::actions::ReaderActions;
+use crate::widgets::ActionBar;
 use super::allowlist::RemoteImageAllowList;
 use super::banner::{DecodeNotice, RemoteImageBanner};
 use super::message_header::MessageHeader;
@@ -72,7 +72,7 @@ pub struct Reader {
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     decode_notice: Rc<DecodeNotice>,
-    actions: Rc<ReaderActions>,
+    actions: Rc<ActionBar>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
@@ -202,7 +202,7 @@ impl Reader {
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
         let decode_notice = Rc::new(DecodeNotice::new());
-        let actions = ReaderActions::new();
+        let actions = super::actions::new();
 
         let chips = crate::parts::Chips::new();
 
