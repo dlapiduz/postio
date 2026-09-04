@@ -206,6 +206,13 @@ mod imp {
         /// The context that had the keyboard before it went to the account
         /// list in settings — see `before_sidebar` (#471).
         pub before_accounts: std::cell::Cell<Option<Context>>,
+        /// The context that had the keyboard before it went to the
+        /// keybinding list in settings — see `before_sidebar` (#1016).
+        pub before_keys: std::cell::Cell<Option<Context>>,
+        /// Set once `keys_list`'s own `EventControllerFocus` has been
+        /// added — never during `Window::new`'s own construction. See
+        /// `Window::ensure_keys_focus_controller`'s own doc for why.
+        pub keys_focus_installed: std::cell::Cell<bool>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -2675,6 +2682,7 @@ impl Window {
 
     /// Shows the settings panel over the workspace.
     pub fn open_settings(&self) {
+        self.ensure_keys_focus_controller();
         // Only one overlay at a time. Through `press_escape`, not
         // `close_finder` directly, for the reason `CommandId::Back` above
         // gives (#1011).
@@ -2698,6 +2706,49 @@ impl Window {
     pub fn close_settings(&self) {
         self.settings().set_visible(false);
         self.shell().grab_focus();
+    }
+
+    /// Adds `keys_list`'s `Context::Keys` `EventControllerFocus`, the
+    /// first time settings is actually opened — never during `Window::new`.
+    ///
+    /// `docs/engineering-notes.md`'s note on `SettingsPanel::build()` (#873,
+    /// #880, #881) explains why nothing that touches a settings sub-widget
+    /// gets added unconditionally during `Window::new`'s own construction:
+    /// a full-`gtk_suite` corruption was chased there before, and even
+    /// though it turned out to be an unrelated pre-existing flake in that
+    /// specific case, the precautionary principle stands. `accounts_focus`,
+    /// right above where this used to sit before that investigation, is the
+    /// same shape and has not been observed to cause a problem — which is
+    /// not the same as proof it cannot, so this stays deferred rather than
+    /// treating that as precedent for adding a second one unconditionally.
+    fn ensure_keys_focus_controller(&self) {
+        if self.imp().keys_focus_installed.get() {
+            return;
+        }
+        self.imp().keys_focus_installed.set(true);
+
+        let keys_focus = gtk::EventControllerFocus::new();
+        keys_focus.connect_enter(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() != Context::Keys {
+                    window.imp().before_keys.set(Some(window.context()));
+                    window.set_context(Context::Keys);
+                }
+            }
+        ));
+        keys_focus.connect_leave(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() == Context::Keys {
+                    let previous = window.imp().before_keys.take();
+                    window.set_context(previous.unwrap_or(Context::List));
+                }
+            }
+        ));
+        self.settings().keys_list().add_controller(keys_focus);
     }
 
     /// Shows the settings panel, or hides it if it is already up.

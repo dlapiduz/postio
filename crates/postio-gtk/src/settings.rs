@@ -1167,6 +1167,13 @@ impl SettingsPanel {
         self.imp().accounts_list.clone()
     }
 
+    /// The keybinding list itself, for the focus controller `Window` puts
+    /// on it — the same reason [`accounts_list`](Self::accounts_list)
+    /// exists, `Context::Keys` (#1016) in place of `Context::Accounts`.
+    pub fn keys_list(&self) -> gtk::ListBox {
+        self.imp().keys_list.clone()
+    }
+
     /// The account whose row the keyboard is in, if it is in one.
     ///
     /// Focus rather than selection: the rows are `set_selectable(false)` and
