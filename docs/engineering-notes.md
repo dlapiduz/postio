@@ -4327,3 +4327,52 @@ negative assertions keep their duration. Both halves need a control at all,
 because "nothing was marked read" is exactly as true of a build where the
 dwell never armed as of one where it was correctly cancelled — without one,
 that file passes with the whole mechanism deleted.
+
+## `SettingsPanel::build()` cannot build *any* new event controller (#873, #880, #881)
+
+Three separate issues hit the same corruption before the rule behind it was
+understood widely enough to check for on the way in. `Window::new` constructs
+`SettingsPanel` as a hidden overlay child while it is still wiring up its own
+overlay siblings and shortcut controllers, and something built during that
+window corrupts keyboard routing for the rest of that same window —
+`gtk_finder`, `gtk_finder_focus`, `gtk_move_picker`, `gtk_toggle_sidebar`,
+`gtk_row` and others have all been the collateral, run-order dependent, never
+the widget that actually regressed.
+
+#873 found this with a `gtk::DropDown` (`[sync]`'s structured pane) and wrote
+it up as a fact about *composite* widgets — a `DropDown`'s own internal
+type-ahead and key controllers. #880's account-detail view hit the identical
+signature with `gtk::Entry`/`gtk::SpinButton`, different composite widgets,
+same shape, and the fix generalized one step: any widget with its own
+internal event controllers, built during `build()`.
+
+#881 broke that generalization again. Its capture controller is not a
+composite widget's internals at all — it is one plain,
+hand-written `gtk::EventControllerKey`, added directly to an already-built
+`gtk::ListBox` the exact same way `accounts_list`'s own `GestureClick` for
+its context menu already is, in the same function, with no incident. That
+precedent turned out not to matter: removing just the new controller made a
+reproducible full-`gtk_suite` segfault disappear, and adding back everything
+else in `build()` except that one `add_controller` call left it gone.
+
+**The rule is not about composite widgets. It is about `build()` constructing
+any event controller at all**, application-added or a toolkit widget's own,
+for a widget that will be part of the hidden overlay `Window::new` is still
+assembling. `accounts_menu`'s `GestureClick` and the panel's own top-level
+Escape `EventControllerKey` predate this understanding and have simply not
+been proven safe rather than proven dangerous — they have not caused a
+regression *yet*, which after three separate widgets each looking like a safe
+case until measured is not evidence of anything.
+
+The fix is the same each time: defer construction out of `build()` entirely,
+to the first moment a real interaction proves the window has finished being
+built — `redraw_sync`/`redraw_ui` calls removed from `build()`'s own trailing
+sequence (#873); `OnceCell`-backed lazy fields built on first
+`open_account_detail()` (#880); an `installed: Cell<bool>` guard around the
+one `add_controller` call, tripped from the first real `redraw_keys()` rather
+than `build()` (#881). Never re-add a removed `redraw_*()` call to `build()`'s
+trailing sequence to "simplify" it, and treat a new controller added anywhere
+in this widget's construction path as guilty until proven by a full
+`gtk_suite` run (not a filtered one — the corruption showed up in tests with
+no apparent connection to settings at all), not by resemblance to an existing
+call that merely has not been checked.
