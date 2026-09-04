@@ -26,6 +26,10 @@ thiserror = "2.0.20"
 tracing = "0.1"
 
 [dev-dependencies]
+# The `.eml` corpus, for `differential.rs`: the two evaluators are held to
+# agreement against real mail rather than against fixtures written to suit
+# whichever one was implemented first.
+postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 
 [lints]

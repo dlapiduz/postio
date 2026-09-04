@@ -45,6 +45,7 @@ has_pending                       # crates/postio-storage/src/repository/operati
 idle_connections                  # crates/postio-storage/src/db.rs:728
 idles                             # crates/postio-sync/src/watch.rs:290
 immediate                         # crates/postio-storage/src/blob.rs:551
+in_account                        # crates/postio-search/src/matcher.rs:108 -- the rules engine (#481) is the production caller; `account:` must still answer
 in_thread                         # crates/postio-storage/src/repository/drafts.rs:459
 interactive_is_waiting            # crates/postio-storage/src/db.rs:469
 into_mailbox                      # crates/postio-account/src/backend/message.rs:156
@@ -131,7 +132,9 @@ vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572
 watch_policy_at                   # crates/postio-session/src/lib.rs:128
 with_blobs                        # crates/postio-sync/src/drain.rs:206
+with_body                         # crates/postio-search/src/matcher.rs:96 -- same: a body-class rule runs at backfill completion (#482)
 with_connect_timeout              # crates/postio-account/src/imap/settings.rs:102
+with_groups                       # crates/postio-search/src/matcher.rs:114 -- same: `group:` is in the language, so the matcher must answer it (#481)
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
 yes                               # crates/postio-config/src/lib.rs:105
