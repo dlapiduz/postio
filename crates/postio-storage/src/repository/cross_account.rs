@@ -183,39 +183,13 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .optional()
             .map_err(Into::into)
     }
-
-    /// Every saga still running for one of `sources`, oldest first.
-    ///
-    /// "Still running" is `copying`, `unconfirmed` or `confirmed` — the
-    /// phases where a saga is a thing that could still be cancelled or
-    /// reversed. `done` and `aborted` are over, and a source message that has
-    /// been moved twice would otherwise hand back a saga that finished last
-    /// week.
-    ///
-    /// Undo is what asks (#531): the undo stack records the source rows, and
-    /// the saga table is the only place that knows a move between accounts
-    /// was one. Scans by `phase` — the index the table already has — rather
-    /// than by source, because the live set is small by construction and a
-    /// second index on a table with at most a handful of open rows is not
-    /// worth its writes.
-    pub fn open_for_sources(&self, sources: &[MessageId]) -> Result<Vec<CrossAccountMove>> {
-        self.for_sources(
-            sources,
-            &[
-                MovePhase::Copying,
-                MovePhase::Unconfirmed,
-                MovePhase::Confirmed,
-            ],
-        )
-    }
-
     /// Every saga in one of `phases` whose *source* is among `sources`.
     ///
-    /// [`open_for_sources`](Self::open_for_sources) is this over the three
-    /// phases a saga can still be walked out of. Undo needs a wider window
-    /// than that: a move that finished is exactly the one a user is most
-    /// likely to take back, and `done` is not open by any other definition
-    /// (#531).
+    /// Phases are the caller's because the two callers want different sets.
+    /// The forward path asks about sagas it can still walk out of; undo has
+    /// to see `done` as well, since a move that finished is exactly the one
+    /// a user is most likely to take back and is not "open" by any
+    /// definition the forward path needed (#531).
     pub fn for_sources(
         &self,
         sources: &[MessageId],
