@@ -65,7 +65,7 @@ pub enum UndoKind {
     Unsnooze,
     /// A send nobody could confirm was settled by hand (#674).
     MarkedSent,
-    /// One of an account's roles was pointed at a folder (ADR 0025).
+    /// One of an account's roles was pointed at a folder (ADR 0027).
     MapMailboxRole,
 }
 

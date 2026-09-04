@@ -275,7 +275,7 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     found
 }
 
-// ── The Mailboxes group (ADR 0025, #966) ────────────────────────────────
+// ── The Mailboxes group (ADR 0027, #966) ────────────────────────────────
 
 /// What one account's folders and role map look like coming in.
 fn folders() -> AccountMailboxes {

@@ -219,7 +219,7 @@ impl RoleOverrides {
     /// These mappings with `pairs` laid over them: a role `pairs` names is
     /// theirs, every other role stays as it was.
     ///
-    /// How an account's own map (ADR 0025) sits on `[mailboxes]`: the file is
+    /// How an account's own map (ADR 0027) sits on `[mailboxes]`: the file is
     /// one table for every account and the store holds what the user said
     /// about this one, so the store wins where it speaks and the file fills in
     /// where it does not. One folder per role survives, because

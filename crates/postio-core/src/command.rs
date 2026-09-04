@@ -606,7 +606,7 @@ pub enum Command {
     RemoveAccount,
     /// Update the focused account's stored credential.
     UpdateCredential,
-    /// Point one of an account's roles at one of its folders (ADR 0025).
+    /// Point one of an account's roles at one of its folders (ADR 0027).
     ///
     /// The one verb whose `None` does not always mean "ask": `account` and
     /// `role` follow the rule at the top of this enum -- a keystroke cannot

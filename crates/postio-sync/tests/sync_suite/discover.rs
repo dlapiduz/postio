@@ -613,7 +613,7 @@ fn sent_path(connection: &Connection, account: &Account) -> Option<String> {
 
 #[tokio::test]
 async fn an_accounts_own_map_outranks_the_configuration() {
-    // ADR 0025: `[mailboxes]` is one table for every account; the account's
+    // ADR 0027: `[mailboxes]` is one table for every account; the account's
     // own map, in the store, is what the user said about *this* server.
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");

@@ -73,7 +73,7 @@ impl DiscoveryReport {
 /// touched. Safe to run on every reconnection, which is what the engine does.
 ///
 /// `overrides` is the configuration tier -- `[mailboxes]`, one table for
-/// every account. The account's own map (ADR 0025) is read from the store
+/// every account. The account's own map (ADR 0027) is read from the store
 /// here, on every pass, and laid over it: nothing about which folder plays
 /// which part is frozen at startup, so a choice made in settings is honoured
 /// by the next pass with the engine untouched.

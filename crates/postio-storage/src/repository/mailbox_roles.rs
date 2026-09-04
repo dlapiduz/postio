@@ -1,5 +1,5 @@
 //! Each account's own map from role to server folder: the `mailbox_roles`
-//! table (ADR 0025).
+//! table (ADR 0027).
 //!
 //! What the user chose, and nothing else. Which row currently *wears* a role
 //! is `mailboxes.role`, written by discovery, and the two are deliberately

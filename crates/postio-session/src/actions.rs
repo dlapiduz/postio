@@ -1627,7 +1627,7 @@ impl Actions {
     /// `None` means the draft the list is on, resolved through the message
     /// its row carries, so the palette entry works where a draft is visible.
     /// Point one of `account`'s roles at the folder at `path`, or back to
-    /// automatic (ADR 0025).
+    /// automatic (ADR 0027).
     ///
     /// Local-first and complete in one transaction: the account's map is
     /// written, the chosen row takes the role, and every other selectable
@@ -4108,7 +4108,7 @@ mod tests {
             Err(CommandError::rejected("Pick a label to add"))
         );
     }
-    // ── Mapping a role to a folder (ADR 0025, #965) ──────────────────────
+    // ── Mapping a role to a folder (ADR 0027, #965) ──────────────────────
 
     #[test]
     fn mapping_a_role_points_it_at_one_folder_and_says_so() {

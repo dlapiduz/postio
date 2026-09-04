@@ -1,4 +1,4 @@
-//! The per-account role map (ADR 0025): which of an account's server folders
+//! The per-account role map (ADR 0027): which of an account's server folders
 //! plays each role, as the user chose it. One row per `(account, role)`, keyed
 //! by path so the choice survives the folder's row being retired and
 //! re-created, and gone with the account.
