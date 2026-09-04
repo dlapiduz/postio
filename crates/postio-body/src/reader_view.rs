@@ -300,6 +300,161 @@ fn count_into(node: &Handle, tables: usize, signals: &mut Signals) {
     }
 }
 
+/// One `label: value` line lifted out of a plain part.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fact {
+    /// The left column: short, and written by the sender as a label.
+    pub label: String,
+    /// The right column: the fact itself.
+    pub value: String,
+}
+
+/// The most rows a block may have.
+///
+/// The canvas draws three. Four is the ceiling because a block longer than
+/// the message it summarises is not a summary — and a template that emits
+/// twenty `label: value` lines is a table of contents, not a set of facts.
+pub const FACTS_KEPT: usize = 4;
+
+/// The fewest lines that make a block.
+///
+/// Repetition is most of the signal. One line of `label: value` is a
+/// sentence with a colon in it far more often than it is a fact, and a
+/// one-row table above somebody's mail looks fabricated — which is exactly
+/// the failure this feature has to avoid.
+pub const FACTS_MIN: usize = 2;
+
+/// The longest a label may be, in characters.
+///
+/// A label is a word or two a sender put in front of a fact. Past this it is
+/// a clause, and a clause before a colon is prose.
+const LABEL_CHARS: usize = 24;
+
+/// The most words a label may have, for the same reason.
+const LABEL_WORDS: usize = 3;
+
+/// Labels that mean this run is mail plumbing rather than facts.
+///
+/// A quoted or forwarded header block has exactly the shape this looks for —
+/// short labels, repeated, one per line — and drawing it as a summary would
+/// put `From`, `To` and `Subject` in a table above a message that already
+/// shows all three in its own header. Only rejected when the *whole* run is
+/// header names: a receipt whose first row happens to be `Date` is still a
+/// receipt.
+const HEADER_LABELS: &[&str] = &[
+    "from", "to", "cc", "bcc", "subject", "date", "sent", "reply-to",
+];
+
+/// Value prefixes that mean the row is a link, not a fact.
+///
+/// A newsletter footer is `Read issue 214: https://...` over
+/// `Unsubscribe: https://...` — two short labels, adjacent, both with a
+/// value. Every rule above passes it, and the block reader view would draw
+/// is the sender's footer restated as a summary.
+///
+/// A link is not a fact, and reader view already has somewhere to put one:
+/// reduction keeps the primary call to action and collapses the rest behind
+/// a count. Lifting a URL up here would say the same thing twice, in the one
+/// place on the page that is supposed to be the facts.
+const LINK_PREFIXES: &[&str] = &["http://", "https://", "mailto:", "www."];
+
+/// Lift a `label: value` block out of a plain part.
+///
+/// Transactional mail buries its facts in a paragraph, and the canvas draws
+/// them as a small table above the body copy: what the tracking number is,
+/// what shipped, where it went. This is the parser that finds them.
+///
+/// # What makes a block
+///
+/// **Repetition, mostly.** A single `label: value` line is a sentence with a
+/// colon in it far more often than it is a fact — so the unit here is a
+/// *contiguous run* of at least [`FACTS_MIN`] lines that all have the shape,
+/// broken by any line that does not (a blank line included). The first run
+/// that qualifies wins; a message with two of them is being over-read
+/// already, and taking the first is a rule a person can predict.
+///
+/// The shape itself is deliberately narrow. A label is short
+/// ([`LABEL_CHARS`], [`LABEL_WORDS`]) and made of letters, digits, spaces and
+/// hyphens — no sentence punctuation, which is what tells `ship to` from
+/// `Please note the following, which matters`. Both sides must be non-empty.
+/// A run whose labels are *all* message-header names is thrown out; see
+/// [`HEADER_LABELS`].
+///
+/// Getting this wrong puts a fabricated-looking table above somebody's mail,
+/// so every rule here refuses rather than guesses, and the result is capped
+/// at [`FACTS_KEPT`].
+///
+/// # Plain text only
+///
+/// The argument is the sender's own plain part — the version they wrote for
+/// reading. Nothing is lifted out of HTML: markup that *looks* like a table
+/// is a layout decision, and reader view's whole premise is that a sender's
+/// layout is not to be trusted.
+pub fn facts(plain: &str) -> Vec<Fact> {
+    let mut run: Vec<Fact> = Vec::new();
+    for line in plain.lines() {
+        match row(line) {
+            Some(fact) => run.push(fact),
+            // Any line that is not a row ends the run, blank or not: the
+            // block the canvas draws is a block on the page too.
+            None => {
+                if let Some(block) = block(&mut run) {
+                    return block;
+                }
+            }
+        }
+    }
+    block(&mut run).unwrap_or_default()
+}
+
+/// A finished run, if it was long enough and was not a header block.
+///
+/// Clears `run` either way, so the caller can keep walking.
+fn block(run: &mut Vec<Fact>) -> Option<Vec<Fact>> {
+    let mut found = std::mem::take(run);
+    if found.len() < FACTS_MIN || found.iter().all(is_header_label) {
+        return None;
+    }
+    found.truncate(FACTS_KEPT);
+    Some(found)
+}
+
+fn is_header_label(fact: &Fact) -> bool {
+    HEADER_LABELS.contains(&fact.label.to_ascii_lowercase().as_str())
+}
+
+/// One line, if it has the shape.
+fn row(line: &str) -> Option<Fact> {
+    let (label, value) = line.trim().split_once(':')?;
+    let label = label.trim();
+    let value = value.trim();
+    if label.is_empty() || value.is_empty() {
+        return None;
+    }
+    let lowered = value.to_ascii_lowercase();
+    if LINK_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
+    {
+        return None;
+    }
+    if label.chars().count() > LABEL_CHARS || label.split_whitespace().count() > LABEL_WORDS {
+        return None;
+    }
+    // No sentence punctuation, which is the whole test: a label is a name,
+    // and a name does not contain a full stop or a comma.
+    if !label
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == ' ' || c == '-')
+    {
+        return None;
+    }
+    Some(Fact {
+        label: label.to_owned(),
+        value: value.to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +605,206 @@ mod tests {
         let reduced = reduce("");
         assert_eq!(reduced.html, "");
         assert_eq!(reduced.links_total(), 0);
+    }
+}
+
+#[cfg(test)]
+mod facts_tests {
+    use super::*;
+
+    fn labels(plain: &str) -> Vec<String> {
+        facts(plain).into_iter().map(|fact| fact.label).collect()
+    }
+
+    #[test]
+    fn a_repeated_label_value_shape_is_a_block() {
+        let found = facts(
+            "Your order has shipped.\n\
+             \n\
+             tracking: EXTEST0042199317\n\
+             item: Type-C Upgrade Small Board Replacement x 1\n\
+             ship to: 1 Example Way, Springfield\n\
+             \n\
+             Follow the parcel from your orders page.\n",
+        );
+        assert_eq!(
+            found,
+            vec![
+                Fact {
+                    label: "tracking".to_owned(),
+                    value: "EXTEST0042199317".to_owned()
+                },
+                Fact {
+                    label: "item".to_owned(),
+                    value: "Type-C Upgrade Small Board Replacement x 1".to_owned(),
+                },
+                Fact {
+                    label: "ship to".to_owned(),
+                    value: "1 Example Way, Springfield".to_owned(),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn one_good_row_on_its_own_is_still_not_a_block() {
+        // The row itself is impeccable -- short label, real value, not a
+        // header name -- so the only thing that can refuse it is the
+        // requirement that the shape repeat.
+        assert!(
+            facts(
+                "Thanks for your order.\n\
+                 \n\
+                 tracking: EXTEST0042199317\n\
+                 \n\
+                 It will arrive next week.\n",
+            )
+            .is_empty(),
+            "one row is not a block, however well formed it is"
+        );
+    }
+
+    #[test]
+    fn one_line_on_its_own_is_a_sentence_with_a_colon_in_it() {
+        assert!(
+            facts("Hello Ada,\n\nHere is the thing you asked about: the meeting is moved.\n")
+                .is_empty(),
+            "a single matching line is not a block"
+        );
+    }
+
+    #[test]
+    fn a_body_that_merely_mentions_a_header_name_does_not_grow_a_table() {
+        assert!(
+            facts(
+                "I could not find your message.\n\
+                 \n\
+                 Subject: quarterly numbers\n\
+                 \n\
+                 Was that the one? Let me know.\n",
+            )
+            .is_empty(),
+            "one quoted header line is not a block"
+        );
+    }
+
+    #[test]
+    fn a_quoted_header_block_is_not_a_facts_block() {
+        assert!(
+            facts(
+                "See below.\n\
+                 \n\
+                 From: Ada Lovelace <ada@example.com>\n\
+                 To: Postio <postio@example.net>\n\
+                 Subject: quarterly numbers\n\
+                 Date: Mon, 1 Jun 2026 09:00:00 +0000\n\
+                 \n\
+                 The numbers are attached.\n",
+            )
+            .is_empty(),
+            "a forwarded header block is mail plumbing, not a set of facts"
+        );
+    }
+
+    #[test]
+    fn a_run_longer_than_the_cap_is_trimmed_to_it() {
+        let plain = (1..=9)
+            .map(|n| format!("field {n}: value {n}\n"))
+            .collect::<String>();
+        let found = facts(&plain);
+        // Spelled out rather than compared against `FACTS_KEPT`, which is
+        // what the constant would say about itself.
+        assert_eq!(
+            found.len(),
+            4,
+            "nine rows is a contents page, not a summary"
+        );
+        assert_eq!(found[0].label, "field 1", "and it keeps the first four");
+        assert_eq!(found[3].label, "field 4");
+    }
+
+    // The three label rules below are tested one at a time, on input that
+    // only that rule refuses. Together they read like one rule; separately
+    // each has to earn its place, and a rule no test can break is a rule
+    // nobody can justify.
+
+    #[test]
+    fn a_label_carrying_sentence_punctuation_is_prose() {
+        // Short, and few enough words -- only the punctuation is wrong.
+        assert!(
+            facts(
+                "Good news, everyone: your order shipped\n\
+                   One thing, though: it is late\n"
+            )
+            .is_empty(),
+            "a comma before the colon means a sentence, not a label"
+        );
+    }
+
+    #[test]
+    fn a_label_of_too_many_words_is_prose() {
+        // Short words, no punctuation: only the count is wrong.
+        assert!(
+            facts(
+                "we will be in touch: soon\n\
+                   and you can call us: today\n"
+            )
+            .is_empty(),
+            "five words before a colon is a clause"
+        );
+    }
+
+    #[test]
+    fn a_label_that_runs_long_is_prose() {
+        // Three words, no punctuation: only the length is wrong.
+        assert!(
+            facts(
+                "delivery confirmation notification: sent\n\
+                   shipment verification acknowledgement: done\n"
+            )
+            .is_empty(),
+            "a label a person would not write as a column heading"
+        );
+    }
+
+    #[test]
+    fn a_row_needs_something_on_both_sides_of_the_separator() {
+        assert!(
+            facts("tracking:\nitem:\nship to:\n").is_empty(),
+            "a label with no value is not a fact"
+        );
+    }
+
+    #[test]
+    fn a_blank_line_ends_the_run() {
+        // Nothing but whitespace separates these four rows, and every one of
+        // them would pass on its own. The block the canvas draws is a block
+        // on the page too, so only the first pair is one.
+        assert_eq!(
+            labels(
+                "tracking: EXTEST0042199317\n\
+                 item: One Small Board\n\
+                 \n\
+                 colour: blue\n\
+                 size: large\n",
+            ),
+            vec!["tracking", "item"],
+        );
+    }
+
+    #[test]
+    fn only_one_run_is_taken_and_it_is_the_first() {
+        assert_eq!(
+            labels(
+                "tracking: EXTEST0042199317\n\
+                 item: One Small Board\n\
+                 \n\
+                 Some prose in between.\n\
+                 \n\
+                 colour: blue\n\
+                 size: large\n",
+            ),
+            vec!["tracking", "item"],
+        );
     }
 }
