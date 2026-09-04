@@ -44,8 +44,8 @@ use postio_body::sanitize::RemoteImages;
 // Q6): one implementation for every frontend, re-exported here so existing
 // paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
-    Absent, DOCUMENT_BASE_URI, HeldBack, Rendering, SCROLL_MARKERS, absent_html, body_html,
-    content_security_policy, document_for, reader_ground, wrap_document,
+    Absent, DOCUMENT_BASE_URI, HeldBack, Rendering, SCROLL_MARKERS, Sheet, absent_html, body_html,
+    content_security_policy, document_for, reader_ground, sheet_for, wrap_document,
 };
 
 /// The message currently on screen, kept so the banner's two actions can ask
@@ -60,6 +60,14 @@ struct Open {
     /// reader quietly deciding that a person who wanted one sender's layout
     /// wants everyone's.
     rendering: Rendering,
+    /// Whether reader view had something to offer on this message.
+    ///
+    /// Recorded at `render` rather than asked again per draw:
+    /// [`suits_reader_view`] parses the markup, and the answer cannot change
+    /// while one message is on screen. It is what tells `View original` apart
+    /// from ordinary correspondence, which is also `Rendering::Original` and
+    /// must keep following the theme.
+    bulk: bool,
 }
 
 /// Called with how many remote references the pane is currently holding
@@ -126,6 +134,8 @@ pub struct Reader {
     /// How many documents have actually been handed to WebKit — see
     /// [`Reader::loads`].
     loads: Rc<std::cell::Cell<u32>>,
+    /// The last document handed to WebKit — see [`Reader::test_document`].
+    document: Rc<RefCell<String>>,
     /// Set by [`Reader::set_actions_visible`]`(false)` — overrides what
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
@@ -274,6 +284,7 @@ impl Reader {
             page: Rc::new(std::cell::Cell::new(0)),
             paints: Rc::new(std::cell::Cell::new(0)),
             loads: Rc::new(std::cell::Cell::new(0)),
+            document: Rc::new(RefCell::new(String::new())),
             _dark_notify: Rc::new(DarkNotify {
                 handler: Some(dark_notify),
             }),
@@ -309,6 +320,7 @@ impl Reader {
             let rendered = Rc::clone(&reader.rendered);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
             reader.reader_notice.connect_action(move || {
                 let Some(notice) = weak.upgrade() else { return };
                 let Some(banner) = banner_from_notice.upgrade() else {
@@ -332,6 +344,7 @@ impl Reader {
                 render_open(
                     &Canvas {
                         view: &view,
+                        document: &document,
                         page: &page,
                         loads: &loads,
                     },
@@ -358,6 +371,7 @@ impl Reader {
             let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
                 let Some(reader_notice) = notice_weak.upgrade() else {
@@ -367,6 +381,7 @@ impl Reader {
                     render_open(
                         &Canvas {
                             view: &view,
+                            document: &document,
                             page: &page,
                             loads: &loads,
                         },
@@ -389,6 +404,7 @@ impl Reader {
             let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
             reader.banner.connect_always_allow(move || {
                 let Some(reader_notice) = notice_weak.upgrade() else {
                     return;
@@ -408,6 +424,7 @@ impl Reader {
                     render_open(
                         &Canvas {
                             view: &view,
+                            document: &document,
                             page: &page,
                             loads: &loads,
                         },
@@ -585,7 +602,8 @@ impl Reader {
         // opens reduced; correspondence never does. See
         // `document::suits_reader_view` for why the question is "was this
         // laid out by a template" rather than "could this be reduced".
-        let rendering = if postio_ui::reader::document::suits_reader_view(body) {
+        let bulk = postio_ui::reader::document::suits_reader_view(body);
+        let rendering = if bulk {
             Rendering::Reader
         } else {
             Rendering::Original
@@ -594,6 +612,7 @@ impl Reader {
             body: body.clone(),
             sender: sender.map(str::to_owned),
             rendering,
+            bulk,
         });
         self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
@@ -688,6 +707,7 @@ impl Reader {
     fn canvas(&self) -> Canvas<'_> {
         Canvas {
             view: &self.view,
+            document: &self.document,
             page: &self.page,
             loads: &self.loads,
         }
@@ -797,7 +817,7 @@ impl Reader {
         self.banner.set_visible(false);
         load_document(
             &self.canvas(),
-            &wrap_document(&absent_html(state), RemoteImages::Blocked),
+            &wrap_document(&absent_html(state), RemoteImages::Blocked, Sheet::Theme),
         );
         // No body drawn, so nothing is being held back either — a caller
         // watching `connect_rendered` must not keep showing the previous
@@ -831,6 +851,17 @@ impl Reader {
     #[doc(hidden)]
     pub fn loads(&self) -> u32 {
         self.loads.get()
+    }
+
+    /// The document the pane last handed to WebKit.
+    ///
+    /// The reader's `WebView` runs with JavaScript off, so a test cannot ask
+    /// the live page what it painted; this is the finished document, which is
+    /// the last thing that exists before WebKit and the place a wiring
+    /// mistake shows. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_document(&self) -> String {
+        self.document.borrow().clone()
     }
 
     /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
@@ -891,7 +922,10 @@ impl Reader {
         self.banner.set_visible(false);
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
-        load_document(&self.canvas(), &wrap_document("", RemoteImages::Blocked));
+        load_document(
+            &self.canvas(),
+            &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
+        );
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
         }
@@ -963,6 +997,15 @@ fn paint_ground(view: &webkit6::WebView) {
 /// `page` whether or not the load was worth doing.
 struct Canvas<'a> {
     view: &'a webkit6::WebView,
+    /// The last document handed to WebKit, kept for [`Reader::test_document`].
+    ///
+    /// The reader's `WebView` has JavaScript off by construction, so a test
+    /// cannot ask the live page what colour it ended up painting -- the one
+    /// assertion that would be closer to what a person sees is the one this
+    /// pane's hardening rules out. This is the next thing down: the finished
+    /// document, the last artifact before WebKit, which is where a wiring
+    /// mistake would show.
+    document: &'a RefCell<String>,
     /// Which of [`SCROLL_MARKERS`]' anchors the pane is at.
     page: &'a Rc<std::cell::Cell<u32>>,
     /// Documents actually handed to WebKit — [`Reader::loads`].
@@ -985,6 +1028,7 @@ struct Canvas<'a> {
 /// judgement belongs where message identity exists, in `postio_app::reading`.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
+    canvas.document.replace(document.to_owned());
     canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
     // before this call -- see `Reader::page_down`.
@@ -1007,7 +1051,7 @@ fn render_open(
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
 ) {
-    let (body, sender, rendering) = {
+    let (body, sender, rendering, bulk) = {
         let guard = open.borrow();
         let Some(current) = guard.as_ref() else {
             return;
@@ -1016,6 +1060,7 @@ fn render_open(
             current.body.clone(),
             current.sender.clone(),
             current.rendering,
+            current.bulk,
         )
     };
     let drawn = body_html(&body, remote, rendering);
@@ -1047,7 +1092,13 @@ fn render_open(
         reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
     }
 
-    load_document(canvas, &document_for(&content, remote));
+    // Which paper this goes on. `Rendering::Original` alone is not enough --
+    // correspondence is Original too, and must keep following the theme; the
+    // sender's sheet is for the person who left reader view to see what was
+    // actually sent. `sheet_for` is where that rule lives, so this frontend
+    // and the FFI one cannot express it differently.
+    let sheet = sheet_for(drawn.rendering, bulk);
+    load_document(canvas, &document_for(&content, remote, sheet));
 
     for handler in rendered.borrow().iter() {
         handler(held_back);
@@ -1272,7 +1323,7 @@ mod tests {
 
     #[test]
     fn the_document_carries_the_base_uri_and_the_stylesheet() {
-        let doc = wrap_document("<p>hi</p>", RemoteImages::Blocked);
+        let doc = wrap_document("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
         assert!(doc.contains("<style>"));
         assert!(doc.contains("<p>hi</p>"));
         assert!(doc.contains("Content-Security-Policy"));

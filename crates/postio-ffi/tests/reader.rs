@@ -92,7 +92,14 @@ fn the_document_is_the_one_the_gtk_reader_would_render() {
     // the point of asserting against `body_html` rather than a literal: the
     // FFI document is the shared one, whichever way it was drawn.
     let drawn = shared::body_html(&body, RemoteImages::Blocked, shared::Rendering::Original);
-    let expected = shared::document_for(&drawn.html, RemoteImages::Blocked);
+    // Through `sheet_for` rather than naming the sheet: the paper is part of
+    // "the document the GTK reader would render", so a test that pinned it to
+    // `Theme` would stop noticing if the two frontends ever chose differently.
+    let expected = shared::document_for(
+        &drawn.html,
+        RemoteImages::Blocked,
+        shared::sheet_for(drawn.rendering, shared::suits_reader_view(&body)),
+    );
 
     assert_eq!(
         session.reader_document(id, RemoteImagesFfi::Blocked),

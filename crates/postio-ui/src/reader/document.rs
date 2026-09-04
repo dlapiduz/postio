@@ -172,16 +172,62 @@ pub fn scroll_markers() -> String {
 /// context those live on. `reader-tokens.css` is generated from the same
 /// design tokens as a literal `--r-*` palette (#296); `reader.css` is
 /// structure only, referencing those variables.
-pub fn wrap_document(content: &str, remote: RemoteImages) -> String {
-    let css = reader_css();
+pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
+    let mut css = reader_css();
     let csp = content_security_policy(remote);
+    let root_class = match sheet {
+        Sheet::Theme => String::new(),
+        Sheet::Senders => {
+            css.push_str(&senders_sheet_css());
+            format!(" class=\"{SENDERS_SHEET_CLASS}\"")
+        }
+    };
     format!(
-        "<!DOCTYPE html>\n<html><head>\n\
+        "<!DOCTYPE html>\n<html{root_class}><head>\n\
          <meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\">\n\
          <style>{css}</style>\n\
          </head><body>{content}</body></html>"
     )
+}
+
+/// The rules that turn the sender's box into their own page.
+///
+/// Scoped to `.postio-body` and not to `:root`, which is the whole design:
+/// `body` keeps painting `var(--r-ground)` from the theme, so the chrome
+/// around the sheet stays dark and the sheet has an edge to be inset from.
+/// Custom properties inherit, so every rule inside the box — the link
+/// colour, the quote ground, the hairlines — resolves against the light
+/// palette without `reader.css` knowing this mode exists.
+///
+/// The values are read out of the generated palette rather than restated,
+/// the same rule and the same reason as [`reader_ground`]: #296 says a
+/// colour has one source, and a second copy is one that can drift.
+fn senders_sheet_css() -> String {
+    format!(
+        "\n.{SENDERS_SHEET_CLASS} .postio-body {{{}\n  background: var(--r-ground);\n  \
+         color: var(--r-ink);\n}}\n",
+        light_tokens()
+    )
+}
+
+/// The light half of the generated palette, as declarations.
+///
+/// A sibling of [`reader_ground`], split out of the same file the same way:
+/// everything before the dark block is the light scheme, and the `:root`
+/// body of it is the set of values a sender's page should be drawn with.
+fn light_tokens() -> &'static str {
+    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
+    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
+    let (light, _) = PALETTE
+        .split_once(DARK_BLOCK)
+        .expect("the generated palette always emits a dark block");
+    light
+        .split_once(":root {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(declarations, _)| declarations.trim_end())
+        .expect("the generated palette always opens with a light :root block")
 }
 
 /// The stylesheet [`wrap_document`] inlines: the generated token palette,
@@ -489,6 +535,53 @@ pub enum Rendering {
     Reader,
 }
 
+/// Which paper a message is drawn on.
+///
+/// Turn 7, screen 20 of the canvas: "When you do open the original, it
+/// renders on its own paper-white sheet inset from the dark chrome — sender
+/// CSS never fights the app theme, and link colors stay the sender's."
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sheet {
+    /// Postio's own ground, following the reader's colour scheme.
+    ///
+    /// What correspondence gets. A reply drawn on a white sheet inside a
+    /// dark window would be worse than what the theme already does, so this
+    /// stays the default and the sender's sheet is the exception.
+    #[default]
+    Theme,
+    /// The sender's own paper: the light palette whatever the scheme, so
+    /// their white-background logo, their mid-grey body text and their links
+    /// land on the page they were designed for.
+    ///
+    /// Only the sender's *box* changes. The chrome around it keeps the
+    /// theme's ground, which is what makes the sheet read as a sheet.
+    Senders,
+}
+
+/// The class [`Sheet::Senders`] puts on the document root.
+///
+/// Namespaced like every other class Postio injects, because the sanitizer
+/// leaves a sender's own `class` attributes alone.
+pub const SENDERS_SHEET_CLASS: &str = "postio-senders-sheet";
+
+/// Which paper this rendering belongs on.
+///
+/// Exactly one situation earns the sender's sheet: the person left reader
+/// view to see the original of something reader view had offered to reduce.
+/// That is a deliberate "show me what they actually sent", and it is the
+/// only time Postio's palette is the wrong one to draw it in.
+///
+/// `suits_reader_view` is passed rather than recomputed from the body:
+/// [`suits_reader_view`] parses the markup, both frontends already call it
+/// to choose the rendering, and asking twice per render would put an
+/// html5ever pass on the path every ordinary message takes.
+pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
+    match (rendering, suits_reader_view) {
+        (Rendering::Original, true) => Sheet::Senders,
+        _ => Sheet::Theme,
+    }
+}
+
 /// A body, drawn, and everything a surface needs to say about how.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rendered {
@@ -628,10 +721,11 @@ pub fn contain_body(content: &str) -> String {
 /// a style: #323 gave the sender's content a visible edge so that markup
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
-pub fn document_for(content: &str, remote: RemoteImages) -> String {
+pub fn document_for(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!("{}{}", contain_body(content), scroll_markers()),
         remote,
+        sheet,
     )
 }
 
@@ -655,6 +749,84 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 mod tests {
     use super::*;
     use postio_model::message::MessageBody;
+
+    /// The sender's sheet is for one gesture only: leaving reader view.
+    ///
+    /// Correspondence is `Original` too, and is the case that must *not*
+    /// change — a reply on a white page inside a dark window is the failure
+    /// this rule exists to avoid.
+    #[test]
+    fn only_the_original_of_something_reader_view_offered_gets_the_senders_sheet() {
+        assert_eq!(sheet_for(Rendering::Original, true), Sheet::Senders);
+        assert_eq!(sheet_for(Rendering::Original, false), Sheet::Theme);
+        assert_eq!(sheet_for(Rendering::Reader, true), Sheet::Theme);
+        assert_eq!(sheet_for(Rendering::Reader, false), Sheet::Theme);
+    }
+
+    #[test]
+    fn an_ordinary_document_carries_no_sheet_of_its_own() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        assert!(
+            !document.contains(SENDERS_SHEET_CLASS),
+            "the theme document must not carry the sender's sheet: {document}"
+        );
+    }
+
+    /// The light values land **inside** the sender's box and nowhere else.
+    ///
+    /// Scoped to `:root` they would repaint `body` too, and the sheet would
+    /// have no dark chrome to be inset from — which is the whole picture the
+    /// canvas asks for, not a detail of it.
+    #[test]
+    fn the_senders_sheet_lights_the_body_box_and_leaves_the_chrome_alone() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        assert!(
+            document.contains(&format!(r#"<html class="{SENDERS_SHEET_CLASS}">"#)),
+            "the root says which sheet it is: {document}"
+        );
+        assert!(
+            document.contains(&format!(".{SENDERS_SHEET_CLASS} .postio-body {{")),
+            "the override is scoped to the sender's box: {document}"
+        );
+        assert!(
+            !document.contains(&format!(".{SENDERS_SHEET_CLASS} :root")),
+            "nothing may repaint the root, or the chrome stops being chrome"
+        );
+    }
+
+    /// The sheet's colours are the palette's light ones, read from the same
+    /// place `reader_ground` reads them — not a second copy that can drift
+    /// away from the design system (#296).
+    #[test]
+    fn the_senders_sheet_is_the_generated_light_palette_and_not_a_second_copy() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        let light = reader_ground(false);
+        let dark = reader_ground(true);
+        assert_ne!(light, dark, "the palette must actually differ by scheme");
+
+        let sheet = document
+            .split_once(&format!(".{SENDERS_SHEET_CLASS} .postio-body {{"))
+            .expect("the sheet rule is in the document")
+            .1
+            .split_once('}')
+            .expect("the sheet rule closes")
+            .0;
+        assert!(
+            sheet.contains(&format!("--r-ground: {light}")),
+            "the sheet paints the light ground: {sheet}"
+        );
+        assert!(
+            !sheet.contains(dark),
+            "no dark value belongs on the sender's page: {sheet}"
+        );
+        // The link colour is what the acceptance names, and it rides the
+        // same variable `reader.css` already resolves `a { color: ... }`
+        // against -- so proving the accent is overridden proves the links.
+        assert!(
+            sheet.contains("--r-accent:"),
+            "the accent is what `a` resolves against: {sheet}"
+        );
+    }
 
     /// A body drawn the ordinary way — what every one of these asserted on
     /// before reader view existed.
@@ -822,7 +994,11 @@ mod tests {
     /// render produces, not just that the CSS rule exists unused.
     #[test]
     fn a_rendered_body_sits_inside_its_own_container() {
-        let document = wrap_document(&contain_body("<p>hi</p>"), RemoteImages::Blocked);
+        let document = wrap_document(
+            &contain_body("<p>hi</p>"),
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
         assert!(
             document.contains(r#"<div class="postio-body"><p>hi</p></div>"#),
             "{document}"
@@ -849,7 +1025,7 @@ mod tests {
 
     #[test]
     fn the_wrapper_carries_the_policy_the_styles_and_the_content() {
-        let document = wrap_document("<p>hello</p>", RemoteImages::Blocked);
+        let document = wrap_document("<p>hello</p>", RemoteImages::Blocked, Sheet::Theme);
         assert!(document.starts_with("<!DOCTYPE html>"));
         assert!(document.contains("Content-Security-Policy"));
         assert!(document.contains("img-src postio-cid: data:; font-src"));
@@ -940,7 +1116,7 @@ mod tests {
     /// absent plate included.
     #[test]
     fn the_document_is_proportional_to_the_message_not_to_the_font_catalogue() {
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked);
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
         assert!(
             !document.contains("data:font/"),
             "the faces are still travelling with the document"

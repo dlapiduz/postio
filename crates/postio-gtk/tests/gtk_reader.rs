@@ -24,6 +24,7 @@ use postio_gtk::reader::{BlobSource, Reader, RemoteImageAllowList};
 use postio_model::address::EmailAddress;
 use postio_model::message::MessageBody;
 use postio_model::test_corpus;
+use postio_ui::reader::document;
 use webkit6::prelude::*;
 
 #[test]
@@ -207,6 +208,61 @@ fn the_reader_renders_and_hardens_the_corpus() {
          screen is a control that does nothing"
     );
 
+    // ── #1029: and it lands on the sender's own paper, not Postio's ───────
+    // The half of the canvas (turn 7, screen 20) that `View original` did
+    // not do yet: *where* the original is drawn. A sender who laid out for a
+    // white page gets their white-background logo, their mid-grey body text
+    // and their links on a dark ground otherwise, which is the failure the
+    // feature exists to avoid rather than one it may cause.
+    let document = reader.test_document();
+    assert!(
+        document.contains(document::SENDERS_SHEET_CLASS),
+        "leaving reader view should draw the original on the sender's sheet"
+    );
+    let sheet = document
+        .split_once(&format!(
+            ".{} .postio-body {{",
+            document::SENDERS_SHEET_CLASS
+        ))
+        .expect("the sheet rule reached the document")
+        .1
+        .split_once('}')
+        .expect("the sheet rule closes")
+        .0;
+    assert!(
+        sheet.contains(&format!("--r-ground: {}", document::reader_ground(false))),
+        "the sheet is the palette's light ground: {sheet}"
+    );
+    // The chrome is the other half, and it is what makes the sheet a sheet:
+    // `body` keeps painting the theme's ground, so nothing here may move the
+    // light values onto the root.
+    assert!(
+        !sheet.contains(":root"),
+        "the light palette belongs inside the sender's box, not on the root"
+    );
+
+    // And it computes. A selector that lost on specificity, or a custom
+    // property assumed to inherit where it does not, would leave the text
+    // above intact and paint nothing at all — so the engine is asked, in
+    // both directions.
+    let painted = computed(&document, ".postio-body", "background-color");
+    assert_eq!(
+        painted,
+        rgb(document::reader_ground(false)),
+        "the sender's box should actually be painted the light ground"
+    );
+    let theme_document = document::document_for(
+        "<p>hi</p>",
+        postio_body::RemoteImages::Blocked,
+        document::Sheet::Theme,
+    );
+    assert_eq!(
+        computed(&theme_document, ".postio-body", "background-color"),
+        "rgba(0, 0, 0, 0)",
+        "an ordinary document must leave the box unpainted, so it shows the \
+         chrome's ground through -- that is what makes the sheet a change"
+    );
+
     // Per message, never sticky. Somebody who wanted to see one newsletter's
     // layout has said nothing at all about the next one.
     let finished = track_load_finished(&reader);
@@ -228,6 +284,15 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "a person's actual mail must look like the person wrote it"
     );
     assert!(!reader.reader_notice_visible());
+    // #1029: correspondence is `Rendering::Original` too, and is exactly the
+    // case that must not change. A reply on a white page inside a dark
+    // window would be worse than what the theme already does.
+    assert!(
+        !reader
+            .test_document()
+            .contains(document::SENDERS_SHEET_CLASS),
+        "an ordinary reply must keep following the theme"
+    );
 
     // ── #319: the header puts sender, subject and date on screen ──────────
     let header = reader.header();
@@ -476,6 +541,105 @@ fn scratch_path(name: &str) -> std::path::PathBuf {
 /// A flag that flips once `reader`'s `WebView` finishes its current load —
 /// success or failure both count, since a `load-failed` is still "done" for
 /// the purpose of "stop pumping and check the result".
+/// What a rendering engine actually computes for `selector`'s `property`,
+/// given `document`.
+///
+/// The string assertions elsewhere prove the right CSS reached the document.
+/// They cannot prove the CSS *applies* — a selector that loses on specificity,
+/// or a custom property that does not inherit where it was assumed to, writes
+/// exactly the same text into exactly the same place and paints nothing. So
+/// this asks the engine.
+///
+/// A scratch `WebView` with JavaScript **on**, and deliberately not the
+/// reader's: the reading pane runs with script off by construction (ADR 0003)
+/// and must keep doing so, which is precisely why a test cannot interrogate
+/// it and needs an instrument of its own. Nothing sender-authored is ever
+/// loaded here — the argument is a document Postio composed.
+fn computed(document: &str, selector: &str, property: &str) -> String {
+    let settings = webkit6::Settings::new();
+    settings.set_enable_javascript(true);
+
+    // Weakly held past the end, because a `WebView` still alive at `exit()`
+    // is #794: WebKit reports `WebProcess didn't exit as expected after the
+    // UI process connection was closed` and the binary dies on the way out,
+    // *after* reporting every test as passed. An instrument that leaks one
+    // per call would reintroduce exactly that, so this releases it and says
+    // so — the same mechanism `gtk_reader_teardown` asserts, at the one place
+    // in this binary that builds views of its own.
+    let (value, weak) = {
+        // Its own ephemeral session and context, dropped with the view: the
+        // default `WebContext` is process-global and its WebProcess outlives
+        // every scope this helper has.
+        let network_session = webkit6::NetworkSession::new_ephemeral();
+        let context = webkit6::WebContext::new();
+        let view = webkit6::WebView::builder()
+            .settings(&settings)
+            .web_context(&context)
+            .network_session(&network_session)
+            .build();
+        let window = gtk::Window::new();
+        window.set_child(Some(&view));
+        window.present();
+
+        let loaded = Rc::new(RefCell::new(false));
+        let flag = Rc::clone(&loaded);
+        view.connect_load_changed(move |_, event| {
+            if event == webkit6::LoadEvent::Finished {
+                *flag.borrow_mut() = true;
+            }
+        });
+        view.load_html(document, None);
+        wait_for(&loaded, Duration::from_secs(5));
+
+        let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let slot = Rc::clone(&answer);
+        view.evaluate_javascript(
+            &format!(
+                "getComputedStyle(document.querySelector('{selector}'))\
+                 .getPropertyValue('{property}')"
+            ),
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                *slot.borrow_mut() = Some(
+                    outcome
+                        .map(|value| value.to_str().to_string())
+                        .unwrap_or_default(),
+                );
+            },
+        );
+        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+        while answer.borrow().is_none() && Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let value = answer.borrow_mut().take().unwrap_or_default();
+
+        let weak = view.downgrade();
+        window.set_child(None::<&gtk::Widget>);
+        window.destroy();
+        (value, weak)
+    };
+    // GTK finalizes on the main loop, not at the closing brace.
+    for _ in 0..200 {
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert!(
+        weak.upgrade().is_none(),
+        "the measuring WebView outlived its window, so its WebProcess is \
+         still attached at exit -- #794 all over again"
+    );
+    value
+}
+
+/// A `#rrggbb` from the generated palette, as a rendering engine reports it.
+fn rgb(hex: &str) -> String {
+    let hex = hex.trim_start_matches('#');
+    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).expect("a #rrggbb colour");
+    format!("rgb({}, {}, {})", channel(0), channel(2), channel(4))
+}
+
 fn track_load_finished(reader: &Reader) -> Rc<RefCell<bool>> {
     let done = Rc::new(RefCell::new(false));
     let flag = Rc::clone(&done);
