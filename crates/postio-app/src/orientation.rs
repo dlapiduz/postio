@@ -15,6 +15,120 @@
 //! [`Orientation`], which has no widget and no database in it and is
 //! therefore provable in a unit test rather than only through a window.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use chrono::Utc;
+use gtk::glib;
+use postio_gtk::feed::Feeds;
+use postio_gtk::window::Window;
+use postio_session::Wiring;
+use postio_storage::repository::SettingsRepository;
+
+/// The `settings` row this feature owns.
+///
+/// Global, never per account: ADR 0012 Q6 — a second account joining a
+/// running installation must not teach the keyboard again.
+const SEEN_KEY: &str = "orientation_seen";
+
+/// Wire the strip to the sync engine, to the store, and to every command
+/// the window runs.
+pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
+    let state = Rc::new(RefCell::new(Orientation::default()));
+
+    // Has some earlier run already shown it? The answer is in SQLite, so it
+    // arrives asynchronously — which is exactly why [`Orientation`] takes
+    // its four inputs in any order rather than assuming this one is first.
+    let answer = crate::search::ask(&wiring.database, &wiring.runtime, |connection| {
+        SettingsRepository::new(connection).get(SEEN_KEY).ok()
+    });
+    glib::spawn_future_local(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        wiring,
+        #[strong]
+        state,
+        async move {
+            // A read that failed outright is treated as *already seen*. The
+            // write is on the same store, so a strip shown against a broken
+            // read is one the user could dismiss and meet again tomorrow —
+            // worse than one that quietly never appears.
+            let seen = !matches!(answer.recv().await, Ok(Some(None)));
+            let effect = state.borrow_mut().remembered(seen);
+            act(&window, &wiring, effect);
+        }
+    ));
+
+    // The first successful sync, and every one after it: `Orientation` is
+    // what knows the difference, so this needs no "have I already" flag of
+    // its own. `last_sync` is `Some` from the moment a list pass completes.
+    feeds.folders.connect_status(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        wiring,
+        #[strong]
+        state,
+        move |status| {
+            if status.last_sync.is_some() {
+                let effect = state.borrow_mut().synced();
+                act(&window, &wiring, effect);
+            }
+        }
+    ));
+
+    // Retiring is the window's to notice and this crate's to write down:
+    // ADR 0012 Q6 counts a command run from the keyboard or the palette and
+    // counts neither a click nor a modifier press, and the only layer that
+    // can tell those apart is the one resolving the keys. It fires once,
+    // whether or not the strip was ever on screen.
+    window.orientation().connect_retired(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        wiring,
+        #[strong]
+        state,
+        move || {
+            let effect = state.borrow_mut().retire();
+            act(&window, &wiring, effect);
+        }
+    ));
+}
+
+/// Carry out what the state machine decided.
+fn act(window: &Window, wiring: &Wiring, effect: Effect) {
+    match effect {
+        Effect::Nothing => {}
+        Effect::Show => window.orientation().set_visible(true),
+        Effect::Retire => {
+            window.orientation().set_visible(false);
+            remember(wiring);
+        }
+    }
+}
+
+/// Write down that this installation is done with the orientation.
+///
+/// The value is when, rather than `"true"`: a row that says only that
+/// something happened is a row nobody can ever debug, and the column is a
+/// string either way. Spawned rather than awaited — ADR 0012 Q4 asks for a
+/// strip that does not block the list, and that includes not blocking it on
+/// the way out.
+fn remember(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        let Ok(connection) = database.connection() else {
+            return;
+        };
+        if let Err(error) = SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339())
+        {
+            tracing::warn!(%error, "could not remember that the orientation was seen");
+        }
+    });
+}
+
 /// What the application should do about the strip, right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effect {

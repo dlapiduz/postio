@@ -25,6 +25,10 @@ use postio_core::Keymap;
 use postio_gtk::orientation::OrientationStrip;
 use postio_gtk::{app, fonts, style};
 
+/// How narrow `Shell` lets the message column get (`shell.rs`'s own size
+/// request), and therefore the width this strip has to stay inside.
+const COLUMN: i32 = 280;
+
 /// Every label on the strip, in the order it draws them.
 fn labels(strip: &OrientationStrip) -> Vec<String> {
     fn walk(widget: &gtk::Widget, found: &mut Vec<String>) {
@@ -73,6 +77,21 @@ pub fn the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none() {
             "the strip never draws {expected:?}; it draws {drawn:?}"
         );
     }
+
+    // ── it has to fit the column it sits in ─────────────────────────────
+    // "Fully dismissible" is an acceptance criterion, and a horizontal box
+    // hands every child its minimum and clips the rest — so a strip wider
+    // than the column pushes its last child, "Got it", off the end, and the
+    // one control that ends this becomes unreachable. `Shell` lets the
+    // message column go down to 280px, so that is the width this has to
+    // survive, not the window's.
+    let (minimum, _natural, _, _) = strip.widget().measure(gtk::Orientation::Horizontal, -1);
+    assert!(
+        minimum <= COLUMN,
+        "the strip demands {minimum}px before it will give any ground, and \
+         the message column is allowed down to {COLUMN}px: everything past \
+         that width -- \"Got it\" last of all -- is cut off"
+    );
 
     // ── and a build of it that has none ─────────────────────────────────
     // Not a contrived state: a `[keys]` that takes `?`, the palette key and

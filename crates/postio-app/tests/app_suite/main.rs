@@ -33,6 +33,7 @@ mod label_wiring;
 mod list_contract;
 mod manual_sync;
 mod onboarding_probe;
+mod orientation;
 mod parts_open_wiring;
 mod reader_loads;
 mod reading;
@@ -177,6 +178,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "manual_sync::the_status_lines_sync_button_asks_for_a_refresh",
         manual_sync::the_status_lines_sync_button_asks_for_a_refresh as fn(),
+    ),
+    (
+        "orientation::the_first_sync_shows_it_and_got_it_ends_it_for_every_later_run",
+        orientation::the_first_sync_shows_it_and_got_it_ends_it_for_every_later_run as fn(),
+    ),
+    (
+        "orientation::a_command_retires_it_even_when_it_was_never_on_screen",
+        orientation::a_command_retires_it_even_when_it_was_never_on_screen as fn(),
     ),
     (
         "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
