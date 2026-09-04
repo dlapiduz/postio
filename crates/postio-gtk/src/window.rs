@@ -1657,6 +1657,11 @@ impl Window {
         // them has the column. Hidden until `postio-app` says otherwise.
         let orientation = crate::orientation::OrientationStrip::new();
         shell.list().prepend(&orientation.widget());
+        orientation.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.orientation().retire()
+        ));
 
         // Canvas 3a: `t` turns this column into the thread. Built alongside
         // the list rather than lazily, because the swap has to be a
@@ -2008,6 +2013,14 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        // ADR 0012 Q6: the first-run orientation is over the moment somebody
+        // runs a command from the keyboard or the palette, whether or not it
+        // ever appeared. This is the seam that can tell that apart from a
+        // click: `connect_action` sees only the commands the window passes
+        // *out*, so it never sees `j` -- which is the exact gesture the ADR
+        // names -- and `act` sees the mouse's invocations too, which it says
+        // are not evidence of anything.
+        self.orientation().retire();
         match id {
             ActionId::Builtin(id) => self.run(id),
             ActionId::Ext(id) => {

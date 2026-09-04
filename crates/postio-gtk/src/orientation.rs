@@ -96,8 +96,14 @@ pub fn spoken(hints: &[Hint]) -> String {
 #[derive(Clone)]
 pub struct OrientationStrip {
     root: gtk::Box,
-    hints: gtk::Box,
+    hints: gtk::FlowBox,
     dismiss: gtk::Button,
+    /// Whether it is over: the user has dismissed it, or has used the
+    /// command system, which is the same answer. Latched, so the handlers
+    /// below run once per window however many keys follow.
+    retired: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Who to tell when that happens — `postio-app`, which writes it down.
+    on_retired: std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn()>>>>,
     /// Whether the keymap in force gives it anything to teach. A strip with
     /// no keys on it is a title and a "Got it" button over somebody's mail,
     /// so it stays hidden however loudly it is asked to show.
@@ -110,9 +116,9 @@ impl OrientationStrip {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         root.add_css_class("postio-orientation");
         root.set_visible(false);
-        // A group with a name, rather than a row of unrelated labels: what
-        // it is called is the whole sentence, because the chips read aloud
-        // as "Command palette ctrl+k" and that is not one.
+        // A group with a name, rather than a row of unrelated labels: the
+        // chips read aloud as "Command palette ctrl+k", which is not a
+        // sentence, so the whole strip carries one that is.
         root.set_accessible_role(gtk::AccessibleRole::Group);
         root.set_margin_start(16);
         root.set_margin_end(16);
@@ -121,34 +127,59 @@ impl OrientationStrip {
 
         let icon = gtk::Image::from_icon_name("input-keyboard-symbolic");
         icon.set_pixel_size(20);
+        icon.set_valign(gtk::Align::Start);
         icon.add_css_class("postio-orientation-icon");
         icon.set_accessible_role(gtk::AccessibleRole::Presentation);
         root.append(&icon);
 
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        text.set_hexpand(true);
+
         let title = gtk::Label::new(Some(TITLE));
         title.add_css_class("postio-orientation-title");
         title.set_xalign(0.0);
+        title.set_wrap(true);
         title.set_accessible_role(gtk::AccessibleRole::Presentation);
-        root.append(&title);
+        text.append(&title);
 
-        let hints = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-        hints.set_hexpand(true);
-        hints.set_halign(gtk::Align::End);
-        hints.set_valign(gtk::Align::Center);
-        root.append(&hints);
+        // The keys wrap rather than shrink. The message column is allowed
+        // down to 280px (`Shell`'s own size request) and high contrast takes
+        // it to about 400 at a full-width window, and a row that can only
+        // give ground by cutting words reaches those widths as
+        // "Co… ctrl+k  Ev… ?  Mo… j/k" — every word gone and every key
+        // kept, which teaches nobody anything. Stacking costs height for one
+        // moment of one run; ellipsis costs the whole point of the strip.
+        let hints = gtk::FlowBox::new();
+        hints.set_selection_mode(gtk::SelectionMode::None);
+        hints.set_min_children_per_line(1);
+        hints.set_max_children_per_line(3);
+        hints.set_column_spacing(16);
+        hints.set_row_spacing(2);
+        hints.set_homogeneous(false);
+        // Not a list to arrow around: the keys are what it is teaching, and
+        // a strip that took the keyboard would be the modal ADR 0012 Q4
+        // rules out.
+        hints.set_focusable(false);
+        hints.set_accessible_role(gtk::AccessibleRole::Presentation);
+        text.append(&hints);
+        root.append(&text);
 
         // "Got it" rather than a close cross: the ADR asks for one
         // dismissal, and a labelled button says what dismissing means where
-        // an X only says that something can be got rid of.
+        // an X only says that something can be got rid of. Last child, and
+        // the only one that never gives ground.
         let dismiss = gtk::Button::with_label("Got it");
         dismiss.add_css_class("flat");
         dismiss.add_css_class("postio-orientation-dismiss");
+        dismiss.set_valign(gtk::Align::Start);
         root.append(&dismiss);
 
         OrientationStrip {
             root,
             hints,
             dismiss,
+            retired: std::rc::Rc::new(std::cell::Cell::new(false)),
+            on_retired: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             taught: std::rc::Rc::new(std::cell::Cell::new(false)),
         }
     }
@@ -170,7 +201,11 @@ impl OrientationStrip {
         }
         let hints = hints(keymap);
         for hint in &hints {
-            self.hints.append(&chip(hint));
+            let child = gtk::FlowBoxChild::new();
+            child.set_child(Some(&chip(hint)));
+            child.set_focusable(false);
+            child.set_accessible_role(gtk::AccessibleRole::Presentation);
+            self.hints.append(&child);
         }
         self.root
             .update_property(&[gtk::accessible::Property::Label(&spoken(&hints))]);
@@ -187,7 +222,8 @@ impl OrientationStrip {
     /// on screen, and a strip that appeared anyway would be a title and a
     /// button sitting on top of the mail.
     pub fn set_visible(&self, visible: bool) {
-        self.root.set_visible(visible && self.taught.get());
+        self.root
+            .set_visible(visible && self.taught.get() && !self.retired.get());
     }
 
     /// Whether it is on screen.
@@ -196,8 +232,39 @@ impl OrientationStrip {
     }
 
     /// Called when the user presses "Got it".
+    ///
+    /// The window subscribes and routes it into [`retire`](Self::retire), so
+    /// the button and the first keystroke end this the same way rather than
+    /// by two paths that have to be kept in step.
     pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
         self.dismiss.connect_clicked(move |_| handler());
+    }
+
+    /// The user is done with it, for good.
+    ///
+    /// Called for the dismiss button and for the first command the window
+    /// resolves from the keyboard or the palette — ADR 0012 Q6 counts both
+    /// as the user demonstrating they know, and counts neither a click nor a
+    /// modifier press. It fires whether or not the strip was ever on screen,
+    /// because somebody who pressed `j` before the first sync finished
+    /// should never meet it at all.
+    ///
+    /// Latched: the second call and every one after it does nothing, so the
+    /// write behind it happens once rather than on every keystroke for the
+    /// rest of the session.
+    pub fn retire(&self) {
+        if self.retired.replace(true) {
+            return;
+        }
+        self.root.set_visible(false);
+        for handler in self.on_retired.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Called the first time it is retired, and never again.
+    pub fn connect_retired(&self, handler: impl Fn() + 'static) {
+        self.on_retired.borrow_mut().push(Box::new(handler));
     }
 }
 
@@ -216,6 +283,12 @@ fn chip(hint: &Hint) -> gtk::Box {
 
     let label = gtk::Label::new(Some(hint.label));
     label.add_css_class("postio-orientation-hint-label");
+    // The last thing to give, and it still gives: at the column's own 280px
+    // minimum even one chip per line is too wide for "Move between
+    // messages", and a label that cannot wrap would take the button off the
+    // end with it. It never wraps at any width somebody reads mail at.
+    label.set_wrap(true);
+    label.set_xalign(0.0);
     label.set_accessible_role(gtk::AccessibleRole::Presentation);
     row.append(&label);
 

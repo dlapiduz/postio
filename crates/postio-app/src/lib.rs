@@ -554,6 +554,12 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // pane and the window wires their swap when the composer is installed.
     reading::install(window, wiring, &feeds, showing);
 
+    // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
+    // Installed here rather than in `postio-gtk` because the two questions
+    // it turns on -- has this been seen, and has a sync finished -- are a
+    // store read and an engine event, and the view layer has neither.
+    orientation::install(window, wiring, &feeds);
+
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
     export::install(window, wiring);
