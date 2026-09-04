@@ -39,10 +39,14 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
-use postio_model::{AccountId, MailboxId, MessageId, Operation};
+use postio_model::{
+    AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
+};
 
 use crate::Result;
-use crate::repository::{MessageRepository, OperationQueueRepository};
+use crate::repository::{
+    FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
+};
 
 /// Which server operation a relocation is.
 ///
@@ -106,4 +110,64 @@ pub fn relocate(
         messages.move_to(ids, destination)?;
     }
     Ok(())
+}
+
+/// Set or clear one flag on `rows`, and keep their threads honest.
+///
+/// Answers the messages whose rows a caller should repaint: every message in
+/// every thread the change touched, not only the ones whose flags moved. The
+/// threads keep two things the rows alone cannot (#754) -- the denormalised
+/// aggregates the account-scoped page reads straight off `threads`, and the
+/// membership that names the row the conversation list draws -- so both are
+/// recomputed inside the caller's transaction. Nothing can then observe a
+/// read message under an unread thread.
+///
+/// `rows` must already have been read: the verb needs each message's current
+/// flags to compute the new set, and its thread to recompute. Rows whose flag
+/// is already `wanted` are the caller's to filter -- this writes what it is
+/// given.
+pub fn set_flag(
+    transaction: &Transaction<'_>,
+    account: AccountId,
+    rows: &[&Message],
+    flag: &Flag,
+    wanted: bool,
+    at: DateTime<Utc>,
+) -> Result<Vec<MessageId>> {
+    let one: FlagSet = std::iter::once(flag.clone()).collect();
+    let messages = MessageRepository::new(transaction);
+    let queue = OperationQueueRepository::new(transaction);
+    for message in rows {
+        let mut flags = message.flags.clone();
+        if wanted {
+            flags.insert(flag.clone());
+        } else {
+            flags.remove(flag);
+        }
+        messages.set_flags(message.id, &flags, FlagSource::Local)?;
+        let operation = if wanted {
+            Operation::SetFlags { flags: one.clone() }
+        } else {
+            Operation::ClearFlags { flags: one.clone() }
+        };
+        queue.enqueue(
+            account,
+            OperationTarget::Message(message.id),
+            &operation,
+            at,
+        )?;
+    }
+
+    let threads = ThreadRepository::new(transaction);
+    let mut conversations: Vec<ThreadId> = rows.iter().filter_map(|row| row.thread_id).collect();
+    conversations.sort_unstable();
+    conversations.dedup();
+    let mut siblings: Vec<MessageId> = Vec::new();
+    for thread in &conversations {
+        threads.recompute(*thread)?;
+        for row in threads.messages(*thread, ThreadOrder::Oldest)? {
+            siblings.push(row.id);
+        }
+    }
+    Ok(siblings)
 }

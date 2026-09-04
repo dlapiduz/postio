@@ -1342,62 +1342,15 @@ impl Actions {
             return Err(CommandError::rejected("Already set"));
         }
 
-        let one: FlagSet = std::iter::once(flag.clone()).collect();
         let at = Utc::now();
-        let mut siblings: Vec<MessageId> = Vec::new();
+        // The rows, their queue entries and the thread recompute are
+        // `postio-storage`'s half now (ADR 0028); the siblings it answers are
+        // what the repaint below widens to. This side owns the transaction,
+        // the rules pass hands over the one it is already inside.
         let transaction = connection.transaction().map_err(store_failure)?;
-        {
-            let messages = MessageRepository::new(&transaction);
-            let queue = OperationQueueRepository::new(&transaction);
-            for message in &touched {
-                let mut flags = message.flags.clone();
-                if wanted {
-                    flags.insert(flag.clone());
-                } else {
-                    flags.remove(&flag);
-                }
-                messages
-                    .set_flags(message.id, &flags, FlagSource::Local)
-                    .map_err(store_failure)?;
-                let operation = if wanted {
-                    Operation::SetFlags { flags: one.clone() }
-                } else {
-                    Operation::ClearFlags { flags: one.clone() }
-                };
-                queue
-                    .enqueue(
-                        account,
-                        OperationTarget::Message(message.id),
-                        &operation,
-                        at,
-                    )
-                    .map_err(store_failure)?;
-            }
-
-            // The threads those rows belong to keep two things the rows
-            // alone cannot (#754): denormalised aggregates the
-            // account-scoped page reads straight off `threads`, and the
-            // membership that names the row the list draws for the
-            // conversation. Recompute the first and collect the second
-            // while the write is still one transaction, so nothing can
-            // observe a read message under an unread thread.
-            let threads = ThreadRepository::new(&transaction);
-            let mut conversations: Vec<ThreadId> = touched
-                .iter()
-                .filter_map(|message| message.thread_id)
-                .collect();
-            conversations.sort_unstable();
-            conversations.dedup();
-            for thread in &conversations {
-                threads.recompute(*thread).map_err(store_failure)?;
-                for row in threads
-                    .messages(*thread, ThreadOrder::Oldest)
-                    .map_err(store_failure)?
-                {
-                    siblings.push(row.id);
-                }
-            }
-        }
+        let siblings =
+            postio_storage::actions::set_flag(&transaction, account, &touched, &flag, wanted, at)
+                .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
