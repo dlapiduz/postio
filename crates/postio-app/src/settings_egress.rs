@@ -5,6 +5,7 @@
 //! follows. Refreshed when the settings command runs, so the list a person
 //! opens is current rather than a snapshot from launch.
 
+use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_storage::Database;
@@ -24,10 +25,16 @@ pub fn install(window: &Window, wiring: &Wiring) {
     // menu, wherever — which is exactly "the moment the person looks".
     // `CommandId::Settings` never reaches `connect_command`: the window
     // answers it itself, and handled commands are not delivered twice.
+    // Weak: the window owns the settings panel that owns this handler
+    // (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
-        let window = window.clone();
         let database = wiring.database.clone();
-        move |_| refresh(&window, &database)
+        move |_| {
+            if let Some(window) = weak.upgrade() {
+                refresh(&window, &database);
+            }
+        }
     });
 }
 

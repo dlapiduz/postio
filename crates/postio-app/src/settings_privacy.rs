@@ -12,6 +12,7 @@
 //! log and the receipt count follow that same shape rather than adding a
 //! distinction the pane draws nowhere else.
 
+use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_storage::Database;
@@ -23,10 +24,16 @@ use crate::Wiring;
 /// count to the store.
 pub fn install(window: &Window, wiring: &Wiring) {
     refresh(window, &wiring.database);
+    // Weak: the window owns the settings panel that owns this handler, so a
+    // strong clone is a cycle and the window never frees (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
-        let window = window.clone();
         let database = wiring.database.clone();
-        move |_| refresh(&window, &database)
+        move |_| {
+            if let Some(window) = weak.upgrade() {
+                refresh(&window, &database);
+            }
+        }
     });
 }
 

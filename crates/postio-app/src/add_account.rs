@@ -37,6 +37,7 @@
 //! account and is #1's work; [`crate::attach_account`] is the seam it will
 //! land on.
 
+use gtk::glib;
 use std::sync::Arc;
 
 use adw::prelude::*;
@@ -55,11 +56,16 @@ use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 /// verbs over mail, and this one is answered by the composition root, which
 /// is the only place that may build a probe and write an account row.
 pub fn install(window: &Window, wiring: &Wiring) {
+    // Weak: this handler is stored on the window itself, so a strong clone
+    // is a cycle with no third party in it at all (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
-        let window = window.clone();
         let wiring = wiring.clone();
         move |id| {
             if id == CommandId::AddAccount {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
                 // Built per opening, not once: a transport is cheap, and one
                 // shared between dialogues would outlive the cancellation
                 // that is supposed to end its work.

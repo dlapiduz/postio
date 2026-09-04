@@ -32,6 +32,7 @@
 //! its own record of the same id only for the one thing the composer cannot
 //! tell it after the fact — which row to delete when the draft is dropped.
 
+use gtk::glib;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -237,13 +238,17 @@ fn install_resume(
     database: Database,
     last_id: Rc<Cell<Option<DraftId>>>,
 ) {
+    // Weak: the window owns the list that owns this handler (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.list().connect_activated({
         let composer = composer.clone();
-        let window = window.clone();
         move |row| {
             if !row.draft {
                 return;
             }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
             let Some(draft) = draft_behind(&database, row.id) else {
                 return;
             };
