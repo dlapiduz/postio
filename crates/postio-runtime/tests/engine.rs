@@ -17,6 +17,10 @@ use postio_storage::repository::OperationQueueRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
+mod harness;
+
+use harness::BlobDir;
+
 /// An engine over a seeded database and a mock server, with an event stream to
 /// read what it announced.
 fn engine() -> (
@@ -24,7 +28,7 @@ fn engine() -> (
     postio_storage::Database,
     postio_storage::seed::SeedReport,
     EventStream,
-    tempfile::TempDir,
+    BlobDir,
 ) {
     let (engine, database, report, events, _backend, directory) = engine_with_backend();
     (engine, database, report, events, directory)
@@ -37,7 +41,7 @@ fn engine_with_backend() -> (
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
-    tempfile::TempDir,
+    BlobDir,
 ) {
     engine_with(|_| {})
 }
@@ -58,7 +62,7 @@ fn engine_with(
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
-    tempfile::TempDir,
+    BlobDir,
 ) {
     engine_with_backfill(prepare, Default::default())
 }
@@ -79,7 +83,7 @@ fn engine_with_backfill(
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
-    tempfile::TempDir,
+    BlobDir,
 ) {
     let database = test_support::memory();
     let report = seed_small(&database, 11);
@@ -115,6 +119,7 @@ fn engine_with_backfill(
     })
     .expect("the engine starts");
 
+    let directory = BlobDir::new(engine.clone(), directory);
     (engine, database, report, events, backend, directory)
 }
 
@@ -867,7 +872,7 @@ fn engine_over(
     database: &postio_storage::Database,
     account: postio_model::ids::AccountId,
     backend: MockBackend,
-) -> (Engine, EventStream, tempfile::TempDir) {
+) -> (Engine, EventStream, BlobDir) {
     engine_over_arc(database, account, Arc::new(backend))
 }
 
@@ -877,7 +882,7 @@ fn engine_over_arc(
     database: &postio_storage::Database,
     account: postio_model::ids::AccountId,
     backend: Arc<MockBackend>,
-) -> (Engine, EventStream, tempfile::TempDir) {
+) -> (Engine, EventStream, BlobDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -904,7 +909,38 @@ fn engine_over_arc(
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
+    let directory = BlobDir::new(engine.clone(), directory);
     (engine, events, directory)
+}
+
+/// The blob directory must not go while the engine is still running.
+///
+/// Locals drop in reverse declaration order, so the directory a test names
+/// last is the *first* thing released at the end of a body — while the engine
+/// thread is still fetching. `TempDir::drop` calls `remove_dir_all` and
+/// swallows the error; the sync pass then commits a blob, `BlobStore`
+/// recreates the parent it needs, and the tree is left behind under
+/// `target/tmp`. That is #724, and it is why the harness hands back a guard
+/// rather than a bare `TempDir`.
+#[tokio::test]
+async fn releasing_the_blob_directory_stops_the_engine_first() {
+    let (_engine, _database, _report, _events, _backend, directory) = engine_with_backend();
+    // A handle the harness does not own, so there is still something to ask
+    // after the bundle has gone. `Engine::stop` closes the job channel for
+    // every handle, not just the last one, which is what makes this readable.
+    let watcher = _engine.clone();
+    let path = directory.path().to_path_buf();
+    assert!(path.exists(), "the blob directory exists to begin with");
+
+    // Exactly what the end of a test body does, in the order it does it.
+    drop(directory);
+
+    assert!(
+        watcher.drain().await.is_err(),
+        "the blob directory was removed while the engine was still running -- \
+         a fetch finishing after this point recreates the tree and leaks it"
+    );
+    assert!(!path.exists(), "and the directory itself is gone");
 }
 
 /// A mock server holding an INBOX with mail in it.
@@ -1381,7 +1417,7 @@ fn engine_seeding_in_batches(
     postio_storage::Database,
     postio_model::ids::MailboxId,
     Arc<MockBackend>,
-    tempfile::TempDir,
+    BlobDir,
 ) {
     let database = test_support::memory();
     let connection = database.connection().expect("a connection");
@@ -1440,6 +1476,7 @@ fn engine_seeding_in_batches(
     })
     .expect("the engine starts");
 
+    let directory = BlobDir::new(engine.clone(), directory);
     (engine, database, inbox.id, backend, directory)
 }
 
@@ -1757,7 +1794,7 @@ fn engine_over_a_real_sync(
     Engine,
     postio_storage::Database,
     postio_model::AccountId,
-    tempfile::TempDir,
+    BlobDir,
     test_support::TempDatabase,
 ) {
     let database = test_support::temp();
@@ -1798,6 +1835,7 @@ fn engine_over_a_real_sync(
     // long as either clone is used, so `database` itself goes back too
     // (#605), instead of the `Box::leak` this used to reach for.
     let cloned = (*database).clone();
+    let directory = BlobDir::new(engine.clone(), directory);
     (engine, cloned, id, directory, database)
 }
 

@@ -29,6 +29,10 @@ use postio_storage::repository::{
 use postio_storage::test_support::TempDatabase;
 use postio_storage::{BlobStore, Database, test_support};
 
+mod harness;
+
+use harness::BlobDir;
+
 /// Long enough that two passes overlap for an unmistakable stretch, short
 /// enough that a whole suite of these still runs in seconds.
 const LATENCY: Duration = Duration::from_millis(40);
@@ -74,7 +78,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// wave this file is about stops overlapping — not because the engine stopped
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::TempDir) {
+fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, BlobDir) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");
@@ -107,6 +111,7 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::Te
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
+    let directory = BlobDir::new(engine.clone(), directory);
     (database, engine, directory)
 }
 
