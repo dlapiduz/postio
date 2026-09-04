@@ -122,7 +122,8 @@ fn remember(wiring: &Wiring) {
         let Ok(connection) = database.connection() else {
             return;
         };
-        if let Err(error) = SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339())
+        if let Err(error) =
+            SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339())
         {
             tracing::warn!(%error, "could not remember that the orientation was seen");
         }

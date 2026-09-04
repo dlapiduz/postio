@@ -69,7 +69,10 @@ pub fn the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none() {
     strip.set_visible(true);
     settle();
 
-    assert!(strip.is_visible(), "asked to show, with three keys to teach");
+    assert!(
+        strip.is_visible(),
+        "asked to show, with three keys to teach"
+    );
     let drawn = labels(&strip);
     for expected in ["Postio is keyboard-first", "ctrl+k", "?", "j/k", "Got it"] {
         assert!(
