@@ -46,6 +46,7 @@ use postio_core::Event;
 use postio_core::bridge::{EventStream, event_channel};
 use postio_model::MailboxRole;
 use postio_runtime::engine::{Clock, Engine, EngineParts, NetworkSource};
+use postio_search::rules::RuleSet;
 use postio_storage::{BlobStore, test_support};
 
 /// Enough to need several batches: `postio_sync::initial::DEFAULT_BATCH_SIZE`
@@ -146,6 +147,7 @@ async fn a_long_sync_tells_the_list_as_it_goes_and_not_once_per_batch() {
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
+        rules: RuleSet::default(),
         clock: Arc::new(FakeClock::new(Duration::from_millis(200))),
     })
     .expect("the engine starts");

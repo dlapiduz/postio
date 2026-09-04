@@ -7,6 +7,7 @@ use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, han
 use postio_session::Wiring;
 
 use crate::event::UiEvent;
+use postio_runtime::engine::RuleSet;
 
 /// Why a session could not be opened.
 ///
@@ -1058,6 +1059,7 @@ impl Session {
             wiring.events.clone(),
             wiring.secrets.clone(),
             wiring.mailbox_roles.clone(),
+            wiring.rules.clone(),
             wiring.backfill,
             wiring.watch,
             &wiring.egress,
@@ -1099,6 +1101,7 @@ impl Session {
             ))),
             events: wiring.events.clone(),
             mailbox_roles: wiring.mailbox_roles.clone(),
+            rules: RuleSet::default(),
             clock: Arc::new(postio_runtime::SystemClock),
             retry: Default::default(),
             backfill: Default::default(),
