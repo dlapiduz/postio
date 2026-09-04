@@ -1130,6 +1130,19 @@ pub async fn fetch_body_with_rules(
         });
     };
 
+    // Whether the body was already local *before* this fetch, read once here
+    // because everything below overwrites it.
+    //
+    // This is the body half of ADR 0008 Q3's "exactly once", and it has to be
+    // written down rather than assumed: the arrival point is guarded
+    // structurally by `is_new`, while the backfill queue merely happens to
+    // ask for each body once, being derived from `body_state <> 'full'`. That
+    // is the queue being well-behaved, not this function being safe to call —
+    // and `request_body` will hand out a second claim for a message somebody
+    // opens while its backfill is in flight. Without this, a rule with
+    // `move:` would move that message twice (#482).
+    let body_was_local = message.sync.body_state == BodyState::Full;
+
     match &request.want {
         // The payload axis: named sections, nothing around them.
         Want::Payloads(parts) => {
@@ -1160,7 +1173,7 @@ pub async fn fetch_body_with_rules(
                 connection, blobs, backend, request, message, inline_cap, cancel,
             )
             .await?;
-            let fired = if matches!(outcome, Outcome::Stored { .. }) {
+            let fired = if matches!(outcome, Outcome::Stored { .. }) && !body_was_local {
                 fired_on_body(connection, rules, message_id)?
             } else {
                 Vec::new()
@@ -1323,7 +1336,11 @@ pub async fn fetch_body_with_rules(
     // Skipped entirely when no rule needs a body, which is the ordinary
     // case and is what `RuleSet::has` is for -- otherwise every backfilled
     // message would pay a read to match nothing.
-    let fired = fired_on_body(connection, rules, request.message)?;
+    let fired = if body_was_local {
+        Vec::new()
+    } else {
+        fired_on_body(connection, rules, request.message)?
+    };
 
     Ok(BodyFetch {
         outcome: Outcome::Stored { bytes },

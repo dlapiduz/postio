@@ -189,6 +189,96 @@ async fn the_header_rule_fires_on_arrival_and_the_body_rule_waits() {
     );
 }
 
+/// The body half of "exactly once".
+///
+/// On the arrival side the guard is structural — `is_new`, the same
+/// predicate contact recording uses. The body side has no such thing unless
+/// it is written: the backfill queue is derived from `body_state <> 'full'`
+/// and so asks for each body once, but that is the *queue* being
+/// well-behaved, not this function being safe to call. A second fetch of a
+/// message whose body is already local must not fire its rules again, or
+/// "exactly once" holds only for as long as nothing else ever asks for a
+/// body.
+#[tokio::test]
+async fn a_body_that_was_already_local_does_not_fire_its_rules_again() {
+    let backend = server().await;
+    let local = local();
+    let rules = rules();
+
+    sync_mailbox_with_rules(
+        &local.connection,
+        &backend,
+        &local.inbox,
+        &CancelToken::new(),
+        &rules,
+        |_| {},
+    )
+    .await
+    .expect("headers");
+
+    let stored = MessageRepository::new(&local.connection)
+        .by_uid(
+            local.inbox.id,
+            postio_model::Generation::new(VALIDITY),
+            Uid::new(1),
+        )
+        .expect("look up")
+        .expect("stored");
+
+    let request = BodyRequest {
+        message: stored.id,
+        mailbox: local.inbox.id,
+        path: local.inbox.path.clone(),
+        uid: Uid::new(1),
+        remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:1")),
+        size: note().len() as u64,
+        received_at: at(1),
+        want: Want::Text,
+    };
+
+    let first = fetch_body_with_rules(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request,
+        None,
+        &rules,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("the body arrives");
+    assert_eq!(
+        first.fired.len(),
+        1,
+        "the body rule has to fire the first time, or the second assertion \
+         below cannot fail"
+    );
+
+    let again = fetch_body_with_rules(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request,
+        None,
+        &rules,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("the body arrives again");
+
+    assert!(
+        again.fired.is_empty(),
+        "fetching a body that was already local fired its rules a second \
+         time: {:?}. A rule with `move:` would move the message twice.",
+        again
+            .fired
+            .iter()
+            .map(|hit| hit.rule.as_str())
+            .collect::<Vec<_>>()
+    );
+    let _ = local.database;
+}
+
 #[tokio::test]
 async fn a_message_seen_again_is_not_evaluated_again() {
     let backend = server().await;
