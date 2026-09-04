@@ -10,6 +10,9 @@ select_all	ctrl+a
 prev_view	h | Left
 back	Escape
 toggle_result_order	o
+next_in_conversation	J
+prev_in_conversation	K
+toggle_fold	space
 view_original	ctrl+o
 expand_all	O
 reply	e

@@ -79,6 +79,12 @@ command_ids! {
     Back => "back",
     /// Switch a search's results between ranked and date order.
     ToggleResultOrder => "toggle_result_order",
+    /// Move to the next message inside the open conversation.
+    NextInConversation => "next_in_conversation",
+    /// Move to the previous message inside the open conversation.
+    PrevInConversation => "prev_in_conversation",
+    /// Fold or unfold the focused message of the open conversation.
+    ToggleFold => "toggle_fold",
     /// Draw the message on screen as its sender wrote it, not reduced.
     ViewOriginal => "view_original",
     /// Open every collapsed message in the conversation.
@@ -358,6 +364,21 @@ pub enum Command {
     Back,
     /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder,
+    /// Walk down the open conversation's stack (#1007).
+    ///
+    /// No payload: `j`/`k` move between *threads* in the list, and these
+    /// move between messages inside the one that is open. Two axes, two
+    /// pairs of keys, and which one you are on is a fact about where the
+    /// keyboard is rather than about what you pressed.
+    NextInConversation,
+    /// Walk up the open conversation's stack (#1007).
+    PrevInConversation,
+    /// Fold or unfold the conversation's focused message (#1007).
+    ///
+    /// The only way to *collapse* the focused message: landing on one
+    /// expands it, so a collapsed-and-focused message is a state only this
+    /// reaches.
+    ToggleFold,
     /// Leave reader view for the sender's own markup (#1009).
     ///
     /// No payload: it always means the message on screen. Reader view is a
@@ -700,6 +721,9 @@ impl Command {
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
+            Command::NextInConversation => CommandId::NextInConversation,
+            Command::PrevInConversation => CommandId::PrevInConversation,
+            Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ExpandAll => CommandId::ExpandAll,
             Command::Reply { .. } => CommandId::Reply,
@@ -786,6 +810,9 @@ impl Command {
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
+            CommandId::NextInConversation => Command::NextInConversation,
+            CommandId::PrevInConversation => Command::PrevInConversation,
+            CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ExpandAll => Command::ExpandAll,
             CommandId::Reply => Command::Reply { message: None },
