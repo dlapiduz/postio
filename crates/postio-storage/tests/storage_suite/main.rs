@@ -25,6 +25,7 @@ mod cold_jump_cost;
 mod connection;
 mod connection_priority;
 mod contact_groups;
+mod contact_rank_index;
 mod contacts;
 mod draft_indexes;
 mod drafts;
