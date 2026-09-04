@@ -116,6 +116,7 @@ mod gtk_settings_account_detail;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
+mod gtk_settings_keys;
 mod gtk_settings_privacy;
 mod gtk_settings_sync;
 mod gtk_settings_ui;
@@ -487,6 +488,27 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends",
         gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
+    ),
+    (
+        "gtk_settings_keys::rows_render_one_per_command_with_its_current_binding",
+        gtk_settings_keys::rows_render_one_per_command_with_its_current_binding as fn(),
+    ),
+    (
+        "gtk_settings_keys::an_override_in_the_file_is_what_the_row_shows",
+        gtk_settings_keys::an_override_in_the_file_is_what_the_row_shows as fn(),
+    ),
+    (
+        "gtk_settings_keys::capturing_a_free_key_writes_the_new_binding_to_the_buffer",
+        gtk_settings_keys::capturing_a_free_key_writes_the_new_binding_to_the_buffer as fn(),
+    ),
+    (
+        "gtk_settings_keys::capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten",
+        gtk_settings_keys::capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten
+            as fn(),
+    ),
+    (
+        "gtk_settings_keys::escape_cancels_capture_without_changing_anything",
+        gtk_settings_keys::escape_cancels_capture_without_changing_anything as fn(),
     ),
     (
         "gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none",

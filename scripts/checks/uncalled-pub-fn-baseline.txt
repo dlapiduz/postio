@@ -88,7 +88,6 @@ open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
 open_search                       # crates/postio-core/src/state.rs:607
 optimize                          # crates/postio-storage/src/db.rs:1012
-overrides_mut                     # crates/postio-config/src/keys.rs:261
 parse_document_html               # crates/postio-body/src/parse.rs:71
 partials                          # crates/postio-search/src/query.rs:369
 plain_forward                     # crates/postio-model/src/reply.rs:221

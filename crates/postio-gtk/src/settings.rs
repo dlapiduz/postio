@@ -72,8 +72,11 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
-use postio_config::{Config, Density, SyncConfig, Theme, patch_filters, patch_sync, patch_ui};
+use postio_config::{Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui};
+use postio_core::CommandId;
 use postio_model::{Account, AccountId};
+
+use crate::keymap::{Chord, ChordFromGdk};
 
 /// How long to let typing settle before writing the buffer back to disk.
 ///
@@ -497,6 +500,23 @@ mod imp {
         /// path rather than hardcoding [`crate::reader::RemoteImageAllowList::path`]:
         /// a test needs a scratch path, not the real state directory.
         pub remote_image_allowlist: RefCell<Option<(crate::reader::RemoteImageAllowList, PathBuf)>>,
+        /// One row per registered command (#881), always present — the same
+        /// no-empty-state shape `sync_box`/`ui_box` use, since the registry
+        /// is never empty. Scrolled rather than a bare list, unlike those
+        /// two: the registry runs to dozens of rows, not five or six.
+        pub keys_list: gtk::ListBox,
+        pub keys_scroller: gtk::ScrolledWindow,
+        /// Which command's row is waiting for the next keypress, if any.
+        pub capturing: RefCell<Option<CommandId>>,
+        /// The last capture attempt's rejection, if the most recent one was
+        /// rejected — read by `key_row` so the row that was being captured
+        /// keeps saying why after the redraw a rejection triggers. Cleared
+        /// the next time that row's rebind button is pressed.
+        pub capture_conflict: RefCell<Option<(CommandId, String)>>,
+        /// Set once [`super::SettingsPanel::ensure_capture_controller`] has
+        /// added `keys_list`'s `EventControllerKey` — never in `build()`,
+        /// see that method's own doc for why.
+        pub capture_controller_installed: Cell<bool>,
     }
 
     impl Default for SettingsPanel {
@@ -548,6 +568,11 @@ mod imp {
                     "No senders are always allowed to load remote images.",
                 )),
                 remote_image_allowlist: RefCell::new(None),
+                keys_list: gtk::ListBox::new(),
+                keys_scroller: gtk::ScrolledWindow::new(),
+                capturing: RefCell::new(None),
+                capture_conflict: RefCell::new(None),
+                capture_controller_installed: Cell::new(false),
             }
         }
     }
@@ -617,6 +642,7 @@ impl SettingsPanel {
         self.redraw_filters();
         self.redraw_sync();
         self.redraw_ui();
+        self.redraw_keys();
         if postio_config::validate::check_str(&text)
             .validation
             .is_valid()
@@ -652,6 +678,7 @@ impl SettingsPanel {
         self.redraw_filters();
         self.redraw_sync();
         self.redraw_ui();
+        self.redraw_keys();
         self.schedule_write();
     }
 
@@ -1718,6 +1745,253 @@ impl SettingsPanel {
         row
     }
 
+    /// Rebuilds `[keys]`'s rows from the buffer's current text — the same
+    /// fresh-widgets-each-time shape [`redraw_filters`](Self::redraw_filters)
+    /// uses, one row per [`postio_core::registry::all`] entry rather than
+    /// per file key: every command is rebindable whether or not `[keys]`
+    /// currently overrides it.
+    fn redraw_keys(&self) {
+        self.ensure_capture_controller();
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        while let Some(row) = imp.keys_list.row_at_index(0) {
+            imp.keys_list.remove(&row);
+        }
+        for spec in postio_core::registry::all() {
+            imp.keys_list.append(&self.key_row(spec, &config.keys));
+        }
+    }
+
+    /// Adds `keys_list`'s capture-phase `EventControllerKey`, the first
+    /// time [`redraw_keys`](Self::redraw_keys) runs — never in `build()`.
+    ///
+    /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
+    /// is still wiring up its own overlay siblings and shortcut controllers
+    /// (window.rs), and constructing a widget with its own event
+    /// controllers there was already found to corrupt keyboard routing for
+    /// the rest of that window (#873, #880). This controller is not part
+    /// of a composite widget's own internals the way those two cases were,
+    /// but building it during `build()` reproduced the exact same
+    /// corruption anyway — confirmed by removing just this call and
+    /// watching the full `gtk_suite` regression it caused (`gtk_row` and
+    /// others, run order dependent) disappear — so it gets the same
+    /// treatment: deferred to the first moment a real interaction proves
+    /// the window has finished constructing, matching how `load()`/
+    /// `set_text()` are what actually populate the rows in the first
+    /// place.
+    fn ensure_capture_controller(&self) {
+        let imp = self.imp();
+        if imp.capture_controller_installed.get() {
+            return;
+        }
+        imp.capture_controller_installed.set(true);
+
+        // Capture phase: this must see a keypress before anything else in
+        // the panel does, including the row's own rebind `Button`, or the
+        // Space/Enter that presses that button would itself be swallowed
+        // by the button's own activation instead of reaching capture.
+        // Stops propagation only while actually capturing, so ordinary
+        // navigation (Tab between rows, arrow keys in the list) is
+        // untouched otherwise.
+        let capture = gtk::EventControllerKey::new();
+        capture.set_propagation_phase(gtk::PropagationPhase::Capture);
+        capture.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, keyval, _, state| {
+                if panel.imp().capturing.borrow().is_none() {
+                    return glib::Propagation::Proceed;
+                }
+                // Held for one turn of the main loop rather than resolved
+                // here: this fires mid-propagation, before the event has
+                // finished being delivered to whatever has focus (usually
+                // the capturing row's own rebind button) -- and resolving
+                // synchronously means `redraw_keys` tears down that exact
+                // widget while GTK is still routing the event to it.
+                // `MessageList::hold` (list.rs) holds for the same reason:
+                // let delivery finish, then act.
+                glib::idle_add_local_once(glib::clone!(
+                    #[weak]
+                    panel,
+                    move || panel.resolve_capture(keyval, state)
+                ));
+                glib::Propagation::Stop
+            }
+        ));
+        imp.keys_list.add_controller(capture);
+    }
+
+    /// Applies `mutate` to the buffer's current `[keys]` overrides and
+    /// writes the result back into the buffer, the same shape
+    /// [`apply_filters_mutation`](Self::apply_filters_mutation) and
+    /// [`apply_sync_mutation`](Self::apply_sync_mutation) already use.
+    fn apply_keys_mutation(&self, mutate: impl FnOnce(&mut std::collections::BTreeMap<String, String>)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        let mut overrides = config.keys.overrides().clone();
+        mutate(&mut overrides);
+        *config.keys.overrides_mut() = overrides.clone();
+        match patch_keys(&original, &overrides) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [keys]"),
+        }
+    }
+
+    /// One command: its title, current effective binding, a rebind button,
+    /// and — only right after a rejected capture on this exact command —
+    /// why it was rejected.
+    fn key_row(&self, spec: &postio_core::CommandSpec, bindings: &postio_config::KeyBindings) -> gtk::ListBoxRow {
+        let command = spec.id;
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-keys-row");
+        row.set_selectable(false);
+
+        let title = gtk::Label::new(Some(spec.title));
+        title.add_css_class("postio-settings-keys-title");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+
+        let capturing = self.imp().capturing.borrow().is_some_and(|id| id == command);
+        let current = bindings
+            .binding(command.as_str())
+            .unwrap_or(spec.default_binding)
+            .to_owned();
+        let binding = gtk::Label::new(Some(if capturing {
+            "press a key…"
+        } else {
+            current.as_str()
+        }));
+        binding.add_css_class("postio-settings-keys-binding");
+        binding.set_xalign(0.0);
+
+        let rebind = gtk::Button::with_label(if capturing { "Cancel" } else { "Rebind" });
+        rebind.add_css_class("postio-settings-keys-rebind");
+        rebind.add_css_class("flat");
+        rebind.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Rebind {}, currently {current}",
+            spec.title
+        ))]);
+        rebind.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.toggle_capture(command)
+        ));
+
+        let conflict_text = self
+            .imp()
+            .capture_conflict
+            .borrow()
+            .as_ref()
+            .filter(|(id, _)| *id == command)
+            .map(|(_, message)| message.clone());
+        let conflict = gtk::Label::new(conflict_text.as_deref());
+        conflict.add_css_class("postio-settings-keys-conflict");
+        conflict.set_xalign(0.0);
+        conflict.set_wrap(true);
+        conflict.set_visible(conflict_text.is_some());
+
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        lines.append(&title);
+        lines.append(&binding);
+        lines.append(&conflict);
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&lines);
+        box_.append(&rebind);
+        row.set_child(Some(&box_));
+        row
+    }
+
+    /// Enters or leaves capture mode for `command`, as its rebind button
+    /// asks — the second click undoes the first, since nothing has
+    /// happened yet to undo.
+    fn toggle_capture(&self, command: CommandId) {
+        let imp = self.imp();
+        let already = *imp.capturing.borrow() == Some(command);
+        *imp.capturing.borrow_mut() = if already { None } else { Some(command) };
+        *imp.capture_conflict.borrow_mut() = None;
+        self.redraw_keys();
+        if !already {
+            imp.keys_list.grab_focus();
+        }
+    }
+
+    /// Resolves whatever [`toggle_capture`](Self::toggle_capture) is
+    /// waiting on with a real keypress — the capture controller's own
+    /// handler, and [`test_capture_key`](Self::test_capture_key)'s.
+    ///
+    /// `Escape` always cancels rather than becoming the new binding: the
+    /// alternative would make "I want out of this" indistinguishable from
+    /// "bind Escape here", and every other capture flow in the wild treats
+    /// it as cancel.
+    fn resolve_capture(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) {
+        let Some(command) = *self.imp().capturing.borrow() else {
+            return;
+        };
+        if keyval == gtk::gdk::Key::Escape {
+            *self.imp().capturing.borrow_mut() = None;
+            self.redraw_keys();
+            return;
+        }
+        let Some(chord) = Chord::from_key_event(keyval, state) else {
+            // A key this build has no name for -- stay in capture mode and
+            // wait for a real one, the same as pressing a bare modifier.
+            return;
+        };
+        let proposed = chord.to_string();
+
+        let original = self.text();
+        let Ok(config) = Config::from_toml_str(&original) else {
+            *self.imp().capturing.borrow_mut() = None;
+            self.redraw_keys();
+            return;
+        };
+        if let Some(other) = postio_core::registry::binding_conflict(
+            command,
+            &proposed,
+            &config.keys,
+            postio_config::paths::Platform::host(),
+        ) {
+            *self.imp().capturing.borrow_mut() = None;
+            *self.imp().capture_conflict.borrow_mut() =
+                Some((command, format!("Already used by {}", other.title)));
+            self.redraw_keys();
+            return;
+        }
+
+        *self.imp().capturing.borrow_mut() = None;
+        self.apply_keys_mutation(move |overrides| {
+            overrides.insert(command.as_str().to_owned(), proposed);
+        });
+        self.redraw_keys();
+    }
+
+    /// Feeds a keypress to whichever command's row is capturing, as a real
+    /// key controller would. `#[doc(hidden)]` because it exists only for
+    /// tests: [`postio_gtk::window::Window::handle_key`](crate::window::Window::handle_key)
+    /// resolves a synthetic keypress against the app's own resolver
+    /// directly rather than dispatching a real `GdkEvent`, so it never
+    /// reaches this panel's own capture controller — this is the seam that
+    /// exercises the same logic that controller calls, the same trade
+    /// [`SettingsPanel::test_open_account_menu`](Self::test_open_account_menu)
+    /// already makes for a right click a test cannot reliably land on a
+    /// pixel.
+    #[doc(hidden)]
+    pub fn test_capture_key(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) {
+        self.resolve_capture(keyval, state);
+    }
+
     /// Rebuilds `[ui]`'s six rows from the buffer's current text — the same
     /// shape [`redraw_filters`](Self::redraw_filters) uses, and for the same
     /// reason: fresh widgets each time means the initial value never fires
@@ -2272,6 +2546,23 @@ impl SettingsPanel {
         imp.privacy_empty.set_wrap(true);
         imp.privacy_empty.set_visible(false);
 
+        // ── keys: one row per command, a rebind capture button (#881) ────
+        imp.keys_list.add_css_class("postio-settings-keys-list");
+        imp.keys_list.set_selection_mode(gtk::SelectionMode::None);
+        imp.keys_list
+            .update_property(&[gtk::accessible::Property::Label("Keybindings")]);
+
+        // The capture controller is deliberately NOT built here -- see
+        // `ensure_capture_controller`'s own doc for why.
+
+        imp.keys_scroller.set_child(Some(&imp.keys_list));
+        imp.keys_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.keys_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.keys_scroller.set_propagate_natural_height(true);
+        imp.keys_scroller.add_css_class("postio-settings-keys");
+
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
         imp.nav.set_selection_mode(gtk::SelectionMode::Single);
@@ -2373,6 +2664,7 @@ impl SettingsPanel {
         column.append(&imp.ui_box);
         column.append(&imp.privacy_scroller);
         column.append(&imp.privacy_empty);
+        column.append(&imp.keys_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&footer);
@@ -2389,6 +2681,7 @@ impl SettingsPanel {
                 panel.redraw_filters();
                 panel.redraw_sync();
                 panel.redraw_ui();
+                panel.redraw_keys();
                 panel.schedule_write();
             }
         ));
