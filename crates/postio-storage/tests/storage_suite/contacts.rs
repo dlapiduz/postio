@@ -289,12 +289,11 @@ fn a_tie_on_frequency_is_broken_by_recency() {
 /// ADR 0007 Q6 names this exact pathology -- "`times_seen = 400` for a
 /// mailing list robot is not evidence that the user wants to write to it" --
 /// and answers it with *bands*, ranking `user`/`import` contacts above `mail`
-/// sightings and keeping `(times_seen DESC, last_seen_at DESC)` inside the
-/// mail band. There are no bands: `contacts` has no `source` column and every
-/// row here is a mail sighting, so the band that was supposed to rescue the
-/// person does not exist and frequency decides everything. Until it does,
-/// within-band order is the only lever, and the reported behaviour is what
-/// the address a person actually uses should get.
+/// sightings and keeping `(last_seen_at DESC, times_seen DESC)` inside the
+/// mail band. Bands exist now (`contacts.source`, banded above mail
+/// sightings since `d64d7153`); both contacts here are plain mail
+/// sightings, so this test is about ordering *within* the mail band --
+/// the lever bands leave in place for exactly this case.
 #[test]
 fn the_address_used_most_recently_comes_before_the_one_used_most_often() {
     let database = test_support::memory();
