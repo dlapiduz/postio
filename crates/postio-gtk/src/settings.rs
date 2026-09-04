@@ -72,7 +72,9 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 use postio_config::filters::{FilterConfig, Reorder};
 use postio_config::sync::{AttachmentFetch, CheckForMail};
-use postio_config::{Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui};
+use postio_config::{
+    Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui,
+};
 use postio_core::CommandId;
 use postio_model::{Account, AccountId};
 
@@ -1769,18 +1771,19 @@ impl SettingsPanel {
     ///
     /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
     /// is still wiring up its own overlay siblings and shortcut controllers
-    /// (window.rs), and constructing a widget with its own event
-    /// controllers there was already found to corrupt keyboard routing for
-    /// the rest of that window (#873, #880). This controller is not part
-    /// of a composite widget's own internals the way those two cases were,
-    /// but building it during `build()` reproduced the exact same
-    /// corruption anyway — confirmed by removing just this call and
-    /// watching the full `gtk_suite` regression it caused (`gtk_row` and
-    /// others, run order dependent) disappear — so it gets the same
-    /// treatment: deferred to the first moment a real interaction proves
-    /// the window has finished constructing, matching how `load()`/
-    /// `set_text()` are what actually populate the rows in the first
-    /// place.
+    /// (window.rs), and #873/#880 each found a widget with its own event
+    /// controllers, built during that window, corrupting keyboard routing
+    /// for the rest of it. This controller is not a composite widget's own
+    /// internals the way those two cases were, so it is deferred out of
+    /// `build()` on the same precautionary principle rather than because a
+    /// `gtk_suite` regression was pinned on it specifically — a full-suite
+    /// crash chased during this same issue turned out to be a pre-existing,
+    /// machine-load-dependent flake, reproducible on `main` with none of
+    /// this code present, not something this controller's timing caused or
+    /// fixed. Deferring construction until a real interaction proves the
+    /// window is done being built is cheap and has not been shown to be
+    /// unnecessary, so it stays; see the issue thread for the bisection
+    /// that cleared this controller instead of confirming it.
     fn ensure_capture_controller(&self) {
         let imp = self.imp();
         if imp.capture_controller_installed.get() {
@@ -1829,7 +1832,10 @@ impl SettingsPanel {
     /// writes the result back into the buffer, the same shape
     /// [`apply_filters_mutation`](Self::apply_filters_mutation) and
     /// [`apply_sync_mutation`](Self::apply_sync_mutation) already use.
-    fn apply_keys_mutation(&self, mutate: impl FnOnce(&mut std::collections::BTreeMap<String, String>)) {
+    fn apply_keys_mutation(
+        &self,
+        mutate: impl FnOnce(&mut std::collections::BTreeMap<String, String>),
+    ) {
         let original = self.text();
         let Ok(mut config) = Config::from_toml_str(&original) else {
             return;
@@ -1846,7 +1852,11 @@ impl SettingsPanel {
     /// One command: its title, current effective binding, a rebind button,
     /// and — only right after a rejected capture on this exact command —
     /// why it was rejected.
-    fn key_row(&self, spec: &postio_core::CommandSpec, bindings: &postio_config::KeyBindings) -> gtk::ListBoxRow {
+    fn key_row(
+        &self,
+        spec: &postio_core::CommandSpec,
+        bindings: &postio_config::KeyBindings,
+    ) -> gtk::ListBoxRow {
         let command = spec.id;
         let row = gtk::ListBoxRow::new();
         row.add_css_class("postio-settings-keys-row");
@@ -1857,7 +1867,11 @@ impl SettingsPanel {
         title.set_xalign(0.0);
         title.set_hexpand(true);
 
-        let capturing = self.imp().capturing.borrow().is_some_and(|id| id == command);
+        let capturing = self
+            .imp()
+            .capturing
+            .borrow()
+            .is_some_and(|id| id == command);
         let current = bindings
             .binding(command.as_str())
             .unwrap_or(spec.default_binding)

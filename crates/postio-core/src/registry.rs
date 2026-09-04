@@ -1175,7 +1175,8 @@ pub fn binding_conflict(
     all().find(|other| {
         other.id != command
             && mine.contexts.intersects(other.contexts)
-            && bindings.binding_on(other.id.as_str(), platform).as_deref() == Some(expanded.as_str())
+            && bindings.binding_on(other.id.as_str(), platform).as_deref()
+                == Some(expanded.as_str())
     })
 }
 
@@ -1472,8 +1473,12 @@ mod tests {
         // Both are List/Thread/Reader/Search commands, so "k" (PrevMessage's
         // own default) is a real collision if NextMessage claims it too.
         let bindings = postio_config::KeyBindings::default();
-        let conflict =
-            binding_conflict(CommandId::NextMessage, "k", &bindings, Platform::Freedesktop);
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "k",
+            &bindings,
+            Platform::Freedesktop,
+        );
         assert_eq!(conflict.map(|spec| spec.id), Some(CommandId::PrevMessage));
     }
 
@@ -1513,13 +1518,23 @@ mod tests {
             .overrides_mut()
             .insert(CommandId::PrevMessage.as_str().to_owned(), "p".to_owned());
         assert_eq!(
-            binding_conflict(CommandId::NextMessage, "k", &bindings, Platform::Freedesktop),
+            binding_conflict(
+                CommandId::NextMessage,
+                "k",
+                &bindings,
+                Platform::Freedesktop
+            ),
             None,
             "k is free now that PrevMessage moved off it"
         );
         assert_eq!(
-            binding_conflict(CommandId::NextMessage, "p", &bindings, Platform::Freedesktop)
-                .map(|spec| spec.id),
+            binding_conflict(
+                CommandId::NextMessage,
+                "p",
+                &bindings,
+                Platform::Freedesktop
+            )
+            .map(|spec| spec.id),
             Some(CommandId::PrevMessage),
             "p is where PrevMessage actually lives now"
         );

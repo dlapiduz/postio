@@ -50,7 +50,10 @@ pub fn capturing_a_free_key_writes_the_new_binding_to_the_buffer() {
     let row = row_for(&panel, "Next message");
     assert_eq!(binding_in(&row), "press a key…");
 
-    panel.test_capture_key(gdk::Key::from_name("n").unwrap(), gdk::ModifierType::empty());
+    panel.test_capture_key(
+        gdk::Key::from_name("n").unwrap(),
+        gdk::ModifierType::empty(),
+    );
     pump();
 
     let row = row_for(&panel, "Next message");
@@ -75,7 +78,10 @@ pub fn capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten()
 
     // "k" is PrevMessage's own default, and both share the List/Thread/
     // Reader/Search contexts -- a real collision.
-    panel.test_capture_key(gdk::Key::from_name("k").unwrap(), gdk::ModifierType::empty());
+    panel.test_capture_key(
+        gdk::Key::from_name("k").unwrap(),
+        gdk::ModifierType::empty(),
+    );
     pump();
 
     let row = row_for(&panel, "Next message");
@@ -106,7 +112,10 @@ pub fn escape_cancels_capture_without_changing_anything() {
     rebind_button_in(&row).emit_clicked();
     pump();
 
-    panel.test_capture_key(gdk::Key::from_name("Escape").unwrap(), gdk::ModifierType::empty());
+    panel.test_capture_key(
+        gdk::Key::from_name("Escape").unwrap(),
+        gdk::ModifierType::empty(),
+    );
     pump();
 
     let row = row_for(&panel, "Next message");
@@ -141,10 +150,13 @@ fn pump() {
 }
 
 fn rows(panel: &SettingsPanel) -> Vec<gtk::ListBoxRow> {
-    collect(panel.upcast_ref::<gtk::Widget>(), "postio-settings-keys-row")
-        .into_iter()
-        .filter_map(|w| w.downcast().ok())
-        .collect()
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-keys-row",
+    )
+    .into_iter()
+    .filter_map(|w| w.downcast().ok())
+    .collect()
 }
 
 fn row_for(panel: &SettingsPanel, title: &str) -> gtk::ListBoxRow {
@@ -155,11 +167,14 @@ fn row_for(panel: &SettingsPanel, title: &str) -> gtk::ListBoxRow {
 }
 
 fn title_in(row: &gtk::ListBoxRow) -> String {
-    collect(row.upcast_ref::<gtk::Widget>(), "postio-settings-keys-title")
-        .into_iter()
-        .find_map(|w| w.downcast::<gtk::Label>().ok())
-        .map(|label| label.text().to_string())
-        .expect("every keys row has a title label")
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-keys-title",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .map(|label| label.text().to_string())
+    .expect("every keys row has a title label")
 }
 
 fn binding_in(row: &gtk::ListBoxRow) -> String {
