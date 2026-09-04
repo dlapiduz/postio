@@ -187,7 +187,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// Block until the list actually holds its first page of mail.
 ///
 /// Every mode after `populate` reads the list back: `selected` picks rows out
-/// of it, `thread` drills into the first one, `open` clicks it. The
+/// of it, `conversation` opens the first one, `open` clicks it. The
 /// hand-rolled source this replaced answered out of a `Vec` and was ready the
 /// instant it was installed; a real `Wiring` crosses to the runtime and
 /// answers on a later turn of the main loop, so without this a mode found an

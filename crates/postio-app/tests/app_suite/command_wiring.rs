@@ -75,7 +75,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 /// `Window::act` threads these through `leave_conversation` rather than
-/// `handled_here`: the local effect happens (closing a thread, drilling
+/// `handled_here`: the local effect happens (leaving a conversation, moving
 /// into one), but the original command is still delivered afterwards for
 /// whatever besides the window might care that it happened (see
 /// `leave_conversation`'s doc comment). So they escape by design on every

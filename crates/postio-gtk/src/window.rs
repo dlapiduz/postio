@@ -119,8 +119,6 @@ mod imp {
         /// [`open_mailbox`](super::Window::open_mailbox) is a no-op before
         /// the window has been fed anything to switch to.
         pub open_mailbox: std::cell::RefCell<Option<OpenMailbox>>,
-        /// Where the list was scrolled to when the drill-in hid it.
-        pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
         /// Installed lazily, on first [`Window::composer`] — nothing before
@@ -510,7 +508,7 @@ impl Window {
         //
         // Here rather than in `show_thread`, because that is one of two ways
         // in: #755 made the list open a conversation directly, without the
-        // drill-in column. This is the single point both routes pass through
+        // conversation pane. This is the single point both routes pass through
         // -- the pane becoming visible is exactly the moment the row stops
         // being what is in front of the reader.
         //

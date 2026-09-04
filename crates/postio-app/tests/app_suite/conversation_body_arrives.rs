@@ -167,7 +167,7 @@ pub fn a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_o
     );
 
     list.first_row();
-    let cursor = list.cursor_row().expect("a row to drill into");
+    let cursor = list.cursor_row().expect("a row to land on");
     window.open_conversation(&cursor);
     assert!(
         settle_until(|| window.conversation().len() == 4),

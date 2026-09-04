@@ -25,7 +25,7 @@ show_key_hints = true
 sender_avatars = false
 ";
 
-pub fn the_six_rows_render_from_a_given_config() {
+pub fn the_five_rows_render_from_a_given_config() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
     };
@@ -37,7 +37,6 @@ pub fn the_six_rows_render_from_a_given_config() {
     );
     assert_eq!(dropdown_in("Theme", &panel).selected(), 2, "dark");
     assert!(!switch_in("Show hover actions", &panel).is_active());
-    assert!(switch_in("Drill into threads with t", &panel).is_active());
     assert!(switch_in("Show key hints", &panel).is_active());
     assert!(!switch_in("Show sender avatars", &panel).is_active());
 

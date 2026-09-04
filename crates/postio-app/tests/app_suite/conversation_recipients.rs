@@ -176,7 +176,7 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     list.first_row();
-    let cursor = list.cursor_row().expect("a row to drill into");
+    let cursor = list.cursor_row().expect("a row to land on");
     window.open_conversation(&cursor);
     assert!(
         settle_until(|| window.conversation().len() == 2),
