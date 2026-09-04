@@ -190,7 +190,44 @@ jobs:
       # Each test says what it is for in its own module docstring, which is
       # where that belonged: a step name in a workflow is not a place anybody
       # reads, and a comment there was a second copy free to disagree.
+      # The step below is eight of this job's nine minutes, and what it tests
+      # is `scripts/`, not the workspace: each self-test builds its own
+      # sandbox repository and never reads `crates/`. A pull request that
+      # touches only Rust cannot change its outcome, so it should not pay for
+      # it. #996 lists this as the cheapest thing to fix here.
+      #
+      # It fails safe in all three directions that matter: a push to `main`
+      # runs them, an API call that does not answer runs them, and anything at
+      # all outside `crates/` runs them. Skipping needs a definite answer that
+      # only `crates/` changed.
+      - name: Decide whether the tooling self-tests need to run
+        id: tooling
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "not a pull request -- running them"
+            exit 0
+          fi
+          files=$(gh api --paginate \
+            "repos/${{ github.repository }}/compare/${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+            --jq '.files[].filename' 2>/dev/null) || files=""
+          if [ -z "$files" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "could not read the diff -- running them"
+            exit 0
+          fi
+          if printf '%s\n' "$files" | grep -qvE '^crates/'; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "changes outside crates/ -- running them"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "only crates/ changed -- the tooling cannot be affected, skipping"
+          fi
+
       - name: Prove the tooling still holds itself up
+        if: steps.tooling.outputs.run == 'yes'
         run: |
           ls scripts/tests/*.py | sort > /tmp/self-tests
           echo "running $(wc -l < /tmp/self-tests) self-tests, four at a time"
@@ -324,10 +361,23 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Its own cache, not the test job's. Clippy emits *check* units through
+      # `clippy-driver` and `cargo test` emits *build* units; cargo
+      # fingerprints those separately, so this job restored 3.1 GB and then
+      # rebuilt 380 crates from `unicode-ident` up anyway. See `cache-name` in
+      # the action for the measurement.
       - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "clippy"
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Drop workspace artifacts before caching
+        if: always()
+        run: scripts/ci-drop-workspace-artifacts.sh
 
   test:
     name: Tests
@@ -335,11 +385,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # The one that writes the cache back: it builds the most, so its
-      # artifacts are the ones worth handing to the next run.
+      # This job's own cache, keyed `build` -- the artifacts `cargo test`
+      # produces. The clippy job keeps a separate one; they cannot share.
       - uses: ./.github/actions/rust-workspace
         with:
           save-cache: "true"
+          cache-name: "build"
 
       # Sixty test files in this workspace open with "no display? skip and
       # return", which is right on a contributor's headless shell and wrong
@@ -438,12 +489,4 @@ jobs:
       # no longer there.
       - name: Drop workspace artifacts before caching
         if: always()
-        run: |
-          before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
-          rm -rf target/*/incremental
-          rm -f  target/*/deps/libpostio_*.rlib \
-                 target/*/deps/libpostio_*.rmeta \
-                 target/*/deps/postio_*.d \
-                 target/*/deps/libpostio_*.d
-          rm -rf target/*/.fingerprint/postio-*
-          echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
+        run: scripts/ci-drop-workspace-artifacts.sh
