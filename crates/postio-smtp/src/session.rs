@@ -47,6 +47,7 @@ use secrecy::SecretString;
 
 use crate::cancel::CancelToken;
 use crate::error::{SmtpError, SmtpResult};
+use crate::reply::ReplyTap;
 use crate::settings::ConnectionSettings;
 use crate::transport::{SmtpConnector, SmtpStream, TransportError};
 
@@ -56,6 +57,9 @@ const READ_BUFFER: usize = 16 * 1024;
 /// An authenticated SMTP session over one connection.
 pub struct SmtpSession {
     stream: Box<dyn SmtpStream>,
+    /// The last complete reply the server sent, so a rejection keeps every
+    /// line of its own explanation (#921). See `crate::reply`.
+    replies: ReplyTap,
     endpoint: String,
     account: String,
 }
@@ -109,12 +113,13 @@ impl SmtpSession {
         // `WantsTlsUpgrade` carries no payload, so the host of the plaintext
         // connect is kept for the certificate check the upgrade performs.
         let mut upgrade_host = settings.host.clone();
+        let mut replies = ReplyTap::default();
 
         loop {
             match coroutine.resume(resume.take()) {
                 SmtpCoroutineState::Complete(Ok(_data)) => break,
                 SmtpCoroutineState::Complete(Err(error)) => {
-                    return Err(map_open_error(settings, error));
+                    return Err(map_open_error(settings, &replies, error));
                 }
                 SmtpCoroutineState::Yielded(SmtpSessionOpenYield::WantsTcpConnect {
                     host,
@@ -139,6 +144,7 @@ impl SmtpSession {
                 SmtpCoroutineState::Yielded(SmtpSessionOpenYield::WantsRead) => {
                     let stream = stream.as_mut().ok_or_else(no_stream)?;
                     let read = stream.read(&mut buffer).await?;
+                    replies.saw(&buffer[..read]);
                     resume = Some(&buffer[..read]);
                 }
                 SmtpCoroutineState::Yielded(SmtpSessionOpenYield::WantsWrite(bytes)) => {
@@ -152,6 +158,7 @@ impl SmtpSession {
 
         Ok(Self {
             stream,
+            replies,
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
         })
@@ -199,7 +206,7 @@ impl SmtpSession {
         let reverse_path = SmtpReversePath::from(parse_mailbox(from)?);
         self.mail(reverse_path, Vec::new())
             .await
-            .map_err(|error| map_mail_error(from, error))?;
+            .map_err(|error| map_mail_error(from, &self.replies, error))?;
 
         for recipient in to {
             if cancel.is_cancelled() {
@@ -208,7 +215,7 @@ impl SmtpSession {
             let forward_path = SmtpForwardPath::from(parse_mailbox(recipient)?);
             self.rcpt(forward_path, Vec::new())
                 .await
-                .map_err(|error| map_rcpt_error(recipient, error))?;
+                .map_err(|error| map_rcpt_error(recipient, &self.replies, error))?;
         }
 
         if cancel.is_cancelled() {
@@ -265,7 +272,7 @@ impl SmtpSession {
                 SmtpCoroutineState::Complete(Err(error)) => {
                     return Err(tag(
                         payload_begun,
-                        map_data_error(SmtpClientError::from(error)),
+                        map_data_error(&self.replies, SmtpClientError::from(error)),
                     ));
                 }
                 SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
@@ -275,6 +282,7 @@ impl SmtpSession {
                         .await
                         .map_err(|error| tag(payload_begun, SmtpError::from(error)))?;
                     answered = true;
+                    self.replies.saw(&buffer[..read]);
                     resume = Some(&buffer[..read]);
                 }
                 SmtpCoroutineState::Yielded(SmtpYield::WantsWrite(bytes)) => {
@@ -327,6 +335,7 @@ impl SmtpClientAsync for SmtpSession {
                     SmtpCoroutineState::Complete(Err(error)) => return Err(error.into()),
                     SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
                         let read = self.stream.read(&mut buffer).await.map_err(as_io)?;
+                        self.replies.saw(&buffer[..read]);
                         resume = Some(&buffer[..read]);
                     }
                     SmtpCoroutineState::Yielded(SmtpYield::WantsWrite(bytes)) => {
@@ -433,11 +442,20 @@ fn as_io(error: TransportError) -> SmtpClientError {
 /// RFC 5321's rule: the first reply digit decides retryability, whichever
 /// command it answered. `4xx` is [`SmtpError::Transient`]; anything else is
 /// `permanent`'s business.
+/// Build the error a rejection becomes, with the server's whole answer.
+///
+/// `message` is what `io-smtp` handed over, which is the reply's **first
+/// line** and only that: every rejection in that crate is built from
+/// `response.text()`. `replies` is the same reply as it arrived, so the
+/// continuation lines -- the typo hint, the help URL, the half a person can
+/// act on -- are recovered here rather than lost (#921, `crate::reply`).
 fn classify(
+    replies: &ReplyTap,
     code: u16,
-    reason: String,
+    message: String,
     permanent: impl FnOnce(u16, String) -> SmtpError,
 ) -> SmtpError {
+    let reason = replies.reason(code).unwrap_or(message);
     if code / 100 == 4 {
         SmtpError::Transient { code, reason }
     } else {
@@ -445,7 +463,11 @@ fn classify(
     }
 }
 
-fn map_open_error(settings: &ConnectionSettings, error: SmtpSessionOpenError) -> SmtpError {
+fn map_open_error(
+    settings: &ConnectionSettings,
+    replies: &ReplyTap,
+    error: SmtpSessionOpenError,
+) -> SmtpError {
     match error {
         SmtpSessionOpenError::StartTlsOverTls | SmtpSessionOpenError::StartTlsInjection => {
             SmtpError::Tls {
@@ -455,7 +477,7 @@ fn map_open_error(settings: &ConnectionSettings, error: SmtpSessionOpenError) ->
         }
         SmtpSessionOpenError::AuthPlain(SmtpAuthPlainError::Rejected { code, message }) => {
             let account = settings.username.clone();
-            classify(code, message, |code, reason| SmtpError::Auth {
+            classify(replies, code, message, |code, reason| SmtpError::Auth {
                 account,
                 code,
                 reason,
@@ -467,42 +489,45 @@ fn map_open_error(settings: &ConnectionSettings, error: SmtpSessionOpenError) ->
     }
 }
 
-fn map_mail_error(sender: &str, error: SmtpClientError) -> SmtpError {
+fn map_mail_error(sender: &str, replies: &ReplyTap, error: SmtpClientError) -> SmtpError {
     match error {
         SmtpClientError::Mail(SmtpMailError::Rejected { code, message }) => {
             let sender = sender.to_owned();
-            classify(code, message, |code, reason| SmtpError::SenderRejected {
-                sender,
-                code,
-                reason,
+            classify(replies, code, message, |code, reason| {
+                SmtpError::SenderRejected {
+                    sender,
+                    code,
+                    reason,
+                }
             })
         }
         other => map_transport_error("MAIL FROM", other),
     }
 }
 
-fn map_rcpt_error(recipient: &str, error: SmtpClientError) -> SmtpError {
+fn map_rcpt_error(recipient: &str, replies: &ReplyTap, error: SmtpClientError) -> SmtpError {
     match error {
         SmtpClientError::Rcpt(SmtpRcptError::Rejected { code, message }) => {
             let recipient = recipient.to_owned();
-            classify(code, message, |code, reason| SmtpError::RecipientRejected {
-                recipient,
-                code,
-                reason,
+            classify(replies, code, message, |code, reason| {
+                SmtpError::RecipientRejected {
+                    recipient,
+                    code,
+                    reason,
+                }
             })
         }
         other => map_transport_error("RCPT TO", other),
     }
 }
 
-fn map_data_error(error: SmtpClientError) -> SmtpError {
+fn map_data_error(replies: &ReplyTap, error: SmtpClientError) -> SmtpError {
     match error {
         SmtpClientError::Data(
             SmtpDataError::CommandRejected { code, message }
             | SmtpDataError::BodyRejected { code, message },
-        ) => classify(code, message, |code, reason| SmtpError::MessageRejected {
-            code,
-            reason,
+        ) => classify(replies, code, message, |code, reason| {
+            SmtpError::MessageRejected { code, reason }
         }),
         other => map_transport_error("DATA", other),
     }
