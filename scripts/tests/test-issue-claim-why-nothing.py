@@ -98,9 +98,17 @@ def main() -> int:
         git("remote", "add", "origin", str(origin), cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
 
-        # The leftover a killed landing leaves: the issue's branch, on origin,
-        # with nothing else wrong.
-        git("push", "-q", "origin", "main:refs/heads/issue-42-a-perfectly-claimable", cwd=repo)
+        # A branch holding work that is genuinely not on main -- the case
+        # the backstop exists for, and since #1063 the only one that still
+        # blocks. A branch whose commits already merged is deleted and the
+        # issue claimed, which `test-issue-claim-stale-branch.py` covers.
+        git("checkout", "-q", "-b", "issue-42-a-perfectly-claimable", cwd=repo)
+        (repo / "work.txt").write_text("unlanded\n", encoding="utf-8")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", "feat: not landed anywhere", cwd=repo)
+        git("push", "-q", "origin", "issue-42-a-perfectly-claimable", cwd=repo)
+        git("checkout", "-q", "main", cwd=repo)
+        git("branch", "-D", "issue-42-a-perfectly-claimable", cwd=repo)
 
         environment = dict(os.environ)
         environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
@@ -130,9 +138,10 @@ def main() -> int:
             f"{output}",
         )
         check(
-            "it says what removes the block",
-            "issue-release.sh 42" in output,
-            f"nothing in the output tells the reader what to do:\n{output}",
+            "it says the branch holds work nobody landed",
+            "not on main" in output,
+            "the reader has to be able to tell 'somebody is working on this' "
+            f"from 'a landing was killed', which is now decided for them:\n{output}",
         )
         check(
             "and it still exits non-zero, because nothing was claimed",
