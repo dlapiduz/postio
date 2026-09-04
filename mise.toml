@@ -66,3 +66,17 @@ sccache = "0.17.0"
 # four are needed only by the gates that name them, and putting them here
 # would make `mise install` — the thing a newcomer runs first — the slowest
 # step in setting up. `cargo install` them when a gate asks for one.
+#
+# Not pinned here for a different reason: **`cargo-nextest`**. It belongs in
+# this list by every argument above — `issue-land.sh` runs the integration
+# tiers through it and `ci.yml` requires it, and it is a published binary that
+# installs in ~2s rather than one of the minutes-long builds — but mise has no
+# registry entry for it, under any backend. So the pin lives in
+# `scripts/install-nextest.sh`, which is what `ci.yml` runs and what the README
+# tells a workstation to run, and this note exists so the absence reads as a
+# limitation rather than as the deliberate omission above.
+#
+# That distinction is not pedantry: it is exactly the gap that let the tool CI
+# depends on be missing from the machine every landing runs on, for as long as
+# nobody looked. `issue-land.sh` falls open to `cargo test` and reports success
+# either way (#1092).
