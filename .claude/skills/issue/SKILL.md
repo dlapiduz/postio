@@ -204,16 +204,23 @@ Also non-negotiable:
 ## 3. Land
 
 ```bash
-scripts/issue-land.sh -m "feat(gtk): teach the list to do the thing"
-scripts/issue-land.sh --gates-only    # check without committing
-scripts/issue-land.sh -m "..." --wip  # push a branch, no PR yet
+scripts/issue-land.sh --detach                      # the ordinary landing
+scripts/issue-land.sh --status                      # what it did, or is doing
+scripts/issue-land.sh --detach -m "feat(gtk): ..."  # with uncommitted work
+scripts/issue-land.sh --detach --gates-only         # check without committing
+scripts/issue-land.sh --detach --wip                # push a branch, no PR yet
 ```
+
+`--detach` runs the landing in a process no tool call can kill and returns
+at once; the hook refuses a foreground run. Read the log with `--status`.
 
 It formats, runs clippy **for the crates you actually changed** and the
 **sanity tier** — the whole workspace's unit tests, 1,313 of them in about
 five seconds — runs every repository invariant via `scripts/check.sh`,
-commits, pushes the branch, opens a PR whose body says `Closes #<n>`,
-**waits for CI, and merges it**.
+commits, pushes the branch, opens a PR whose body says `Closes #<n>`, and
+**arms GitHub's auto-merge**: the ruleset requires CI's checks, so it merges
+the moment they are green and nobody waits (#1107). `--wait` watches and
+merges the old way, for a landing you want to see through.
 
 `--full` adds the per-crate integration suites, which is what this used to
 always do. **Land on the default; `--full` needs a specific reason, and "my
@@ -231,16 +238,15 @@ catches the bug it actually ships: layers that each pass and are not joined
 up. Which is an argument for *writing* them, and for running the ones your
 change is about; it is not an argument for running all of them twice.
 
-That last part is not optional and not someone else's job. A PR nobody merges
-is work that looks finished and is not: the branch goes stale, it conflicts
-with whatever lands next, and the issue it claims to close stays open. You are
-the session that knows what the change was for, so you are the session that
-waits for the checks and deals with them.
+A PR nobody merges is work that looks finished and is not, so a red one is
+still yours:
 
-- **Checks pass** → it rebases onto `main` and deletes the branch. Then
-  claim the next issue from inside this worktree; the claim reuses it.
-- **Checks fail** → yours to fix, on the same branch, then run the script
-  again. Do not open a second PR, and do not leave it sitting.
+- **Checks pass** → GitHub merges and deletes the branch. You have already
+  claimed the next issue from inside this worktree.
+- **Checks fail** → your next claim says so (`note: PR #N has failing
+  checks`), and so does `/steward`. `scripts/issue-claim.sh --resume <n>`
+  cuts a worktree from the branch, tracking it; fix, then land again onto
+  the same PR. Do not open a second PR.
 - `--no-merge` opens the PR and stops, for a change that genuinely needs a
   human to look first. Say in the PR why.
 
@@ -254,10 +260,10 @@ again from the top on the new copy — gates included. That is not a fault:
 this script rebases the tree it lives in, so without the handover the run
 that pulls a landing fix in is the one run that fix cannot protect. See #160.
 
-GitHub's own `--auto` merge is not used yet. It waits only for *required*
-checks, and until a ruleset requires CI it would merge before CI had started.
-Requiring them — and letting sessions move on instead of waiting ten minutes
-per landing — is #1107, the maintainer's call.
+GitHub's `--auto` merge waits only for *required* checks, which is why the
+ruleset requires every `ci.yml` job: a job that skips itself for a docs-only
+diff still reports, and counts as passed. On a repository without auto-merge
+allowed the script watches and merges itself, as it always did.
 
 The commit message rules are unchanged — conventional subject, a body that
 explains **why**, wrapped at 72 columns. The footer becomes `Refs: #<n>`
