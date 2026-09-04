@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Postio's application icon.
+  The mark is the `/` search key: the accent field, the paper slash, and one
+  square dot for unread mail. Drawn, not lit — no gradient, no bevel, no
+  shadow.
 
-  The Industry identity, reduced to what survives at 16px: the steel accent
-  #5980a6 as a solid plate, and the envelope stated as line-work on the paper
-  tone rather than filled. No gradient, no bevel, no shadow — this design draws
-  edges, it does not light them.
+  This file is the shipped copy of `Design/icons/postio.svg`, with the
+  provenance metadata stripped: it is compiled into the binary through
+  `postio.gresource.xml` and installed into the user's icon theme, and the
+  metadata was twenty-five times the size of the drawing. `Design/icons/`
+  keeps the originals, and its README carries the optical-sizing rule that
+  says why 16 and 32 are separate files rather than downscales of this one.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
   <title>Postio</title>
-  <rect x="8" y="8" width="112" height="112" rx="26" fill="#5980a6"/>
-  <g fill="none" stroke="#f2f2f3" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="27" y="42" width="74" height="44" rx="5"/>
-    <path d="M30 45 L64 67 L98 45"/>
-  </g>
+  <rect width="64" height="64" fill="#5980a6"/>
+  <path d="M40 14 L24 50" fill="none" stroke="#f2f2f3" stroke-width="6"/>
+  <rect x="43" y="43" width="7" height="7" fill="#f2f2f3"/>
 </svg>

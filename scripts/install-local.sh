@@ -21,8 +21,15 @@ prefix="${PREFIX:-$HOME/.local}"
 
 bin="$prefix/bin/postio"
 desktop="$data_home/applications/dev.postio.Postio.desktop"
-icon_png="$data_home/icons/hicolor/128x128/apps/dev.postio.Postio.png"
 icon_svg="$data_home/icons/hicolor/scalable/apps/dev.postio.Postio.svg"
+icon_symbolic="$data_home/icons/hicolor/scalable/apps/dev.postio.Postio-symbolic.svg"
+# The raster sizes, and only the ones that earn a file. 16 and 32 are drawn
+# rather than scaled -- the mark's slash is thickened as it shrinks and its
+# dot is dropped below 24px, which no downscale of the master can do -- and
+# 128 exists because Flatpak's export validation reads a PNG (flatpak/README).
+# Every other size is better served by the scalable SVG above, so shipping a
+# raster for it would only override something sharper.
+icon_sizes=(16 32 128)
 metainfo="$data_home/metainfo/dev.postio.Postio.metainfo.xml"
 
 refresh_caches() {
@@ -42,7 +49,10 @@ refresh_caches() {
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-    rm -f "$bin" "$desktop" "$icon_png" "$icon_svg" "$metainfo"
+    rm -f "$bin" "$desktop" "$icon_svg" "$icon_symbolic" "$metainfo"
+    for size in "${icon_sizes[@]}"; do
+        rm -f "$data_home/icons/hicolor/${size}x${size}/apps/dev.postio.Postio.png"
+    done
     refresh_caches
     echo "Postio removed from $prefix and $data_home."
     exit 0
@@ -137,8 +147,13 @@ target="${CARGO_TARGET_DIR:-$here/target}"
 
 install -Dm755 "$target/release/postio" "$bin"
 install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.desktop" "$desktop"
-install -Dm644 "$here/crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png" "$icon_png"
 install -Dm644 "$here/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg" "$icon_svg"
+install -Dm644 "$here/crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" "$icon_symbolic"
+for size in "${icon_sizes[@]}"; do
+    install -Dm644 \
+        "$here/crates/postio-gtk/data/icons/${size}x${size}/apps/dev.postio.Postio.png" \
+        "$data_home/icons/hicolor/${size}x${size}/apps/dev.postio.Postio.png"
+done
 install -Dm644 "$here/crates/postio-gtk/data/dev.postio.Postio.metainfo.xml" "$metainfo"
 refresh_caches
 
