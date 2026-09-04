@@ -49,6 +49,14 @@
 //! later and repaints again, redundantly but harmlessly; that redundancy is
 //! what keeps a hand-edited `[filters]` and the box's own `Ctrl+S` reaching
 //! the sidebar through one path instead of two.
+//!
+//! # `[storage]` (#929)
+//!
+//! This crate has no store to enforce a disk ceiling against, so
+//! `changed.storage` only reaches [`Window::notify_storage_changed`] here —
+//! the composition root, which owns the `Database`/`BlobStore` pair, is what
+//! subscribes through [`Window::connect_storage_changed`] and re-runs the
+//! eviction pass off the main thread.
 
 use std::path::Path;
 
@@ -225,6 +233,9 @@ pub fn install_at(window: &Window, path: &Path) {
                 window
                     .sidebar()
                     .set_saved_searches(&saved_searches(service.config()));
+            }
+            if update.changed.storage {
+                window.notify_storage_changed(service.config().storage.max_bytes);
             }
             // Whichever save this was — the panel's own debounced write, or
             // `$EDITOR`'s — a file that loads without error is what "Revert

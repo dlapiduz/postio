@@ -593,6 +593,29 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
+    // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
+    // through `Wiring::storage_ceiling` -- this is the other half. Lowering
+    // it evicts without a restart; raising it needs nothing beyond the next
+    // pass reading the new number. Off the main thread, the same reason
+    // `reclaim_disk`'s own ceiling pass above is: `evict_to_fit` reads and
+    // deletes blobs.
+    window.connect_storage_changed({
+        let database = wiring.database.clone();
+        let blobs = wiring.blobs.clone();
+        let runtime = wiring.runtime.clone();
+        move |max_bytes| {
+            let database = database.clone();
+            let blobs = blobs.clone();
+            runtime.spawn_blocking(move || {
+                if let Err(error) =
+                    postio_session::enforce_storage_ceiling(&database, &blobs, max_bytes)
+                {
+                    tracing::warn!(%error, "could not bring the store under its new ceiling");
+                }
+            });
+        }
+    });
+
     Some(Wired { feeds, search })
 }
 

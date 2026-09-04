@@ -847,6 +847,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_live_config::editing_config_toml_rebinds_the_running_window as fn(),
     ),
     (
+        "gtk_live_config::editing_storage_max_bytes_notifies_the_window",
+        gtk_live_config::editing_storage_max_bytes_notifies_the_window as fn(),
+    ),
+    (
         "gtk_onboarding::a_repair_arrives_with_the_address_and_the_servers_already_filled_in",
         gtk_onboarding::a_repair_arrives_with_the_address_and_the_servers_already_filled_in as fn(),
     ),
