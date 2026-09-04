@@ -51,6 +51,8 @@ TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
 # The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
+# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
+[ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 
 FILTER=""
 while [ $# -gt 0 ]; do

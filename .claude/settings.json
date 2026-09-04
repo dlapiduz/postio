@@ -13,6 +13,9 @@
       }
     ]
   },
+  "env": {
+    "MAKEFLAGS": "--jobserver-auth=fifo:/tmp/postio-jobserver/fifo"
+  },
   "permissions": {
     "allow": [
       "Bash(git status:*)",

@@ -1,16 +1,23 @@
 # Several Claude sessions build this workspace at the same time, on one
-# machine, sharing one target directory.
+# machine.
 #
 # Cargo defaults to one job per core. Four concurrent sessions on eight cores
-# therefore ask for ~32 parallel compile jobs, and linking postio-app pulls in
-# the whole GTK and WebKit stack — seven `rust-lld` processes at ~210 MB each
-# were once resident together, with 150 MB of 15 GB free. Nothing was slow;
-# everything was starved, and the machine spent its time in btrfs and dm-crypt
-# kworkers servicing the swap that followed.
+# therefore asked for ~32 parallel compile jobs, and linking postio-app pulls
+# in the whole GTK and WebKit stack -- seven `rust-lld` processes at ~210 MB
+# each were once resident together, with 150 MB of 15 GB free. Nothing was
+# slow; everything was starved, and the machine spent its time in btrfs and
+# dm-crypt kworkers servicing the swap that followed. `jobs = 2` was the
+# answer, and it cost the common case: measured over every session's
+# transcript, ONE session was building 60% of the time and two 26%, so six
+# cores sat idle most of the day (#1104).
 #
-# Two jobs per session leaves the box responsive with four sessions running.
-# Raise it when you are the only one building — `cargo build -j8`, or set
-# CARGO_BUILD_JOBS, both of which override this.
+# The real limit is now a machine-wide jobserver -- `scripts/jobserver.sh`,
+# a fifo of N tokens every cargo on the box draws from, named by MAKEFLAGS
+# (which .claude/settings.json exports for every session and the repo
+# scripts export for themselves). Cargo ignores `jobs` while it has one, so
+# a lone session gets the whole box and four sessions share one ceiling.
+# This value is the fallback for a cargo with no fifo to join -- it warns
+# and uses this -- and it is the same conservative number as before.
 [build]
 jobs = 2
 # One compile cache for the whole machine, in every worktree, without every
