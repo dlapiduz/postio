@@ -55,6 +55,8 @@ type ActionHandler = Box<dyn Fn(postio_core::Command)>;
 type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 /// See [`Window::connect_keymap`].
 type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
+/// See [`Window::connect_storage_changed`].
+type StorageHandler = Box<dyn Fn(Option<u64>)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -231,6 +233,9 @@ mod imp {
         /// live keymap — see
         /// [`Window::connect_keymap`](super::Window::connect_keymap).
         pub keymaps: std::cell::RefCell<Vec<KeymapHandler>>,
+        /// Whoever owns the store side of `[storage] max_bytes` — see
+        /// [`Window::connect_storage_changed`](super::Window::connect_storage_changed).
+        pub storage_changed: std::cell::RefCell<Vec<StorageHandler>>,
         /// The keymap currently in force, once one has been applied, so a
         /// surface built later can be handed it rather than waiting for the
         /// next edit.
@@ -2219,6 +2224,33 @@ impl Window {
             handler(keymap);
         }
         self.imp().keymaps.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Called with the new `[storage] max_bytes` every time `config.rs`'s
+    /// reload loop sees that section move (#929).
+    ///
+    /// `postio-gtk` has no store to enforce a ceiling against, so this only
+    /// asks — the composition root, which owns the `Database`/`BlobStore`
+    /// pair, is what subscribes and re-runs the eviction pass.
+    ///
+    /// Not replayed on connect the way [`connect_keymap`](Self::connect_keymap)
+    /// is: the initial ceiling is already read once at startup through
+    /// `Wiring::storage_ceiling`, and this signal only exists for the values
+    /// after that.
+    pub fn connect_storage_changed(&self, handler: impl Fn(Option<u64>) + 'static) {
+        self.imp()
+            .storage_changed
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires what [`connect_storage_changed`](Self::connect_storage_changed)
+    /// is listening for. Called from `config.rs`'s reload loop, in the same
+    /// crate.
+    pub(crate) fn notify_storage_changed(&self, max_bytes: Option<u64>) {
+        for handler in self.imp().storage_changed.borrow().iter() {
+            handler(max_bytes);
+        }
     }
 
     /// Called with every *registered* command a key or a palette row reaches.

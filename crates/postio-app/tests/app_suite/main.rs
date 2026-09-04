@@ -63,6 +63,7 @@ mod settings_credential_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
+mod storage_ceiling_wiring;
 mod sync_window;
 mod thread_bulk_keystroke;
 mod thread_dwell;
@@ -223,6 +224,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it",
         reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
+    ),
+    (
+        "storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs",
+        storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs
+            as fn(),
     ),
     (
         "reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity",
