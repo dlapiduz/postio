@@ -89,14 +89,24 @@ fn idle_refresh_is_untouched_by_config_and_keeps_its_own_default() {
 }
 
 #[test]
-fn check_for_mail_manual_does_not_idle_but_still_polls_for_now() {
-    // `WatchPolicy` has no "never check automatically" state yet -- see
-    // `watch_policy`'s own doc comment -- so `Manual` gets the closest
-    // faithful answer available: no push connection, same interval polling
-    // as `Poll`. Pinned so a future `WatchPolicy` that *can* express "off"
-    // changes this test rather than drifting past it unnoticed.
+fn check_for_mail_manual_turns_off_idle_and_sets_manual() {
+    // #1013: `WatchPolicy::manual` is what actually silences the periodic
+    // check -- `idle` stays consistent with the other two variants for
+    // anything that reads it directly, but the watcher itself checks
+    // `manual` first and never gets as far as consulting `idle`.
     let file = config_file("[sync]\ncheck_for_mail = \"manual\"\n");
     let policy = watch_policy_at(file.path());
     assert!(!policy.idle);
-    assert_eq!(policy.poll_interval, Duration::from_secs(300));
+    assert!(policy.manual);
+}
+
+#[test]
+fn check_for_mail_idle_and_poll_leave_manual_off() {
+    for text in ["idle", "poll"] {
+        let file = config_file(&format!("[sync]\ncheck_for_mail = \"{text}\"\n"));
+        assert!(
+            !watch_policy_at(file.path()).manual,
+            "check_for_mail = {text:?} must not silence automatic checking"
+        );
+    }
 }
