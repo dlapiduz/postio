@@ -9,7 +9,7 @@ history and reasoning behind every rule here lives in
 ## The loop
 
 ```bash
-scripts/issue-claim.sh                  # next ready issue → private worktree
+scripts/issue-claim.sh                  # next ready issue → your worktree, reused or seeded
 cd ~/src/postio-worktrees/issue-<n>     # work there, not in ~/src/postio
 scripts/issue-land.sh                   # gates, commit, push, PR, merge
 scripts/issue-release.sh <n>            # remove the worktree
@@ -70,7 +70,8 @@ corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
 ```bash
 scripts/test-fast.sh                                 # between edits: changed crates, --lib
 scripts/test-sanity.sh                               # before landing: whole workspace, --lib
-cargo test   -p <crate>                              # that crate, integration included
+cargo nextest run -p <crate> --test <suite>          # one integration suite, tests in parallel
+cargo nextest run -p <crate>                         # that crate's suites; doctests: cargo test -p <crate> --doc
 cargo clippy -p <crate> --all-targets -- -D warnings # before landing
 scripts/check.sh                                     # every repository invariant
 ```
@@ -86,13 +87,12 @@ cheap.** Measured, warm, on this workstation:
 
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
-share this machine with `jobs = 2`, so landing had become something you
-queued for.
+share this machine, so landing had become something you queued for.
 
 **Land on the default. `--full` needs a specific reason, and "this change is
 about wiring" is not one** (maintainer, 2026-09-03: *"dont run the full gate
 if you dont need to"*). Before landing, run the suites your diff actually
-touches — `cargo test -p <crate> --test <suite>` — which is seconds, aimed at
+touches — `cargo nextest run -p <crate> --test <suite>` — which is seconds, aimed at
 what changed, and re-runnable; then let CI run the rest. `--full` re-runs what
 you already ran, inside a ~25-minute chain where any unrelated flake restarts
 the whole thing.
@@ -132,10 +132,23 @@ link". Both halves were wrong, and the correction matters because the number
 was load-bearing (#973 cites it). Measured: cargo's own `--timings` puts the
 `app_suite` test target at **3.9s**, a warm rebuild-and-relink at **2s**, and
 the suite's *execution* at **200s**. Linking is ~1.2s — 0.3% of the cycle.
-What costs eleven minutes is a **cold worktree**, where ~470 third-party
-crates are compiled before anything of ours is: 95% of unit time, with
-`openssl-sys`'s build script the single largest item. That is an argument for
-`--reuse` (#1012), not against integration tests.
+What cost eleven minutes was a **cold worktree**, where ~470 third-party
+crates were compiled before anything of ours was — compiled, not fetched
+from sccache, because every rustc invocation carried a per-worktree linker
+path and the cache hit 1% of the time (#1101). A claim now reuses the tree
+you are in or seeds a new one by reflink copy (#1102): measured, the sanity
+tier in a seeded tree is **12 s compiling 3 crates** against 19 minutes
+cold. That is an argument for the seeded claim, not against integration
+tests.
+
+**Integration suites run under nextest.** `cargo nextest run -p <crate>
+--test <suite>` runs one binary's tests as separate processes, in parallel;
+`issue-land.sh` and CI already do (`scripts/install-nextest.sh` installs the
+pinned version). Measured on this workspace: `app_suite`
+200 s → 20 s, the whole workspace ~500 s → 119 s. Keep `cargo test` for
+`--lib` — a process per unit test is 2.2x *slower* there, which is why the
+two tiers above use it — and for doctests, which nextest does not run and
+does not say so: `cargo test -p <crate> --doc`.
 
 `scripts/test-fast.sh` runs `--lib` for the crates you changed and links
 nothing else; use it between edits. Run the integration suites to *confirm*, at
@@ -301,27 +314,31 @@ rebase, push again.
 Parallel sessions are the normal state. Worktrees isolate the files; three
 things stay shared:
 
-- **CPU**: `.cargo/config.toml` pins `jobs = 2`. Raise per-command
-  (`cargo build -j8`) only when you're alone.
+- **CPU**: one machine-wide jobserver (`scripts/jobserver.sh`, #1104) hands
+  compile jobs to every cargo on the box — alone you get the whole machine,
+  four sessions share one ceiling. It reaches cargo through `MAKEFLAGS` in
+  `.claude/settings.json`, and the PreToolUse hook keeps the pool up before
+  any command that mentions cargo. `jobs = 2` in `.cargo/config.toml` is
+  only the fallback for a cargo with no fifo to join. Never pass `-j`: it is
+  ignored while the pool is up and wrong when it is not.
 - **The compile cache**: sccache, wired in automatically, one cache
-  machine-wide. Each worktree keeps its own `target/` (sharing one compiled
-  crates against a sibling's — #76).
+  machine-wide — true on paper only until #1101: the linker and `CC` were
+  per-worktree paths in every rustc argument list and every build script's
+  environment, so the cache hit 1% of the time. They are bare names now
+  (`postio-linker`, `postio-cc`; `scripts/install-shims.sh` puts them on
+  PATH and the claim, land and test scripts run it). **Never put a worktree
+  path into anything rustc or a build script sees.** Each worktree keeps
+  its own `target/` (sharing one compiled crates against a sibling's — #76).
 
-  **So claim with `--reuse` by default.** A *fresh* worktree is a cold
-  `target/`: Postio's own ~20 crates rebuilt before the first gate result —
-  595s of sanity tier plus 289s of workspace check on #1012's own landing,
-  and that was a change with no Rust in it at all. `scripts/issue-claim.sh
-  --reuse` takes the next issue in the worktree you are already in and keeps
-  that build. It is **not** the sharing #76 forbids: that is two worktrees
-  writing one target, and this is one worktree with a different branch
-  checked out.
-
-  Claim fresh only when you need the old tree kept — an unlanded branch you
-  mean to come back to, or work you have not finished with. You do not have
-  to decide carefully: `--reuse` refuses on its own if the tree is dirty,
-  holds commits that are not on `main`, or is the shared checkout, and each
-  refusal names its reason and changes nothing. Trying it first costs
-  nothing when it does not apply.
+  **A plain claim reuses or seeds.** Run `scripts/issue-claim.sh` from
+  inside your landed worktree and it moves that tree to the next issue,
+  build and all; if that would strand something — a dirty tree, unlanded
+  commits — it says so and claims a fresh tree instead, leaving this one
+  alone. A fresh tree's `target/debug` is copied from the newest sibling by
+  reflink (#1102): one second for 11 GB on btrfs, and the sanity tier then
+  builds in 12 s compiling 3 crates. It is a copy, not the sharing #76
+  forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
+  `--reuse` is the strict form that refuses instead of falling back.
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other

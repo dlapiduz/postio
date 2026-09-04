@@ -22,20 +22,22 @@ scripts/issue-claim.sh --milestone MVP      # scoped to a milestone
 scripts/issue-claim.sh 42                   # a specific issue
 scripts/issue-claim.sh --dry-run            # look before taking
 scripts/issue-claim.sh --base feature/x 42  # cut from an initiative branch
-scripts/issue-claim.sh --reuse             # here, with target/ still warm
+scripts/issue-claim.sh --fresh              # a new worktree even from inside one
+scripts/issue-claim.sh --cold               # ...and do not seed its target/
+scripts/issue-claim.sh --reuse              # strict: refuse rather than fall back
 ```
 
-**Reach for `--reuse` first.** A new worktree is a cold `target/`, and that is
-Postio's own ~20 crates rebuilt before the first gate result — nearly fifteen
-minutes on #1012's landing, for a change with no Rust in it. `--reuse` moves
-the tree you are standing in to the new issue's name and checks out its
-branch, so the build stays warm. It is *not* the sharing #76 forbids: that is
-two worktrees writing one target, and this is one worktree.
+**Run it from inside the worktree you just landed.** A plain claim there
+moves that tree to the new issue's name and checks out its branch, so the
+build stays warm — and when reuse would strand something (a dirty tree,
+commits not on the base) it says why and claims a fresh tree instead,
+leaving this one exactly as it was (#1102). A fresh tree is not cold either:
+its `target/debug` is reflink-copied from the newest sibling, one second for
+11 GB, and the sanity tier then builds in 12 s. Neither is the sharing #76
+forbids: that is two worktrees writing one target.
 
-Claim fresh when you need the old tree kept — an unlanded branch you are
-coming back to. Otherwise try `--reuse`: it refuses if the tree is dirty, if
-it holds commits that are not on `main`, or if you are in the shared
-checkout, and a refusal changes nothing, so the wrong guess is free.
+`--fresh` when you want the old tree kept on purpose; `--reuse` when you
+want to be told rather than helped.
 
 ## Several small issues on one branch
 

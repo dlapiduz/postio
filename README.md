@@ -88,7 +88,8 @@ sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
 # mold is the linker, selected by scripts/linker.sh whenever it is present.
 # Not for speed -- there is only ~1.2s of link to contest either way -- but
 # for memory: it peaks ~265 MB below lld, and this workstation runs several
-# sessions that link at once, which is why jobs = 2 exists. Without it lld
+# sessions that link at once, which is what the jobserver's token count
+# defends (scripts/jobserver.sh, #1104). Without it lld
 # links the binary and nothing says so; `readelf -p .comment <binary>` is the
 # only thing that tells you which one ran. #1092.
 sudo dnf install ccache mold
