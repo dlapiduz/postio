@@ -140,6 +140,163 @@ pub fn opening_a_second_account_populates_its_own_settings_not_the_firsts() {
     window.destroy();
 }
 
+/// An account with two named signatures, one of them already the default.
+fn an_account_with_signatures(id: i64) -> Account {
+    let mut account = an_account(id, "Ada", "ada@example.com");
+    let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+    work.id = postio_model::ids::SignatureId::new(7);
+    let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+    brief.id = postio_model::ids::SignatureId::new(8);
+    account.default_signature_id = Some(work.id);
+    account.signatures = vec![work, brief];
+    account
+}
+
+/// #979: the row lists the account's signatures and starts on its default.
+///
+/// A dropdown over what the account has, not a path field: `Account` carries
+/// `signatures: Vec<Signature>` and `default_signature_id`, and there has
+/// never been a filesystem path for #880's mockup to have meant.
+pub fn the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default() {
+    let Some((window, panel)) = new_panel() else {
+        return;
+    };
+    panel.set_accounts(vec![an_account_with_signatures(1)]);
+    pump();
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    let picker = signature_picker(&panel);
+    assert!(
+        picker.is_visible(),
+        "an account with signatures has something to choose between"
+    );
+    let names: Vec<String> = (0..picker.model().expect("a model").n_items())
+        .filter_map(|n| {
+            picker
+                .model()
+                .expect("a model")
+                .item(n)
+                .and_then(|o| o.downcast::<gtk::StringObject>().ok())
+                .map(|s| s.string().to_string())
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec!["Work".to_owned(), "Brief".to_owned()],
+        "the picker lists the account's signatures by name, in its own order"
+    );
+    assert_eq!(
+        picker.selected(),
+        0,
+        "and opens on the one the account already calls its default"
+    );
+    drop(window);
+}
+
+/// The empty state, decided by the precedent this codebase already set.
+///
+/// `composer.rs::set_signatures` hides its picker when the account has none
+/// — *"a picker with one entry is a control that can only ever say what is
+/// already true"* — and `set_accounts` cites that rule for hiding an empty
+/// section. The same answer applies here for a sharper reason: **nothing in
+/// Postio creates a signature yet.** `Signature::new` has no caller outside
+/// seeds and tests, so a row prompting "add one" would point at a flow that
+/// does not exist, which is the failure `/issue` §4 is about.
+pub fn an_account_with_no_signatures_gets_no_picker_at_all() {
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    assert!(
+        !signature_picker(&panel).is_visible(),
+        "an account with no signatures is offered a control that can only \
+         ever say what is already true"
+    );
+    drop(window);
+}
+
+/// Choosing one reports the account and the signature, the same way every
+/// other field in this view does — the panel never writes, because an
+/// account is database state and `settings_accounts.rs` owns the write.
+pub fn choosing_a_signature_reports_the_account_and_the_choice() {
+    let Some((window, panel)) = new_panel() else {
+        return;
+    };
+    panel.set_accounts(vec![an_account_with_signatures(1)]);
+    pump();
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = std::rc::Rc::clone(&seen);
+    panel.connect_account_edited(move |id, edit| recorder.borrow_mut().push((id, edit)));
+
+    // The second entry: "Brief", which is not the current default.
+    signature_picker(&panel).set_selected(1);
+    pump();
+
+    assert_eq!(
+        *seen.borrow(),
+        vec![(
+            AccountId::new(1),
+            AccountEdit::DefaultSignature(Some(postio_model::ids::SignatureId::new(8)))
+        )],
+        "one edit naming the account and the signature it chose"
+    );
+    drop(window);
+}
+
+/// Opening an account must not look like editing it.
+///
+/// Filling the picker moves its selection, and a `DropDown` cannot tell a
+/// programmatic move from a person's — so without
+/// `account_detail_loading`, merely *viewing* an account would report a
+/// `DefaultSignature` edit and rewrite what it was showing. The panel has
+/// that guard already; this is the first test that holds a control to it,
+/// because every other one connects its handler after opening and so could
+/// not see the edit if it happened.
+pub fn opening_an_account_reports_no_edit_of_its_own() {
+    let Some((window, panel)) = new_panel() else {
+        return;
+    };
+    // The default is the *second* signature on purpose. With the first,
+    // populating sets the selection to an index it already holds, GTK emits
+    // no notification, and this test passes whether or not the guard is
+    // there — which is a test that cannot fail.
+    let mut account = an_account_with_signatures(1);
+    account.default_signature_id = Some(account.signatures[1].id);
+    panel.set_accounts(vec![account]);
+    pump();
+
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = std::rc::Rc::clone(&seen);
+    panel.connect_account_edited(move |id, edit| recorder.borrow_mut().push((id, edit)));
+
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    assert!(
+        seen.borrow().is_empty(),
+        "opening the view reported an edit, so viewing an account rewrites \
+         it: {:?}",
+        seen.borrow()
+    );
+    drop(window);
+}
+
+fn signature_picker(panel: &SettingsPanel) -> gtk::DropDown {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-detail-signature",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::DropDown>().ok())
+    .expect("the detail view has a signature picker")
+}
+
 fn panel_with_account() -> Option<(gtk::Window, SettingsPanel)> {
     let (window, panel) = new_panel()?;
     panel.set_accounts(vec![an_account(1, "Ada", "ada@example.com")]);

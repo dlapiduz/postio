@@ -97,6 +97,10 @@ fn edit_account(wiring: &Wiring, id: postio_model::ids::AccountId, edit: Account
         AccountEdit::ImapPort(value) => account.incoming.port = value,
         AccountEdit::SmtpHost(value) => account.outgoing.host = value,
         AccountEdit::SmtpPort(value) => account.outgoing.port = value,
+        // #979. `Option` all the way through: an account may have
+        // signatures and prefer none of them, which is what the composer
+        // reads as "use the identity's own".
+        AccountEdit::DefaultSignature(value) => account.default_signature_id = value,
     }
     if let Err(error) = repository.update(&mut account) {
         tracing::warn!(%error, "could not save an account detail edit");

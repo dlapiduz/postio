@@ -76,6 +76,7 @@ use postio_config::{
     Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui,
 };
 use postio_core::CommandId;
+use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
@@ -149,6 +150,12 @@ pub enum AccountEdit {
     SmtpHost(String),
     /// The SMTP server's port.
     SmtpPort(u16),
+    /// Which of the account's signatures the composer starts on (#979).
+    ///
+    /// `Option` because "none of them" is a real answer the model already
+    /// holds — `Account::default_signature_id` is an `Option<SignatureId>`,
+    /// and an account can have signatures without preferring one.
+    DefaultSignature(Option<SignatureId>),
 }
 
 /// What to call when a field in the account detail view is committed.
@@ -466,6 +473,14 @@ mod imp {
         pub account_detail_imap_port: OnceCell<gtk::SpinButton>,
         pub account_detail_smtp_host: OnceCell<gtk::Entry>,
         pub account_detail_smtp_port: OnceCell<gtk::SpinButton>,
+        /// #979's picker, and the ids behind its rows — the widget carries
+        /// names because that is what a person picks by, and the handler
+        /// needs the id the row stands for.
+        pub account_detail_signature: OnceCell<gtk::DropDown>,
+        /// The whole row, label included: hiding only the control would
+        /// leave a "Default signature" label with nothing beside it.
+        pub account_detail_signature_row: OnceCell<gtk::Box>,
+        pub account_detail_signature_ids: RefCell<Vec<SignatureId>>,
         /// Set while [`super::SettingsPanel::open_account_detail`] is
         /// populating the fields above, so setting an `Entry`'s text does
         /// not itself fire an edit — the same guard [`SettingsPanel::load`]
@@ -574,6 +589,9 @@ mod imp {
                 account_detail_imap_port: OnceCell::new(),
                 account_detail_smtp_host: OnceCell::new(),
                 account_detail_smtp_port: OnceCell::new(),
+                account_detail_signature: OnceCell::new(),
+                account_detail_signature_row: OnceCell::new(),
+                account_detail_signature_ids: RefCell::new(Vec::new()),
                 account_detail_loading: Cell::new(false),
                 account_edited: RefCell::new(Vec::new()),
                 filters_list: gtk::ListBox::new(),
@@ -1405,6 +1423,33 @@ impl SettingsPanel {
             .get()
             .expect("built above")
             .set_text(&account.outgoing.host);
+        // #979: the account's own signatures, and the one it already
+        // prefers. Hidden entirely when it has none — the rule
+        // `composer.rs::set_signatures` states and `set_accounts` cites: a
+        // picker with nothing to choose between can only ever say what is
+        // already true. Nothing in Postio creates a signature yet, so a
+        // prompt to make one would point at a flow that does not exist.
+        {
+            let picker = imp.account_detail_signature.get().expect("built above");
+            let names: Vec<&str> = account
+                .signatures
+                .iter()
+                .map(|signature| signature.name.as_str())
+                .collect();
+            picker.set_model(Some(&gtk::StringList::new(&names)));
+            *imp.account_detail_signature_ids.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            let selected = account
+                .default_signature_id
+                .and_then(|id| account.signatures.iter().position(|s| s.id == id))
+                .unwrap_or(0);
+            picker.set_selected(selected as u32);
+            imp.account_detail_signature_row
+                .get()
+                .expect("built above")
+                .set_visible(!account.signatures.is_empty());
+        }
+
         imp.account_detail_smtp_port
             .get()
             .expect("built above")
@@ -1504,6 +1549,35 @@ impl SettingsPanel {
         imp.account_detail
             .append(&detail_row("SMTP port", &smtp_port));
         let _ = imp.account_detail_smtp_port.set(smtp_port);
+
+        // #979. A dropdown over the account's own signatures, not the
+        // "signature path" field #880's mockup drew: `Account` carries
+        // `signatures: Vec<Signature>` and `default_signature_id`, and there
+        // has never been a filesystem path for that field to have edited.
+        //
+        // The row is built here and *hidden* per account in
+        // `open_account_detail`, because whether it has anything to offer is
+        // a fact about the account rather than about the panel.
+        let signature = gtk::DropDown::from_strings(&[]);
+        signature.add_css_class("postio-settings-account-detail-signature");
+        signature.update_property(&[gtk::accessible::Property::Label("Default signature")]);
+        signature.connect_selected_item_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |picker| {
+                let chosen = panel
+                    .imp()
+                    .account_detail_signature_ids
+                    .borrow()
+                    .get(picker.selected() as usize)
+                    .copied();
+                panel.commit_account_edit(AccountEdit::DefaultSignature(chosen));
+            }
+        ));
+        let signature_row = detail_row("Default signature", &signature);
+        imp.account_detail.append(&signature_row);
+        let _ = imp.account_detail_signature_row.set(signature_row);
+        let _ = imp.account_detail_signature.set(signature);
     }
 
     /// Closes the detail view and shows the account list again, as the
