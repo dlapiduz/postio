@@ -1059,6 +1059,7 @@ impl Session {
             wiring.secrets.clone(),
             wiring.mailbox_roles.clone(),
             wiring.backfill,
+            wiring.watch,
             &wiring.egress,
         )
         .map_err(|refusal| SessionError::StoreUnavailable {

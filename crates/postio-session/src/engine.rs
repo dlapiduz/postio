@@ -55,6 +55,7 @@ pub fn start(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: Arc<dyn postio_model::egress::EgressSink>,
 ) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
@@ -100,7 +101,7 @@ pub fn start(
         retry: Default::default(),
         backfill,
         reconnect: Default::default(),
-        watch: Default::default(),
+        watch,
         network: NetworkSource::NetworkManager,
         mailbox_roles,
         clock: Arc::new(SystemClock),
@@ -282,6 +283,7 @@ pub fn start_all(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
     let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
@@ -306,6 +308,7 @@ pub fn start_all(
             Arc::clone(&secrets),
             mailbox_roles.clone(),
             backfill,
+            watch,
             egress.for_account(account.id),
         ) {
             engines.push((account.id, engine));
@@ -341,6 +344,7 @@ pub fn start_joining(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Option<Engine>, StartupRefusal> {
     let budget = engine_budget(database.pool().max_connections());
@@ -355,6 +359,7 @@ pub fn start_joining(
         secrets,
         mailbox_roles,
         backfill,
+        watch,
         egress.for_account(account.id),
     ))
 }

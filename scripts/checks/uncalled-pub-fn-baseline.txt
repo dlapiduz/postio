@@ -130,6 +130,7 @@ try_next                          # crates/postio-core/src/bridge.rs:328
 untracked                         # crates/postio-core/src/invocation.rs:155
 vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572
+watch_policy_at                   # crates/postio-session/src/lib.rs:128
 with_blobs                        # crates/postio-sync/src/drain.rs:206
 with_connect_timeout              # crates/postio-account/src/imap/settings.rs:102
 with_html                         # crates/postio-model/src/account.rs:188

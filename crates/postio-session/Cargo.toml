@@ -24,6 +24,10 @@ postio-model.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-smtp.workspace = true
+# `watch_policy`'s `WatchPolicy` (#932). Already in the graph under
+# `postio-runtime`; naming it here is what lets a config value reach it
+# rather than only `postio-runtime`'s own tests.
+postio-sync.workspace = true
 postio-storage.workspace = true
 # `reader::Absent` and `reader::parts::BlobSource`: the frontend-independent
 # half of the reader. Toolkit-free, so no cycle and no widget reaches in.
@@ -40,11 +44,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 # is the whole argument for the crate: the verbs are testable without a
 # toolkit, and they were not while they lived beside a GTK binary.
 postio-storage = { workspace = true, features = ["test-support"] }
-# The backfill's own entry points, so `inline_images.rs` can drive a message
-# from a `BODYSTRUCTURE` all the way to a resolved `postio-cid:` request. It is
-# already in the graph under `postio-runtime`; naming it here costs nothing to
-# compile and is what lets the test cross the layers #751 fell between.
-postio-sync.workspace = true
 # `store_key.rs` builds a *plaintext* store to prove `open_store_at` encrypts
 # it. Nothing shipping here touches SQL, so this is dev-only -- and the
 # features match `postio-storage`'s, because one `links = "sqlite3"` crate in

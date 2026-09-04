@@ -786,6 +786,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     ) {
         Ok(engines) => engines,
@@ -836,6 +837,7 @@ pub fn attach_account(
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     )?;
     if let Some(sync) = started {
@@ -1056,6 +1058,7 @@ fn open_with(
         ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
             .with_mailbox_roles(context.mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
+            .with_watch(postio_session::watch_policy(&context.sync_config))
             .with_storage_ceiling(context.storage_ceiling)
             .with_secrets(context.secrets.clone())
     };
