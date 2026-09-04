@@ -658,6 +658,28 @@ impl Live {
         self.inner.outcome.borrow().clone()
     }
 
+    /// Replace the caveat on the outcome already showing, without asking
+    /// anything again (#1060).
+    ///
+    /// `unreachable` was computed once, at the moment a search's answer
+    /// came back, so an account that dropped out or came back while the
+    /// result sat on screen left the readout saying something that had
+    /// stopped being true. This is the retraction/attachment path: a
+    /// no-op when nothing is on screen (`outcome` is `None`) or the list
+    /// is unchanged, and a redraw otherwise.
+    pub fn set_unreachable(&self, unreachable: Vec<String>) {
+        let mut outcome = self.inner.outcome.borrow_mut();
+        let Some(current) = outcome.as_mut() else {
+            return;
+        };
+        if current.unreachable == unreachable {
+            return;
+        }
+        current.unreachable = unreachable;
+        drop(outcome);
+        self.render();
+    }
+
     /// Whether a run is scheduled or in flight.
     pub fn is_running(&self) -> bool {
         self.inner.queued.borrow().is_some()

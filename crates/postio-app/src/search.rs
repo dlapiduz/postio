@@ -175,7 +175,11 @@ fn install_leave_to_list(window: &Window, finder: &Finder) {
 /// other accounts are doing. A **disabled** account names nothing either, and
 /// for free — the sidebar's list is built from the enabled accounts, so one
 /// that is switched off is never in it to be named.
-fn unreachable_accounts(window: &Window, folders: &Folders, scope: AccountScope) -> Vec<String> {
+pub(crate) fn unreachable_accounts(
+    window: &Window,
+    folders: &Folders,
+    scope: AccountScope,
+) -> Vec<String> {
     if scope.is_single_account() {
         return Vec::new();
     }
