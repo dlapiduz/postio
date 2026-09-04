@@ -597,6 +597,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
     ),
     (
+        "gtk_widgets::the_blocked_images_notice_counts_and_elides",
+        gtk_widgets::the_blocked_images_notice_counts_and_elides as fn(),
+    ),
+    (
         "gtk_widgets::a_notice_overflow_replaces_rather_than_appends",
         gtk_widgets::a_notice_overflow_replaces_rather_than_appends as fn(),
     ),

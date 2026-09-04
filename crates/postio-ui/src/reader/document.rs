@@ -434,6 +434,41 @@ pub struct HeldBack {
 }
 
 impl HeldBack {
+    /// What the notice says: `14 remote images and 1 tracker blocked`.
+    ///
+    /// Both numbers, because they are different claims: a picture the sender
+    /// wanted you to see and a beacon that wanted to see you are not the same
+    /// thing to a person deciding whether to load them. Trackers alone still
+    /// say "tracker" rather than folding into a picture count — the whole
+    /// reason #174 taught the parts panel to tell them apart.
+    ///
+    /// Empty when nothing was held back: a notice with nothing to report
+    /// should not be on screen at all.
+    pub fn summary(self) -> String {
+        let images = self.remote_images;
+        let trackers = self.trackers;
+        let picture = |n: u32| {
+            if n == 1 {
+                "1 remote image".to_owned()
+            } else {
+                format!("{n} remote images")
+            }
+        };
+        let beacon = |n: u32| {
+            if n == 1 {
+                "1 tracker".to_owned()
+            } else {
+                format!("{n} trackers")
+            }
+        };
+        match (images, trackers) {
+            (0, 0) => String::new(),
+            (n, 0) => format!("{} blocked", picture(n)),
+            (0, n) => format!("{} blocked", beacon(n)),
+            (i, t) => format!("{} and {} blocked", picture(i), beacon(t)),
+        }
+    }
+
     /// Everything held back, whatever kind it was.
     ///
     /// What the banner asks: whether it has anything at all to offer.
@@ -950,5 +985,55 @@ mod tests {
         assert!(markers.contains("top:0vh"));
         assert!(markers.contains("top:90vh"));
         assert!(markers.contains(&format!("top:{}vh", 59 * 90)));
+    }
+
+    #[test]
+    fn the_notice_counts_pictures_and_beacons_separately() {
+        // A picture the sender wanted you to see and a beacon that wanted to
+        // see you are different claims (#174).
+        assert_eq!(
+            HeldBack {
+                remote_images: 14,
+                trackers: 1
+            }
+            .summary(),
+            "14 remote images and 1 tracker blocked",
+            "the canvas's own wording"
+        );
+        assert_eq!(
+            HeldBack {
+                remote_images: 3,
+                trackers: 0
+            }
+            .summary(),
+            "3 remote images blocked"
+        );
+        assert_eq!(
+            HeldBack {
+                remote_images: 0,
+                trackers: 2
+            }
+            .summary(),
+            "2 trackers blocked",
+            "a beacon is still named a beacon when it is the only thing there"
+        );
+    }
+
+    #[test]
+    fn one_of_each_is_singular() {
+        assert_eq!(
+            HeldBack {
+                remote_images: 1,
+                trackers: 1
+            }
+            .summary(),
+            "1 remote image and 1 tracker blocked"
+        );
+    }
+
+    #[test]
+    fn nothing_held_back_says_nothing() {
+        // A notice with nothing to report should not be on screen at all.
+        assert_eq!(HeldBack::default().summary(), "");
     }
 }
