@@ -23,6 +23,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::io;
+use std::ops::Not;
 
 use io_sasl::mechanism::Sasl;
 use io_sasl::rfc4616::plain::SaslPlainCreds;
@@ -35,7 +36,8 @@ use io_smtp::rfc5321::mail::SmtpMailError;
 use io_smtp::rfc5321::quit::SmtpQuit;
 use io_smtp::rfc5321::rcpt::SmtpRcptError;
 use io_smtp::rfc5321::{
-    SmtpDomain, SmtpEhloDomain, SmtpForwardPath, SmtpLocalPart, SmtpMailbox, SmtpReversePath,
+    SmtpAtom, SmtpDomain, SmtpEhloDomain, SmtpForwardPath, SmtpLocalPart, SmtpMailbox,
+    SmtpParameter, SmtpReversePath,
 };
 use io_smtp::sasl::auth_plain::SmtpAuthPlainError;
 use io_smtp::session::{
@@ -62,6 +64,9 @@ pub struct SmtpSession {
     replies: ReplyTap,
     endpoint: String,
     account: String,
+    /// The EHLO keywords the server offered, uppercased. Read for exactly
+    /// one thing — see [`SmtpSession::supports`].
+    capabilities: Vec<String>,
 }
 
 impl fmt::Debug for SmtpSession {
@@ -114,10 +119,30 @@ impl SmtpSession {
         // connect is kept for the certificate check the upgrade performs.
         let mut upgrade_host = settings.host.clone();
         let mut replies = ReplyTap::default();
+        // What the server said it can do, kept rather than dropped.
+        //
+        // Reading this is *not* a licence to start announcing things: the
+        // compliance argument for `SIZE` and `8BITMIME` is that Postio
+        // announces nothing and relies on nothing, and that still holds.
+        // RFC 6531 is the one case where relying on nothing is not enough,
+        // because the address itself carries the 8-bit octets and no
+        // encoding can hide them from the envelope (#922).
+        //
+        // Uppercased once here: EHLO keywords are case-insensitive
+        // (RFC 5321 §2.4), and comparing them case-insensitively at every
+        // call site is how one of them eventually is not.
+        let capabilities: Vec<String>;
 
         loop {
             match coroutine.resume(resume.take()) {
-                SmtpCoroutineState::Complete(Ok(_data)) => break,
+                SmtpCoroutineState::Complete(Ok(data)) => {
+                    capabilities = data
+                        .capabilities
+                        .iter()
+                        .map(|capability| capability.to_ascii_uppercase())
+                        .collect();
+                    break;
+                }
                 SmtpCoroutineState::Complete(Err(error)) => {
                     return Err(map_open_error(settings, &replies, error));
                 }
@@ -161,7 +186,26 @@ impl SmtpSession {
             replies,
             endpoint: settings.endpoint(),
             account: settings.username.clone(),
+            capabilities,
         })
+    }
+
+    /// Whether the server advertised `keyword` in its EHLO reply.
+    ///
+    /// `keyword` is matched case-insensitively, as RFC 5321 §2.4 requires,
+    /// and against the keyword only: `SIZE 35882577` advertises `SIZE`.
+    ///
+    /// **One caller, deliberately.** Postio's compliance argument for `SIZE`
+    /// and `8BITMIME` is that it announces nothing and relies on nothing, and
+    /// a capability list is exactly the thing that erodes that one
+    /// `if server_supports` at a time. RFC 6531 is the case where relying on
+    /// nothing is not available: a non-ASCII local part cannot be encoded
+    /// away, because the envelope carries it in the clear (#922).
+    pub fn supports(&self, keyword: &str) -> bool {
+        let keyword = keyword.to_ascii_uppercase();
+        self.capabilities
+            .iter()
+            .any(|advertised| advertised.split_whitespace().next() == Some(keyword.as_str()))
     }
 
     /// The `host:port` this session is connected to.
@@ -203,8 +247,43 @@ impl SmtpSession {
             });
         }
 
+        // RFC 6531, before anything reaches the wire. A server that never
+        // advertised `SMTPUTF8` is entitled to reject an 8-bit address — and
+        // some accept it and mangle it instead, which reaches the user as the
+        // recipient ignoring their mail. Refusing here means the failure is
+        // legible and nothing has been half-sent (#922).
+        let needs_utf8 = std::iter::once(from)
+            .chain(to.iter().map(String::as_str))
+            .find(|address| local_part_needs_utf8(address));
+        if let Some(address) = needs_utf8
+            && !self.supports(SMTPUTF8)
+        {
+            return Err(SmtpError::Configuration {
+                reason: format!(
+                    "{address} has a non-ASCII local part, and this server did not offer \
+                     SMTPUTF8 — it cannot carry that address"
+                ),
+            });
+        }
+        // The parameter RFC 6531 §3.4 requires: it is what tells the server
+        // the transaction carries UTF-8. Sending the octets without it would
+        // be relying on an extension nobody asked for, which is the same
+        // fault as not reading the capability at all.
+        let parameters = match needs_utf8 {
+            // Through `parse`, because `SmtpAtom`'s field is private to
+            // `io-smtp` and this is the only public way to make one. The
+            // input is a `&'static str` this file owns, so the failure is
+            // impossible rather than merely unlikely.
+            Some(_) => vec![SmtpParameter {
+                keyword: SmtpAtom::parse(SMTPUTF8.as_bytes())
+                    .expect("SMTPUTF8 is a valid ESMTP keyword"),
+                value: None,
+            }],
+            None => Vec::new(),
+        };
+
         let reverse_path = SmtpReversePath::from(parse_mailbox(from)?);
-        self.mail(reverse_path, Vec::new())
+        self.mail(reverse_path, parameters)
             .await
             .map_err(|error| map_mail_error(from, &self.replies, error))?;
 
@@ -414,10 +493,38 @@ fn parse_mailbox(address: &str) -> SmtpResult<SmtpMailbox<'static>> {
         return Err(invalid());
     }
 
+    // The domain becomes ASCII whatever the server offered (RFC 5891): IDNA
+    // is a conversion, not a negotiation, and `例え.jp` and `xn--r8jz45g.jp`
+    // are the same domain. A domain IDNA cannot render is not usable as an
+    // envelope address, which is what `invalid` already means.
+    //
+    // The local part is deliberately untouched. There is no encoding for it —
+    // RFC 6531 exists precisely because the only way to carry one is to send
+    // the octets — so it stays as typed and `send_message` decides whether
+    // this connection may carry it.
+    let domain = idna::domain_to_ascii(domain).map_err(|_| invalid())?;
+
     Ok(SmtpMailbox {
         local_part: SmtpLocalPart(Cow::Owned(local.to_owned())),
-        domain: SmtpEhloDomain::SmtpDomain(SmtpDomain(Cow::Owned(domain.to_owned()))),
+        domain: SmtpEhloDomain::SmtpDomain(SmtpDomain(Cow::Owned(domain))),
     })
+}
+
+/// The `SMTPUTF8` keyword, as RFC 6531 spells it.
+const SMTPUTF8: &str = "SMTPUTF8";
+
+/// Whether `address`'s local part needs RFC 6531 to reach a server.
+///
+/// The domain never does — [`parse_mailbox`] punycodes it — so this asks
+/// only about the part before the `@`, and about the address as typed rather
+/// than as converted.
+fn local_part_needs_utf8(address: &str) -> bool {
+    address
+        .split_once('@')
+        .map(|(local, _)| local)
+        .unwrap_or(address)
+        .is_ascii()
+        .not()
 }
 
 fn is_safe_address_component(part: &str) -> bool {

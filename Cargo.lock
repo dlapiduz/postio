@@ -2938,6 +2938,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "idna",
  "io-sasl",
  "io-smtp",
  "postio-model",

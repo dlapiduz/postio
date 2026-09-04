@@ -492,25 +492,39 @@ async fn an_enhanced_status_code_reaches_the_reason_though_the_first_digit_decid
     assert!(permanent.to_string().contains("5.2.1"));
 }
 
+/// A script whose EHLO advertises `SMTPUTF8`.
+fn utf8_script() -> SmtpScript {
+    SmtpScript::new("220 mail.example.com ESMTP ready")
+        .on(
+            "EHLO",
+            "250-mail.example.com\r\n250-SMTPUTF8\r\n250 AUTH PLAIN",
+        )
+        .on("AUTH PLAIN", "235 2.7.0 authentication successful")
+        .on("MAIL FROM", "250 2.1.0 sender ok")
+        .on("RCPT TO", "250 2.1.5 recipient ok")
+        .on("DATA", "354 start mail input")
+        .on(".", "250 2.0.0 queued")
+        .on("QUIT", "221 2.0.0 bye")
+}
+
+/// RFC 6531 §3.1 / RFC 5891: a non-ASCII **domain** needs no extension.
+///
+/// IDNA turns it into ASCII, and every server accepts ASCII — so this is a
+/// conversion rather than a negotiation, and it happens whatever the server
+/// advertised. The script here is the plain one, with no `SMTPUTF8` in its
+/// EHLO, precisely to show the send does not depend on it.
 #[tokio::test]
-async fn a_non_ascii_address_reaches_the_wire_as_it_was_typed() {
-    // **The input half of #922**, in `rfc5322.rs`'s idiom: the gap is that
-    // this address goes out as raw UTF-8 with no `SMTPUTF8` negotiated and no
-    // punycode conversion, and a test asserting the fix cannot pass before
-    // the fix. What is asserted is that the case is real and reachable — the
-    // send succeeds, and the octets above 127 are on the wire — so that a
-    // future change which quietly started rejecting or rewriting the address
-    // makes this fail rather than making #922 look fixed.
+async fn a_non_ascii_domain_is_punycoded_and_needs_no_extension() {
     let (mut session, connector) = open(happy_script()).await;
     session
         .send_message(
             "ada@example.com",
-            &["grüße@example.net".to_owned()],
+            &["ada@例え.test".to_owned()],
             b"From: ada@example.com\r\nTo: x@example.net\r\n\r\nhi\r\n",
             &CancelToken::new(),
         )
         .await
-        .expect("nothing today refuses a non-ASCII address");
+        .expect("an ASCII-able address is sendable anywhere");
 
     let rcpt = connector
         .log()
@@ -519,14 +533,95 @@ async fn a_non_ascii_address_reaches_the_wire_as_it_was_typed() {
         .find(|command| command.starts_with("RCPT TO"))
         .expect("a RCPT TO");
     assert!(
-        rcpt.contains("grüße@example.net"),
-        "the address was rewritten on its way to the wire, which would mean \
-         #922 has an answer this test does not know about: {rcpt}"
+        rcpt.is_ascii(),
+        "a domain that IDNA can render in ASCII must not put 8-bit octets on \
+         a connection that never negotiated them: {rcpt}"
     );
     assert!(
-        !rcpt.is_ascii(),
-        "the command is pure ASCII, so either the address was punycoded or \
-         the local part was encoded -- #922 is fixed and this test and the \
-         SMTPUTF8 row both need rewriting: {rcpt}"
+        rcpt.contains("xn--r8jz45g.test"),
+        "the domain has to be the punycode of what was typed, not something \
+         else that happens to be ASCII: {rcpt}"
+    );
+}
+
+/// RFC 6531: a non-ASCII **local part** is only legal once the server has
+/// advertised `SMTPUTF8`, so without it Postio refuses rather than guessing.
+///
+/// Refusing is the whole point. A server that never advertised the extension
+/// is entitled to reject the command — and some accept it and mangle the
+/// address instead, which reaches the user as the recipient ignoring their
+/// mail. Neither is something to find out about after the fact.
+#[tokio::test]
+async fn a_non_ascii_local_part_is_refused_when_the_server_never_offered_smtputf8() {
+    let (mut session, connector) = open(happy_script()).await;
+    let error = session
+        .send_message(
+            "ada@example.com",
+            &["grüße@example.net".to_owned()],
+            b"From: ada@example.com\r\nTo: x@example.net\r\n\r\nhi\r\n",
+            &CancelToken::new(),
+        )
+        .await
+        .expect_err("the server never offered SMTPUTF8");
+
+    let said = error.to_string();
+    assert!(
+        said.contains("grüße@example.net"),
+        "the refusal has to name the address, or the user cannot act on it: {said}"
+    );
+    assert!(
+        said.to_lowercase().contains("smtputf8"),
+        "and name what is missing: {said}"
+    );
+
+    // And nothing went out. A refusal that had already sent `RCPT TO` would
+    // be a refusal after the fact.
+    let commands = connector.log().commands();
+    assert!(
+        !commands
+            .iter()
+            .any(|command| command.starts_with("RCPT TO")),
+        "the address reached the wire before being refused: {commands:?}"
+    );
+}
+
+/// And when the server *does* advertise it, the address goes out as typed —
+/// with the `SMTPUTF8` parameter RFC 6531 §3.4 requires on `MAIL FROM`.
+///
+/// The parameter is not decoration: it is what tells the server the
+/// transaction contains UTF-8, and an implementation that sent the 8-bit
+/// address without it would be relying on an extension it never asked for,
+/// which is the same fault as not reading the capability at all.
+#[tokio::test]
+async fn a_non_ascii_local_part_goes_out_when_the_server_advertised_smtputf8() {
+    let (mut session, connector) = open(utf8_script()).await;
+    session
+        .send_message(
+            "ada@example.com",
+            &["grüße@example.net".to_owned()],
+            b"From: ada@example.com\r\nTo: x@example.net\r\n\r\nhi\r\n",
+            &CancelToken::new(),
+        )
+        .await
+        .expect("the server advertised SMTPUTF8");
+
+    let commands = connector.log().commands();
+    let mail = commands
+        .iter()
+        .find(|command| command.starts_with("MAIL FROM"))
+        .expect("a MAIL FROM");
+    assert!(
+        mail.contains("SMTPUTF8"),
+        "RFC 6531 §3.4 puts the parameter on MAIL FROM; without it the server \
+         was never told this transaction carries UTF-8: {mail}"
+    );
+    let rcpt = commands
+        .iter()
+        .find(|command| command.starts_with("RCPT TO"))
+        .expect("a RCPT TO");
+    assert!(
+        rcpt.contains("grüße@example.net"),
+        "the local part cannot be punycoded -- IDNA is a domain encoding -- so \
+         with the extension negotiated it goes out as typed: {rcpt}"
     );
 }

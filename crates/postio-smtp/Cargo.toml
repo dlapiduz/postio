@@ -12,6 +12,11 @@ repository.workspace = true
 async-trait = "0.1.92"
 io-sasl = { version = "=0.1.0", default-features = false }
 io-smtp = { version = "=0.3.0", default-features = false, features = ["client"] }
+# IDNA, for RFC 6531's easy half: a non-ASCII *domain* is punycoded and needs
+# no extension at all. Already in the tree through `url`, so this adds a name
+# rather than a crate. `io-smtp` has modules for RFC 1870, 3207, 3461, 4954,
+# 7628 and 7677 and none for 6531, so the conversion is ours to do (#922).
+idna = "1.1.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
