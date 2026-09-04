@@ -432,6 +432,23 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts_keys::undo_outside_the_account_list_leaves_the_removal_toast_alone as fn(),
     ),
     (
+        "gtk_settings_account_detail::the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default",
+        gtk_settings_account_detail::the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all",
+        gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::opening_an_account_reports_no_edit_of_its_own",
+        gtk_settings_account_detail::opening_an_account_reports_no_edit_of_its_own as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::choosing_a_signature_reports_the_account_and_the_choice",
+        gtk_settings_account_detail::choosing_a_signature_reports_the_account_and_the_choice as fn(),
+    ),
+    (
         "gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none",
         gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none as fn(),
     ),

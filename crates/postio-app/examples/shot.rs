@@ -14,6 +14,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/plate.png demo
 //! cargo run -p postio-app --example shot -- /tmp/settings.png demo settings
 //! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
+//! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
@@ -372,6 +373,37 @@ fn show_settings(window: &Window) {
 ///
 /// The three are the states that look different: payloads not being fetched,
 /// payloads being fetched, and totals still being counted.
+/// The account detail view (#880), on an account that has signatures.
+///
+/// Its own flag because the view is reached by activating a row, so no
+/// existing mode renders it — and #979's signature picker is *hidden* for an
+/// account with none, which is correct and also means the ordinary demo
+/// store cannot show it. Two signatures here, so the row is on screen and
+/// can be looked at.
+fn show_account_detail(window: &Window) {
+    let mut account = postio_model::Account::new(
+        "Ada Lovelace",
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    account.id = AccountId::new(1);
+    account.enabled = true;
+    account.incoming.host = "imap.example.com".to_owned();
+    account.incoming.port = 993;
+    account.outgoing.host = "smtp.example.com".to_owned();
+    account.outgoing.port = 587;
+    let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+    work.id = postio_model::ids::SignatureId::new(1);
+    let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+    brief.id = postio_model::ids::SignatureId::new(2);
+    account.default_signature_id = Some(work.id);
+    account.signatures = vec![work, brief];
+
+    let panel = window.settings();
+    panel.set_accounts(vec![account]);
+    window.toggle_settings();
+    panel.open_account_detail(AccountId::new(1));
+}
+
 fn show_account_weights(window: &Window) {
     let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
         postio_core::event::MailFootprint {
@@ -528,6 +560,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "syncing",
     "settings",
     "weights",
+    "account",
     "compose",
     "detached",
     "selected",
@@ -837,6 +870,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("weights") {
         show_account_weights(&window);
+    }
+    if flag("account") {
+        show_account_detail(&window);
     }
     if flag("compose") {
         show_composer(&window);

@@ -113,7 +113,84 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         "editing the IMAP host should have reached the database"
     );
 
+    // #979: the signature picker, which is the one control in this view
+    // whose value is not text the user typed. The account needs signatures
+    // before it has anything to pick between -- nothing in Postio creates
+    // one yet, which is why the picker hides without them and why this test
+    // makes them through the repository.
+    let (work, brief) = {
+        let connection = database.connection().expect("a connection");
+        let signatures = postio_storage::repository::SignatureRepository::new(&connection);
+        let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+        let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+        signatures
+            .create(seeded_id, &mut work)
+            .expect("a signature");
+        signatures
+            .create(seeded_id, &mut brief)
+            .expect("a second signature");
+        (work.id, brief.id)
+    };
+
+    // Reopened so the view is built from an account that now has them.
+    panel.set_accounts(
+        AccountRepository::new(&database.connection().expect("a connection"))
+            .list()
+            .expect("list"),
+    );
+    pump();
+    panel.open_account_detail(seeded_id);
+    pump();
+
+    let picker = signature_picker(&panel);
+    assert!(
+        picker.is_visible(),
+        "the account has two signatures and the picker is hidden"
+    );
+    // Index 1 is "Brief" -- deliberately not the first, so the selection
+    // genuinely moves and the notification genuinely fires.
+    picker.set_selected(1);
+
+    assert!(
+        settle_until(|| read_default_signature(&database, seeded_id) == Some(brief)),
+        "choosing a signature should have reached the database: the picker \
+         is drawn, it is selectable, and `default_signature_id` is still {:?}",
+        read_default_signature(&database, seeded_id)
+    );
+    assert_ne!(work, brief, "the fixture needs two distinct signatures");
+
     bridge.shutdown();
+}
+
+fn signature_picker(panel: &postio_gtk::settings::SettingsPanel) -> gtk::DropDown {
+    fn walk(widget: &gtk::Widget, found: &mut Option<gtk::DropDown>) {
+        if found.is_none()
+            && widget.has_css_class("postio-settings-account-detail-signature")
+            && let Ok(picker) = widget.clone().downcast::<gtk::DropDown>()
+        {
+            *found = Some(picker);
+        }
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            walk(&node, found);
+            child = node.next_sibling();
+        }
+    }
+    let mut found = None;
+    walk(panel.upcast_ref::<gtk::Widget>(), &mut found);
+    found.expect("the detail view has a signature picker")
+}
+
+fn read_default_signature(
+    database: &postio_storage::Database,
+    id: postio_model::ids::AccountId,
+) -> Option<postio_model::ids::SignatureId> {
+    let connection = database.connection().expect("a connection");
+    AccountRepository::new(&connection)
+        .get(id)
+        .expect("get")
+        .expect("still there")
+        .default_signature_id
 }
 
 fn pump() {
