@@ -25,11 +25,8 @@ pimalaya-stream = { version = "0.3", features = ["rustls-ring"] }
 postio-account = { version = "0.2.0", path = "../postio-account", default-features = false }
 postio-model = { version = "0.2.0", path = "../postio-model" }
 
-secrecy = { version = "0.10", default-features = false }
-thiserror = "2"
 tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
 tracing = "0.1"
-url = "2"
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

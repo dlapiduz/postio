@@ -90,12 +90,64 @@ codegen-units = 1
 
 # Debug info is the heaviest part of compiling and linking the GTK/WebKit
 # stack, and diagnosis here happens through tests and POSTIO_LOG, not a
-# debugger. Line tables keep backtraces readable (file:line survives); what is
-# lost is variable inspection in gdb. Delete this line to get that back.
+# debugger. This was tuned once to `line-tables-only` without measuring what
+# that left behind, and what it left behind was most of it. Measured on the
+# `app_suite` test binary, cold builds of `cargo test --no-run -p postio-app
+# --test app_suite` at `-j6` with sccache off, on an idle box:
+#
+#     debug                 cold build   binary   .debug sections
+#     "line-tables-only"      301/307s   239 MB       153.6 MB
+#     0                           282s    70 MB              0
+#
+# Faster *and* smaller: line tables are not free to emit across ~470 crates,
+# and `target/debug/deps` holds ~330 executables that each carried them.
+#
+# What this costs was checked rather than assumed, and it is narrower than it
+# sounds. `file:line` survives in **panic and assertion messages** -- what a
+# failing test actually prints -- because those come from `#[track_caller]`
+# and are compiled in as data, not read from DWARF. What is lost is
+# `file:line` on the frames of a `RUST_BACKTRACE` dump (function names
+# remain) and variable inspection in gdb. Nothing in this workspace asserts
+# on a backtrace.
+#
+# **`strip = "debuginfo"` was tried here and does nothing.** The theory was
+# that `debug = 0` cannot reach the precompiled std rlibs and only a link-time
+# strip would. Measured, that is false: `debug = 0` alone leaves *zero* bytes
+# of `.debug_*` in the binary. Adding `strip` produced a byte-identical 70 MB
+# and cost 44 seconds (326s against 282s), because cargo passes `-C strip` to
+# all ~470 units while only a handful are ever linked. Do not add it back.
+#
+# To get debug info for one run, with no edit here:
+#
+#     CARGO_PROFILE_DEV_DEBUG=line-tables-only cargo test -p <crate>
+#
+# Budget a full rebuild when you do: a profile change invalidates cargo's
+# fingerprint for every unit in the graph, and sccache hashes the literal
+# command line so it cannot serve the difference either (docs/engineering-
+# notes.md, "mold looked like a memory win").
 [profile.dev]
-debug = "line-tables-only"
+debug = 0
 
 # Dev builds must stay fast to iterate on, but the perf budget is measured in
 # release; see CLAUDE.md.
+#
+# `opt-level = 2` here meant every one of the ~470 third-party crates was
+# optimized in dev, which is the largest single codegen cost in a cold
+# worktree -- and cold worktrees are the normal case, because each one keeps
+# its own `target/` (#76) and a claim starts from an empty one unless
+# `--reuse` applies (#1012).
+#
+# Lowering this was tried, and measured, and put back. `opt-level = 1` looked
+# free -- no gate can observe it, because the perf budgets are asserted as
+# **counts** off SQLite's trace hook rather than as timings (CLAUDE.md,
+# "Gated as counts, not as timings") and `cargo bench` measures release. But
+# what it moves is the wall clock of the suites people wait on, and it moves
+# it a long way: `cargo test -p postio-app --test app_suite` runs in **200s**
+# with this at `2` and **382s** with it at `1`. Nearly double, for ~20s of
+# cold-build time saved.
+#
+# So this line is not a leftover to tidy away: it is the reason the
+# integration suites are bearable, and the thing it protects does not show up
+# in any gate's pass or fail.
 [profile.dev.package."*"]
 opt-level = 2
