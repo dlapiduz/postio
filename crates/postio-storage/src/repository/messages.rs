@@ -1409,20 +1409,11 @@ impl<'a> MessageRepository<'a> {
         };
         Ok(Some(match body.headers {
             None => postio_model::Headers::new(),
-            // `parse_headers` rather than `parse`: there is no body here to
-            // find, and it is the hardened entry point either way (#277).
-            //
-            // Terminated first. The block is stored without the blank line
-            // that ended it on the wire -- that line is the separator, not a
-            // header -- and a parser handed an unterminated block reads the
-            // last field as still being folded and drops it. The same
-            // terminator `mime::decode_header_text` appends, for the same
-            // reason, and the round-trip test is what caught it.
-            Some(block) => {
-                let mut terminated = block.into_bytes();
-                terminated.extend_from_slice(b"\r\n\r\n");
-                postio_model::mime::parse_headers(&terminated).headers
-            }
+            // `headers::parse_block`, not a parse of this repository's own:
+            // it appends the terminator the stored block does not carry, and
+            // a caller that forgot would silently lose the block's last
+            // field. One place decides what a stored block means (ADR 0025).
+            Some(block) => postio_model::headers::parse_block(&block),
         }))
     }
 

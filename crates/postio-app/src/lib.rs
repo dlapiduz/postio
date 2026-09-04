@@ -582,6 +582,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     catch_up_the_body_index(wiring);
     repair_the_header_blocks(wiring);
+    catch_up_the_header_index(wiring);
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
@@ -615,6 +616,37 @@ fn repair_the_header_blocks(wiring: &Wiring) {
             // mail client that would not open over it would be trading the
             // wrong thing.
             tracing::warn!(%error, "could not rebuild the stored header blocks");
+        }
+    });
+}
+
+/// Index the header blocks that are already on this machine, out of the way.
+///
+/// `header:` matches `message_headers`, which is derived from
+/// `messages.body_headers` (ADR 0025 Q2) — so on every store that exists, and
+/// after every bump of the headers schema half, there is a mailbox's worth of
+/// stored blocks with no rows. The fetch path indexes the mail that arrives
+/// from now on; this is the mail that is already here.
+///
+/// After [`repair_the_header_blocks`] rather than before, and the order is
+/// load-bearing rather than tidy: that pass is what *writes* the blocks this
+/// one reads, so on a store that predates #884 running them the other way
+/// round would leave this pass with almost nothing to index and everything to
+/// do again next start. Both are spawned, so the ordering is a head start
+/// rather than a guarantee — and a message either pass misses is picked up by
+/// whichever of them runs next, which is what makes that acceptable.
+///
+/// `spawn_blocking` and once per start, the same two reasons
+/// [`catch_up_the_body_index`] has: it is synchronous SQLite that
+/// decompresses and parses a block per message, and nothing on screen waits
+/// for it. Every pass after the first costs one query that finds nothing.
+fn catch_up_the_header_index(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::index_local_headers(&database) {
+            // Recoverable, like every other idle pass here: `header:` is a
+            // little less complete until the next start tries again.
+            tracing::warn!(%error, "could not index the header blocks already on disk");
         }
     });
 }

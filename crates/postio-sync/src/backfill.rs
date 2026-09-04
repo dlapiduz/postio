@@ -1118,6 +1118,7 @@ pub async fn fetch_body(
             };
             let bytes = block.text.len() as u64;
             messages.set_headers(request.message, Some(&block))?;
+            index_the_header_block(connection, request.message, Some(&block));
             return Ok(Outcome::Stored { bytes });
         }
         // Every byte: asked for, or the only answer left for a row whose
@@ -1238,7 +1239,45 @@ pub async fn fetch_body(
             "a fetched body did not reach the search index"
         );
     }
+    index_the_header_block(connection, request.message, block.as_ref());
     Ok(Outcome::Stored { bytes })
+}
+
+/// A stored header block into `message_headers`, after the commit point.
+///
+/// The counterpart of `index_body_of` two lines above every one of its call
+/// sites, and here for exactly the reason that one is: this is where blocks
+/// arrive, and a scheduler that indexed them would see only some of them.
+/// `postio_session::index_local_headers` catches up whatever an unavailable
+/// index misses, but it runs once per start — so without this, `header:`
+/// would answer for mail that was already here and not for mail that arrived
+/// while the application was open, which reads as the feature being broken
+/// rather than as an index catching up.
+///
+/// After the commit point, and never fatal, for the two reasons `index_body_of`
+/// gives at length: rows for a block that is not stored yet would let search
+/// answer for a corpus the store does not have, and a store whose search
+/// schema was never created is a real state that must not cost a fetched
+/// message.
+fn index_the_header_block(
+    connection: &Connection,
+    message: MessageId,
+    block: Option<&postio_model::headers::Block>,
+) {
+    let Some(block) = block else {
+        // No block on the wire, so nothing to index -- and deliberately not
+        // an empty row set, which would be a claim that this message has no
+        // such header rather than that nobody has looked.
+        return;
+    };
+    let headers = postio_model::headers::parse_block(&block.text);
+    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers) {
+        tracing::debug!(
+            message = message.get(),
+            %error,
+            "a fetched header block did not reach the search index"
+        );
+    }
 }
 
 /// Fetches only the sections holding a message's own text, and decodes them.
@@ -1412,6 +1451,7 @@ async fn fetch_text_parts(
             "a fetched body did not reach the search index"
         );
     }
+    index_the_header_block(connection, request.message, block.as_ref());
     Ok(Outcome::Stored { bytes })
 }
 
