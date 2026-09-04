@@ -8,7 +8,6 @@
 //! position and prose a human can act on.
 
 use std::path::Path;
-use std::time::Instant;
 
 use postio_config::validate::{self, Checked};
 
@@ -69,28 +68,18 @@ fn the_status_line_carries_the_parse_timing() {
     assert!(line.starts_with("valid"), "{line}");
     assert!(line.contains("parsed in"), "{line}");
     assert!(line.contains("ms"), "{line}");
-    assert!(
-        checked.validation.elapsed() < std::time::Duration::from_millis(50),
-        "{line}"
-    );
+    // No bound on `elapsed()` here. What this test is about is that the line
+    // *carries* a timing, and a 50 ms ceiling on a shared machine is the same
+    // wall-clock gate the rest of #917 removed -- with the added problem that
+    // it would fail this test, whose subject is the wording.
 }
 
-#[test]
-fn validating_a_normal_config_is_well_under_two_milliseconds() {
-    // The design advertises "parsed in 2 ms"; that is a budget, not a boast.
-    check(GOOD); // warm any lazily built tables
-    let runs = 50;
-    let start = Instant::now();
-    for _ in 0..runs {
-        let checked = check(GOOD);
-        assert!(checked.validation.is_valid());
-    }
-    let each = start.elapsed() / runs;
-    assert!(
-        each < std::time::Duration::from_millis(2),
-        "validation took {each:?} per run, over the 2 ms the design advertises"
-    );
-}
+// The 2 ms budget is asserted in `validation_cost.rs`, as allocations rather
+// than as a stopwatch reading. It lived here and measured the machine: this
+// repository routinely has three sessions compiling at once, and
+// `.cargo/config.toml` pins `jobs = 2` because the box is oversubscribed, so
+// the assertion failed for reasons that had nothing to do with validation.
+// #917, and the rule #100 set.
 
 // ------------------------------------------------------------- keybindings --
 

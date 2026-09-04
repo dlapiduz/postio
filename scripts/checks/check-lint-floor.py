@@ -61,6 +61,13 @@ EXCEPTIONS: dict[str, str] = {
     # `unsafe` -- and note that a test target cannot opt out of `forbid`, which
     # is why this is an exception rather than a local allow.
     "postio-account": "deny",
+    # `tests/validation_cost.rs` installs a counting `GlobalAlloc` to hold
+    # config validation to a work budget without a stopwatch -- the same
+    # technique and the same reason as `postio-account` above, and #917 is
+    # why: the wall-clock assertion it replaces measured the machine, which
+    # routinely has three sessions compiling on it. No library code in this
+    # crate uses `unsafe`.
+    "postio-config": "deny",
     # One FFI call, in `db.rs`: `OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT)`,
     # behind a `Once` and a documented `# Safety`. SQLCipher pulls libcrypto
     # in, libcrypto registers an `atexit` handler that frees its own state,
