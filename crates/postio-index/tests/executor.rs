@@ -1172,3 +1172,274 @@ fn sender_affinity_from_contacts_reaches_the_ranking() {
         "ada is the frequent sender; without affinity, bob's newer message wins"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `header:` — ADR 0025's operator, and the only one that is not an FTS MATCH
+// ---------------------------------------------------------------------------
+
+/// A message carrying `headers`, indexed the way the sync path indexes one.
+fn with_headers(
+    connection: &Connection,
+    account: &postio_model::Account,
+    mailbox: postio_model::MailboxId,
+    subject: &str,
+    headers: &[(&str, &str)],
+) -> Message {
+    let created = message(connection, account, mailbox, "ada", subject, at(9));
+    let headers: postio_model::Headers = headers.iter().copied().collect();
+    postio_index::index::index_headers(connection, created.id.get(), &headers)
+        .expect("index headers");
+    created
+}
+
+#[test]
+fn header_finds_a_message_by_a_field_it_carries() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let mutt = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Sent with mutt",
+        &[("X-Mailer", "Mutt 1.5.24 (2015-08-30)")],
+    );
+    let _plain = with_headers(&connection, &account, mailbox, "Sent plainly", &[]);
+
+    assert_eq!(
+        found(&connection, account.id, "header:x-mailer"),
+        vec![mutt.id],
+        "presence, whatever the value says"
+    );
+    // The wire case is not the stored case and neither is what a person
+    // types; RFC 5322 field names are case-insensitive and every spelling
+    // has to reach the one row.
+    assert_eq!(
+        found(&connection, account.id, "header:X-MAILER"),
+        vec![mutt.id]
+    );
+}
+
+#[test]
+fn a_header_value_is_matched_as_a_substring_case_insensitively() {
+    // ADR 0025 Q6, and the motivating example: `X-Mailer` is
+    // `Mutt 1.5.24 (2015-08-30)`, so an equality match would never fire.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let mutt = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Sent with mutt",
+        &[("X-Mailer", "Mutt 1.5.24 (2015-08-30)")],
+    );
+    let _other = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Sent with something else",
+        &[("X-Mailer", "Thunderbird 128.0")],
+    );
+
+    assert_eq!(
+        found(&connection, account.id, "header:x-mailer=mutt"),
+        vec![mutt.id]
+    );
+    assert!(
+        found(&connection, account.id, "header:x-mailer=pine").is_empty(),
+        "a value nothing carries matches nothing"
+    );
+}
+
+#[test]
+fn a_name_from_one_header_never_pairs_with_a_value_from_another() {
+    // #884's acceptance criterion, and the reason ADR 0025 rejected a single
+    // FTS index over the whole block: there, `header:x-mailer=bulk` would
+    // match this message, because it does have an `X-Mailer` and the word
+    // `bulk` does appear in its headers. A normalized row makes the binding
+    // structural rather than something a test has to hope for.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let _crossed = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Two headers, no pairing",
+        &[("X-Mailer", "Mutt 1.5.24"), ("Precedence", "bulk")],
+    );
+
+    assert!(
+        found(&connection, account.id, "header:x-mailer=bulk").is_empty(),
+        "`bulk` is the Precedence value; pairing it with X-Mailer is the bug"
+    );
+    assert!(
+        found(&connection, account.id, "header:precedence=mutt").is_empty(),
+        "and the same crossing the other way"
+    );
+    assert_eq!(
+        found(&connection, account.id, "header:precedence=bulk").len(),
+        1,
+        "while each name still pairs with its own value"
+    );
+}
+
+#[test]
+fn a_header_name_is_matched_exactly_and_never_as_a_substring() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let _mailer = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Has X-Mailer",
+        &[("X-Mailer", "Mutt")],
+    );
+
+    assert!(
+        found(&connection, account.id, "header:x-mail").is_empty(),
+        "`header:x-mail` must not find `X-Mailer` -- a prefix is a different field"
+    );
+    assert!(
+        found(&connection, account.id, "header:mailer").is_empty(),
+        "nor a suffix"
+    );
+}
+
+#[test]
+fn any_occurrence_of_a_repeated_header_can_match() {
+    // `Received` chains are why `Headers` keeps duplicates and why the table
+    // has an `ordinal`. ADR 0025 Q6: any of them matching is a match.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let relayed = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Three hops",
+        &[
+            ("Received", "from first.example.com"),
+            ("Received", "from second.example.com"),
+            ("Received", "from third.example.com"),
+        ],
+    );
+
+    for hop in ["first", "second", "third"] {
+        assert_eq!(
+            found(&connection, account.id, &format!("header:received={hop}")),
+            vec![relayed.id],
+            "the {hop} hop is as matchable as any other"
+        );
+    }
+}
+
+#[test]
+fn a_negated_header_excludes_and_composes_with_other_operators() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let _bulk = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Quarterly report",
+        &[("Precedence", "bulk")],
+    );
+    let personal = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Quarterly report",
+        &[("X-Mailer", "Mutt")],
+    );
+
+    assert_eq!(
+        found(
+            &connection,
+            account.id,
+            "subject:quarterly -header:precedence"
+        ),
+        vec![personal.id],
+        "`-header:` excludes exactly the messages that carry the field"
+    );
+}
+
+#[test]
+fn a_wildcard_in_a_header_value_is_matched_literally() {
+    // `%` and `_` mean something to `LIKE`, and header values are full of
+    // them: a MIME boundary, a spam score. Without escaping,
+    // `header:x-spam-status=100%` would match every message that has an
+    // `X-Spam-Status` at all -- a wrong answer that reads like a right one.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let scored = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Scored",
+        &[("X-Spam-Status", "No, score=0.1 confidence=100%")],
+    );
+    let _unscored = with_headers(
+        &connection,
+        &account,
+        mailbox,
+        "Also scored",
+        &[("X-Spam-Status", "No, score=0.1")],
+    );
+
+    assert_eq!(
+        found(&connection, account.id, "header:x-spam-status=100%"),
+        vec![scored.id],
+        "the `%` is part of what was asked for, not a wildcard"
+    );
+    assert!(
+        found(&connection, account.id, "header:x-spam-status=score_0.1").is_empty(),
+        "and `_` matches an underscore, not any character"
+    );
+}
+
+#[test]
+fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for_presence() {
+    // The population ADR 0025 Q5 is about, stated as a search result rather
+    // than as a pass: a message the catch-up has not reached carries no rows,
+    // so `header:` cannot answer for it. What it must never do is answer
+    // *wrongly* -- claiming the field is absent is a lie, so the honest
+    // behaviour is that it is simply not a hit yet, and the pass is what
+    // turns it into one.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    postio_index::index::ensure_schema(&connection).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection);
+
+    let unindexed = message(&connection, &account, mailbox, "ada", "Not indexed", at(9));
+
+    assert!(found(&connection, account.id, "header:x-mailer").is_empty());
+
+    let headers: postio_model::Headers = [("X-Mailer", "Mutt")].into_iter().collect();
+    postio_index::index::index_headers(&connection, unindexed.id.get(), &headers)
+        .expect("the pass reaches it");
+
+    assert_eq!(
+        found(&connection, account.id, "header:x-mailer"),
+        vec![unindexed.id],
+        "and once it is indexed it is found -- nothing else had to change"
+    );
+}

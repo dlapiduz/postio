@@ -88,11 +88,20 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
              DROP TRIGGER IF EXISTS trg_message_bodies_fts_ad;",
         )?;
     }
+    if half_version(connection, "headers")? != HEADERS_SCHEMA_VERSION {
+        // The index goes with the table; SQLite drops it either way, and
+        // naming it is what stops a future rename from leaving one behind.
+        connection.execute_batch(
+            "DROP INDEX IF EXISTS idx_message_headers_name;
+             DROP TABLE IF EXISTS message_headers;",
+        )?;
+    }
 
     connection.execute_batch(SCHEMA)?;
 
     set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION)?;
     set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION)?;
+    set_half_version(connection, "headers", HEADERS_SCHEMA_VERSION)?;
     Ok(())
 }
 
@@ -122,6 +131,34 @@ const METADATA_SCHEMA_VERSION: i64 = 2;
 /// missing from it and refills in the background, batched and yielding
 /// (#500).
 const BODIES_SCHEMA_VERSION: i64 = 1;
+
+/// The header half's version: `message_headers` and its name index.
+///
+/// **Bump this when the table changes shape, and also when either cap in
+/// [`HEADER_ROWS_PER_MESSAGE`] or [`postio_model::headers::VALUE_LIMIT`]
+/// moves** — the rows are that policy's output, so a store whose rows were
+/// written under the old caps answers `header:` differently from a fresh
+/// one, which is the drift ADR 0025 Q3 promises is revisable.
+///
+/// Revisable because refilling is cheap: unlike the body half, nothing here
+/// reads a blob or decompresses a body of its own — `body_headers` is one of
+/// the three columns the row already carries, and
+/// [`messages_missing_header_rows`] finds every message that needs one.
+const HEADERS_SCHEMA_VERSION: i64 = 1;
+
+/// How many rows one message may contribute to `message_headers`.
+///
+/// ADR 0025 Q3's second cap, and the one that bounds the pathological
+/// message: twenty hops through a mailing list, each adding a `Received` and
+/// an ARC set, is a hundred fields for one message. The first
+/// [`HEADER_ROWS_PER_MESSAGE`] in **wire order** are kept, which is where the
+/// fields a person searches for live — a `Received` chain grows at the top
+/// and the interesting `X-` fields sit above it.
+///
+/// A cap and not an allowlist, for the reason ADR 0025 Q3 gives at length: a
+/// list of header names is maintained forever, lies about every name off it,
+/// and converges on one provider's own vocabulary.
+pub const HEADER_ROWS_PER_MESSAGE: usize = 64;
 
 /// Everything the metadata half is made of, for the rebuild path. Kept next
 /// to [`SCHEMA`], which recreates each of these: a trigger dropped here and
@@ -280,6 +317,125 @@ pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// Replaces a message's rows in `message_headers`.
+///
+/// The only writer of that table. Every field becomes a row, in wire order,
+/// under ADR 0025 Q3's two caps: values truncated by
+/// [`postio_model::headers::normalize_value`] and the message cut off at
+/// [`HEADER_ROWS_PER_MESSAGE`] fields.
+///
+/// # Why it normalizes rather than trusting its caller
+///
+/// The index holds a 512-byte prefix and an in-memory matcher (#479) holds
+/// whatever it was handed, so the two disagree about every long header unless
+/// both pass through the same function. Calling
+/// [`Headers::normalized`](postio_model::Headers::normalized) here means a
+/// caller cannot forget, and means there is one answer to "what does this
+/// message's `X-Mailer` say" rather than one per evaluator.
+///
+/// # A message with no fields still gets a row
+///
+/// An empty block writes one row whose name is empty, and that is the same
+/// trick [`index_body`] plays with an empty body for the same reason: the
+/// rows are also the record that this message *was* indexed. Without it,
+/// [`messages_missing_header_rows`] would offer a message that parses to
+/// nothing on every lap for ever, which is #500 exactly. The row can never
+/// match — the parser refuses an empty header name, so no `Filter::Header`
+/// ever carries one.
+///
+/// A message with no row in `messages` is a harmless no-op rather than an
+/// error, exactly as [`index_body`] is: the foreign key rejects the insert
+/// and indexing that raced an expunge is not a fault.
+pub fn index_headers(
+    connection: &Connection,
+    message_id: i64,
+    headers: &postio_model::Headers,
+) -> Result<()> {
+    if !message_exists(connection, message_id)? {
+        return Ok(());
+    }
+    // Delete first: the pass is resumable and a version bump refills the whole
+    // table, so re-indexing a message is the ordinary case. An upsert would
+    // leave the rows of a message that has *lost* a header behind.
+    connection.execute(
+        "DELETE FROM message_headers WHERE message_id = ?1",
+        [message_id],
+    )?;
+
+    let normalized = headers.normalized();
+    let mut statement = connection.prepare(
+        "INSERT INTO message_headers (message_id, name, value, ordinal)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (message_id, name, ordinal) DO NOTHING",
+    )?;
+    let mut written = 0usize;
+    for (ordinal, header) in normalized.iter().take(HEADER_ROWS_PER_MESSAGE).enumerate() {
+        // `normalize_name` trims, so a field whose name was whitespace has
+        // none. It would collide with the "indexed, nothing there" row below
+        // and it is not a name anything can ask for.
+        if header.name.is_empty() {
+            continue;
+        }
+        statement.execute(rusqlite::params![
+            message_id,
+            header.name,
+            header.value,
+            ordinal as i64
+        ])?;
+        written += 1;
+    }
+    if written == 0 {
+        statement.execute(rusqlite::params![message_id, "", "", 0i64])?;
+    }
+    Ok(())
+}
+
+/// Whether `messages` still holds this id.
+///
+/// Asked before the delete rather than left to the foreign key, because the
+/// delete on its own would succeed against no rows and the insert that
+/// follows would be the thing that failed — turning "indexed a message that
+/// has just been expunged" into an error the caller has to classify.
+fn message_exists(connection: &Connection, message_id: i64) -> Result<bool> {
+    let found: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM messages WHERE id = ?1",
+            [message_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(found.is_some())
+}
+
+/// Message ids whose header block is stored and whose header rows are not,
+/// newest first and windowed to `limit`.
+///
+/// What the catch-up pass in `postio_session::index_local_headers` works
+/// through: every message in every store, the first time, because nothing
+/// wrote `body_headers` until #884 and nothing indexed it until now. Empty
+/// on a store that is caught up, which is what makes running it on every
+/// start affordable.
+///
+/// **Local only, and that is a scoping decision rather than an omission.**
+/// `body_headers IS NOT NULL` is ADR 0025 Q5's first population — the one a
+/// pass with no network can finish. A message whose block was never stored
+/// belongs to `MessageRepository::messages_missing_headers` (a repair from
+/// the raw blob on disk) or to `messages_needing_a_header_fetch` (the only
+/// case that dials out). Mixing them here would mean batches this pass can
+/// make no progress on, and the pass stops when a batch does not shrink.
+pub fn messages_missing_header_rows(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
+    let mut statement = connection.prepare(
+        "SELECT m.id
+           FROM messages m
+          WHERE m.body_headers IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
+          ORDER BY m.received_at DESC
+          LIMIT ?1",
+    )?;
+    let rows = statement.query_map([limit], |row| row.get::<_, i64>(0))?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
 /// Rebuilds `messages_fts` from `search_documents`.
 ///
 /// This is FTS5's own `'rebuild'` command: it discards and regenerates the
@@ -363,6 +519,40 @@ AFTER DELETE ON messages
 BEGIN
     DELETE FROM message_bodies_fts WHERE rowid = old.id;
 END;
+
+-- Arbitrary headers: the table `header:` matches against (ADR 0025 Q2).
+--
+-- An ordinary table rather than a second FTS index, and the reason is the
+-- values: `header:` is wanted for `x-mailer=mutt`, `spf=pass`,
+-- `multipart/signed`, `1.5.24`. A `unicode61` tokenizer splits every one of
+-- those into pieces and loses the adjacency that made it meaningful, so this
+-- is a substring match on a column, not an inverted index.
+--
+-- Nor could a contentless FTS table say which message a row belongs to: it
+-- gets away with `content = ''` on the bodies precisely because there is one
+-- body per message and the rowid can *be* the message id. A message has many
+-- headers, so the rowid would have to be a header id and mapping it back
+-- needs a side table -- which is this table with the value taken out.
+--
+-- `ON DELETE CASCADE` rather than a trigger: `trg_message_bodies_fts_ad` had
+-- to be written by hand only because a contentless table has no content row
+-- for the foreign key to act on. This one does.
+--
+-- `WITHOUT ROWID` because the primary key is the whole row bar the value:
+-- storing a rowid beside it would be a second copy of the key for nothing.
+CREATE TABLE IF NOT EXISTS message_headers (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    name       TEXT    NOT NULL,   -- lowercased; RFC 5322 names are case-insensitive
+    value      TEXT    NOT NULL,   -- unfolded, RFC 2047-decoded, truncated at VALUE_LIMIT
+    ordinal    INTEGER NOT NULL,   -- position within the message, wire order
+    PRIMARY KEY (message_id, name, ordinal)
+) WITHOUT ROWID;
+
+-- `header:` narrows on the name first, and this is what makes that a range
+-- scan over one name rather than a scan of the table. `message_id` second so
+-- the correlated `EXISTS` the executor compiles is answered by the index
+-- alone.
+CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, message_id);
 
 -- messages -> search_documents: subject and list_id, both scalar columns on
 -- `messages` itself. Sender/recipients/filenames come from their own
