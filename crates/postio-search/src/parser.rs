@@ -101,7 +101,7 @@ fn classify(raw: &str, today: NaiveDate) -> Option<TokenKind> {
     if let Some((keyword, value)) = split_operator(body)
         && let Some(field) = Field::parse(keyword)
     {
-        return Some(operator(negated, field, unquote(value), today));
+        return Some(operator(negated, field, value, today));
     }
 
     let value = unquote(body);
@@ -131,7 +131,13 @@ fn unquote(value: &str) -> String {
 
 /// Builds the token for a recognized operator, falling back to a [`Partial`]
 /// whenever the value is not usable yet.
-fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> TokenKind {
+///
+/// `raw` is everything after the colon, quotes and all. Unquoting happens
+/// here rather than at the call site because `header:` has to split its own
+/// value first: `header:x-mailer="mutt 1.5"` opens its quote *inside* the
+/// operator value, so stripping the outer quotes before the `=` is found
+/// takes the closing one off and leaves the opening one in the value.
+fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKind {
     let partial = |value: String| {
         TokenKind::Partial(Partial {
             negated,
@@ -141,6 +147,11 @@ fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> Tok
     };
     let filter = |filter: Filter| TokenKind::Filter(Clause { negated, filter });
 
+    if field == Field::Header {
+        return header(negated, raw);
+    }
+
+    let value = unquote(raw);
     if value.is_empty() {
         return partial(value);
     }
@@ -184,7 +195,51 @@ fn operator(negated: bool, field: Field, value: String, today: NaiveDate) -> Tok
             Some(bytes) => filter(Filter::Smaller(bytes)),
             None => partial(value),
         },
+        // Handled above: it is the one operator whose value has structure of
+        // its own, so it never reaches this table.
+        Field::Header => unreachable!("header: is split before the value is unquoted"),
     }
+}
+
+/// `header:name`, `header:name=value`, and every half-typed state in between.
+///
+/// The grammar is ADR 0025 Q6's table. Split at the **first** `=`, because a
+/// structured header value contains its own —
+/// `authentication-results=spf=pass` is the motivating example, and splitting
+/// at the last one would ask for a field called
+/// `authentication-results=spf`, which no message has.
+///
+/// Both halves are normalized here, by `postio_model::headers`, and that is
+/// the point of doing it in the parser at all: the index holds normalized
+/// rows, an in-memory matcher (#479) holds normalized headers, and a
+/// `Filter::Header` that had not been through the same function would ask
+/// each of them for a string neither can hold — two spaces where the stored
+/// value has one, an encoded word where the stored value has the word.
+fn header(negated: bool, raw: &str) -> TokenKind {
+    let (name, value) = match raw.split_once('=') {
+        Some((name, value)) => (name, Some(value)),
+        None => (raw, None),
+    };
+    let name = postio_model::headers::normalize_name(&unquote(name));
+    // No name yet -- `header:`, `header:=`, `header:=mutt`. Nothing to ask
+    // of the index, and an error would be wrong: this is what the query
+    // looks like one keystroke in.
+    if name.is_empty() {
+        return TokenKind::Partial(Partial {
+            negated,
+            field: Field::Header,
+            value: raw.to_string(),
+        });
+    }
+    // `header:x-mailer=` is presence, never an error, and never
+    // `Some("")` -- see `Filter::Header`.
+    let value = value
+        .map(|value| postio_model::headers::normalize_value(&unquote(value)))
+        .filter(|value| !value.is_empty());
+    TokenKind::Filter(Clause {
+        negated,
+        filter: Filter::Header { name, value },
+    })
 }
 
 #[cfg(test)]
