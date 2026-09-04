@@ -278,13 +278,23 @@ impl Reader {
             let view = reader.view.clone();
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
-            let banner = Rc::clone(&reader.banner);
+            // Weakly, and this is the half that is easy to get wrong: the
+            // banner's own closures hold the notice (below), so a strong
+            // reference back would be a cycle between two Rcs that nothing
+            // ever frees -- and both of them hold a `WebView` clone, so what
+            // leaks is a WebProcess per message. `gtk_reader_teardown` is
+            // what says so: "5 of 5 WebViews outlived the readers that made
+            // them".
+            let banner_from_notice = Rc::downgrade(&reader.banner);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             reader.reader_notice.connect_action(move || {
                 let Some(notice) = weak.upgrade() else { return };
+                let Some(banner) = banner_from_notice.upgrade() else {
+                    return;
+                };
                 {
                     let mut guard = open.borrow_mut();
                     let Some(current) = guard.as_mut() else {
@@ -326,11 +336,14 @@ impl Reader {
             let open = Rc::clone(&reader.open);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
-            let reader_notice = Rc::clone(&reader.reader_notice);
+            let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
+                let Some(reader_notice) = notice_weak.upgrade() else {
+                    return;
+                };
                 if let Some(banner) = banner_weak.upgrade() {
                     render_open(
                         &Canvas {
@@ -354,10 +367,13 @@ impl Reader {
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
-            let reader_notice = Rc::clone(&reader.reader_notice);
+            let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
             reader.banner.connect_always_allow(move || {
+                let Some(reader_notice) = notice_weak.upgrade() else {
+                    return;
+                };
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
                     let mut allowlist = allowlist.borrow_mut();
