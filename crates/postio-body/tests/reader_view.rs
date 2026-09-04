@@ -75,3 +75,61 @@ fn ordinary_mail_is_not_dragged_into_reader_view() {
         "an ordinary message must not be treated as a campaign"
     );
 }
+
+/// The plain part of a corpus fixture, as the reader gets it.
+fn plain(name: &str) -> String {
+    let fixture = test_corpus::load(name);
+    let parsed = postio_model::mime::parse(fixture.bytes());
+    parsed
+        .body
+        .text
+        .unwrap_or_else(|| panic!("`{name}` has no plain part"))
+}
+
+#[test]
+fn a_shipping_notice_yields_its_tracking_number_item_and_destination() {
+    let found = reader_view::facts(&plain("transactional-shipping-notice"));
+    let rows: Vec<(&str, &str)> = found
+        .iter()
+        .map(|fact| (fact.label.as_str(), fact.value.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("tracking", "EXTEST0042199317"),
+            ("item", "Type-C Upgrade Small Board Replacement x 1"),
+            ("ship to", "1 Example Way, Springfield"),
+        ],
+        "the three facts the canvas draws, in the order the sender wrote them"
+    );
+}
+
+#[test]
+fn the_prose_around_the_block_is_not_dragged_into_it() {
+    // The fixture's closing paragraph contains `Note: this notice`, mid
+    // sentence and on its own -- exactly the shape that would produce a
+    // fabricated one-row table.
+    let body = plain("transactional-shipping-notice");
+    assert!(
+        body.contains("Note: this notice"),
+        "the fixture still carries the sentence this test is about"
+    );
+    assert_eq!(
+        reader_view::facts(&body).len(),
+        3,
+        "only the block, not the sentence with a colon in it"
+    );
+}
+
+#[test]
+fn a_newsletter_with_no_block_in_its_plain_part_yields_nothing() {
+    let fixture = test_corpus::load("html-newsletter");
+    let parsed = postio_model::mime::parse(fixture.bytes());
+    let Some(text) = parsed.body.text else {
+        return;
+    };
+    assert!(
+        reader_view::facts(&text).is_empty(),
+        "a newsletter's plain part is prose, and prose has no facts block"
+    );
+}

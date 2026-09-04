@@ -108,6 +108,7 @@ Fixtures are tagged, not filed — most carry several tags.
 
 | File | Exercises |
 |---|---|
+| `transactional-shipping-notice.eml` | A `multipart/alternative` shipping notice: the HTML part is nested layout tables, and the plain part carries a repeated `label: value` block (tracking, item, ship to). Reader view lifts that block above the body copy, so this is what the extractor is built and tuned against. |
 | `transfer-encoding-base64.eml` | A plain-text body encoded base64 for no reason, as export tools do. |
 | `transfer-encoding-quoted-printable.eml` | Soft line breaks, a literal `=` as `=3D`, encoded trailing whitespace, accented runs and currency symbols. |
 

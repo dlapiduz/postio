@@ -384,6 +384,8 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList] =>
+        "A shipping notice whose plain part carries a repeated label: value block \u{2014} the facts reader view lifts above the body copy.",
     "transfer-encoding-base64": [Base64, PlainText] =>
         "A plain-text body encoded base64, as export tools emit even when there is nothing to escape.",
     "transfer-encoding-quoted-printable": [QuotedPrintable, PlainText, EncodedWord] =>

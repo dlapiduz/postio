@@ -1,0 +1,47 @@
+From: Example Shop <orders@shop.example.test>
+To: Ada Lovelace <ada@example.com>
+Subject: Your order EX-4417 has shipped
+Date: Tue, 2 Jun 2026 08:14:00 +0000
+Message-ID: <ship-ex-4417@shop.example.test>
+List-Unsubscribe: <https://shop.example.test/unsubscribe?o=EX-4417>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_postio_1030_shipping"
+
+--=_postio_1030_shipping
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Your order has shipped.
+
+tracking: EXTEST0042199317
+item: Type-C Upgrade Small Board Replacement x 1
+ship to: 1 Example Way, Springfield
+
+Follow the parcel from your orders page. Replies to this address are
+not read; the shop is reachable at help@example.test.
+
+You are receiving this because you placed an order. Note: this notice
+is sent once per shipment.
+
+--=_postio_1030_shipping
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<table width="100%" bgcolor="#f4f4f4"><tr><td align="center">
+  <table width="600" style="font-family: Helvetica, sans-serif">
+    <tr><td><h1>Your order has shipped.</h1></td></tr>
+    <tr><td>
+      <table>
+        <tr><td>tracking</td><td>EXTEST0042199317</td></tr>
+        <tr><td>item</td><td>Type-C Upgrade Small Board Replacement x 1</td></tr>
+        <tr><td>ship to</td><td>1 Example Way, Springfield</td></tr>
+      </table>
+    </td></tr>
+    <tr><td><a href="https://shop.example.test/orders">Follow the parcel</a></td></tr>
+    <tr><td><font size="1" color="#999999">Sent once per shipment.</font></td></tr>
+  </table>
+</td></tr></table>
+</body></html>
+
+--=_postio_1030_shipping--
