@@ -469,6 +469,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
     ),
     (
+        "gtk_settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt",
+        gtk_settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt as fn(),
+    ),
+    (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),

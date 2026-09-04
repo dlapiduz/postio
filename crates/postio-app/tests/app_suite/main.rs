@@ -61,6 +61,7 @@ mod settings_account_detail_wiring;
 mod settings_accounts_token_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
+mod settings_reindex_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
@@ -339,6 +340,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window",
         settings_credential_wiring::update_credential_opens_a_prefilled_dialog_without_disturbing_the_window
+            as fn(),
+    ),
+    (
+        "settings_reindex_wiring::the_rows_own_action_clears_and_refills_its_accounts_local_index",
+        settings_reindex_wiring::the_rows_own_action_clears_and_refills_its_accounts_local_index
             as fn(),
     ),
     (

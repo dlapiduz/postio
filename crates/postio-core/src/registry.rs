@@ -1006,6 +1006,21 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::RebuildAccountIndex,
+        title: "Rebuild search index",
+        // `r` for rebuild. Free within `Context::Accounts` -- the other three
+        // rows here use `Return`, `d` and `c`, and `Refresh`'s own `R` is
+        // scoped to the message surfaces, not this one.
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // Rewriting a derived table -- postio_session::reindex_account's own
+        // doc explains why there is nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is

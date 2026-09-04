@@ -57,6 +57,7 @@ use postio_storage::repository::{ContactRepository, LabelRepository};
 use postio_storage::{Database, PooledConnection};
 
 use crate::Wiring;
+use crate::settings_accounts::Reindexing;
 
 /// How many hits one run brings back.
 ///
@@ -76,7 +77,12 @@ const HIT_LIMIT: u32 = 200;
 /// optional in the running application — `feed_the_window` builds both — and
 /// is taken by reference here rather than found, because which `Feeds` a
 /// window has is the composition root's business, the same as the source.
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> {
+pub fn install(
+    window: &Window,
+    wiring: &Wiring,
+    feeds: &Feeds,
+    reindexing: Reindexing,
+) -> Option<View> {
     let account = crate::first_account(&wiring.database)?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
@@ -110,6 +116,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
         wiring,
         held.clone(),
         order.clone(),
+        reindexing,
     );
     install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone());
@@ -198,6 +205,22 @@ pub(crate) fn unreachable_accounts(
         })
         .map(|(_, name)| name)
         .collect()
+}
+
+/// Whether an account this search's `scope` covers is rebuilding its local
+/// search index right now (#981).
+///
+/// A single account asks about itself; a unified search asks whether *any*
+/// enabled account is mid-rebuild — a coarser answer than `unreachable_accounts`
+/// gives, deliberately: `corpus_complete` is already a single boolean over
+/// the whole scope rather than a per-account list (unlike `unreachable`,
+/// which Q10 asks to name accounts individually), so there is no finer
+/// answer to compose it from without growing a second caveat shape.
+fn reindexing_covers(reindexing: &Reindexing, scope: AccountScope) -> bool {
+    match scope.account() {
+        Some(id) => reindexing.borrow().contains(&id),
+        None => !reindexing.borrow().is_empty(),
+    }
 }
 
 /// Ask the query again when the account scope changes.
@@ -289,6 +312,7 @@ where
 type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
+#[allow(clippy::too_many_arguments)]
 fn install_run(
     view: &View,
     finder: &Finder,
@@ -297,6 +321,7 @@ fn install_run(
     wiring: &Wiring,
     held: Held,
     order: Order,
+    reindexing: Reindexing,
 ) {
     let Some(live) = finder.live() else {
         // The readout is built by `Finder::attach`, which the window does
@@ -349,6 +374,7 @@ fn install_run(
                 let held = held.clone();
                 let folders = folders.clone();
                 let window = window.clone();
+                let reindexing = reindexing.clone();
                 async move {
                     let Ok(Some(results)) = hits.recv().await else {
                         // The store could not be read, so there is no answer
@@ -381,11 +407,18 @@ fn install_run(
                         .upgrade()
                         .map(|window| unreachable_accounts(&window, &folders, account))
                         .unwrap_or_default();
+                    // Whether an account this answer covers is rebuilding
+                    // its local index right now (#981) -- read against the
+                    // same scope the search ran under, for the reason
+                    // `unreachable` above is.
+                    let reindexing_now = reindexing_covers(&reindexing, account);
                     // The readout first: it is what the field is showing and
                     // what the user is waiting for.
                     if !live.deliver(
                         sequence,
-                        Outcome::of(&results).with_unreachable(unreachable),
+                        Outcome::of(&results)
+                            .with_unreachable(unreachable)
+                            .with_reindexing(reindexing_now),
                     ) {
                         // Superseded. Everything downstream of these results
                         // is about a question nobody is asking.
@@ -1012,6 +1045,43 @@ mod tests {
 
         assert_eq!(results.hits.len(), 1, "the subject still matched");
         assert!(results.hits[0].snippet.is_empty());
+    }
+
+    // -- reindexing_covers (#981) -------------------------------------------
+
+    #[test]
+    fn a_single_account_search_asks_only_about_itself() {
+        let reindexing: Reindexing = Default::default();
+        let watched = AccountId::new(1);
+        let other = AccountId::new(2);
+        reindexing.borrow_mut().insert(other);
+
+        assert!(
+            !reindexing_covers(&reindexing, AccountScope::Account(watched)),
+            "the account this search ran under is not the one rebuilding"
+        );
+
+        reindexing.borrow_mut().insert(watched);
+        assert!(
+            reindexing_covers(&reindexing, AccountScope::Account(watched)),
+            "now it is"
+        );
+    }
+
+    #[test]
+    fn a_unified_search_asks_whether_anything_is_rebuilding_at_all() {
+        let reindexing: Reindexing = Default::default();
+        assert!(
+            !reindexing_covers(&reindexing, AccountScope::Unified),
+            "nothing is rebuilding yet"
+        );
+
+        reindexing.borrow_mut().insert(AccountId::new(7));
+        assert!(
+            reindexing_covers(&reindexing, AccountScope::Unified),
+            "a unified view covers every account, so one of them rebuilding \
+             is enough to raise the caveat"
+        );
     }
 }
 

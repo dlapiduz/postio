@@ -317,6 +317,49 @@ pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// As [`messages_missing_body_text`], scoped to one account (#981).
+///
+/// What a per-account reindex is driven by, after
+/// [`clear_account_body_index`] has made this account's own local mail the
+/// candidate set — the rest of the store is untouched, so a rebuild for one
+/// account never re-derives another's.
+pub fn messages_missing_body_text_for_account(
+    connection: &Connection,
+    account_id: i64,
+    limit: u32,
+) -> Result<Vec<i64>> {
+    let mut statement = connection.prepare(
+        "SELECT m.id
+           FROM messages m
+          WHERE m.account_id = ?1
+            AND m.body_state IN ('full', 'partial')
+            AND NOT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id)
+          ORDER BY m.received_at DESC
+          LIMIT ?2",
+    )?;
+    let rows = statement.query_map(rusqlite::params![account_id, limit], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// Removes `account_id`'s rows from `message_bodies_fts`, so the next
+/// [`messages_missing_body_text_for_account`] call finds them again.
+///
+/// `message_bodies_fts` is `contentless_delete = 1` (see the module docs on
+/// why it has to be), which is exactly what makes a targeted delete possible
+/// at all — a plain contentless table can only be appended to. Nothing here
+/// touches `messages`, `search_documents` or `messages_fts`: this account's
+/// mail is not going anywhere, only its body text drops out of the index
+/// until the catch-up pass puts it back.
+pub fn clear_account_body_index(connection: &Connection, account_id: i64) -> Result<usize> {
+    Ok(connection.execute(
+        "DELETE FROM message_bodies_fts
+          WHERE rowid IN (SELECT id FROM messages WHERE account_id = ?1)",
+        [account_id],
+    )?)
+}
+
 /// Replaces a message's rows in `message_headers`.
 ///
 /// The only writer of that table. Every field becomes a row, in wire order,
@@ -434,6 +477,44 @@ pub fn messages_missing_header_rows(connection: &Connection, limit: u32) -> Resu
     )?;
     let rows = statement.query_map([limit], |row| row.get::<_, i64>(0))?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// As [`messages_missing_header_rows`], scoped to one account (#981). See
+/// [`messages_missing_body_text_for_account`]'s own doc for why a targeted
+/// candidate query is what keeps a per-account reindex from touching any
+/// other account's rows.
+pub fn messages_missing_header_rows_for_account(
+    connection: &Connection,
+    account_id: i64,
+    limit: u32,
+) -> Result<Vec<i64>> {
+    let mut statement = connection.prepare(
+        "SELECT m.id
+           FROM messages m
+          WHERE m.account_id = ?1
+            AND m.body_headers IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
+          ORDER BY m.received_at DESC
+          LIMIT ?2",
+    )?;
+    let rows = statement.query_map(rusqlite::params![account_id, limit], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// Removes `account_id`'s rows from `message_headers`, so the next
+/// [`messages_missing_header_rows_for_account`] call finds them again.
+///
+/// Ordinary rows, unlike [`clear_account_body_index`]'s contentless table —
+/// this is the same delete [`index_headers`] itself issues before replacing
+/// a message's rows, just for every message an account has rather than one.
+pub fn clear_account_header_index(connection: &Connection, account_id: i64) -> Result<usize> {
+    Ok(connection.execute(
+        "DELETE FROM message_headers
+          WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
+        [account_id],
+    )?)
 }
 
 /// Rebuilds `messages_fts` from `search_documents`.
@@ -940,5 +1021,125 @@ mod tests {
         ensure_schema(&connection).expect("schema");
 
         index_body(&connection, 999, Some("text")).expect("no-op, not an error");
+    }
+
+    /// A second account in the same store, for the scoping tests below.
+    fn second_account(
+        connection: &Connection,
+    ) -> (postio_model::Account, postio_model::ids::MailboxId) {
+        let mut account = postio_model::Account::new(
+            "Second",
+            postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+        );
+        postio_storage::repository::AccountRepository::new(connection)
+            .create(&mut account)
+            .expect("second account");
+        let mailbox = postio_storage::test_support::mailbox(connection, &account, "INBOX");
+        (account, mailbox.id)
+    }
+
+    #[test]
+    fn clearing_and_recandidating_a_bodys_index_touches_only_that_account() {
+        let database = test_support::memory();
+        let connection = database.connection().expect("checkout");
+        ensure_schema(&connection).expect("schema");
+        let (first, first_inbox) = test_support::account_with_inbox(&connection);
+        let (second, second_inbox) = second_account(&connection);
+
+        let messages = MessageRepository::new(&connection);
+        let mut a = Message::new(first.id, first_inbox, Utc::now());
+        a.sync.body_state = postio_model::BodyState::Full;
+        messages.create(&mut a).expect("create a");
+        index_body_of(
+            &connection,
+            a.id.get(),
+            &MessageBody {
+                text: Some("alpha".to_owned()),
+                html: None,
+            },
+        )
+        .expect("index a's body");
+
+        let mut b = Message::new(second.id, second_inbox, Utc::now());
+        b.sync.body_state = postio_model::BodyState::Full;
+        messages.create(&mut b).expect("create b");
+        index_body_of(
+            &connection,
+            b.id.get(),
+            &MessageBody {
+                text: Some("beta".to_owned()),
+                html: None,
+            },
+        )
+        .expect("index b's body");
+
+        // Both are indexed, so neither is a candidate for either account yet.
+        assert!(
+            messages_missing_body_text_for_account(&connection, first.id.get(), 10)
+                .expect("candidates")
+                .is_empty()
+        );
+
+        let cleared = clear_account_body_index(&connection, first.id.get()).expect("clear");
+        assert_eq!(cleared, 1, "only the first account's one message");
+
+        assert_eq!(
+            messages_missing_body_text_for_account(&connection, first.id.get(), 10)
+                .expect("candidates"),
+            vec![a.id.get()],
+            "the cleared account's message is a candidate again"
+        );
+        assert!(
+            messages_missing_body_text_for_account(&connection, second.id.get(), 10)
+                .expect("candidates")
+                .is_empty(),
+            "the other account's index was never touched"
+        );
+    }
+
+    #[test]
+    fn clearing_and_recandidating_headers_touches_only_that_account() {
+        let database = test_support::memory();
+        let connection = database.connection().expect("checkout");
+        ensure_schema(&connection).expect("schema");
+        let (first, first_inbox) = test_support::account_with_inbox(&connection);
+        let (second, second_inbox) = second_account(&connection);
+
+        let messages = MessageRepository::new(&connection);
+        let block = postio_model::headers::Block {
+            text: "Subject: hi".to_owned(),
+            truncated: false,
+        };
+        let mut a = Message::new(first.id, first_inbox, Utc::now());
+        messages.create(&mut a).expect("create a");
+        messages
+            .set_headers(a.id, Some(&block))
+            .expect("store a's block");
+        index_headers(&connection, a.id.get(), &postio_model::Headers::default())
+            .expect("index a's headers");
+
+        let mut b = Message::new(second.id, second_inbox, Utc::now());
+        messages.create(&mut b).expect("create b");
+        messages
+            .set_headers(b.id, Some(&block))
+            .expect("store b's block");
+        index_headers(&connection, b.id.get(), &postio_model::Headers::default())
+            .expect("index b's headers");
+
+        let cleared = clear_account_header_index(&connection, first.id.get()).expect("clear");
+        assert_eq!(cleared, 1, "only the first account's one message");
+
+        assert_eq!(
+            messages_missing_header_rows_for_account(&connection, first.id.get(), 10)
+                .expect("candidates"),
+            vec![a.id.get()],
+            "the cleared account's message is a candidate again"
+        );
+        assert!(
+            messages_missing_header_rows_for_account(&connection, second.id.get(), 10)
+                .expect("candidates")
+                .is_empty(),
+            "the other account's index was never touched"
+        );
     }
 }

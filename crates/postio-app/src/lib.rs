@@ -564,8 +564,15 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // a drop actually asks, so this costs nothing until it is used.
     export::install(window, wiring);
 
-    // The settings panel's account rows: enable/disable, remove-with-undo.
-    settings_accounts::install(window, wiring);
+    // Which accounts are rebuilding their local search index right now
+    // (#981) -- shared between the settings panel, which owns the set, and
+    // search, which reads it to raise a search outcome's own corpus caveat
+    // while a rebuild is running.
+    let reindexing: settings_accounts::Reindexing = Default::default();
+
+    // The settings panel's account rows: enable/disable, remove-with-undo,
+    // rebuild-index.
+    settings_accounts::install(window, wiring, reindexing.clone());
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
     // The privacy pane's unsubscribe-activation log (#971).
@@ -585,7 +592,8 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
+    let search =
+        search::install(window, wiring, &feeds, reindexing).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
     repair_the_header_blocks(wiring);

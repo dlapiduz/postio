@@ -25,19 +25,34 @@
 //! runs at the next launch, before any engine exists
 //! (`postio_app::reap_pending_accounts`).
 
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
+
 use gtk::glib;
 use postio_gtk::settings::{AccountAction, AccountEdit, ConnectionStatus, SignatureDraft};
 use postio_gtk::window::Window;
+use postio_model::ids::AccountId;
 use postio_runtime::AttachmentPolicy;
 use postio_storage::repository::{AccountRepository, MessageRepository, SignatureRepository};
 
 use crate::Wiring;
 
+/// Accounts whose local search index is being rebuilt right now (#981).
+///
+/// Shared between this module, which adds and removes membership as
+/// [`rebuild_index`] runs, and [`crate::search`], which reads it when
+/// composing a search outcome's corpus caveat -- view state about what is
+/// on screen right now, not something [`Wiring`] carries for a second
+/// window or a background task to see.
+pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
+
 /// Wires `window`'s settings panel to `wiring`: the account list itself,
-/// the enable/disable switch, remove-with-undo, and update-credential
-/// (opened through [`crate::settings_credential::install`], which needs the
-/// runtime and the secret store `wiring` carries alongside the database).
-pub fn install(window: &Window, wiring: &Wiring) {
+/// the enable/disable switch, remove-with-undo, update-credential (opened
+/// through [`crate::settings_credential::install`], which needs the runtime
+/// and the secret store `wiring` carries alongside the database), and
+/// rebuild-index.
+pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
     refresh(window, wiring);
 
     let panel = window.settings();
@@ -57,11 +72,13 @@ pub fn install(window: &Window, wiring: &Wiring) {
     panel.connect_account_action({
         let window = window.clone();
         let wiring = wiring.clone();
+        let reindexing = reindexing.clone();
         move |id, action| match action {
             AccountAction::Remove => remove(&window, &wiring, id),
             AccountAction::UpdateCredential => {
                 crate::settings_credential::install(&window, &wiring, id)
             }
+            AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
         }
     });
 
@@ -461,5 +478,65 @@ fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
             tracing::warn!(%error, "could not undo removing an account");
         }
         refresh(&restore_window, &restore_wiring);
+    });
+}
+
+/// Rebuilds `id`'s local search index (#981), reporting progress on its own
+/// row as it runs and clearing the line the moment it is done.
+///
+/// `postio_session::reindex_account` runs on the blocking pool -- it is
+/// synchronous SQLite that decompresses a body or parses a block per
+/// message, exactly like the two catch-up passes it wraps. Its own
+/// `on_progress` callback therefore also runs there, where a GTK call would
+/// be unsound; every reading it reports crosses to the main context over a
+/// channel, the same shape [`refresh`]'s own token-expiry read already
+/// uses for the same reason.
+///
+/// Also announced as an [`postio_core::Event::BackfillProgress`] on the
+/// account's own account id -- the maintainer's own design for #981: one
+/// progress channel, not two. The settings row is driven off the direct
+/// channel rather than that event, though, because nothing here can tell a
+/// rebuild's report apart from a real backfill's inside the event itself,
+/// and "Rebuilding search index" would be the wrong words for the other one.
+///
+/// `reindexing` gains `id` for as long as the rebuild runs and loses it the
+/// moment the channel says it is over -- what [`crate::search`] reads to
+/// raise a search outcome's own corpus caveat while this account's index is
+/// mid-rebuild (#981's own "the search surface should say so too").
+fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: AccountId) {
+    reindexing.borrow_mut().insert(id);
+
+    let database = wiring.database.clone();
+    let events = wiring.events.clone();
+    let (sender, receiver) = async_channel::unbounded::<Option<(u32, u32)>>();
+    wiring.runtime.spawn_blocking(move || {
+        let result = postio_session::reindex_account(&database, id, |done, total| {
+            events.emit(postio_core::Event::BackfillProgress {
+                account: id,
+                done,
+                total,
+                footprint: None,
+            });
+            let _ = sender.send_blocking(Some((done, total)));
+        });
+        if let Err(error) = result {
+            tracing::warn!(%error, "could not rebuild an account's local search index");
+        }
+        let _ = sender.send_blocking(None);
+    });
+
+    glib::spawn_future_local({
+        let window = window.clone();
+        let reindexing = reindexing.clone();
+        async move {
+            while let Ok(progress) = receiver.recv().await {
+                let over = progress.is_none();
+                window.settings().set_reindex_progress(id, progress);
+                if over {
+                    reindexing.borrow_mut().remove(&id);
+                    break;
+                }
+            }
+        }
     });
 }

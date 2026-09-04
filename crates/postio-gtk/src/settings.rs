@@ -109,8 +109,9 @@ const ACCOUNTS_MAX_HEIGHT: i32 = 160;
 /// What an account row's context menu asked for (#464, ADR 0005 Q6a).
 ///
 /// Not itself a `CommandId`: both need a specific account as their payload,
-/// which a keystroke carries no default for. `CommandId::RemoveAccount` and
-/// `CommandId::UpdateCredential` (#471) reach the keyboard path by resolving
+/// which a keystroke carries no default for. `CommandId::RemoveAccount`,
+/// `CommandId::UpdateCredential` (#471) and `CommandId::RebuildAccountIndex`
+/// (#981) reach the keyboard path by resolving
 /// [`SettingsPanel::focused_account`] and calling
 /// [`SettingsPanel::request_account_action`] with the same variant the
 /// context menu would have -- one payload type either entry point ends in,
@@ -122,6 +123,8 @@ pub enum AccountAction {
     UpdateCredential,
     /// Mark the account for removal.
     Remove,
+    /// Rebuild this account's local search index (#981).
+    RebuildIndex,
 }
 
 /// What to call when an account row's context menu picks an action.
@@ -534,6 +537,11 @@ mod imp {
         /// an expiry at all), so the row shows no validity line rather
         /// than a wrong one.
         pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
+        /// A reindex in progress, per account (#981) — `(done, total)`. An
+        /// id absent means nothing is rebuilding that account's index right
+        /// now, the same "absent means nothing to say" shape
+        /// `token_expiries` uses.
+        pub reindex_progress: RefCell<Vec<(AccountId, (u32, u32))>>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -682,6 +690,7 @@ mod imp {
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
                 token_expiries: RefCell::new(Vec::new()),
+                reindex_progress: RefCell::new(Vec::new()),
                 weights: RefCell::new(Vec::new()),
                 attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
@@ -1009,6 +1018,23 @@ impl SettingsPanel {
         self.redraw_accounts();
     }
 
+    /// `account`'s reindex progress right now (#981) — `Some((done, total))`
+    /// while `postio_session::reindex_account` is running for it, `None`
+    /// once it has finished or nothing is running.
+    ///
+    /// Replaces any earlier reading for the same account rather than
+    /// accumulating one: what a caller reports here is "where the rebuild
+    /// is right now", not a log of every step it passed through.
+    pub fn set_reindex_progress(&self, account: AccountId, progress: Option<(u32, u32)>) {
+        let mut readings = self.imp().reindex_progress.borrow_mut();
+        readings.retain(|(id, _)| *id != account);
+        if let Some(progress) = progress {
+            readings.push((account, progress));
+        }
+        drop(readings);
+        self.redraw_accounts();
+    }
+
     /// The validity line this account's row carries under its badge, if it
     /// has one to carry — `None` for a password account, an OAuth account
     /// fed by an external broker, or one [`set_token_expiries`](Self::set_token_expiries)
@@ -1033,6 +1059,29 @@ impl SettingsPanel {
             }
             Err(_) => Some("token expired — re-authorization needed".to_owned()),
         }
+    }
+
+    /// The reindex line this account's row shows while a rebuild is running
+    /// (#981), or `None` when nothing is.
+    ///
+    /// Said out loud on purpose, not a silent background action: a rebuild
+    /// makes search *worse* while it runs — messages drop out of results
+    /// until they are reindexed — and a user who pressed the button and saw
+    /// nothing on the row would read the silence as the button having done
+    /// nothing.
+    fn reindex_status(&self, account: AccountId) -> Option<String> {
+        let (done, total) = self
+            .imp()
+            .reindex_progress
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, progress)| *progress)?;
+        Some(if total == 0 {
+            "Rebuilding search index…".to_owned()
+        } else {
+            format!("Rebuilding search index — {done} of {total}")
+        })
     }
 
     /// Shows one row per sender with a standing remote-image exception,
@@ -1365,6 +1414,15 @@ impl SettingsPanel {
             lines.append(&line);
         }
 
+        let reindexing = self.reindex_status(account.id);
+        if let Some(text) = &reindexing {
+            let line = gtk::Label::new(Some(text));
+            line.add_css_class("postio-settings-account-reindexing");
+            line.set_xalign(0.0);
+            line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&line);
+        }
+
         let enabled = gtk::Switch::new();
         enabled.set_active(account.enabled);
         enabled.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -1399,6 +1457,9 @@ impl SettingsPanel {
         announcement.push_str(&format!(", {badge_text}"));
         if let Some(validity) = &validity {
             announcement.push_str(&format!(", {validity}"));
+        }
+        if let Some(reindexing) = &reindexing {
+            announcement.push_str(&format!(", {reindexing}"));
         }
         row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
         row
@@ -2223,6 +2284,7 @@ impl SettingsPanel {
 
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Update credential"), Some("account.update-credential"));
+        menu.append(Some("Rebuild search index"), Some("account.rebuild-index"));
         menu.append(Some("Remove"), Some("account.remove"));
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -2234,6 +2296,7 @@ impl SettingsPanel {
         let actions = gtk::gio::SimpleActionGroup::new();
         for (name, action) in [
             ("update-credential", AccountAction::UpdateCredential),
+            ("rebuild-index", AccountAction::RebuildIndex),
             ("remove", AccountAction::Remove),
         ] {
             let simple = gtk::gio::SimpleAction::new(name, None);
