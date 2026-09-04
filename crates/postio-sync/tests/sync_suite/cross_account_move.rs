@@ -7,7 +7,7 @@
 //! confirmed copy in the target.**
 
 use chrono::{DateTime, TimeZone, Utc};
-use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
+use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::ids::{AccountId, MailboxId, MessageId, Uid, UidValidity};
 use postio_model::{Message, Operation, OperationTarget, RfcMessageId};
 use postio_storage::repository::{
@@ -576,4 +576,279 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
     // own server assigned — which is `copy_identity`, read off the row
     // before the undo, and written there by phase 2.
     let _ = copy_identity;
+}
+
+#[tokio::test]
+async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
+    // A restart that lost its settle re-queues the operation the same way
+    // `a_replayed_copy_finds_the_first_copy_and_makes_no_second` does -- but
+    // this time onto a saga that is already `Aborted` (Q13's own vanished-
+    // destination case), which `copy` must recognise before it ever asks
+    // whether the destination exists again.
+    let world = world(RAW, true);
+    let target = target_server(true).await;
+    {
+        let connection = world.database.connection().expect("checkout");
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .delete(world.target_inbox)
+            .expect("the destination goes away");
+    }
+
+    drain(&world, &target, world.target_account).await;
+    assert_eq!(phase(&world), MovePhase::Aborted);
+
+    {
+        let connection = world.database.connection().expect("checkout");
+        connection
+            .execute(
+                "UPDATE operation_queue SET state = 'pending' WHERE account_id = ?1",
+                [world.target_account.get()],
+            )
+            .expect("re-queue the copy as a restart would find it");
+    }
+    drain(&world, &target, world.target_account).await;
+
+    assert_eq!(
+        phase(&world),
+        MovePhase::Aborted,
+        "a replayed copy against an already-aborted saga must not move the \
+         phase again"
+    );
+    assert_eq!(
+        messages_in(&target, "INBOX").await,
+        0,
+        "and must not try the destination a second time either"
+    );
+}
+
+#[tokio::test]
+async fn a_search_failure_while_confirming_backs_off_rather_than_failing() {
+    // The Message-ID search is what proves an append without UIDPLUS -- and
+    // without UIDPLUS it also runs first, before any append is attempted, so
+    // a server that refuses it must be retried rather than treated as a
+    // permanent failure: nothing has been uploaded yet to fail over.
+    let world = world(RAW, true);
+    let target = target_server(false).await;
+    target.inject_after(
+        1,
+        Fault::Rejected("SEARCH not permitted just now".to_owned()),
+    );
+
+    drain(&world, &target, world.target_account).await;
+
+    assert_eq!(
+        phase(&world),
+        MovePhase::Copying,
+        "a search failure must leave the saga exactly where it was, not \
+         abort it or park it unconfirmed"
+    );
+    assert_eq!(
+        messages_in(&target, "INBOX").await,
+        0,
+        "and nothing should have been uploaded on the strength of a search \
+         that never answered"
+    );
+}
+
+#[tokio::test]
+async fn an_upload_failure_backs_off_rather_than_failing() {
+    // No Message-ID to search by, so the append is the very first thing
+    // `copy` asks the server for. A server that refuses it is a reason to
+    // retry later, not to abandon the move -- the source copy is still
+    // exactly where it was.
+    let world = world(RAW_ANONYMOUS, false);
+    let target = target_server(false).await;
+    target.inject_after(1, Fault::Rejected("APPEND refused".to_owned()));
+
+    drain(&world, &target, world.target_account).await;
+
+    assert_eq!(
+        phase(&world),
+        MovePhase::Copying,
+        "an upload failure must leave the saga exactly where it was"
+    );
+    assert_eq!(messages_in(&target, "INBOX").await, 0);
+}
+
+/// A message with no server identity at all, in an account of its own --
+/// the case #211-236 exists for and neither existing removal test reaches:
+/// `enqueue`'s own snapshot is empty (there was nothing to snapshot) *and*
+/// the live row has nothing either, so `remove` has no coordinate from
+/// either source and must settle the saga without asking a server anything.
+#[tokio::test]
+async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server() {
+    let database = test_support::temp();
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("blobs");
+    let connection = database.connection().expect("checkout");
+
+    let (source, source_inbox) = test_support::account_with_inbox(&connection);
+    let mut target = postio_model::Account::new(
+        "Second",
+        postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+    );
+    postio_storage::repository::AccountRepository::new(&connection)
+        .create(&mut target)
+        .expect("target account");
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").id;
+
+    // No `server.remote_id` at all -- born locally with nowhere on a server
+    // it has ever been, which is the state #940 describes for a provisional
+    // copy and, degenerately, the state any message has before its first
+    // sync.
+    let mut message = Message::new(source.id, source_inbox, at(8));
+    let source_message = MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("source message");
+
+    let saga = CrossAccountMoveRepository::new(&connection)
+        .create(&NewCrossAccountMove {
+            source_message,
+            source_account: source.id,
+            source_mailbox: source_inbox,
+            target_account: target.id,
+            target_mailbox: target_inbox,
+            target_message: None,
+            raw_blob_id: None,
+            rfc_message_id: None,
+        })
+        .expect("saga");
+    // `remove` refuses to run before `confirmed` -- reachable straight from
+    // `copying`, per the phase graph, without staging a whole copy this test
+    // is not about.
+    CrossAccountMoveRepository::new(&connection)
+        .transition(saga, MovePhase::Confirmed)
+        .expect("confirmed");
+
+    let queue = OperationQueueRepository::new(&connection);
+    queue
+        .enqueue(
+            source.id,
+            OperationTarget::Message(source_message),
+            &Operation::CrossAccountRemove { saga },
+            at(9),
+        )
+        .expect("enqueue remove");
+    drop(connection);
+
+    let source_backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX").uid_validity(UidValidity::new(1)))
+        .build();
+    source_backend.connect().await.expect("connect");
+
+    let connection = database.connection().expect("checkout");
+    Drainer::new(&source_backend)
+        .with_blobs(&blobs)
+        .drain(&connection, source.id, at(10))
+        .await
+        .expect("a drain pass");
+
+    let phase = CrossAccountMoveRepository::new(&connection)
+        .get(saga)
+        .expect("read")
+        .expect("the saga")
+        .phase;
+    assert_eq!(
+        phase,
+        MovePhase::Done,
+        "a removal with no coordinate anywhere must still settle -- \
+         retrying can never produce a coordinate that does not exist"
+    );
+}
+
+#[tokio::test]
+async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing() {
+    // Phase 1 needs the raw bytes on this machine, and a queue row can
+    // outrun a backfill that has not landed them yet. Nothing to upload is
+    // a reason to wait, not to fail the move over a race with a different
+    // pass of the same engine.
+    let database = test_support::temp();
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("blobs");
+    let connection = database.connection().expect("checkout");
+
+    let (source, source_inbox) = test_support::account_with_inbox(&connection);
+    let mut target = postio_model::Account::new(
+        "Second",
+        postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+    );
+    postio_storage::repository::AccountRepository::new(&connection)
+        .create(&mut target)
+        .expect("target account");
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").id;
+
+    let mut message = Message::new(source.id, source_inbox, at(8));
+    message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
+    let source_message = MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("source message");
+    let mut copy = message.clone();
+    copy.id = MessageId::UNASSIGNED;
+    copy.account_id = target.id;
+    copy.mailbox_id = target_inbox;
+    copy.server = postio_model::ServerIdentifiers::default();
+    let target_message = MessageRepository::new(&connection)
+        .create(&mut copy)
+        .expect("the provisional copy");
+
+    // No `raw_blob_id` at all -- the state a queue row is in the moment it
+    // is enqueued, before the backfill that will eventually fetch this
+    // message's bytes has had a turn.
+    let saga = CrossAccountMoveRepository::new(&connection)
+        .create(&NewCrossAccountMove {
+            source_message,
+            source_account: source.id,
+            source_mailbox: source_inbox,
+            target_account: target.id,
+            target_mailbox: target_inbox,
+            target_message: Some(target_message),
+            raw_blob_id: None,
+            rfc_message_id: None,
+        })
+        .expect("saga");
+
+    let queue = OperationQueueRepository::new(&connection);
+    queue
+        .enqueue(
+            target.id,
+            OperationTarget::Message(source_message),
+            &Operation::CrossAccountCopy { saga },
+            at(9),
+        )
+        .expect("enqueue copy");
+    drop(connection);
+
+    let target_backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .build();
+    target_backend.connect().await.expect("connect");
+
+    let connection = database.connection().expect("checkout");
+    Drainer::new(&target_backend)
+        .with_blobs(&blobs)
+        .drain(&connection, target.id, at(10))
+        .await
+        .expect("a drain pass");
+
+    let phase = CrossAccountMoveRepository::new(&connection)
+        .get(saga)
+        .expect("read")
+        .expect("the saga")
+        .phase;
+    assert_eq!(
+        phase,
+        MovePhase::Copying,
+        "a missing local blob must leave the saga exactly where it was"
+    );
+    assert_eq!(
+        target_backend.status("INBOX").await.expect("status").exists,
+        0,
+        "and nothing should have been appended with no bytes to send"
+    );
 }
