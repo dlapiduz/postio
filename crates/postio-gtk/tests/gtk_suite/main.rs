@@ -144,10 +144,19 @@ mod gtk_window_open_message;
 mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
+mod list_contract;
 mod list_model;
 mod no_stray_prints;
 
+/// Cases held out of a default run, by name. See `app_suite`'s copy for what
+/// this is for; nothing here is held out today.
+const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
+
 const CASES: &[(&str, fn())] = &[
+    (
+        "list_contract::the_list_output_stays_libtest_shaped",
+        list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
     (
         "feed::the_message_list_is_fed_from_the_runtime",
         feed::the_message_list_is_fed_from_the_runtime as fn(),
@@ -1051,13 +1060,35 @@ pub fn settle() {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {
+        // Two questions, and a libtest-compatible runner asks both: every
+        // test, then `--ignored` for the ignored subset. Answering the second
+        // with the full list tells a process-per-test runner that everything
+        // is ignored -- it then runs nothing and reports success, which looks
+        // exactly like a fast green run.
+        // Plain `--list` names every case, ignored ones included -- that is
+        // what libtest does, and a runner takes the ignored set as a subset
+        // of it. `--ignored` narrows to just those.
+        let only_ignored = arguments.iter().any(|a| a == "--ignored");
         for (name, _) in CASES {
-            println!("{name}: test");
+            if !only_ignored || IGNORED.contains(name) {
+                println!("{name}: test");
+            }
         }
-        println!();
-        println!("{} tests, 0 benchmarks", CASES.len());
+        // `--format terse` is a machine-readable contract: real libtest emits
+        // the names and nothing else, and a runner rejects any line not
+        // ending in ": test". The count below is what `cargo test` and the
+        // tooling's test counting read, so it stays for the non-terse form.
+        if !arguments.iter().any(|a| a == "terse") {
+            println!();
+            println!("{} tests, 0 benchmarks", CASES.len());
+        }
         return;
     }
+    // `--exact` means the argument is a whole test name, not a substring: a
+    // process-per-test runner passes it for every case, and without it a name
+    // that is a prefix of another would run both.
+    let exact = arguments.iter().any(|a| a == "--exact");
+    let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
     let filters: Vec<&str> = arguments
         .iter()
         .filter(|a| !a.starts_with('-'))
@@ -1067,7 +1098,15 @@ fn main() {
     let mut failed = Vec::new();
     let mut ran = 0usize;
     for (name, case) in CASES {
-        if !filters.is_empty() && !filters.iter().any(|f| name.contains(f)) {
+        let matched = filters
+            .iter()
+            .any(|f| if exact { *name == *f } else { name.contains(f) });
+        if !filters.is_empty() && !matched {
+            continue;
+        }
+        // An ignored case runs only when it is asked for by name, or when
+        // `--ignored` asks for exactly those -- same rule libtest uses.
+        if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
             continue;
         }
         ran += 1;
