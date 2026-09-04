@@ -15,8 +15,8 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use postio_model::{MailboxId, MessageId, Operation};
-use postio_storage::actions::{Relocation, relocate};
+use postio_model::{Flag, MailboxId, Message, MessageId, Operation};
+use postio_storage::actions::{Relocation, relocate, set_flag};
 use postio_storage::repository::{MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
 
@@ -222,4 +222,112 @@ fn a_message(connection: &rusqlite::Connection, mailbox: MailboxId, remote: &str
         )
         .expect("insert a message");
     MessageId::new(connection.last_insert_rowid())
+}
+
+/// Flagging two messages inside one transaction the caller owns.
+///
+/// Same contract as [`relocate`]: the rules pass will call this from inside
+/// the sync transaction that inserted the message, so the verb takes a borrow
+/// and never commits.
+#[test]
+fn two_flag_changes_share_one_caller_owned_transaction() {
+    let database = test_support::memory();
+    let mut connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let first = a_message(&connection, inbox, "uid-1");
+    let second = a_message(&connection, inbox, "uid-2");
+    let rows = read(&connection, &[first, second]);
+
+    let transaction = connection.transaction().expect("open a transaction");
+    set_flag(
+        &transaction,
+        account.id,
+        &[&rows[0]],
+        &Flag::Seen,
+        true,
+        at(9),
+    )
+    .expect("the first flag change");
+    set_flag(
+        &transaction,
+        account.id,
+        &[&rows[1]],
+        &Flag::Seen,
+        true,
+        at(10),
+    )
+    .expect("the second, in the same transaction");
+    transaction.commit().expect("commit");
+
+    for id in [first, second] {
+        let row = MessageRepository::new(&connection)
+            .get(id)
+            .expect("read back")
+            .expect("still there");
+        assert!(
+            row.flags.contains(&Flag::Seen),
+            "both flag changes should have landed once the caller committed"
+        );
+    }
+}
+
+/// Setting a flag enqueues `SetFlags`; clearing it enqueues `ClearFlags`.
+#[test]
+fn clearing_a_flag_enqueues_the_opposite_operation() {
+    let database = test_support::memory();
+    let mut connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let message = a_message(&connection, inbox, "uid-9");
+
+    let transaction = connection.transaction().expect("open a transaction");
+    let rows = read(&transaction, &[message]);
+    set_flag(
+        &transaction,
+        account.id,
+        &[&rows[0]],
+        &Flag::Seen,
+        true,
+        at(9),
+    )
+    .expect("set");
+    let rows = read(&transaction, &[message]);
+    set_flag(
+        &transaction,
+        account.id,
+        &[&rows[0]],
+        &Flag::Seen,
+        false,
+        at(10),
+    )
+    .expect("clear");
+    transaction.commit().expect("commit");
+
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(23))
+        .expect("read the queue");
+    assert_eq!(queued.len(), 2, "one operation per change");
+    assert!(
+        matches!(queued[0].operation, Operation::SetFlags { .. }),
+        "the first change should enqueue SetFlags, got {:?}",
+        queued[0].operation
+    );
+    assert!(
+        matches!(queued[1].operation, Operation::ClearFlags { .. }),
+        "the second should enqueue ClearFlags, got {:?}",
+        queued[1].operation
+    );
+}
+
+/// Rows as the verb wants them: it is given the messages, not their ids,
+/// because it needs each one's current flags and thread.
+fn read(connection: &rusqlite::Connection, ids: &[MessageId]) -> Vec<Message> {
+    let messages = MessageRepository::new(connection);
+    ids.iter()
+        .map(|id| {
+            messages
+                .get(*id)
+                .expect("read a message")
+                .expect("the message exists")
+        })
+        .collect()
 }
