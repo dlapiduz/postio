@@ -269,3 +269,76 @@ pub fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
     settle();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// #1062 / ADR 0008 Q3: a deferred rule says so on the line the user reads.
+///
+/// The note exists in `postio-config` either way; what this asserts is that
+/// it reaches the one surface validation output is ever seen on. A note
+/// nothing renders is a note nobody reads — the shape #416 catalogued three
+/// times over: written, correct, and wired to nothing.
+///
+/// Both cases in one test for the reason this file already gives: GTK is
+/// initialised once per process, and the pair is one claim — the note
+/// appears when the rule defers and *only* then.
+pub fn a_deferred_rule_says_so_on_the_validity_line_and_a_header_rule_does_not() {
+    let root = std::env::temp_dir().join(format!("postio-settings-rules-{}", std::process::id()));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "[[rules]]\nname = \"receipts\"\nquery = \"body:invoice\"\nactions = [\"flag\"]\n",
+    )
+    .unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    let footer = window.settings().footer_text();
+    assert!(
+        window.settings().is_valid(),
+        "a deferred rule is a working rule; the file is correct: {footer:?}"
+    );
+    assert!(
+        footer.contains("runs after the body is fetched"),
+        "the rule will sit in the Inbox until its body lands and nothing on \
+         screen says why: {footer:?}"
+    );
+    assert!(
+        footer.contains("receipts"),
+        "and the note does not name which rule it is about: {footer:?}"
+    );
+
+    // ── and a rule that runs on arrival leaves the line alone ────────────
+    // A note on every rule is a note nobody reads.
+    window
+        .settings()
+        .set_text("[[rules]]\nname = \"team\"\nquery = \"from:team\"\nactions = [\"flag\"]\n");
+    settle();
+
+    let footer = window.settings().footer_text();
+    assert!(
+        !footer.contains("after the body is fetched"),
+        "a header-only rule runs on arrival and should say nothing: {footer:?}"
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}

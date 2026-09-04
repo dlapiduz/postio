@@ -11,6 +11,16 @@ repository.workspace = true
 [dependencies]
 notify = "8.2.0"
 postio-model.workspace = true
+# The query classifier, for ADR 0008 Q3's validation note: whether a rule can
+# be answered from the headers is a fact about the *parsed* query, and parsing
+# one is `postio-search`'s (`postio-model` keeps a rule's query as text on
+# purpose). A pure leaf of `postio-model` and `chrono`, so this adds no
+# dependency class to a crate the whole workspace waits on. #1062.
+postio-search.workspace = true
+# Only to answer "today" for the query parser, whose date operators
+# (`before:`/`after:`) resolve relative terms against it. Same
+# `default-features = false` shape `postio-search` itself uses.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 toml = "1.1.4"
