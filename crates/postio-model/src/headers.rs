@@ -418,6 +418,25 @@ fn cut_to_limit(block: &[u8]) -> Option<&[u8]> {
     Some(trim_line_break(&block[..boundary]))
 }
 
+/// The fields of a stored header block.
+///
+/// The other half of [`block_of`], and one function rather than one per
+/// caller because of the terminator: the block is stored **without** the
+/// blank line that ended it on the wire — that line is the separator, not a
+/// header — and a parser handed an unterminated block reads the last field as
+/// still being folded and drops it. Every caller has to append it, so no
+/// caller does.
+///
+/// `parse_headers` rather than `parse`: there is no body here to find, and it
+/// is the hardened entry point either way — `mail_parser` behind a
+/// `catch_unwind`, because these bytes were chosen by whoever sent the mail
+/// (#277).
+pub fn parse_block(block: &str) -> Headers {
+    let mut terminated = block.to_owned().into_bytes();
+    terminated.extend_from_slice(b"\r\n\r\n");
+    crate::mime::parse_headers(&terminated).headers
+}
+
 #[cfg(test)]
 mod block_tests {
     use super::*;
@@ -495,6 +514,39 @@ mod block_tests {
             "the cut landed inside a field: {:?}",
             &block.text[block.text.len().saturating_sub(60)..]
         );
+    }
+
+    #[test]
+    fn a_stored_block_parses_back_to_the_fields_it_was_made_of() {
+        // The round trip `Message.headers` never had. Every field, including
+        // the last one -- which is the one the missing terminator eats.
+        let block = block_of(MESSAGE).expect("a block");
+        let headers = parse_block(&block.text);
+
+        assert_eq!(headers.get("From"), Some("ada@example.com"));
+        assert_eq!(
+            headers.get("X-Mailer"),
+            Some("mutt 1.5.24"),
+            "the last field in a stored block is a field, not a fold"
+        );
+    }
+
+    #[test]
+    fn every_fixture_in_the_corpus_round_trips_through_a_stored_block() {
+        // The corpus is the closest thing here to real mail, and this path is
+        // what every `header:` match in a real store is answered from.
+        for fixture in crate::test_corpus::all() {
+            let block = block_of(fixture.bytes())
+                .unwrap_or_else(|| panic!("{} has no header block", fixture.name()));
+            let parsed = parse_block(&block.text);
+            let direct = fixture.parse().headers;
+            assert_eq!(
+                parsed.len(),
+                direct.len(),
+                "{} lost or gained a field on the way through storage",
+                fixture.name()
+            );
+        }
     }
 
     #[test]
