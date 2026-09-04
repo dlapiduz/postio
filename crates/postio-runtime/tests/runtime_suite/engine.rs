@@ -17,7 +17,7 @@ use postio_storage::repository::OperationQueueRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-mod harness;
+use crate::harness;
 
 use harness::BlobDir;
 

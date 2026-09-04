@@ -254,15 +254,15 @@ async fn the_backend_is_usable_behind_a_trait_object() {
 const BACKEND_SOURCES: &[(&str, &str)] = &[
     (
         "capability.rs",
-        include_str!("../src/backend/capability.rs"),
+        include_str!("../../src/backend/capability.rs"),
     ),
-    ("error.rs", include_str!("../src/backend/error.rs")),
-    ("identity.rs", include_str!("../src/backend/identity.rs")),
-    ("message.rs", include_str!("../src/backend/message.rs")),
-    ("mock.rs", include_str!("../src/backend/mock.rs")),
-    ("mod.rs", include_str!("../src/backend/mod.rs")),
-    ("sink.rs", include_str!("../src/backend/sink.rs")),
-    ("uid_set.rs", include_str!("../src/backend/uid_set.rs")),
+    ("error.rs", include_str!("../../src/backend/error.rs")),
+    ("identity.rs", include_str!("../../src/backend/identity.rs")),
+    ("message.rs", include_str!("../../src/backend/message.rs")),
+    ("mock.rs", include_str!("../../src/backend/mock.rs")),
+    ("mod.rs", include_str!("../../src/backend/mod.rs")),
+    ("sink.rs", include_str!("../../src/backend/sink.rs")),
+    ("uid_set.rs", include_str!("../../src/backend/uid_set.rs")),
 ];
 
 #[test]

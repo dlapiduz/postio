@@ -29,7 +29,7 @@ use postio_storage::repository::{
 use postio_storage::test_support::TempDatabase;
 use postio_storage::{BlobStore, Database, test_support};
 
-mod harness;
+use crate::harness;
 
 use harness::BlobDir;
 
