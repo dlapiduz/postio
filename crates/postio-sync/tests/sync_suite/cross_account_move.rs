@@ -345,6 +345,65 @@ async fn unconfirmable_stops_at_phase_two_and_deletes_nothing() {
     );
 }
 
+/// #531 / ADR 0026: phase 3 uses the identity its own queue row snapshotted.
+///
+/// `remove` re-derives the source coordinate from the live message row, and
+/// reads "no `remote_id` on the row" as "the server copy is already gone" —
+/// settling the saga `done` without touching a server. That is right for a
+/// row whose copy really did vanish and wrong for a row that never had an
+/// identity, which is precisely what an inverse saga hands it: the
+/// provisional copy in the target account is born with none (#940).
+///
+/// The mechanism to use instead already exists. `operation_queue.
+/// source_remote_id` is filled by `enqueue` for every message-targeted
+/// operation, reading the row *before* the caller's local write can null it
+/// — the ordering #289 exists to enforce — and `Move` and `Delete` already
+/// prefer it for exactly this reason.
+///
+/// The fixture nulls the row's identity after enqueueing, which is the state
+/// an inverse saga produces and the one this code has never been run
+/// against.
+#[tokio::test]
+async fn the_removal_uses_the_coordinate_its_queue_row_snapshotted() {
+    let world = world(RAW, true);
+    let source = source_server().await;
+    let target = target_server(true).await;
+
+    // Phase 1-2 on the target, so the saga reaches `confirmed`.
+    drain(&world, &target, world.target_account).await;
+    assert_eq!(phase(&world), MovePhase::Confirmed);
+
+    // The live row loses its identity, the queue row keeps its snapshot.
+    {
+        let connection = world.database.connection().expect("checkout");
+        connection
+            .execute(
+                "UPDATE messages SET remote_id = NULL, uid = NULL WHERE id = ?1",
+                [world.source_message.get()],
+            )
+            .expect("clear the live coordinates");
+    }
+    assert_eq!(
+        messages_in(&source, "INBOX").await,
+        1,
+        "the source server still holds the message, or the assertion below \
+         cannot fail"
+    );
+
+    drain(&world, &source, world.source_account).await;
+
+    assert_eq!(
+        messages_in(&source, "INBOX").await,
+        0,
+        "phase 3 settled without expunging anything: it read the live row, \
+         found no coordinate, and called that 'already gone'. The source \
+         copy is still on the server and the move reports success — which is \
+         a duplicate the user did not ask for, and the same silence an \
+         inverse saga would hit every time"
+    );
+    assert_eq!(phase(&world), MovePhase::Done);
+}
+
 #[tokio::test]
 async fn a_vanished_destination_aborts_with_the_source_intact() {
     // Q13: the target folder was deleted (or its account removed) while the

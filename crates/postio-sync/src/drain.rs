@@ -318,7 +318,8 @@ impl<'a> Drainer<'a> {
             return crate::cross_account::copy(self.backend, self.blobs, connection, *saga).await;
         }
         if let Operation::CrossAccountRemove { saga } = &context.operation {
-            return crate::cross_account::remove(self.backend, connection, *saga).await;
+            return crate::cross_account::remove(self.backend, connection, *saga, &context.ids)
+                .await;
         }
 
         let result = match &context.operation {
@@ -447,11 +448,27 @@ impl<'a> Drainer<'a> {
             // Everything a saga phase needs lives on the saga row, which
             // `send` reads fresh — a Context resolved here could be a
             // restart old by the time it runs.
+            //
+            // The one exception is the source coordinate phase 3 removes by,
+            // and it is an exception because it is a *snapshot* rather than
+            // something re-derived: `enqueue` recorded it before the local
+            // write that hides the source row, so unlike a live row it
+            // cannot have gone stale in the meantime. `Move` and `Delete`
+            // below prefer it for the same reason (#289), and phase 3
+            // needs it for a sharper one — an inverse saga's source is the
+            // provisional copy, which is born with no identity at all
+            // (#940, #531).
+            let snapshot = match step.operation {
+                Operation::CrossAccountRemove { .. } => OperationQueueRepository::new(connection)
+                    .get(step.head())?
+                    .and_then(|row| row.source_remote_id),
+                _ => None,
+            };
             return Ok(Resolved::Ready(Context {
                 operation: step.operation.clone(),
                 path: String::new(),
                 destination: None,
-                ids: Vec::new(),
+                ids: snapshot.into_iter().collect(),
                 mailbox: MailboxId::UNASSIGNED,
                 send: None,
                 draft: None,
