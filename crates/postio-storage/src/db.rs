@@ -74,16 +74,17 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 ///   SQLCipher every page miss costs a decrypt rather than a `memcpy`.
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
-/// * `auto_vacuum = INCREMENTAL` — pages a delete frees can be handed back to
-///   the filesystem, by [`Database::reclaim_free_pages`], instead of being
-///   kept forever for a future insert. SQLite's default is `NONE`, which is
-///   the right trade for a database of roughly constant size and the wrong
-///   one for a complete mailbox replica (ADR 0016) that a `UIDVALIDITY`
-///   reset can wipe and re-sync from one server-side event. It is **first**
-///   in this batch and it only takes effect on a database with no tables
-///   yet: it is a header field, so on an existing store this line is a
-///   silent no-op and [`Database::adopt_incremental_vacuum`] is what
-///   converts it. #381.
+///
+/// **`auto_vacuum` is deliberately not here, though it was.** It belongs to
+/// the database rather than to a connection, and setting it is a *write*: on
+/// an existing store `PRAGMA auto_vacuum = INCREMENTAL` is a no-op that
+/// still takes the write lock to decide so. In this batch, every reader
+/// checked out during an open write transaction blocked on it for the whole
+/// `busy_timeout` — the one property this list exists to provide, inverted,
+/// deterministically, five seconds at a time.
+/// `a_read_proceeds_while_a_write_transaction_is_open` is what caught it.
+/// [`configure`] sets it instead, on a database whose schema is still empty,
+/// which the probe it already runs answers for free. #381.
 ///
 /// **`PRAGMA key` is not here.** It has to be the first statement on the
 /// connection, before anything reads a page, so [`configure`] issues it ahead
@@ -95,7 +96,6 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// 0014 priced this as a known casualty and the README's memory numbers were
 /// re-measured rather than adjusted.
 pub const PRAGMAS: &str = "\
-PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
@@ -236,11 +236,32 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
     // that proves the key: one page, already in cache for everything after it.
     // A brand-new database has no page 1 yet and answers 0 rows, which is a
     // successful read and not a wrong key.
-    connection
+    let objects = connection
         .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
             row.get::<_, i64>(0)
         })
         .map_err(|_| Error::WrongStoreKey)?;
+
+    // `auto_vacuum` on a database that has nothing in it yet, which is the
+    // only moment SQLite will take it: it is a header field, and after the
+    // first table exists the only way to change it is a full `VACUUM`
+    // (`Database::adopt_incremental_vacuum`). The probe above has just told
+    // us which case this is, for free.
+    //
+    // **Only when the answer is zero**, and that is the whole point. Setting
+    // this pragma is a *write*: on a populated store it is a documented
+    // no-op that still takes the write lock to decide so, and issued
+    // unconditionally in `PRAGMAS` it made every reader checked out during
+    // an open write transaction block for the full `busy_timeout` — the one
+    // property that batch exists to provide, inverted, deterministically,
+    // five seconds at a time. A database with no schema in it has no writer
+    // to contend with, so here it is free. #381.
+    //
+    // Before `PRAGMAS`, because `journal_mode = WAL` writes the header and
+    // SQLite will not move `auto_vacuum` afterwards.
+    if objects == 0 {
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
+    }
 
     // `execute_batch` rather than `pragma_update`: several of these return the
     // value they were set to, which `pragma_update` treats as an error.
