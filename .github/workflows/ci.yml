@@ -73,6 +73,10 @@ env:
   # eight-core workstation. That reasoning does not travel: a runner is one
   # job on its own machine, and inheriting the limit throttled CI to a quarter
   # of the box for no benefit. CARGO_BUILD_JOBS overrides the config file.
+  #
+  # This is the floor, not the setting. The jobs that compile ask the runner
+  # how many cores it has and raise it (see .github/actions/rust-workspace);
+  # the cheap jobs that only read metadata never build enough to care.
   CARGO_BUILD_JOBS: 4
 
 jobs:
