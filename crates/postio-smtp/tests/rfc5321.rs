@@ -399,12 +399,10 @@ async fn a_multiline_rejection_is_classified_by_its_code_however_many_lines_it_h
     // §4.2.1: a reply is one or more lines, all carrying the same code, with
     // `-` after the code on every line but the last.
     //
-    // **The continuation lines are dropped — #921.** No assertion here says
-    // they survive, deliberately: `rfc5322.rs` sets the precedent that a test
-    // asserting the bug is worthless and a test asserting the fix cannot pass
-    // before the fix. What is asserted is the half that holds today and the
-    // half a fix must not break — the reply really is multiline, the code
-    // still decides retryability, and the first line still reaches a person.
+    // Every line reaches a person (#921). The actionable half of a bounce
+    // from a large provider is routinely on the second and third lines --
+    // the typo hint, the help URL -- and a reply that says only "the address
+    // does not exist" gives somebody nothing to do about it.
     let error = send_expecting_failure(script_overriding(
         "RCPT TO",
         "550-5.1.1 The address you entered does not exist\r\n\
@@ -425,6 +423,37 @@ async fn a_multiline_rejection_is_classified_by_its_code_however_many_lines_it_h
     assert!(
         reason.contains("550"),
         "the reply code is what a person can quote to their provider: {reason}"
+    );
+
+    // The half #921 is about.
+    assert!(
+        reason.contains("Check for typos in the recipient"),
+        "the second line of the reply is where the advice was: {reason}"
+    );
+    assert!(
+        reason.contains("https://example.invalid/help/nosuchuser"),
+        "and the third is where the explanation was: {reason}"
+    );
+
+    // One message, not three. The code is quotable once; three copies of it
+    // read as three failures.
+    assert_eq!(
+        reason.matches("550").count(),
+        1,
+        "the code is repeated, so the reason reads as three rejections: {reason}"
+    );
+    assert_eq!(
+        reason.matches("5.1.1").count(),
+        1,
+        "and so is the enhanced status code, which every line carries: {reason}"
+    );
+
+    // Nothing here may reach a log line as more than one line. `SmtpError`
+    // is formatted into `tracing` and into the Attention row, and a reason
+    // carrying a CRLF would forge a log entry.
+    assert!(
+        !reason.contains('\r') && !reason.contains('\n'),
+        "a line break survived into the reason: {reason:?}"
     );
 }
 
