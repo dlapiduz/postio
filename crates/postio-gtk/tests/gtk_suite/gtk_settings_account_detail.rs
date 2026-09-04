@@ -9,9 +9,12 @@
 //! `connect_account_enabled_changed`/`connect_account_action` already use.
 //! Skips without a display. Nothing here touches the network.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::settings::{AccountEdit, SettingsPanel};
+use postio_gtk::settings::{AccountEdit, ConnectionStatus, SettingsPanel};
 use postio_gtk::{fonts, style};
 use postio_model::account::{ServerConfig, TransportSecurity};
 use postio_model::ids::AccountId;
@@ -430,4 +433,83 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
+}
+
+// ---------------------------------------------------------------------------
+// Test connection (#980)
+// ---------------------------------------------------------------------------
+
+pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
+    // The three states the acceptance names, and the one it forbids: a
+    // spinner that stops silently. The panel does not connect to anything --
+    // `settings_accounts.rs` in `postio-app` runs the probe, exactly as it
+    // does for every other edit here -- so this drives the button and then
+    // hands the panel each answer by hand.
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    let asked: Rc<RefCell<Vec<AccountId>>> = Rc::new(RefCell::new(Vec::new()));
+    panel.connect_test_connection({
+        let asked = asked.clone();
+        move |account| asked.borrow_mut().push(account)
+    });
+
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    // ── pressing it asks, naming the account the view is open on ─────────
+    assert!(
+        panel.test_press_test_connection(),
+        "the detail view has no test-connection control to press"
+    );
+    pump();
+    assert_eq!(
+        *asked.borrow(),
+        vec![AccountId::new(1)],
+        "the button has to say which account it is about: the panel shows one \
+         at a time and the handler writes to the store"
+    );
+
+    // ── while it runs, it says so ────────────────────────────────────────
+    panel.set_connection_status(ConnectionStatus::Testing);
+    pump();
+    let running = panel.test_connection_status_text();
+    assert!(
+        !running.is_empty(),
+        "a button that reports nothing while it works is the silent spinner \
+         #980 is about"
+    );
+
+    // ── and then what happened, per server, in the server's own words ────
+    panel.set_connection_status(ConnectionStatus::Answered {
+        incoming: Ok(()),
+        outgoing: Err("smtp.example.com is not listening on 587".to_owned()),
+    });
+    pump();
+    let answer = panel.test_connection_status_text();
+    assert!(
+        answer.contains("587"),
+        "the server's own words are what tell somebody which field to edit: \
+         {answer:?}"
+    );
+    assert_ne!(
+        answer, running,
+        "the result has to replace the running state, not sit under it"
+    );
+
+    // ── success says so plainly, and clears the failure ──────────────────
+    panel.set_connection_status(ConnectionStatus::Answered {
+        incoming: Ok(()),
+        outgoing: Ok(()),
+    });
+    pump();
+    let settled = panel.test_connection_status_text();
+    assert!(
+        !settled.contains("587"),
+        "the previous failure is still on screen after a successful test: \
+         {settled:?}"
+    );
+    assert!(!settled.is_empty());
+
+    window.destroy();
 }

@@ -69,13 +69,6 @@ pub enum Reachability {
     },
 }
 
-impl Reachability {
-    /// Whether the server answered.
-    pub fn reached(&self) -> bool {
-        matches!(self, Reachability::Reached)
-    }
-}
-
 /// What a test of one account's stored settings found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reachabilities {
@@ -83,13 +76,6 @@ pub struct Reachabilities {
     pub incoming: Reachability,
     /// The outgoing (SMTP) server.
     pub outgoing: Reachability,
-}
-
-impl Reachabilities {
-    /// Whether both servers answered.
-    pub fn all_reached(&self) -> bool {
-        self.incoming.reached() && self.outgoing.reached()
-    }
 }
 
 /// Try `account`'s stored incoming and outgoing settings, and say what
