@@ -12,7 +12,8 @@ history and reasoning behind every rule here lives in
 scripts/issue-claim.sh                  # next ready issue → your worktree, reused or seeded
 cd ~/src/postio-worktrees/issue-<n>     # work there, not in ~/src/postio
 scripts/issue-land.sh                   # gates, commit, push, PR, merge
-scripts/issue-release.sh <n>            # remove the worktree
+scripts/issue-claim.sh                  # from inside the worktree: reuses it for the next issue
+scripts/issue-release.sh <n>            # only when you stop; the next claim is the release otherwise
 ```
 
 An issue is yours when it is open, labelled `ready`, unassigned, and blocked
@@ -97,15 +98,11 @@ what changed, and re-runnable; then let CI run the rest. `--full` re-runs what
 you already ran, inside a ~25-minute chain where any unrelated flake restarts
 the whole thing.
 
-#901 is the worked example: three consecutive `--full` runs failed, none of
-them on a defect in the change — a `gtk_suite` segfault (#988), an `e2e`
-timeout at 121s that passed in 12s alone, and four SQLCipher `PRAGMA key`
-failures (the documented #710/#699). The fourth attempt, on the default,
-found a **real** compile error in two minutes: another session had landed a
-second construction site for a struct the branch had added a field to. Note
-what that means — `--full` could not have caught it and the default did not
-need to. **The rebase is what finds a shared type's new callers**, and
-`issue-land.sh` rebases on every attempt whatever the tier.
+#901 is the worked example (`docs/engineering-notes.md`): three `--full`
+runs failed on other people's bugs, and the default found the branch's one
+real defect in two minutes, through the rebase. **The rebase is what finds a
+shared type's new callers**, and `issue-land.sh` rebases on every attempt
+whatever the tier.
 
 **A gate failure in code your diff does not touch is probably not yours.**
 Check before re-running: reproduce it alone, read the backtrace
@@ -121,25 +118,23 @@ pass and are not joined up, like the Reader that was built, tested and never
 mounted. Do not read the fast default as permission to skip integration
 tests: write them, and let CI be the thing that runs them.
 
-**Iterate at the cheapest layer that can fail.** On this workstation
-`postio-body`'s 49 unit tests run in 0.00s and `postio-gtk`'s 330 in 0.42s,
-while `cargo test -p postio-app --test app_suite` takes ~200s. TDD pays that
-twice — once for red, once for green — so a cycle through an integration
-binary costs minutes for two minutes of thinking.
+**Iterate at the cheapest layer that can fail.** `postio-body`'s 49 unit
+tests run in 0.00s and `postio-gtk`'s 330 in 0.42s, while `app_suite` takes
+~200s under `cargo test` (~20s under nextest). TDD pays that twice — once
+for red, once for green. `scripts/test-fast.sh` runs `--lib` for the crates
+you changed and links nothing else; use it between edits, and run the
+integration suites to *confirm*, at the end. This is also an argument about
+where logic lives: a rule expressed as a function in `postio-core`,
+`postio-ui` or `postio-body` can be proven red in a second, and the same
+rule buried in a widget cannot. It does not license asserting on what a
+layer was handed instead of what a person would see — that is what the
+integration suites and `issue-land.sh` are still for.
 
-This used to say the suite was "eleven and a half minutes, nearly all of it
-link". Both halves were wrong, and the correction matters because the number
-was load-bearing (#973 cites it). Measured: cargo's own `--timings` puts the
-`app_suite` test target at **3.9s**, a warm rebuild-and-relink at **2s**, and
-the suite's *execution* at **200s**. Linking is ~1.2s — 0.3% of the cycle.
-What cost eleven minutes was a **cold worktree**, where ~470 third-party
-crates were compiled before anything of ours was — compiled, not fetched
-from sccache, because every rustc invocation carried a per-worktree linker
-path and the cache hit 1% of the time (#1101). A claim now reuses the tree
-you are in or seeds a new one by reflink copy (#1102): measured, the sanity
-tier in a seeded tree is **12 s compiling 3 crates** against 19 minutes
-cold. That is an argument for the seeded claim, not against integration
-tests.
+Linking is not the cost — ~1.2 s of an `app_suite` cycle. What used to cost
+eleven minutes was a **cold worktree**, and a claim now reuses the tree you
+are in or seeds a new one (#1102): the sanity tier in a seeded tree is
+**12 s** against 19 minutes cold. The measurements, and the sccache finding
+behind them, are in `docs/engineering-notes.md` ("Where the waiting went").
 
 **Integration suites run under nextest.** `cargo nextest run -p <crate>
 --test <suite>` runs one binary's tests as separate processes, in parallel;
@@ -150,14 +145,6 @@ pinned version). Measured on this workspace: `app_suite`
 two tiers above use it — and for doctests, which nextest does not run and
 does not say so: `cargo test -p <crate> --doc`.
 
-`scripts/test-fast.sh` runs `--lib` for the crates you changed and links
-nothing else; use it between edits. Run the integration suites to *confirm*, at
-the end, not to iterate. This is also an argument about where logic lives: a
-rule expressed as a function in `postio-core`, `postio-ui` or `postio-body` can
-be proven red in a second, and the same rule buried in a widget cannot. It does
-not license asserting on what a layer was handed instead of what a person would
-see — that is what the integration suites and `issue-land.sh` are still for.
-
 **Test the crates you changed; the reconcile pass proves the rest.**
 `issue-land.sh` runs the gate chain (fmt, clippy, the sanity tier,
 `check.sh`) over exactly your changed crates — plus one `cargo check --workspace
@@ -166,9 +153,8 @@ list describes (#419) — and the steward loop periodically runs the
 whole workspace against `main` — so a workspace build or test from an
 ordinary session is almost always waste, and a red crate you didn't touch is
 usually someone's in-flight TDD: note it on your issue and move on. Don't
-re-run gates ritually either — a third of all tool calls ever made in this
-repository were re-running a gate that `issue-land.sh` was going to run
-anyway. `cargo fmt` is a formatter, not verification: inside your worktree
+re-run gates ritually either; `issue-land.sh` runs them. `cargo fmt` is a
+formatter, not verification: inside your worktree
 `cargo fmt --all` is fine (the land script runs it); in the shared checkout
 format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
 
@@ -186,13 +172,9 @@ the exact tree, so an unchanged retry skips straight to the landing.
   `scripts/test-headless.sh --stop` to stop the compositor. Headless is ~3.5x
   faster than a live display — a test that passes on the desktop and fails
   headless usually has a real race (see `docs/engineering-notes.md`).
-- **The reconcile pass**, when you are the one doing it: `cargo check
-  --workspace --all-targets` first — it is what catches a *test* target that
-  stopped compiling, which is how `main` went red twice in one day (#419),
-  and it answers before the test run has finished linking — then `cargo test
-  --workspace --no-fail-fast`, always `--no-fail-fast`, because plain cargo
-  aborts remaining targets on the first failure and one red crate hides a
-  thousand passing tests. `cargo bench` checks the perf budgets.
+- **The whole-workspace reconcile pass is `/steward`'s job**, not an
+  ordinary session's; the skill says how to run it so one red crate cannot
+  hide a thousand passing tests.
 - **To see the app**: `scripts/run-isolated.sh [commit] [--inspect|--shot]`
   builds a pinned commit with its own target dir and throwaway store. It
   links `--release` — never run it while other sessions are building.
@@ -397,9 +379,12 @@ local full-suite run first — `release.yml` ships without testing.
 
 ## Skills and design authorities
 
-`/issue` (the loop), `/lanes` (who else is here), `/preflight` (true state of
-the tree), `/add-fixture`, `/ux-architect` (designing any surface),
-`/gtk-design` (building it).
+`/issue` (the loop), `/initiative` (several issues on one feature branch),
+`/lanes` (who else is here), `/preflight` (true state of the tree),
+`/add-fixture`, `/ux-architect` (designing any surface, and the
+`needs-architecture` queue), `/gtk-design` (building it), `/product-manager`
+and `/steward` (the two loops that watch the backlog and the execution).
+`docs/session-prompts.md` says which to run when.
 
 Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
 (`Design/Mail Client.dc.html`, direction PLATE 1b) — spacing, color,

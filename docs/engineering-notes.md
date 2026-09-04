@@ -2726,7 +2726,7 @@ than clever:
 bound reached) against a real bare remote with only `gh` stubbed. Its case A
 is the #50 incident verbatim in shape.
 
-## Landing work
+## Landing work: `cargo doc` is a CI-only gate
 
 **`issue-land.sh`'s gates do not include `cargo doc`, and CI's do.** Moving
 code between crates is the case where that bites: a doc comment carries its
@@ -2752,7 +2752,7 @@ RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
     cargo doc --workspace --no-deps --document-private-items
 ```
 
-## The shared cargo target directory
+## The cargo target directory (shared until #178; private and copied on claim since #1102)
 
 **sccache's server outlives the worktree that started it, and
 `issue-release.sh` could leave it pointing at a directory that no longer
@@ -2901,6 +2901,12 @@ fresh worktree, because `.cargo/config.toml` points TMPDIR there and its
 absence made every `tempfile::tempdir()` in a fresh worktree fail with
 NotFound — three sessions hit that in one day. The interim tell above stays
 true for anyone still on the shared directory.
+
+**Since #1102 a fresh worktree's `target/debug` is a reflink *copy* of the
+newest sibling's.** That is not the sharing above: each tree owns its copy
+and cargo's fingerprints are self-consistent inside it. "sccache carries the
+third-party cost once per machine" in the paragraph above was also only
+half true until #1101 — see "Where the waiting went" at the end of this file.
 
 **The daemon can also wedge outright: every build on the box stalls at once,
 and the tell is idle CPU under minutes-old `rustc` processes** (2026-09-01,
@@ -3649,7 +3655,12 @@ not stylistic:
   that no cache ever saw — which is what was pushing `issue-land.sh` past a
   foreground tool call's ten-minute cap, and every killed run leaks its live
   tests' `/dev/shm/postio-test-*` scratch (171 at once observed).
-- **ccache caches that C**, wired in as `[env] CC = scripts/cc-wrapper.sh`.
+  *Correction (#1101):* sccache was not carrying the Rust half across
+  worktrees either, because `-C linker=<per-worktree path>` was in every
+  invocation's hash — 1.1% hits, measured. The linker and `CC` are bare
+  names now; the ccache measurement below stands.
+- **ccache caches that C**, wired in as `[env] CC = postio-cc`
+  (`scripts/cc-wrapper.sh`, installed on PATH by `scripts/install-shims.sh`).
   Routing the C through sccache instead does not work, and this was measured
   before being believed: `openssl-src` extracts and compiles its sources
   *inside each target directory*, so every include path and `#line`
@@ -4639,7 +4650,7 @@ What is true, and is the useful form of the observation: a cold worktree
 compiles the dependency graph roughly **twice**, once as check units and once
 as build units. That is inherent to running both `clippy`/`check` and
 `test`, it is not an ordering mistake, and the only lever on it is not paying
-for a cold worktree in the first place (`--reuse`, #1012).
+for a cold worktree in the first place (a reused or seeded claim, #1102).
 
 
 ## The compile cache was full, and had been for a long time (2026-09-03)
@@ -4653,7 +4664,9 @@ Max cache size    10 GiB      <- the default; nobody had ever set it
 
 11G on disk against a 10 GiB ceiling is a cache in permanent eviction. Nine
 worktrees live here, each holding ~2.1 GB of dependency artifacts, so the
-sessions were continuously throwing out each other's entries. From inside a
+sessions were continuously throwing out each other's entries — and, it
+turned out (#1101), each worktree's entries were keyed by its own linker
+path, so none of them could have served another worktree anyway. From inside a
 session that presents as "the compile cache died and fell back to compiling
 locally" and as a unit tier that takes 43 minutes instead of seconds -- which
 is how it was noticed, by a session on another machine saying so out loud.
@@ -4889,7 +4902,7 @@ parallel branches. `CLAUDE.md` already blesses several small issues on one
 branch; this is that argument at a larger size. #1000 was about 70% sequential
 dependencies and still ran as six branches, which bought no parallelism and
 four rebases. The decision is worth making once, before the first
-`issue-claim.sh`, and `docs/session-prompts.md`'s Initiative prompt is where
+`issue-claim.sh`, and the `/initiative` skill is where
 it now lives.
 
 ### A related one, in the same session
