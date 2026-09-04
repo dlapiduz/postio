@@ -2924,6 +2924,7 @@ dependencies = [
  "postio-sync",
  "postio-ui",
  "rusqlite",
+ "secrecy",
  "tempfile",
  "tokio",
  "tracing",
