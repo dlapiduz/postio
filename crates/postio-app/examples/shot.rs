@@ -770,6 +770,14 @@ fn main() -> glib::ExitCode {
                     // settled account, which is where every account ends up
                     // under ADR 0016 and so is the honest default for a shot.
                     corpus_complete: !flag("syncing"),
+                    // `unreachable` shows ADR 0005 Q10's caveat (#812), so a
+                    // shot can be taken of the state a reviewer would
+                    // otherwise have to unplug a server to see. Empty is the
+                    // ordinary case: every account answering.
+                    unreachable: match flag("unreachable") {
+                        true => vec!["Work".to_owned()],
+                        false => Vec::new(),
+                    },
                 },
             );
         }

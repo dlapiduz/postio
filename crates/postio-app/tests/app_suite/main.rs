@@ -69,6 +69,7 @@ mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
 mod unified_search;
+mod unified_search_reach;
 mod unified_select_all;
 mod unsubscribe_wiring;
 mod window_drain;
@@ -254,6 +255,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "unified_search::a_unified_search_reaches_every_account",
         unified_search::a_unified_search_reaches_every_account as fn(),
+    ),
+    (
+        "unified_search_reach::a_unified_search_names_the_account_it_could_not_reach",
+        unified_search_reach::a_unified_search_names_the_account_it_could_not_reach as fn(),
     ),
     (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",

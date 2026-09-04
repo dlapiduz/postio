@@ -44,7 +44,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::prelude::WidgetExt;
 use postio_core::{Command, Event};
-use postio_gtk::feed::Feeds;
+use postio_gtk::feed::{Feeds, Folders};
 use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
@@ -102,7 +102,15 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
 
     install_leave_to_list(window, &finder);
     install_preview(&view, wiring, window);
-    install_run(&view, &finder, window, wiring, held.clone(), order.clone());
+    install_run(
+        &view,
+        &finder,
+        window,
+        feeds,
+        wiring,
+        held.clone(),
+        order.clone(),
+    );
     install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone());
     install_order_toggle(window, &finder, feeds, order);
@@ -135,6 +143,57 @@ fn install_leave_to_list(window: &Window, finder: &Finder) {
             true
         }
     });
+}
+
+/// Which accounts a search under `scope` could not reach, by the name the
+/// sidebar shows, in the sidebar's order.
+///
+/// ADR 0005 Q10: *a view that cannot include an account says so, names the
+/// account, and stays usable.* The list obeys that rule through
+/// `list_state::derive_aggregate`; a search is the other surface that can
+/// answer for less mail than the user thinks they asked about, and its answer
+/// is a number, which looks just as complete either way.
+///
+/// # Why the composition root and not the executor
+///
+/// Which accounts answered is a fact about *connections*. `postio-index` only
+/// ever sees the store, and a search of a store whose account is offline
+/// reads exactly like one whose account is fine — the rows are all local.
+/// This is the one layer holding both halves.
+///
+/// # One rule, two populations
+///
+/// `list_state::is_current` is the rule, and it is shared with
+/// `Window::set_folders`' own reach calculation rather than re-stated here
+/// (#811: the banner and the selection came to disagree about which account
+/// was which precisely by deriving separately). What differs is the
+/// population, legitimately: the list vouches for the accounts it is
+/// *drawing*, and a unified search covers every enabled account whether or
+/// not the list is currently showing one.
+///
+/// A single-account search names nothing: it leaves nothing out, whatever the
+/// other accounts are doing. A **disabled** account names nothing either, and
+/// for free — the sidebar's list is built from the enabled accounts, so one
+/// that is switched off is never in it to be named.
+fn unreachable_accounts(window: &Window, folders: &Folders, scope: AccountScope) -> Vec<String> {
+    if scope.is_single_account() {
+        return Vec::new();
+    }
+    let statuses = folders.statuses();
+    window
+        .sidebar()
+        .account_names()
+        .into_iter()
+        .filter(|(id, _)| {
+            statuses
+                .iter()
+                .find(|(candidate, _)| candidate == id)
+                // Silence is not a claim that a server is reachable: an
+                // account nothing has reported on has not answered either.
+                .is_none_or(|(_, status)| !postio_gtk::list_state::is_current(status))
+        })
+        .map(|(_, name)| name)
+        .collect()
 }
 
 /// Ask the query again when the account scope changes.
@@ -230,6 +289,7 @@ fn install_run(
     view: &View,
     finder: &Finder,
     window: &Window,
+    feeds: &Feeds,
     wiring: &Wiring,
     held: Held,
     order: Order,
@@ -247,6 +307,7 @@ fn install_run(
     let runtime = wiring.runtime.clone();
     let events = wiring.events.clone();
     let view = view.clone();
+    let folders = feeds.folders.clone();
     // Weak, because the window owns the finder that owns this handler; a
     // strong clone here is a cycle that keeps the window alive for the life
     // of the process.
@@ -282,6 +343,8 @@ fn install_run(
                 let runtime = runtime.clone();
                 let events = events.clone();
                 let held = held.clone();
+                let folders = folders.clone();
+                let window = window.clone();
                 async move {
                     let Ok(Some(results)) = hits.recv().await else {
                         // The store could not be read, so there is no answer
@@ -305,9 +368,21 @@ fn install_run(
                         elapsed_ms = results.elapsed.as_millis() as u64,
                         "search answered"
                     );
+                    // Which accounts this answer could not include. Read
+                    // here, on the GTK side, and against the scope the search
+                    // actually ran under -- the user is free to switch scope
+                    // while the store is answering, and a caveat about the
+                    // scope they moved to would be about a different question.
+                    let unreachable = window
+                        .upgrade()
+                        .map(|window| unreachable_accounts(&window, &folders, account))
+                        .unwrap_or_default();
                     // The readout first: it is what the field is showing and
                     // what the user is waiting for.
-                    if !live.deliver(sequence, Outcome::of(&results)) {
+                    if !live.deliver(
+                        sequence,
+                        Outcome::of(&results).with_unreachable(unreachable),
+                    ) {
                         // Superseded. Everything downstream of these results
                         // is about a question nobody is asking.
                         return;
