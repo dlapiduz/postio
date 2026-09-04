@@ -16,7 +16,14 @@
 #   scripts/issue-claim.sh --label area:compose
 #   scripts/issue-claim.sh --dry-run          # show what it would take
 #   scripts/issue-claim.sh --base feature/x   # cut from an initiative branch
-#   scripts/issue-claim.sh --reuse            # in this worktree, target warm
+#   scripts/issue-claim.sh --reuse            # in this worktree, target warm (strict)
+#   scripts/issue-claim.sh --fresh            # a new worktree even from inside one
+#   scripts/issue-claim.sh --cold             # ...and do not seed its target/
+#
+# Run from inside a landed worktree, a plain claim reuses it (the --reuse
+# path) and falls back to a fresh tree, saying why, when reuse would strand
+# something. A fresh tree's target/debug is seeded by copying the newest
+# sibling's. Both are #1102; the reasoning is beside the code below.
 #   scripts/issue-claim.sh --ready-label ready-mac   # a different queue
 set -euo pipefail
 
@@ -39,7 +46,8 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 # bureaucratized yet is still claimable.
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
-WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0
+WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0; FRESH=0; COLD=0
+REUSE_IMPLICIT=0
 # Why each candidate was passed over, so the message at the end can say which
 # of the three it was rather than guessing (#1077).
 SKIPPED_CLAIMED=""; SKIPPED_BRANCH=""; SKIPPED_WORKTREE=""
@@ -51,6 +59,8 @@ while [ $# -gt 0 ]; do
         --base)      BASE="$2";      shift 2 ;;
         --dry-run)   DRY=1;          shift ;;
         --reuse)     REUSE=1;        shift ;;
+        --fresh)     FRESH=1;        shift ;;
+        --cold)      COLD=1;         shift ;;
         [0-9]*)      WANT="$1";      shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -79,14 +89,32 @@ fi
 # a library the change never reached. One tree with a different branch checked
 # out cannot do that, and the build stays warm because it is the same tree.
 #
+# Reuse by default (#1102). `--reuse` shipped in #1012 and was used 3 times
+# in the next 396 claims: the loop in CLAUDE.md is `issue-claim.sh` with no
+# flag, and a flag is a thing every session has to remember. So a plain
+# claim run from inside a worktree under $WORKTREES takes the reuse path on
+# its own, and when reuse refuses -- dirty tree, unlanded commits, a base
+# gone from origin -- it says so and claims a fresh tree instead, leaving
+# this one exactly as it was. That is the same choice CLAUDE.md asked
+# sessions to make by hand ("claim fresh only when you need the old tree
+# kept"); the tree is kept by construction here. `--reuse` stays strict,
+# because a session that asked for it wants to know when it did not happen;
+# `--fresh` opts out; a dry run previews and never moves anything.
+if [ "$REUSE" = 0 ] && [ "$FRESH" = 0 ] && [ "$DRY" = 0 ]; then
+    case "$(git rev-parse --show-toplevel 2>/dev/null || true)" in
+        "$WORKTREES"/*) REUSE=1; REUSE_IMPLICIT=1 ;;
+    esac
+fi
+
 # Vetted here, before any claim is taken, so a refusal costs nothing and
-# cannot strand a lock.
+# cannot strand a lock. Every refusal prints its reason and returns 1; who
+# asked decides what that means (below).
 REUSE_TREE=""
-if [ "$REUSE" = 1 ]; then
+vet_reuse() {
     REUSE_TREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
     if [ -z "$REUSE_TREE" ]; then
         echo "--reuse works in a git worktree, and this is not one." >&2
-        exit 2
+        return 1
     fi
     case "$REUSE_TREE" in
         "$WORKTREES"/*) : ;;
@@ -96,13 +124,13 @@ if [ "$REUSE" = 1 ]; then
             # refuses the destructive commands this would run there.
             echo "--reuse only reuses a worktree under $WORKTREES." >&2
             echo "This is $REUSE_TREE, which is not one -- claim without --reuse." >&2
-            exit 2
+            return 1
             ;;
     esac
     if [ -n "$(git -C "$REUSE_TREE" status --porcelain)" ]; then
         echo "$REUSE_TREE has uncommitted changes, so there is nothing safe to do here." >&2
         echo "Uncommitted work is unprotected work: commit or land it first." >&2
-        exit 2
+        return 1
     fi
     # Nothing unlanded. A reuse that carried away commits nobody merged would
     # lose them behind a branch switch, which is worse than a cold build.
@@ -135,7 +163,7 @@ if [ "$REUSE" = 1 ]; then
         echo "refuses rather than guessing. Claim without --reuse, or correct" >&2
         echo "the record:" >&2
         echo "    printf 'main\n' > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
-        exit 2
+        return 1
     fi
     UNLANDED="$(git -C "$REUSE_TREE" cherry FETCH_HEAD HEAD 2>/dev/null \
                 | grep -c '^+' || true)"
@@ -143,11 +171,69 @@ if [ "$REUSE" = 1 ]; then
         echo "$REUSE_TREE holds $UNLANDED commit(s) that are not on $REUSE_BASE." >&2
         echo "Land them first -- reusing the tree now would leave them behind" >&2
         echo "a branch switch with nothing pointing at them." >&2
+        return 1
+    fi
+
+    return 0
+}
+if [ "$REUSE" = 1 ] && ! vet_reuse; then
+    if [ "$REUSE_IMPLICIT" = 1 ]; then
+        echo "note: not reusing $REUSE_TREE for the reason above; claiming a fresh tree instead." >&2
+        echo >&2
+        REUSE=0; REUSE_TREE=""
+    else
         exit 2
     fi
 fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
+
+# Seed a fresh worktree's target/debug from the newest sibling's (#1102).
+#
+# A cold target/ is 11 to 19 minutes before the first gate can say anything,
+# and 393 of 396 claims paid it. Measured on this box: `cp -a --reflink` of
+# an 11 GB target/debug took one second on btrfs, and the seeded tree then
+# built the whole sanity tier in 12 s compiling 3 crates, against 1149 s and
+# 389 crates cold. Copy-on-write, so it costs no disk until files diverge.
+#
+# It is a *copy*, which is what makes it safe against #76: that was two
+# trees writing one target and handing each other stale libraries. Each
+# tree here owns its own; cargo's fingerprints are self-consistent inside
+# it, and anything the seed built for a different source simply rebuilds.
+# Only works because `.cargo/config.toml` names the linker and cc rather
+# than pathing them (#1101): with a per-worktree path in every fingerprint,
+# the copy rebuilt everything.
+#
+# `--reflink=auto`, so a filesystem without reflinks gets a plain copy
+# (slower, still faster than a cold build); a `cp` without the flag at all
+# (macOS) fails, the partial copy is removed, and the tree starts cold,
+# which is what it did before. The sibling's `target/tmp` is never copied:
+# it is live scratch for whatever that session is running. Newest by the
+# mtime of `target/debug/deps`, which moves every time cargo finishes a
+# crate there. `--cold` and `POSTIO_CLAIM_SEED=0` opt out.
+SEEDED=""
+seed_target() { # <tree>
+    [ "$COLD" = 0 ] || return 0
+    [ "${POSTIO_CLAIM_SEED:-1}" != 0 ] || return 0
+    local candidate deps_dirs="" src started
+    for candidate in "$WORKTREES"/issue-*/target/debug "$REPO_ROOT/target/debug"; do
+        [ -d "$candidate/deps" ] || continue
+        [ "$candidate" != "$1/target/debug" ] || continue
+        deps_dirs="$deps_dirs $candidate/deps"
+    done
+    [ -n "$deps_dirs" ] || return 0
+    # shellcheck disable=SC2086 -- worktree paths carry no spaces, by construction
+    src="$(ls -td $deps_dirs 2>/dev/null | head -1)"
+    src="${src%/deps}"
+    [ -n "$src" ] || return 0
+    mkdir -p "$1/target"
+    started=$(date +%s)
+    if cp -a --reflink=auto "$src" "$1/target/debug" 2>/dev/null; then
+        SEEDED="$src ($(( $(date +%s) - started ))s)"
+    else
+        rm -rf "$1/target/debug"
+    fi
+}
 
 # The linker and C compiler `.cargo/config.toml` names are bare program
 # names, and this is what makes them resolve (#1101). Guarded: the
@@ -383,6 +469,7 @@ while IFS=$'\t' read -r NUM TITLE; do
         git -C "$TREE" checkout --quiet -b "$BRANCH" "origin/$BASE"
     else
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
+        seed_target "$TREE"
     fi
     # Recorded rather than retyped. `issue-land.sh` reads this back, so a
     # session that claimed from an initiative branch lands onto it without
@@ -405,8 +492,10 @@ while IFS=$'\t' read -r NUM TITLE; do
     echo "  branch: $BRANCH"
     if [ "$REUSE" = 1 ]; then
         echo "  target: reused, already warm (moved from $REUSE_TREE)"
+    elif [ -n "$SEEDED" ]; then
+        echo "  target: seeded by copy from $SEEDED; only what differs rebuilds"
     else
-        echo "  target: this worktree's own (deps come from the machine-wide sccache, wired in automatically)"
+        echo "  target: cold -- nothing to seed from (deps come from the machine-wide sccache)"
     fi
     echo
     echo "Work in that directory from here on:  cd $TREE"
