@@ -84,7 +84,14 @@ if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
     fi
     exit 1
 fi
+# The REST field PATCH sets is `allow_auto_merge`; `gh repo view --json` has
+# no field for it at all (#1136), so a script asking there gets an error
+# and an empty answer, and takes the watching path for ever.
 if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+    echo "Unknown JSON field: \"autoMergeAllowed\"" >&2
+    exit 1
+fi
+if [ "$1" = "api" ] && printf '%s' "$*" | grep -q 'allow_auto_merge'; then
     echo "true"
     exit 0
 fi

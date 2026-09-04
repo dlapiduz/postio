@@ -754,7 +754,11 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 # found afterwards: the next claim lists the caller's red PRs, /steward
 # sweeps them, and `issue-claim.sh --resume <n>` comes back to the branch.
 # GitHub deletes the head branch on merge; until then it is the PR.
-AUTO_MERGE_ALLOWED=$(gh repo view --json autoMergeAllowed --jq .autoMergeAllowed 2>/dev/null || true)
+# The REST field, not `gh repo view --json`: that command has no field for
+# auto-merge at all, and asking it for one is an error whose empty answer
+# reads as "no" -- which is how the first landing after #1107 quietly took
+# the watching path (#1136).
+AUTO_MERGE_ALLOWED=$(gh api "repos/{owner}/{repo}" --jq .allow_auto_merge 2>/dev/null || true)
 if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
     echo
     echo "--- auto-merge ---"
