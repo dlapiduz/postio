@@ -189,6 +189,26 @@ subject:invoice -in:archive
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
 `is:read` `is:flagged` `before:` `after:` `larger:` `smaller:` `account:`
+`group:` `header:`
+
+`header:` reaches any RFC 5322 field the envelope does not carry:
+`header:x-mailer` asks whether a message has that field at all,
+`header:x-mailer=mutt` whether its value contains `mutt`, and
+`header:x-mailer=` — the instant after the `=` is typed — means presence
+rather than an error. The name is matched exactly and case-insensitively, so
+`header:x-mail` does not find `X-Mailer`; the value is matched as a
+case-insensitive substring, like `from:` and `subject:`. `=` rather than a
+second colon, split at the first one, so `header:authentication-results=spf=pass`
+asks what it looks like it asks.
+
+It answers over indexed mail, exactly as `body:` will: headers arrive with the
+body, so a message whose body has not been fetched yet is not a hit — not a
+message that lacks the field ([ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md)).
+Every header is indexed, with no list of names: a curated list is maintained
+forever, lies about every name off it, and converges on one provider's own
+vocabulary, which §3 is most explicit about. A header that must be matchable
+*before* the body arrives earns an operator of its own instead — `list:` is
+one that was.
 
 `account:` names an account by the name it shows in the sidebar or by its
 address, and composes with everything else — `account:work is:unread` is one

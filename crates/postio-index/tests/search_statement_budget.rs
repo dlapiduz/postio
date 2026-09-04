@@ -28,6 +28,14 @@
 //! The count of application statements does not move. It is four here — for a
 //! query matching one message, for one matching 2,500, and for a page four
 //! times wider.
+//!
+//! `header:` is measured separately and against itself, because it is the one
+//! operator that is not an FTS `MATCH`: ADR 0025 Q2 compiles it to a
+//! correlated `EXISTS` over `message_headers`, which is a different *plan*
+//! from every other operator and therefore not comparable to one. What has to
+//! hold is the same property — that a `header:` matching the whole mailbox
+//! costs no more statements than one matching a single message, and that a
+//! wider page costs no more either.
 
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
@@ -65,6 +73,14 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
         message.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
         message.subject = Some(format!("quarterly report {nth}"));
         messages.create(&mut message).expect("create message");
+        // One header block per message, the same shape: `X-Mailer` on all of
+        // them so `header:x-mailer=mutt` matches everything, and the number
+        // in the value so one query can pick out a single message.
+        let headers: postio_model::Headers = [("X-Mailer", format!("Mutt 1.5.24 build {nth}"))]
+            .into_iter()
+            .collect();
+        postio_index::index::index_headers(&connection, message.id.get(), &headers)
+            .expect("index headers");
     }
 
     let broad_query = parse("quarterly", today());
@@ -131,6 +147,46 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
         broad.statements + 1,
         "adding a query to the counted block did not change the count, so the \
          equalities either side of this are not measuring what they claim"
+    );
+
+    // ADR 0025's new join. `header:` narrows on `message_headers.name` inside
+    // a correlated `EXISTS`, which is a plan no other operator produces — so
+    // it gets its own pair rather than being compared against the FTS ones.
+    // A `header:` that matches the whole mailbox must cost what one matching
+    // a single message costs; anything else is a per-match read on a path
+    // that returns identical results either way.
+    let header_broad_query = parse("header:x-mailer=mutt", today());
+    let header_narrow_query = parse(
+        &format!("header:x-mailer=\"build {}\"", MATCHES - 1),
+        today(),
+    );
+    let (header_broad, header_broad_hits) = run(&header_broad_query, 25);
+    let (header_narrow, header_narrow_hits) = run(&header_narrow_query, 25);
+
+    assert_eq!(
+        header_broad_hits, 25,
+        "`header:x-mailer=mutt` is on every message, so it should fill a page"
+    );
+    assert_eq!(
+        header_narrow_hits, 1,
+        "and the numbered value should pick out exactly one"
+    );
+    assert_eq!(
+        header_broad.statements, header_narrow.statements,
+        "a `header:` matching {MATCHES} messages issued {} statements where \
+         one matching {header_narrow_hits} issued {}. The EXISTS is correlated \
+         to the outer message, so a plan that lost `idx_message_headers_name` \
+         would read the whole table per row and return the same results.",
+        header_broad.statements, header_narrow.statements
+    );
+
+    let (header_wide, header_wide_hits) = run(&header_broad_query, 100);
+    assert_eq!(header_wide_hits, 100, "a page of 100 should come back full");
+    assert_eq!(
+        header_wide.statements, header_broad.statements,
+        "showing {header_wide_hits} `header:` hits issued {} statements where \
+         {header_broad_hits} issued {}: a query per hit.",
+        header_wide.statements, header_broad.statements
     );
 
     // The other shape an N+1 takes: per *hit* rather than per match. A wider

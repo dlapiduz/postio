@@ -233,6 +233,10 @@ const CASES: &[(&str, fn())] = &[
         search_index::opening_the_window_indexes_local_bodies_without_being_asked as fn(),
     ),
     (
+        "search_index::opening_the_window_indexes_local_headers_without_being_asked",
+        search_index::opening_the_window_indexes_local_headers_without_being_asked as fn(),
+    ),
+    (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
         egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable as fn(),
     ),
