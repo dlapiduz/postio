@@ -181,7 +181,13 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
         wiring.runtime.clone(),
         Default::default(),
     );
-    commands::drain(&window, &feeds, hub.subscribe("window"), notifier);
+    commands::drain(
+        &window,
+        &feeds,
+        hub.subscribe("window"),
+        notifier,
+        state.clone(),
+    );
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() == 2),

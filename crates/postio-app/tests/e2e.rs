@@ -183,7 +183,13 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let feeds = feed_the_window(&window, &wiring)
         .expect("the store has an account")
         .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+    commands::install(
+        &window,
+        &feeds,
+        state.clone(),
+        wiring.commands.clone(),
+        wired,
+    );
     // Both event queues drain into the window, exactly as `open_account`
     // drains them — without this the engine can sync the world and the list
     // never hears about it, which is itself a postio-bl2-shaped wiring hole
@@ -194,8 +200,14 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         wiring.runtime.clone(),
         Default::default(),
     );
-    commands::drain(&window, &feeds, engine_events, notifier.clone());
-    commands::drain(&window, &feeds, replies, notifier);
+    commands::drain(
+        &window,
+        &feeds,
+        engine_events,
+        notifier.clone(),
+        state.clone(),
+    );
+    commands::drain(&window, &feeds, replies, notifier, state);
 
     // The production entry: reads the account row, builds the real connector
     // and pool, spawns the engine, starts the watch.

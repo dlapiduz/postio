@@ -7,6 +7,7 @@
 //! The `e2e*` binaries stay out on purpose: they run under the headless
 //! runner's watchdog by *name* (#272), in isolation.
 
+mod account_connection_wiring;
 mod add_account_wiring;
 mod aiming;
 mod attach_account;
@@ -89,6 +90,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    (
+        "account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate",
+        account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate
+            as fn(),
     ),
     (
         "add_account_wiring::the_add_account_key_opens_a_blank_form_over_the_running_window",

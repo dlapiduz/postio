@@ -374,7 +374,7 @@ fn open_account(
     // them — and `take`, because a second `activate` must not drain a stream
     // that is already being drained.
     if let Some(stream) = events.borrow_mut().take() {
-        commands::drain(window, &feeds, stream, notifier.clone());
+        commands::drain(window, &feeds, stream, notifier.clone(), state.clone());
     }
 }
 

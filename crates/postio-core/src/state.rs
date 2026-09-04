@@ -490,7 +490,12 @@ impl AppState {
 
     /// Move to the next scope: unified, then each account in turn, and round.
     ///
-    /// What `g a` does. Cycling rather than a menu because the set is small
+    /// The rule `g a` cycles by, spelled once so a frontend can share it —
+    /// today's GTK frontend does not: `postio_gtk::sidebar::Sidebar::select_next_scope`
+    /// walks the strip's own rows directly and never reaches this (#974), so
+    /// this has no production caller. It is kept, tested and correct for
+    /// whichever caller closes that gap, rather than deleted for being
+    /// unreached today. Cycling rather than a menu because the set is small
     /// and ordered, and because a keystroke has no argument to name a scope
     /// with — the sidebar's rows are the surface for going somewhere
     /// directly.
