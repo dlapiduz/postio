@@ -24,7 +24,10 @@ use io_imap::types::flag::FlagNameAttribute;
 use io_imap::types::mailbox::{ListMailbox, Mailbox};
 use postio_model::MailboxRole;
 
-use crate::backend::{BackendError, BackendResult, MailboxFilter, MailboxSummary, resolve_roles};
+use crate::backend::{
+    BackendError, BackendResult, MailboxFilter, MailboxSummary, resolve_roles_with_known_names,
+};
+use crate::discovery::preset_for_imap_host;
 
 use super::{ConnectionPool, Dispatch, ImapSession, ListingStrategy, Priority};
 
@@ -61,7 +64,7 @@ pub async fn list_mailboxes(
         );
     })
     .inspect_err(|error| tracing::warn!(%error, "cannot list the server's folders"))
-    .map(|mailboxes| finish(mailboxes, filter))
+    .map(|mailboxes| finish(mailboxes, filter, &pool.settings().host))
 }
 
 /// Issues the listing commands against one open session.
@@ -116,11 +119,23 @@ async fn list_with(
 
 /// Applies the filter, settles contested roles, and puts the listing in a
 /// stable order.
-fn finish(mut mailboxes: Vec<MailboxSummary>, filter: &MailboxFilter) -> Vec<MailboxSummary> {
+///
+/// `host` is the server this listing came from -- `pool.settings().host`,
+/// never a domain re-derived from the address -- so a role tie-break can ask
+/// which provider's own folder names apply (#959), the same host the
+/// account is already connected to rather than a fresh discovery lookup.
+fn finish(
+    mut mailboxes: Vec<MailboxSummary>,
+    filter: &MailboxFilter,
+    host: &str,
+) -> Vec<MailboxSummary> {
     if filter.subscribed_only {
         mailboxes.retain(|mailbox| mailbox.subscribed);
     }
-    resolve_roles(&mut mailboxes);
+    let known_names = preset_for_imap_host(host)
+        .map(|preset| preset.role_names())
+        .unwrap_or_default();
+    resolve_roles_with_known_names(&mut mailboxes, &known_names);
     sort_listing(&mut mailboxes);
     mailboxes
 }
@@ -169,6 +184,7 @@ fn list_pattern(pattern: &str) -> BackendResult<ListMailbox<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn summary(path: &str, attributes: &[&str]) -> MailboxSummary {
         MailboxSummary::new(path, Some('/'), attributes.iter().copied())
@@ -189,7 +205,7 @@ mod tests {
             summary("INBOX", &[]),
         ];
 
-        resolve_roles(&mut mailboxes);
+        resolve_roles_with_known_names(&mut mailboxes, &BTreeMap::new());
 
         assert_eq!(
             roles(&mailboxes),
@@ -210,7 +226,7 @@ mod tests {
             summary("[Gmail]/All Mail", &["\\Archive"]),
         ];
 
-        resolve_roles(&mut mailboxes);
+        resolve_roles_with_known_names(&mut mailboxes, &BTreeMap::new());
 
         assert_eq!(
             roles(&mailboxes),
@@ -226,8 +242,8 @@ mod tests {
         let mut first = vec![summary("Junk", &[]), summary("Spam", &[])];
         let mut reversed = vec![summary("Spam", &[]), summary("Junk", &[])];
 
-        resolve_roles(&mut first);
-        resolve_roles(&mut reversed);
+        resolve_roles_with_known_names(&mut first, &BTreeMap::new());
+        resolve_roles_with_known_names(&mut reversed, &BTreeMap::new());
 
         let junk = |mailboxes: &[MailboxSummary]| {
             mailboxes
@@ -240,10 +256,75 @@ mod tests {
     }
 
     #[test]
+    fn a_known_provider_name_wins_the_tie_the_alphabet_would_otherwise_win() {
+        // iCloud's own account (#501, #943): `Sent` sorts before
+        // `Sent Messages`, so the alphabet alone hands the role to the
+        // look-alike another client left behind. The provider's own name
+        // settles it instead.
+        let mut mailboxes = vec![summary("Sent", &[]), summary("Sent Messages", &[])];
+        let known_names = BTreeMap::from([(MailboxRole::Sent, "Sent Messages".to_owned())]);
+
+        resolve_roles_with_known_names(&mut mailboxes, &known_names);
+
+        assert_eq!(
+            roles(&mailboxes),
+            [
+                ("Sent", MailboxRole::Regular),
+                ("Sent Messages", MailboxRole::Sent),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_known_name_absent_from_the_listing_falls_back_to_todays_behaviour() {
+        // The preset expects "Archives" and the server never lists one --
+        // nothing here should suppress the role, only decline to help
+        // settle it. #959's third acceptance criterion.
+        let mut with_hint = vec![summary("Archive", &[]), summary("Nested/Archive", &[])];
+        let mut without_hint = with_hint.clone();
+        let known_names = BTreeMap::from([(MailboxRole::Archive, "Archives".to_owned())]);
+
+        resolve_roles_with_known_names(&mut with_hint, &known_names);
+        resolve_roles_with_known_names(&mut without_hint, &BTreeMap::new());
+
+        assert_eq!(roles(&with_hint), roles(&without_hint));
+        assert_eq!(
+            roles(&with_hint),
+            [
+                ("Archive", MailboxRole::Archive),
+                ("Nested/Archive", MailboxRole::Regular),
+            ],
+            "the shallowest match should still win when the known name matched nothing"
+        );
+    }
+
+    #[test]
+    fn a_server_declared_role_still_beats_a_known_name() {
+        // The server's own SPECIAL-USE is still the first word, even over a
+        // folder that happens to be spelled exactly like the preset's own
+        // name for a different, plainly-named folder.
+        let mut mailboxes = vec![
+            summary("Sent Messages", &[]),
+            summary("[Gmail]/Sent Mail", &["\\Sent"]),
+        ];
+        let known_names = BTreeMap::from([(MailboxRole::Sent, "Sent Messages".to_owned())]);
+
+        resolve_roles_with_known_names(&mut mailboxes, &known_names);
+
+        assert_eq!(
+            roles(&mailboxes),
+            [
+                ("Sent Messages", MailboxRole::Regular),
+                ("[Gmail]/Sent Mail", MailboxRole::Sent),
+            ]
+        );
+    }
+
+    #[test]
     fn the_inbox_is_never_contested() {
         let mut mailboxes = vec![summary("INBOX", &[]), summary("INBOX/Sub", &[])];
 
-        resolve_roles(&mut mailboxes);
+        resolve_roles_with_known_names(&mut mailboxes, &BTreeMap::new());
 
         assert_eq!(mailboxes[0].role, MailboxRole::Inbox);
     }

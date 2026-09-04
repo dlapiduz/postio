@@ -83,6 +83,18 @@ pub struct ProviderRow {
     pub backend: Vec<String>,
     #[serde(default)]
     pub jmap: Option<JmapRow>,
+    /// `[provider.<id>.mailboxes]` -- role to this provider's own folder
+    /// name, read the same shape a user's `[mailboxes]` writes (#959).
+    ///
+    /// For a provider whose server advertises no RFC 6154 `SPECIAL-USE`, so
+    /// a role can only ever be guessed from a name: when the guess is
+    /// contested by a look-alike another client created, the provider's own
+    /// name here wins the tie the alphabet would otherwise decide. Empty for
+    /// a provider whose folders are unambiguous today -- there is nothing to
+    /// disambiguate until a real account demonstrates the look-alike, the
+    /// way iCloud's did (#501, #943).
+    #[serde(default)]
+    pub mailboxes: BTreeMap<String, String>,
 }
 
 /// Every row that predates #545, and most rows after it.
@@ -296,6 +308,7 @@ mod tests {
             oauth: None,
             backend: default_backend(),
             jmap: None,
+            mailboxes: BTreeMap::new(),
         }
     }
 
@@ -321,6 +334,42 @@ mod tests {
         assert_eq!(row.domains, ["example.com"]);
         assert_eq!(row.imap_port, 993);
         assert!(parsed.stripped_secrets.is_empty());
+        assert!(
+            row.mailboxes.is_empty(),
+            "a row that names no [mailboxes] table should not invent one"
+        );
+    }
+
+    #[test]
+    fn a_mailboxes_table_names_the_providers_own_folders() {
+        let parsed = parse(
+            r#"
+            [provider.test]
+            display_name = "Test"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["app-password"]
+
+            [provider.test.mailboxes]
+            sent = "Sent Messages"
+            trash = "Deleted Messages"
+            "#,
+        )
+        .expect("a [mailboxes] table should parse");
+        let row = &parsed.rows["test"];
+        assert_eq!(
+            row.mailboxes.get("sent").map(String::as_str),
+            Some("Sent Messages")
+        );
+        assert_eq!(
+            row.mailboxes.get("trash").map(String::as_str),
+            Some("Deleted Messages")
+        );
     }
 
     #[test]
