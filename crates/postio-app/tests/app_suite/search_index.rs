@@ -280,3 +280,114 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
 
     bridge.shutdown();
 }
+
+/// Land a header block for `id`, the way a settled backfill leaves one, and
+/// leave the header *index* alone — which is the state every store is in
+/// before the catch-up pass reaches it (ADR 0025 Q5).
+fn give_header_block(database: &Database, id: MessageId, block: &str) {
+    let connection = database.connection().expect("a connection");
+    let stored = StoredBody {
+        text: Some("a body, so the row looks fetched".to_owned()),
+        html: None,
+        headers: Some(block.to_owned()),
+        headers_truncated: false,
+        encoding_problems: false,
+    };
+    MessageRepository::new(&connection)
+        .set_body(id, &stored, BodyState::Full)
+        .expect("store the block");
+}
+
+/// `header:` answers over mail that was already on this machine — without
+/// anybody asking for it.
+///
+/// The same question `opening_the_window_indexes_local_bodies_without_being_asked`
+/// asks, for ADR 0025's index. `message_headers` is derived from
+/// `messages.body_headers`, so on every store that exists there is a
+/// mailbox's worth of blocks with no rows, and `header:x-mailer=mutt` answers
+/// "no such mail" until something fills them. `index_local_headers` is that
+/// something, and a pass only a test ever runs would be the fifth capability
+/// in this repository built, tested and wired to nothing.
+///
+/// So: no call to `index_local_headers` here. A store with a stored block,
+/// the same `feed_the_window` the binary calls, and then wait for the
+/// operator to start answering.
+///
+/// Nothing here touches the network — `start_syncing` is the half that opens
+/// a socket and this never calls it.
+pub fn opening_the_window_indexes_local_headers_without_being_asked() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let database = test_support::memory();
+    let report = seed_small(&database, 37);
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    let target = all_messages(&database)[0];
+    // A field no envelope column carries and no fixture in the corpus has,
+    // so nothing but `message_headers` could answer for it.
+    give_header_block(
+        &database,
+        target,
+        "X-Mailer: Photogrammetry 4.2\r\nContent-Type: text/plain; charset=utf-8",
+    );
+    ensure_search_index(&database).expect("the index is part of opening the store");
+    assert!(
+        hits(
+            &database,
+            report.account.id,
+            "header:x-mailer=photogrammetry"
+        )
+        .is_empty(),
+        "the block is stored and unindexed, so this cannot be measuring the wiring"
+    );
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    );
+
+    let window = Window::default();
+    window.present();
+    while glib::MainContext::default().iteration(false) {}
+
+    // ── the same call `run` makes, and nothing else ──────────────────────
+    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+
+    postio_test_support::settle_until(
+        "a stored header block to become findable with header:",
+        || {
+            while glib::MainContext::default().iteration(false) {}
+        },
+        || {
+            hits(
+                &database,
+                report.account.id,
+                "header:x-mailer=photogrammetry",
+            )
+            .contains(&target)
+        },
+    );
+
+    // Presence and value are two different questions, and both have to reach
+    // the running application -- `header:x-mailer` alone is the half a
+    // half-typed query asks.
+    assert!(
+        hits(&database, report.account.id, "header:x-mailer").contains(&target),
+        "presence is answerable too, not only a value match"
+    );
+
+    bridge.shutdown();
+}
