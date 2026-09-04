@@ -30,6 +30,57 @@
 # machinery's. See the rebase step below and #160.
 set -euo pipefail
 
+# # Which runner the integration gates use
+#
+# `cargo nextest` gives every test its own process and runs test *binaries*
+# concurrently, where `cargo test` runs them one after another. With 140
+# binaries that is most of the cost: measured on this workspace, sccache off,
+# idle box, `app_suite` goes 200s -> 20.4s and the whole workspace ~500s ->
+# 118.6s.
+#
+# It is **not** faster at everything, and the difference decides where it is
+# used here. A process per test is a process per test: the unit tier's ~1,459
+# small tests become 1,459 spawns where `cargo test` runs them on threads
+# inside ~19 binaries. Interleaved on a warm tree, `--workspace --lib`:
+#
+#     cargo test   4511ms  4648ms  4988ms
+#     nextest      9311ms 11260ms 10700ms     <- 2.2x slower
+#
+# So: nextest for the integration tiers, `cargo test` for `--lib`. Same reason
+# `scripts/test-fast.sh` and `scripts/test-sanity.sh` were left alone -- they
+# are the between-edits loop, and switching them would be a tidy-looking
+# regression.
+#
+# Fail open, like the wrappers in `.cargo/config.toml`: a machine without
+# nextest runs `cargo test` and gets the same answer, slower.
+#
+# Defined here rather than sourced from `lib/`: `issue-land.sh` is the only
+# caller, and the self-tests under `scripts/tests/` copy this file into a
+# sandbox on its own -- a `source` line makes every one of them fail on a
+# missing path rather than on anything they are testing.
+if cargo nextest --version >/dev/null 2>&1; then
+    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-nextest}"
+else
+    POSTIO_TEST_RUNNER="${POSTIO_TEST_RUNNER:-cargo}"
+fi
+
+# Takes `cargo test` syntax; the selectors used here mean the same to both.
+run_tests() {
+    if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
+        cargo nextest run "$@"
+    else
+        cargo test "$@"
+    fi
+}
+
+# Always `cargo test`: **nextest does not run doctests**, and does not say so.
+# A doctest is compiled and run by rustdoc, not by a test binary it can list,
+# so anything moving off `cargo test` has to ask for them by name or ~20 of
+# them stop running with nothing to report it.
+run_doctests() {
+    cargo test --doc "$@"
+}
+
 TREE=$(git rev-parse --show-toplevel)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # How many times one landing may hand over to a rebased copy of itself before
@@ -286,12 +337,25 @@ if [ "$GATES_GREEN" != 1 ]; then
             # Headless without asking: .cargo/config.toml's runner puts every
             # test binary on a compositor of its own.
             PHASE_START=$(date +%s)
-            cargo test -p "$crate"
+            run_tests -p "$crate"
+            # `cargo test -p X` used to cover doctests as a side effect. The
+            # nextest path does not run them at all, so they are asked for by
+            # name rather than quietly dropped.
+            run_doctests -p "$crate"
             echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
         done
     else
         echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
         PHASE_START=$(date +%s)
+        # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
+        # small unit tests, and a process per test costs more than it saves
+        # there -- measured 4.5s here against nextest's 9.3s on a warm tree
+        # (scripts/lib/test-runner.sh has the numbers). nextest earns its
+        # keep on the integration suites above, where 140 binaries are the
+        # bottleneck rather than the tests inside them.
+        #
+        # `--lib` excludes doctests under either runner, so this tier loses
+        # nothing by not calling run_doctests.
         cargo test --workspace --lib
         echo "[timing] sanity tier: $(( $(date +%s) - PHASE_START ))s"
     fi
@@ -353,7 +417,8 @@ if [ "$GATES_GREEN" != 1 ]; then
            | grep -qE '^[+-].*crates/'; then
             echo "--- workspace tests: this branch changes the members list ---"
             PHASE_START=$(date +%s)
-            cargo test --workspace
+            run_tests --workspace
+            run_doctests --workspace
             echo "[timing] workspace tests: $(( $(date +%s) - PHASE_START ))s"
         fi
     fi
