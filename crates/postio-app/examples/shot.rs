@@ -348,6 +348,55 @@ fn show_settings(window: &Window) {
     window.open_settings();
 }
 
+/// The account detail view's Mailboxes group (#966), open on an account
+/// whose server has the shape that started all this: its own `Sent Messages`
+/// beside a `Sent` another client made, an Archive the user has pointed by
+/// hand, and a Junk folder the server no longer lists.
+///
+/// Hand-fed rather than seeded, for `show_account_weights`' reason: the three
+/// states a row can be in -- automatic, chosen, and pointing at a folder that
+/// has gone -- do not occur together in any one real account, and looking at
+/// them side by side is the whole point of rendering this.
+fn show_account_mailboxes(window: &Window) {
+    use postio_gtk::settings::AccountMailboxes;
+    use postio_model::MailboxRole;
+
+    let mut account = postio_model::Account::new(
+        "Ada Lovelace",
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    account.id = AccountId::new(1);
+    account.enabled = true;
+
+    let panel = window.settings();
+    panel.set_accounts(vec![account]);
+    panel.set_account_mailboxes(vec![(
+        AccountId::new(1),
+        AccountMailboxes {
+            folders: vec![
+                "INBOX".to_owned(),
+                "Archive".to_owned(),
+                "Deleted Messages".to_owned(),
+                "Drafts".to_owned(),
+                "Sent".to_owned(),
+                "Sent Messages".to_owned(),
+            ],
+            chosen: vec![
+                (MailboxRole::Archive, "Archive".to_owned()),
+                (MailboxRole::Junk, "Posta indesiderata".to_owned()),
+            ],
+            resolved: vec![
+                (MailboxRole::Sent, "Sent".to_owned()),
+                (MailboxRole::Archive, "Archive".to_owned()),
+                (MailboxRole::Drafts, "Drafts".to_owned()),
+                (MailboxRole::Trash, "Deleted Messages".to_owned()),
+            ],
+        },
+    )]);
+    window.open_settings();
+    panel.open_account_detail(AccountId::new(1));
+}
+
 /// Three account rows, to look at what #411 put under the names.
 ///
 /// **A layout check, not a wiring check.** `demo settings` draws one row and
@@ -516,6 +565,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "syncing",
     "settings",
     "weights",
+    "mailboxes",
     "compose",
     "detached",
     "selected",
@@ -762,6 +812,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("weights") {
         show_account_weights(&window);
+    }
+    if flag("mailboxes") {
+        show_account_mailboxes(&window);
     }
     if flag("compose") {
         show_composer(&window);

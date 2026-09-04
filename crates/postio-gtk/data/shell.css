@@ -1531,6 +1531,19 @@ button.postio-settings-revert:hover {
   background-color: var(--postio-hover-bg);
 }
 
+/* A group heading inside the account detail view (#966).
+
+   The one place that view has a heading, and without a rule it renders
+   identically to the field labels beneath it -- so "Mailbox roles" read as a
+   sixth field rather than as the name of the five that follow. The condensed
+   face is what every other heading in this application uses, and secondary
+   ink keeps it under the account's own name rather than competing with it. */
+.postio-settings-account-detail-group {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  color: var(--postio-ink-secondary);
+}
+
 /* ── The composer (canvas 2a) ─────────────────────────────────────────
    Compose takes over the reading pane, so it has to read as a different
    plane from the message it replaced: `--postio-surface` rather than

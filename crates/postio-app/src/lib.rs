@@ -557,7 +557,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     export::install(window, wiring);
 
     // The settings panel's account rows: enable/disable, remove-with-undo.
-    settings_accounts::install(window, wiring);
+    settings_accounts::install(window, wiring, &feeds);
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
 
