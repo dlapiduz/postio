@@ -62,13 +62,12 @@ impl KeycapButton {
             button.add_css_class("postio-ghost");
         }
 
-        let this = Self {
+        Self {
             button,
             hint,
             command,
             handlers: RefCell::new(Vec::new()),
-        };
-        this
+        }
     }
 
     /// The widget to place in a bar.
@@ -148,10 +147,10 @@ impl KeycapButton {
     /// runs a verb does not change because the verb was renamed for one
     /// message.
     pub fn set_label(&self, label: &str) {
-        if let Some(content) = self.button.child().and_downcast::<gtk::Box>() {
-            if let Some(text) = content.first_child().and_downcast::<gtk::Label>() {
-                text.set_label(label);
-            }
+        if let Some(content) = self.button.child().and_downcast::<gtk::Box>()
+            && let Some(text) = content.first_child().and_downcast::<gtk::Label>()
+        {
+            text.set_label(label);
         }
         self.button
             .update_property(&[gtk::accessible::Property::Label(label)]);
