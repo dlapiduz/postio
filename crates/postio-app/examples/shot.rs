@@ -385,7 +385,7 @@ fn show_settings(window: &Window) {
 /// would dial a real server, and a shot must not. What there is to look at is
 /// the row's *shape*, which has to read as the server having said no rather
 /// than as Postio being broken, in dark and high contrast too.
-fn show_account_detail(window: &Window, tested: bool) {
+fn show_account_detail(window: &Window, tested: bool, signature: bool) {
     let mut account = postio_model::Account::new(
         "Ada Lovelace",
         postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
@@ -407,6 +407,10 @@ fn show_account_detail(window: &Window, tested: bool) {
     panel.set_accounts(vec![account]);
     window.toggle_settings();
     panel.open_account_detail(AccountId::new(1));
+    if signature {
+        // The editor, on the signature the account already has (#1086).
+        panel.open_signature_editor(Some(postio_model::ids::SignatureId::new(1)));
+    }
     if tested {
         panel.set_connection_status(postio_gtk::settings::ConnectionStatus::Answered {
             incoming: Ok(()),
@@ -573,6 +577,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "weights",
     "account",
     "tested",
+    "signature",
     "compose",
     "detached",
     "selected",
@@ -884,7 +889,7 @@ fn main() -> glib::ExitCode {
         show_account_weights(&window);
     }
     if flag("account") {
-        show_account_detail(&window, flag("tested"));
+        show_account_detail(&window, flag("tested"), flag("signature"));
     }
     if flag("compose") {
         show_composer(&window);

@@ -484,6 +484,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings_account_detail::signatures_can_be_added_edited_and_deleted_from_the_detail_view",
+        gtk_settings_account_detail::signatures_can_be_added_edited_and_deleted_from_the_detail_view
+            as fn(),
+    ),
+    (
         "gtk_settings_account_detail::the_back_button_returns_to_the_account_list",
         gtk_settings_account_detail::the_back_button_returns_to_the_account_list as fn(),
     ),

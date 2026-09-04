@@ -26,10 +26,10 @@
 //! (`postio_app::reap_pending_accounts`).
 
 use gtk::glib;
-use postio_gtk::settings::{AccountAction, AccountEdit, ConnectionStatus};
+use postio_gtk::settings::{AccountAction, AccountEdit, ConnectionStatus, SignatureDraft};
 use postio_gtk::window::Window;
 use postio_runtime::AttachmentPolicy;
-use postio_storage::repository::{AccountRepository, MessageRepository};
+use postio_storage::repository::{AccountRepository, MessageRepository, SignatureRepository};
 
 use crate::Wiring;
 
@@ -79,6 +79,125 @@ pub fn install(window: &Window, wiring: &Wiring) {
         let wiring = wiring.clone();
         move |id| test_connection(&window, &wiring, id)
     });
+
+    panel.connect_signature_saved({
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move |id, draft| save_signature(&window, &wiring, id, draft)
+    });
+
+    panel.connect_signature_deleted({
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move |id, signature| delete_signature(&window, &wiring, id, signature)
+    });
+}
+
+/// Write a signature, new or edited, and show the account again (#1086).
+///
+/// Nothing in Postio created one before this: every layer under it -- the
+/// model, the store, the composer's picker, #979's default row -- existed and
+/// worked, and there was no way to become a user who had any.
+///
+/// A refused write goes back to the editor rather than to a log.
+/// `idx_signatures_name` is a unique index on `(account_id, name)`, so a
+/// second "Work" fails, and "UNIQUE constraint failed: signatures.account_id,
+/// signatures.name" is not an answer anybody can act on.
+fn save_signature(
+    window: &Window,
+    wiring: &Wiring,
+    id: postio_model::ids::AccountId,
+    draft: &SignatureDraft,
+) {
+    let Ok(connection) = wiring.database.connection() else {
+        return;
+    };
+    let signatures = SignatureRepository::new(&connection);
+    let written = match draft.id {
+        Some(existing) => {
+            let mut signature = postio_model::Signature::new(&draft.name, &draft.text);
+            signature.id = existing;
+            // The rich variant is left exactly as it was: this editor is
+            // text-only (#1086), and rewriting `html` to `None` here would
+            // quietly discard a signature somebody else's tooling wrote.
+            if let Some(previous) = existing_signature(&connection, id, existing) {
+                signature.html = previous.html;
+            }
+            signatures.update(&signature)
+        }
+        None => {
+            let mut signature = postio_model::Signature::new(&draft.name, &draft.text);
+            signatures.create(id, &mut signature).map(|_| ())
+        }
+    };
+    drop(connection);
+
+    match written {
+        Ok(()) => {
+            refresh(window, wiring);
+            // Back to the account, with the list it now belongs to.
+            window.settings().open_account_detail(id);
+        }
+        Err(error) => window
+            .settings()
+            .set_signature_error(Some(explain_signature_failure(&draft.name, &error))),
+    }
+}
+
+/// The stored signature `id` currently is, so an edit keeps the fields this
+/// editor does not show.
+fn existing_signature(
+    connection: &postio_storage::PooledConnection,
+    account: postio_model::ids::AccountId,
+    id: postio_model::ids::SignatureId,
+) -> Option<postio_model::Signature> {
+    SignatureRepository::new(connection)
+        .list_for_account(account)
+        .ok()?
+        .into_iter()
+        .find(|signature| signature.id == id)
+}
+
+/// A store refusal, as the person who typed it needs to read it.
+fn explain_signature_failure(name: &str, error: &postio_storage::Error) -> String {
+    let raw = error.to_string();
+    // The only refusal this form can produce today, and the only one worth
+    // recognising: anything else is a real fault and its own text is more
+    // use than a guess at what it meant.
+    if raw.contains("UNIQUE") || raw.contains("constraint") {
+        format!("This account already has a signature called “{name}”")
+    } else {
+        raw
+    }
+}
+
+/// Remove a signature and show the account again.
+///
+/// `accounts.default_signature_id` is `ON DELETE SET NULL`, so an account
+/// whose default this was is left consistent by the schema rather than by
+/// anything here -- `storage_suite/accounts.rs` is what holds that to
+/// account. The refresh below is what makes #979's row and the composer's
+/// picker agree with it without a restart.
+fn delete_signature(
+    window: &Window,
+    wiring: &Wiring,
+    id: postio_model::ids::AccountId,
+    signature: postio_model::ids::SignatureId,
+) {
+    let Ok(connection) = wiring.database.connection() else {
+        return;
+    };
+    let removed = SignatureRepository::new(&connection).delete(signature);
+    drop(connection);
+    match removed {
+        Ok(_) => {
+            refresh(window, wiring);
+            window.settings().open_account_detail(id);
+        }
+        Err(error) => window
+            .settings()
+            .set_signature_error(Some(error.to_string())),
+    }
 }
 
 /// Try `id`'s stored settings and put the answer on the detail view (#980).

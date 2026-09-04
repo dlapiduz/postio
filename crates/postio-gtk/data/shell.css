@@ -1553,6 +1553,49 @@ button.postio-settings-revert:hover {
 }
 
 
+/* The account's signatures (#1086). Rows rather than bare text: each one
+   opens an editor, so it has to look like something you can press. */
+.postio-settings-signature-list {
+  background-color: transparent;
+}
+
+.postio-settings-signature-list row {
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-settings-signature-list row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-row {
+  padding: var(--postio-space-2) var(--postio-space-3);
+}
+
+/* The body. A framed field like the Name entry above it: without this it is
+   text on the ground, and nothing says it can be typed into. */
+.postio-settings-signature-text {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-text text {
+  background-color: transparent;
+}
+
+/* Why a signature would not save -- a name already taken, so far. The
+   accent's warning cousin, like every other refusal in this app: nothing has
+   gone wrong, the store said no. */
+.postio-settings-signature-error {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+  font-size: 0.8864rem;
+}
+
 /* What the last connection test found (#980). Under the servers it is about,
    because the result is something you read, compare against the fields above,
    and then edit -- a toast would take it away before either. */

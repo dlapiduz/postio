@@ -14,10 +14,10 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::settings::{AccountEdit, ConnectionStatus, SettingsPanel};
+use postio_gtk::settings::{AccountEdit, ConnectionStatus, SettingsPanel, SignatureDraft};
 use postio_gtk::{fonts, style};
 use postio_model::account::{ServerConfig, TransportSecurity};
-use postio_model::ids::AccountId;
+use postio_model::ids::{AccountId, SignatureId};
 use postio_model::{Account, EmailAddress};
 
 fn an_account(id: i64, name: &str, address: &str) -> Account {
@@ -510,6 +510,121 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
          {settled:?}"
     );
     assert!(!settled.is_empty());
+
+    window.destroy();
+}
+
+// ---------------------------------------------------------------------------
+// Signatures (#1086)
+// ---------------------------------------------------------------------------
+
+pub fn signatures_can_be_added_edited_and_deleted_from_the_detail_view() {
+    // Everything downstream of a signature already worked -- the model, the
+    // store, the composer's picker, #979's default row -- and nothing could
+    // make one. This is the way in, so what it has to prove is that each
+    // gesture *reports* the right thing: the panel writes nothing itself,
+    // exactly as it writes no account edit itself.
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    let saved: Rc<RefCell<Vec<(AccountId, SignatureDraft)>>> = Rc::new(RefCell::new(Vec::new()));
+    let deleted: Rc<RefCell<Vec<(AccountId, SignatureId)>>> = Rc::new(RefCell::new(Vec::new()));
+    panel.connect_signature_saved({
+        let saved = saved.clone();
+        move |account, draft| saved.borrow_mut().push((account, draft.clone()))
+    });
+    panel.connect_signature_deleted({
+        let deleted = deleted.clone();
+        move |account, id| deleted.borrow_mut().push((account, id))
+    });
+
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    // ── an account with none offers a way to make one ────────────────────
+    assert!(
+        panel.test_press_add_signature(),
+        "an account with no signatures has no way to get one, which is the \
+         whole of #1086"
+    );
+    pump();
+    panel.test_type_signature("Work", "— Ada\nAnalytical Engines");
+    assert!(panel.test_press_save_signature());
+    pump();
+
+    assert_eq!(saved.borrow().len(), 1, "the save was not reported");
+    let (account, draft) = saved.borrow()[0].clone();
+    assert_eq!(account, AccountId::new(1));
+    assert_eq!(
+        draft.id, None,
+        "a new signature has no id yet: the store assigns it"
+    );
+    assert_eq!(draft.name, "Work");
+    assert!(draft.text.contains("Analytical Engines"));
+
+    // ── a name already taken says so, and keeps what was typed ───────────
+    //
+    // `idx_signatures_name` refuses it, and a raw SQLite error is not an
+    // answer anybody can act on. The app reports the conflict; the editor
+    // has to stay open on the words that caused it.
+    panel.set_signature_error(Some("A signature called “Work” already exists".to_owned()));
+    pump();
+    assert!(
+        panel.test_signature_error_text().contains("already exists"),
+        "the conflict has to be visible: {:?}",
+        panel.test_signature_error_text()
+    );
+    assert_eq!(
+        panel.test_signature_name(),
+        "Work",
+        "the editor threw away what was typed, so the fix means retyping it"
+    );
+
+    // ── an existing one opens for editing, and reports its id ────────────
+    let mut account_with_one = an_account(1, "Ada", "ada@example.com");
+    let mut work = postio_model::Signature::new("Work", "— Ada");
+    work.id = SignatureId::new(7);
+    account_with_one.signatures = vec![work];
+    panel.set_accounts(vec![account_with_one]);
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+
+    assert!(
+        panel.test_open_signature(SignatureId::new(7)),
+        "the detail view does not list the account's signatures"
+    );
+    pump();
+    assert_eq!(
+        panel.test_signature_name(),
+        "Work",
+        "the editor opened empty"
+    );
+    panel.test_type_signature("Work weekly", "— Ada");
+    assert!(panel.test_press_save_signature());
+    pump();
+
+    let (_, draft) = saved.borrow().last().cloned().expect("a second save");
+    assert_eq!(
+        draft.id,
+        Some(SignatureId::new(7)),
+        "editing reported a *new* signature, so saving would make a second one"
+    );
+    assert_eq!(draft.name, "Work weekly");
+
+    // ── and it can be deleted ────────────────────────────────────────────
+    panel.open_account_detail(AccountId::new(1));
+    pump();
+    assert!(panel.test_open_signature(SignatureId::new(7)));
+    pump();
+    assert!(
+        panel.test_press_delete_signature(),
+        "a list that can only grow is its own bug report"
+    );
+    pump();
+    assert_eq!(
+        *deleted.borrow(),
+        vec![(AccountId::new(1), SignatureId::new(7))]
+    );
 
     window.destroy();
 }
