@@ -76,7 +76,7 @@ use postio_config::{
     Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui,
 };
 use postio_core::CommandId;
-use postio_model::{Account, AccountId};
+use postio_model::{Account, AccountId, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
 
@@ -502,6 +502,19 @@ mod imp {
         /// path rather than hardcoding [`crate::reader::RemoteImageAllowList::path`]:
         /// a test needs a scratch path, not the real state directory.
         pub remote_image_allowlist: RefCell<Option<(crate::reader::RemoteImageAllowList, PathBuf)>>,
+        /// One row per past one-click-unsubscribe activation (#971), newest
+        /// first — the log itself, not something this pane can act on: it is
+        /// read-only history, unlike `privacy_list`'s revocable exceptions.
+        pub unsubscribe_list: gtk::ListBox,
+        /// Hidden entirely when nothing has ever been activated.
+        pub unsubscribe_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `unsubscribe_scroller` when the log is empty —
+        /// same "empty is never blank" rule `privacy_empty` follows.
+        pub unsubscribe_empty: gtk::Label,
+        /// What `redraw_unsubscribe_activations` last drew — handed in by
+        /// `window.rs`, the same reason `remote_image_allowlist` is handed
+        /// in rather than read here: `postio-gtk` has no SQL of its own.
+        pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
         /// One row per registered command (#881), always present — the same
         /// no-empty-state shape `sync_box`/`ui_box` use, since the registry
         /// is never empty. Scrolled rather than a bare list, unlike those
@@ -570,6 +583,10 @@ mod imp {
                     "No senders are always allowed to load remote images.",
                 )),
                 remote_image_allowlist: RefCell::new(None),
+                unsubscribe_list: gtk::ListBox::new(),
+                unsubscribe_scroller: gtk::ScrolledWindow::new(),
+                unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
+                unsubscribe_activations: RefCell::new(Vec::new()),
                 keys_list: gtk::ListBox::new(),
                 keys_scroller: gtk::ScrolledWindow::new(),
                 capturing: RefCell::new(None),
@@ -967,6 +984,65 @@ impl SettingsPanel {
         row.set_child(Some(&box_));
         row.update_property(&[gtk::accessible::Property::Label(&format!(
             "{sender}, always allowed to load remote images"
+        ))]);
+        row
+    }
+
+    /// Hands the panel the current account's unsubscribe-activation log
+    /// (#971), newest first — `window.rs` reads it fresh from
+    /// [`postio_storage::repository::UnsubscribeRepository`] every time the
+    /// pane opens, the same reason [`SettingsPanel::set_remote_image_allowlist`]
+    /// is handed its list rather than reading one itself: `postio-gtk` has
+    /// no SQL of its own.
+    pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
+        *self.imp().unsubscribe_activations.borrow_mut() = activations;
+        self.redraw_unsubscribe_activations();
+    }
+
+    /// Rebuilds the unsubscribe-log rows from whatever was last handed in.
+    fn redraw_unsubscribe_activations(&self) {
+        let imp = self.imp();
+        while let Some(row) = imp.unsubscribe_list.row_at_index(0) {
+            imp.unsubscribe_list.remove(&row);
+        }
+        let activations = imp.unsubscribe_activations.borrow();
+        for activation in activations.iter() {
+            imp.unsubscribe_list
+                .append(&self.unsubscribe_activation_row(activation));
+        }
+        imp.unsubscribe_scroller
+            .set_visible(!activations.is_empty());
+        imp.unsubscribe_empty.set_visible(activations.is_empty());
+    }
+
+    /// One past activation: the list it left, and when.
+    fn unsubscribe_activation_row(&self, activation: &UnsubscribeActivation) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-unsubscribe-row");
+        row.set_selectable(false);
+
+        let list = gtk::Label::new(Some(&activation.list_identifier));
+        list.add_css_class("postio-settings-unsubscribe-list-identifier");
+        list.set_xalign(0.0);
+        list.set_hexpand(true);
+        list.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let when = activation.activated_at.format("%Y-%m-%d").to_string();
+        let when_label = gtk::Label::new(Some(&when));
+        when_label.add_css_class("postio-settings-unsubscribe-when");
+        when_label.set_xalign(1.0);
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&list);
+        box_.append(&when_label);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Left {} on {when}",
+            activation.list_identifier
         ))]);
         row
     }
@@ -2567,6 +2643,40 @@ impl SettingsPanel {
         imp.privacy_empty.set_wrap(true);
         imp.privacy_empty.set_visible(false);
 
+        // ── privacy: one row per past unsubscribe activation (#971) ──────
+        // A second list under the same nav section as `privacy_list`, so it
+        // gets its own heading to tell the two apart — the only place in
+        // this panel a section holds two lists.
+        let unsubscribe_title = gtk::Label::new(Some("Mailing lists left"));
+        unsubscribe_title.add_css_class("postio-settings-unsubscribe-title");
+        unsubscribe_title.set_xalign(0.0);
+
+        imp.unsubscribe_list
+            .add_css_class("postio-settings-unsubscribe-list");
+        imp.unsubscribe_list
+            .set_selection_mode(gtk::SelectionMode::None);
+        imp.unsubscribe_list
+            .update_property(&[gtk::accessible::Property::Label(
+                "Mailing lists left through one-click unsubscribe",
+            )]);
+
+        imp.unsubscribe_scroller
+            .set_child(Some(&imp.unsubscribe_list));
+        imp.unsubscribe_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.unsubscribe_scroller
+            .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
+        imp.unsubscribe_scroller.set_propagate_natural_height(true);
+        imp.unsubscribe_scroller
+            .add_css_class("postio-settings-unsubscribe");
+        imp.unsubscribe_scroller.set_visible(false);
+
+        imp.unsubscribe_empty
+            .add_css_class("postio-settings-unsubscribe-empty");
+        imp.unsubscribe_empty.set_xalign(0.0);
+        imp.unsubscribe_empty.set_wrap(true);
+        imp.unsubscribe_empty.set_visible(false);
+
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
         imp.keys_list.set_selection_mode(gtk::SelectionMode::None);
@@ -2692,6 +2802,9 @@ impl SettingsPanel {
         column.append(&imp.ui_box);
         column.append(&imp.privacy_scroller);
         column.append(&imp.privacy_empty);
+        column.append(&unsubscribe_title);
+        column.append(&imp.unsubscribe_scroller);
+        column.append(&imp.unsubscribe_empty);
         column.append(&imp.keys_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));

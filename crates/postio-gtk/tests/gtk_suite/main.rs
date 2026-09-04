@@ -543,6 +543,15 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_privacy::revoking_a_sender_removes_its_row_and_persists as fn(),
     ),
     (
+        "gtk_settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state",
+        gtk_settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state
+            as fn(),
+    ),
+    (
+        "gtk_settings_privacy::every_activation_gets_its_own_row_newest_first",
+        gtk_settings_privacy::every_activation_gets_its_own_row_newest_first as fn(),
+    ),
+    (
         "gtk_settings_sync::the_rows_render_from_a_given_config",
         gtk_settings_sync::the_rows_render_from_a_given_config as fn(),
     ),
