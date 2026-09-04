@@ -429,6 +429,16 @@ async fn srv_records_are_used_when_no_autoconfig_document_exists() {
 }
 
 // --- failing fast to manual entry ---------------------------------------
+//
+// The three `elapsed() < 2s`/`< 3s` assertions below are wall-clock on
+// purpose, and are **not** the kind #100, #917 and #1068 replaced with
+// counts. Those were budgets — "this work is cheap" — where the cause is
+// countable and the stopwatch measures the machine as much as the code.
+// These assert that a probe *gives up rather than hanging*, which is
+// irreducibly a claim about time: there is nothing to count, because the
+// failure being ruled out is the absence of an event. The margins are
+// enormous (a hang is unbounded, the bound is seconds) rather than tight,
+// which is what makes them safe on a loaded box. Leave them.
 
 #[tokio::test]
 async fn a_domain_with_no_autoconfig_fails_fast_to_manual_entry() {
