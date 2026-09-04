@@ -1,4 +1,5 @@
-//! What `cipher_page_size = 8192` would actually buy (#381, ADR 0017 axis 3).
+//! The two numbers #381 asks for: what the partial index saves, and what
+//! `cipher_page_size = 8192` would buy (ADR 0017 axis 3).
 //!
 //! Ignored by default: it seeds a realistic store and vacuums it three times,
 //! which is minutes, and its output is numbers for a person to read rather
@@ -217,4 +218,58 @@ fn keyed_at(connection: &rusqlite::Connection, key: &postio_storage::key::Subkey
     connection
         .execute_batch(&format!("PRAGMA cipher_page_size = {page};"))
         .expect("page size");
+}
+
+#[test]
+#[ignore = "#381: a measurement, not an assertion -- its output is numbers"]
+fn what_the_partial_draft_index_saves() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("store.db");
+    let key = test_support::key();
+    let database = Database::open(&path, &key).expect("a store");
+    let seeded = seed_large(&database, 7, MESSAGES);
+
+    let connection = database.connection().expect("a connection");
+    let rows: i64 = connection
+        .query_row("SELECT count(*) FROM attachments", [], |row| row.get(0))
+        .expect("a count");
+    let drafts: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM attachments WHERE draft_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("a count");
+    println!(
+        "{} messages, {rows} attachment rows, {drafts} of them a draft's",
+        seeded.message_count
+    );
+
+    // Measured as pages, because that is what an index costs. The store is
+    // vacuumed either side so the number is the index and not whatever the
+    // freelist happened to be holding.
+    let cost = |sql: &str| -> i64 {
+        connection
+            .execute_batch(&format!(
+                "DROP INDEX IF EXISTS idx_attachments_draft; {sql} VACUUM;"
+            ))
+            .expect("rebuild the index");
+        number(&connection, "PRAGMA page_count")
+    };
+
+    let partial = cost(
+        "CREATE INDEX idx_attachments_draft ON attachments (draft_id, position) \
+         WHERE draft_id IS NOT NULL;",
+    );
+    let whole = cost("CREATE INDEX idx_attachments_draft ON attachments (draft_id, position);");
+    let page = number(&connection, "PRAGMA page_size");
+
+    println!("partial: {partial} pages of {page}");
+    println!("whole:   {whole} pages of {page}");
+    println!(
+        "saved:   {} pages, {} bytes, over {rows} rows -- {:.1} bytes a row",
+        whole - partial,
+        (whole - partial) * page,
+        ((whole - partial) * page) as f64 / rows as f64
+    );
 }
