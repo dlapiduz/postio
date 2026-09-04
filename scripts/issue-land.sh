@@ -487,7 +487,29 @@ fi
 # own rebase and refuses if the remote moved for any other reason. A bare
 # --force cannot tell those apart, and the guard hook refuses it everywhere
 # for that reason.
-git push -u --force-with-lease origin "$BRANCH"
+#
+# And leased only when there is something to lease *against*. The first push
+# of a branch the remote has never seen is a create, and a create cannot
+# clobber anything -- there is no counterpart to be behind. Asking for a lease
+# there buys nothing and can cost a landing: `--force-with-lease` without an
+# explicit <expect> also turns on `--force-if-includes`, which inspects the
+# reflog, and #860 watched three green gate chains in a row die on
+#
+#     ! [rejected]  issue-411-... (stale info)
+#
+# for a branch that was not on the remote at all (`git ls-remote` empty, no
+# remote-tracking ref). A plain `git push -u` created it immediately and the
+# next run landed with no other change.
+#
+# The window between asking and pushing is safe: if somebody creates the
+# branch in it, the plain push is rejected as non-fast-forward rather than
+# overwriting them. It fails closed, which is the property the lease was for.
+if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+    git push -u --force-with-lease origin "$BRANCH"
+else
+    echo "--- pushing $BRANCH for the first time (no lease: nothing to clobber) ---"
+    git push -u origin "$BRANCH"
+fi
 
 [ "$WIP" = 1 ] && { echo; echo "pushed $BRANCH without a PR (work in progress)."; exit 0; }
 

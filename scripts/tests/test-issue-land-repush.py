@@ -23,6 +23,15 @@ Leased rather than bare, and that is the part worth keeping: the push must go
 through for this script's own rebase and still refuse if the remote moved for
 any other reason. Both directions are asserted below.
 
+**And leased only when there is a counterpart to lease against (#860).** The
+first push of a branch the remote has never seen is a create; a create cannot
+clobber anything, and asking for a lease there cost three green gate chains on
+one landing, each ending `! [rejected] ... (stale info)` for a branch
+`git ls-remote` did not list. That case is asserted here too, on the script's
+own announcement rather than on the exit status -- the leased spelling
+succeeds here on most days, which is why the bug survived until a rebase left
+a `rebase (finish)` entry in the reflog for `--force-if-includes` to read.
+
 Each case runs `issue-land.sh --wip`, which stops right after pushing and
 never touches `gh`.
 
@@ -148,6 +157,24 @@ def main() -> int:
             FAILURES.append(f"the first landing failed:\n{first.stdout}\n{first.stderr}")
             return report()
 
+        # ── and it took the create path, without a lease (#860) ───────────
+        #
+        # A branch the remote has never seen cannot clobber anything, so the
+        # lease buys nothing -- and it can cost a landing. `--force-with-lease`
+        # with no explicit <expect> also turns on `--force-if-includes`, which
+        # inspects the reflog, and #860 watched three green gate chains in a
+        # row die on "(stale info)" for a branch that was not on the remote at
+        # all. Asserted on the announcement rather than on the exit status,
+        # because the leased spelling *also* succeeds here on most days --
+        # which is exactly why the bug survived until a rebase made the reflog
+        # interesting.
+        if "no lease: nothing to clobber" not in first.stdout + first.stderr:
+            FAILURES.append(
+                "the first push of a never-seen branch did not take the "
+                "create path, so it is still asking for a lease against a ref "
+                f"that does not exist:\n{first.stdout}\n{first.stderr}"
+            )
+
         # ── main moves, exactly as it does while a PR sits in review ─────
         #
         # This is what forces the rebase on the next run, and so what makes
@@ -175,6 +202,18 @@ def main() -> int:
             )
         elif "non-fast-forward" in second.stderr:
             FAILURES.append(f"the push was rejected:\n{second.stderr}")
+
+        # The control for the create-path assertion above: this push has a
+        # counterpart to lease against, so it must *not* announce the create
+        # path. Without this the string check above would pass on a script
+        # that printed it unconditionally, and would then be asserting
+        # nothing about which branch was taken.
+        if "no lease: nothing to clobber" in second.stdout + second.stderr:
+            FAILURES.append(
+                "the second push of a branch already on the remote took the "
+                "create path, so it pushed without the lease that #781 added "
+                f"for exactly this case:\n{second.stdout}\n{second.stderr}"
+            )
 
         # The remote must now carry the second landing's work.
         remote_log = subprocess.run(
