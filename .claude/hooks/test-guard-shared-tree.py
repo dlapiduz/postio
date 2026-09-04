@@ -75,7 +75,7 @@ ALLOW = [
     "git commit -- crates/postio-core",
     "git commit -m 'wip' -- crates/postio-core/src/lib.rs",
     "git stash show",
-    "cargo test --workspace",
+    "cargo test --workspace --lib",  # a bare --workspace run is refused since #1131
     "git status",
     "git push",
     "git push origin main",
@@ -127,8 +127,11 @@ def decide(
     cwd: str | None = None,
     session: str | None = None,
     worktrees: str | None = None,
+    background: bool = False,
 ) -> str:
     body = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if background:
+        body["tool_input"]["run_in_background"] = True
     if cwd:
         body["cwd"] = cwd
     if session:
@@ -398,9 +401,10 @@ with tempfile.TemporaryDirectory(
         cmd: str,
         cwd: str | None = None,
         session: str | None = None,
+        background: bool = False,
         _outer=decide,
     ) -> str:
-        return _outer(cmd, cwd=cwd, session=session, worktrees=WORKTREES)
+        return _outer(cmd, cwd=cwd, session=session, worktrees=WORKTREES, background=background)
 
     mine = FakeWorktree(WORKTREES, "issue-9001", gitdirs)
 
@@ -637,6 +641,59 @@ with tempfile.TemporaryDirectory() as raw:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+# ── the loop's own shape (#1131) ───────────────────────────────────────────
+#
+# Not a shared-tree hazard, so these hold in a private worktree too. The
+# transcripts show 427 workspace test runs and 852 whole-crate runs used as
+# the inner loop against 6 runs of test-fast.sh, and 79 landings killed by a
+# foreground tool call's cap. The docs say otherwise and are not read at the
+# moment it matters; the hook is.
+LOOP_DENY = [
+    "cargo test --workspace",
+    "cargo test --workspace --no-fail-fast",
+    "cargo test --all",
+    "cargo nextest run --workspace",
+    "cd ~/src/postio-worktrees/issue-27 && cargo test --workspace",
+    "scripts/issue-land.sh",
+    "scripts/issue-land.sh -m 'feat(gtk): x'",
+    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --full",
+    "nohup scripts/issue-land.sh > land.log 2>&1 &",
+]
+LOOP_ALLOW = [
+    "cargo test --workspace --lib",
+    "cargo test --workspace --lib -- quote",
+    "cargo test --workspace --no-run",
+    "cargo test --workspace --doc",
+    "cargo check --workspace --all-targets",
+    "cargo test -p postio-core",
+    "cargo nextest run -p postio-app --test app_suite",
+    "POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast",
+    "scripts/test-sanity.sh",
+    "scripts/issue-land.sh --detach",
+    "scripts/issue-land.sh --status",
+    "scripts/issue-land.sh --gates-only --detach",
+    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --detach",
+]
+for where in (SHARED, WORKTREE):
+    for cmd in LOOP_DENY:
+        got = decide(cmd, cwd=where)
+        ok = got == "deny"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} in {where} -> {got}")
+    for cmd in LOOP_ALLOW:
+        got = decide(cmd, cwd=where)
+        ok = got == "allow"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} allow {cmd!r} in {where} -> {got}")
+# A backgrounded land is the other spelling of --detach.
+got = decide("scripts/issue-land.sh", cwd=WORKTREE, background=True)
+ok = got == "allow"
+failures += not ok
+scoped += 1
+print(f"  {'ok  ' if ok else 'FAIL'} allow a run_in_background land -> {got}")
 
 print(f"\n{len(DENY) + len(ALLOW) + scoped + claims} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)
