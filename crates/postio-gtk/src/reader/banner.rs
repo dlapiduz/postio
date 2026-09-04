@@ -17,10 +17,20 @@ use std::rc::Rc;
 
 use crate::widgets::{NoticeBar, NoticeMenuItem};
 
+/// How much of a sender's address the menu spells out.
+///
+/// Wide enough that an ordinary address is untouched, narrow enough that a
+/// private-relay one does not set the menu's width on its own.
+const ADDRESS_WIDTH: usize = 34;
+
 /// "Remote images are blocked", with a way to see them once and a way to
 /// trust this sender from now on.
 pub struct RemoteImageBanner {
     notice: Rc<NoticeBar>,
+    /// The sender's domain, for the second menu entry. Kept alongside the
+    /// address because "always allow this domain" and "always allow this
+    /// address" are different promises and the menu offers both.
+    domain: std::cell::RefCell<Option<String>>,
     /// What "always allow" would exempt, and what its menu entry says. Kept
     /// because [`set_sender`](Self::set_sender) rebuilds the menu and the
     /// handler has to be re-attached with it.
@@ -37,6 +47,7 @@ impl RemoteImageBanner {
         notice.set_action(Some("Show images"));
         let banner = RemoteImageBanner {
             notice,
+            domain: std::cell::RefCell::new(None),
             sender: std::cell::RefCell::new(None),
             always_allow: std::cell::RefCell::new(Vec::new()),
         };
@@ -59,6 +70,16 @@ impl RemoteImageBanner {
         self.notice.is_visible()
     }
 
+    /// What the banner currently says. Test-facing.
+    pub fn text(&self) -> String {
+        self.notice.text()
+    }
+
+    /// The overflow's entries, in order. Test-facing.
+    pub fn menu_labels(&self) -> Vec<String> {
+        self.notice.menu_labels()
+    }
+
     /// The key `Show images` announces, from the live keymap.
     pub fn set_action_key(&self, key: Option<&str>) {
         self.notice.set_action_key(key);
@@ -70,8 +91,24 @@ impl RemoteImageBanner {
     /// "Always allow" with no object — the notice's shape is the icon, the
     /// text and `Show images`, and that stays constant.
     pub fn set_sender(&self, sender: Option<&str>) {
+        *self.domain.borrow_mut() = sender
+            .and_then(|sender| sender.rsplit_once('@'))
+            .map(|(_, domain)| domain.to_owned())
+            .filter(|domain| !domain.is_empty());
         *self.sender.borrow_mut() = sender.map(str::to_owned);
         self.rebuild_menu();
+    }
+
+    /// What the notice says: the counts, per canvas turn 7.
+    ///
+    /// Called by the reader once a render has settled how many references
+    /// were held back — the banner cannot know, and a notice that guessed
+    /// would be a privacy claim made without evidence.
+    pub fn set_held_back(&self, held_back: postio_ui::reader::document::HeldBack) {
+        let summary = held_back.summary();
+        if !summary.is_empty() {
+            self.notice.set_text(&summary);
+        }
     }
 
     /// Called when the user asks to see this one message's images once,
@@ -121,14 +158,36 @@ impl RemoteImageBanner {
             return;
         };
         let handlers = self.always_allow.borrow().clone();
-        self.notice.set_menu(vec![NoticeMenuItem::new(
-            format!("Always allow {sender}"),
+        // The address is middle-truncated: a private-relay address is 70
+        // characters, and spelling one out is what made this notice three
+        // lines tall before #1008 moved it into a menu at all.
+        let mut items = vec![NoticeMenuItem::new(
+            format!(
+                "Always allow {}",
+                postio_ui::format::middle_truncate(&sender, ADDRESS_WIDTH)
+            ),
             move || {
                 for handler in &handlers {
                     handler();
                 }
             },
-        )]);
+        )];
+        // "This domain" is a wider promise than "this sender", and the canvas
+        // offers both because they are different decisions: a shop that mails
+        // from a new address per order needs the domain, and a single
+        // correspondent does not.
+        if let Some(domain) = self.domain.borrow().clone() {
+            let handlers = self.always_allow.borrow().clone();
+            items.push(NoticeMenuItem::new(
+                format!("Always allow {domain}"),
+                move || {
+                    for handler in &handlers {
+                        handler();
+                    }
+                },
+            ));
+        }
+        self.notice.set_menu(items);
     }
 }
 

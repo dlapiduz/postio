@@ -232,3 +232,48 @@ pub fn a_notice_survives_an_overflow_entry_that_rebuilds_the_menu() {
         "and its own rebuild took effect rather than being lost"
     );
 }
+
+/// The remote-image notice says what it blocked and keeps its long action in
+/// the overflow (#1008).
+pub fn the_blocked_images_notice_counts_and_elides() {
+    if !ready() {
+        eprintln!("skipping: no display");
+        return;
+    }
+
+    let banner = postio_gtk::reader::banner::RemoteImageBanner::new();
+    banner.set_held_back(postio_ui::reader::document::HeldBack {
+        remote_images: 14,
+        trackers: 1,
+    });
+    assert_eq!(
+        banner.text(),
+        "14 remote images and 1 tracker blocked",
+        "the canvas's own wording: a picture and a beacon are different claims"
+    );
+
+    // A relay address is the case that made the old banner three lines tall.
+    banner.set_sender(Some(
+        "transaction_at_shop_12345@privaterelay.appleid.example",
+    ));
+    let menu = banner.menu_labels();
+    assert_eq!(
+        menu.len(),
+        2,
+        "the address and its domain are different promises: {menu:?}"
+    );
+    assert!(menu[0].starts_with("Always allow transaction"), "{menu:?}");
+    assert!(
+        menu[0].contains('…'),
+        "the address is elided rather than spelled out: {menu:?}"
+    );
+    assert!(
+        menu[0].len() < 60,
+        "and the entry stays a menu entry: {menu:?}"
+    );
+    assert_eq!(menu[1], "Always allow privaterelay.appleid.example");
+
+    // Nothing to name, nothing to offer.
+    banner.set_sender(None);
+    assert!(banner.menu_labels().is_empty());
+}

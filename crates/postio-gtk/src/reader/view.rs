@@ -954,6 +954,9 @@ fn render_open(
     let content = crate::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
+    // The count, before the visibility: a notice that appeared and then
+    // changed what it said would flicker a number at the reader (#1008).
+    banner.set_held_back(held_back);
     banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
 
     // Only while a message is actually drawn reduced. A notice offering to
