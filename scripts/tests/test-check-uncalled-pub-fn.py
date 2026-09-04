@@ -216,6 +216,49 @@ def main() -> int:
         should_fail=False,
     )
 
+    # ── #882: a feature-gated test helper is exempt without #[doc(hidden)] ─
+    case(
+        "a #[cfg(feature = \"test-support\")] item with only a test caller is exempt",
+        lib='#[cfg(feature = "test-support")]\npub fn stopping_after() {}\n',
+        test="#[test]\nfn it_works() { postio_thing::stopping_after(); }\n",
+        should_fail=False,
+    )
+    case(
+        "the same function without the feature gate is still scanned",
+        lib="pub fn stopping_after() {}\n",
+        test="#[test]\nfn it_works() { postio_thing::stopping_after(); }\n",
+        should_fail=True,
+        expect_text="stopping_after",
+    )
+    case(
+        "any feature name containing test is exempt, not only test-support",
+        lib='#[cfg(feature = "testing")]\npub fn only_in_debug_builds() {}\n',
+        test="#[test]\nfn it_works() { postio_thing::only_in_debug_builds(); }\n",
+        should_fail=False,
+    )
+    case(
+        "a feature gate that does not name test is not exempted by it",
+        lib='#[cfg(feature = "gtk")]\npub fn banner_widget() {}\n',
+        test="#[test]\nfn it_works() { postio_thing::banner_widget(); }\n",
+        should_fail=True,
+        expect_text="banner_widget",
+    )
+    case(
+        # The real shape #882 was found in: the exempting attribute sits
+        # right beside a doc comment that quotes it as prose, on the
+        # function it actually belongs to. Blanking strings is what stops a
+        # comment from creating a *caller* (the case above); this is the
+        # companion property that a real attribute is still read correctly
+        # with prose right next to it.
+        "a doc comment quoting the attribute does not stop the real one working",
+        lib="/// Behind the `test-support` feature. `#[cfg(feature = \"test-support\")]`\n"
+        "/// is what marks it as test scaffolding.\n"
+        '#[cfg(feature = "test-support")]\n'
+        "pub fn stopping_after() {}\n",
+        test="#[test]\nfn it_works() { postio_thing::stopping_after(); }\n",
+        should_fail=False,
+    )
+
     # ── the baseline, in both directions ─────────────────────────────────
     case(
         "a baselined name is accepted",
