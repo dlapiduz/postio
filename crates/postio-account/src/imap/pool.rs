@@ -387,6 +387,11 @@ impl ConnectionPool {
         }
     }
 
+    /// The server this pool connects to.
+    pub fn settings(&self) -> &ConnectionSettings {
+        &self.settings
+    }
+
     /// What the pool is doing right now.
     pub fn stats(&self) -> PoolStats {
         let inner = self.lock();
