@@ -26,6 +26,7 @@ mod connection;
 mod connection_priority;
 mod contact_groups;
 mod contacts;
+mod draft_indexes;
 mod drafts;
 mod encrypt_migration;
 mod encryption;
