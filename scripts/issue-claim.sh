@@ -17,6 +17,7 @@
 #   scripts/issue-claim.sh --dry-run          # show what it would take
 #   scripts/issue-claim.sh --base feature/x   # cut from an initiative branch
 #   scripts/issue-claim.sh --reuse            # in this worktree, target warm (strict)
+#   scripts/issue-claim.sh --resume 42        # back to issue 42's branch: its PR went red
 #   scripts/issue-claim.sh --fresh            # a new worktree even from inside one
 #   scripts/issue-claim.sh --cold             # ...and do not seed its target/
 #
@@ -48,7 +49,7 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
 WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0; FRESH=0; COLD=0
-REUSE_IMPLICIT=0
+REUSE_IMPLICIT=0; RESUME=""
 # Why each candidate was passed over, so the message at the end can say which
 # of the three it was rather than guessing (#1077).
 SKIPPED_CLAIMED=""; SKIPPED_BRANCH=""; SKIPPED_WORKTREE=""
@@ -62,6 +63,7 @@ while [ $# -gt 0 ]; do
         --reuse)     REUSE=1;        shift ;;
         --fresh)     FRESH=1;        shift ;;
         --cold)      COLD=1;         shift ;;
+        --resume)    RESUME="$2";    shift 2 ;;
         [0-9]*)      WANT="$1";      shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -76,6 +78,45 @@ if ! git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "$BASE" >/dev/null
     git -C "$REPO_ROOT" ls-remote --heads origin \
         | sed 's|.*refs/heads/|    |' | head -20 >&2
     exit 2
+fi
+
+# --resume <n>: a worktree for an issue whose branch is already on origin --
+# the PR went red after the session moved on (#1107). With auto-merge the
+# landing script arms the merge and returns, so a red check has nobody in
+# front of it; this cuts a tree from the existing branch, tracking it, so a
+# fix lands on the same PR. From the base would be a second branch for the
+# same issue, and the stale-branch backstop below would refuse it anyway.
+if [ -n "$RESUME" ]; then
+    RESUME_BRANCH="$(git -C "$REPO_ROOT" ls-remote --heads origin "issue-$RESUME-*" 2>/dev/null \
+                     | sed 's|.*refs/heads/||' | head -1 || true)"
+    if [ -z "$RESUME_BRANCH" ]; then
+        echo "No branch issue-$RESUME-* on origin; there is nothing to resume." >&2
+        echo "Claim it normally instead: scripts/issue-claim.sh $RESUME" >&2
+        exit 2
+    fi
+    RESUME_TREE="$WORKTREES/issue-$RESUME"
+    if [ -d "$RESUME_TREE" ]; then
+        echo "$RESUME_TREE already exists; a session may be in it." >&2
+        exit 2
+    fi
+    mkdir -p "$WORKTREES" "$CLAIMS"
+    mkdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+    git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
+    git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
+    git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
+    printf '%s\n' "$BASE" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
+    mkdir -p "$RESUME_TREE/target/tmp"
+    [ -x "$REPO_ROOT/scripts/install-shims.sh" ] && "$REPO_ROOT/scripts/install-shims.sh"
+    gh issue edit "$RESUME" --add-assignee @me --add-label in-progress >/dev/null 2>&1 || true
+    RESUME_PR="$(gh pr list --head "$RESUME_BRANCH" --state open --json number,url \
+                 --jq '.[0] | "#\(.number) \(.url)"' 2>/dev/null || true)"
+    echo "resumed #$RESUME on $RESUME_BRANCH${RESUME_PR:+ (PR $RESUME_PR)}"
+    echo
+    echo "  tree:   $RESUME_TREE"
+    echo "  branch: $RESUME_BRANCH, tracking origin -- a push updates the PR"
+    echo
+    echo "Fix it there, then scripts/issue-land.sh --detach lands onto the same PR."
+    exit 0
 fi
 
 # --reuse: work the next issue in the worktree this session is already in,
@@ -169,10 +210,25 @@ vet_reuse() {
     UNLANDED="$(git -C "$REUSE_TREE" cherry FETCH_HEAD HEAD 2>/dev/null \
                 | grep -c '^+' || true)"
     if [ "${UNLANDED:-0}" -ne 0 ]; then
-        echo "$REUSE_TREE holds $UNLANDED commit(s) that are not on $REUSE_BASE." >&2
-        echo "Land them first -- reusing the tree now would leave them behind" >&2
-        echo "a branch switch with nothing pointing at them." >&2
-        return 1
+        # Not stranded if every commit is on origin and a PR is open for
+        # them: with auto-merge (#1107) the landing script returns before
+        # the merge, and this is the ordinary state of a tree that just
+        # landed. The local branch stays behind for `--resume`.
+        REUSE_BRANCH="$(git -C "$REUSE_TREE" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        REUSE_REMOTE="$(git -C "$REUSE_TREE" rev-parse --verify --quiet "origin/$REUSE_BRANCH" 2>/dev/null || true)"
+        REUSE_PR_STATE=""
+        if [ -n "$REUSE_REMOTE" ] && [ "$REUSE_REMOTE" = "$(git -C "$REUSE_TREE" rev-parse HEAD)" ]; then
+            REUSE_PR_STATE="$(gh pr view "$REUSE_BRANCH" --json state --jq .state 2>/dev/null || true)"
+        fi
+        if [ "$REUSE_PR_STATE" = "OPEN" ]; then
+            echo "note: $REUSE_BRANCH is pushed with its PR open; auto-merge decides, and"
+            echo "      scripts/issue-claim.sh --resume <n> comes back to it if CI says no."
+        else
+            echo "$REUSE_TREE holds $UNLANDED commit(s) that are not on $REUSE_BASE." >&2
+            echo "Land them first -- reusing the tree now would leave them behind" >&2
+            echo "a branch switch with nothing pointing at them." >&2
+            return 1
+        fi
     fi
 
     return 0
@@ -314,6 +370,28 @@ for i in ranked:
     print(i["number"], i["title"], sep="\t")
 '
 }
+
+# The caller's open PRs with a failing check, before any new work is taken
+# (#1107). With auto-merge nobody waits in front of a PR, so a red one is
+# found here -- by the next claim -- and by /steward's sweep.
+RED_PRS="$(gh pr list --author @me --state open --limit 50 \
+            --json number,headRefName,url,statusCheckRollup 2>/dev/null \
+    | python3 -c '
+import json, re, sys
+try:
+    prs = json.load(sys.stdin)
+except Exception:
+    prs = []
+for pr in prs:
+    bad = [c.get("name") for c in pr.get("statusCheckRollup") or []
+           if str(c.get("conclusion") or c.get("state") or "").upper() in ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED")]
+    if not bad:
+        continue
+    m = re.match(r"issue-(\d+)-", pr.get("headRefName") or "")
+    issue = m.group(1) if m else "?"
+    print("note: PR #%s (issue-%s) has failing checks: %s -- scripts/issue-claim.sh --resume %s" % (pr["number"], issue, ", ".join(str(b) for b in bad), issue))
+' 2>/dev/null || true)"
+[ -n "$RED_PRS" ] && printf '%s\n\n' "$RED_PRS" >&2
 
 CANDIDATES=$(fetch_candidates)
 

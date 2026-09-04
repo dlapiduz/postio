@@ -32,8 +32,24 @@ issue's timeline before touching it. Releasing live work is far worse than
 leaving a label a day too long. `scripts/issue-release.sh --stale` applies
 that rule: it will not release a claim younger than a day unless told to.
 
-A PR that is green and unmerged is different — landing means merged, so one
-sitting for hours is work nobody finished. Find out why it stopped.
+**Red pull requests are yours to chase.** Landings arm auto-merge and move
+on (#1107), so a failing check has nobody in front of it. List them:
+
+```bash
+gh pr list --state open --json number,headRefName,url,statusCheckRollup \
+  --jq '.[] | select([.statusCheckRollup[]?.conclusion] | index("FAILURE")) | "\(.number) \(.headRefName) \(.url)"'
+```
+
+For each: read the failing job. A flake (a known intermittent, a runner
+that died) gets a re-run (`gh run rerun <id> --failed`). A real failure
+gets `scripts/issue-claim.sh --resume <n>`, a fix on that branch, and a new
+landing onto the same PR — yours if it is small, otherwise a comment on the
+issue and the session that owns it. A PR whose author's claim has gone
+stale for a day is abandoned work: resume it or say so in the report.
+
+A PR that is green and unmerged is different — auto-merge should have taken
+it, so one sitting for hours is a required check that never reported or a
+conflict with main. Find out which.
 
 CI:
 
@@ -83,9 +99,11 @@ This is the whole-workspace proof that ordinary sessions deliberately skip.
 `cargo check --workspace --all-targets` first — it is what catches a *test*
 target that stopped compiling, which is how `main` went red twice in one day
 (#419), and it answers before a test run has finished linking — then
-`cargo test --workspace --no-fail-fast`, always `--no-fail-fast`, because
-plain cargo aborts remaining targets on the first failure and one red crate
-hides a thousand passing tests. `cargo bench` checks the perf budgets. If
+`POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast`, always
+`--no-fail-fast`, because plain cargo aborts remaining targets on the first
+failure and one red crate hides a thousand passing tests, and with the
+prefix because the hook refuses a whole-workspace run without it — this
+pass is the one place it belongs. `cargo bench` checks the perf budgets. If
 either is red: pull `ready` from open issues, fix on a branch, land it,
 restore the labels.
 
