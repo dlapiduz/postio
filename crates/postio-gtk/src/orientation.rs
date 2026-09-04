@@ -17,6 +17,11 @@ use postio_core::{CommandId, Keymap};
 /// three keys that make it true.
 const TITLE: &str = "Postio is keyboard-first";
 
+/// Who to tell when the strip is over with. Shared, so a clone of the
+/// strip reaches the handlers that were registered rather than a copy of
+/// the list nobody subscribed to.
+type Retired = std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn()>>>>;
+
 /// One clause of the orientation: what it does, and the key that does it.
 ///
 /// The same shape [`crate::list_state`] draws its named states' hints in,
@@ -103,7 +108,7 @@ pub struct OrientationStrip {
     /// below run once per window however many keys follow.
     retired: std::rc::Rc<std::cell::Cell<bool>>,
     /// Who to tell when that happens — `postio-app`, which writes it down.
-    on_retired: std::rc::Rc<std::cell::RefCell<Vec<Box<dyn Fn()>>>>,
+    on_retired: Retired,
     /// Whether the keymap in force gives it anything to teach. A strip with
     /// no keys on it is a title and a "Got it" button over somebody's mail,
     /// so it stays hidden however loudly it is asked to show.
@@ -348,7 +353,13 @@ mod tests {
         let spoken = spoken(&hints(&keymap));
 
         assert!(spoken.starts_with("Postio is keyboard-first."), "{spoken}");
-        assert!(spoken.contains("Command palette, press ctrl+k."), "{spoken}");
-        assert!(spoken.contains("Move between messages, press j/k."), "{spoken}");
+        assert!(
+            spoken.contains("Command palette, press ctrl+k."),
+            "{spoken}"
+        );
+        assert!(
+            spoken.contains("Move between messages, press j/k."),
+            "{spoken}"
+        );
     }
 }
