@@ -23,6 +23,19 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # WebKit and SQLite is where the resident set spikes, so keep the linker's own
 # parallelism modest too.
 #
+# `--threads=4`, raised from 2, because the thing that made 2 necessary is
+# gone. The peak this defends against is proportional to what the linker has
+# to hold, and `[profile.dev]` in the root Cargo.toml now strips debug info
+# rather than merging it: measured on `app_suite`, that is 162 MB of DWARF
+# per binary that the linker no longer reads, out of 232 MB. The isolated
+# link step was already only ~1.1 GB RSS when it was last measured against
+# mold (docs/engineering-notes.md, 2026-09-01), which is not pressure on this
+# box; with the DWARF gone there is headroom to spend on threads.
+#
+# Still capped rather than left to lld's default of one thread per core:
+# `jobs = 2` means two links can be in flight per session, several sessions
+# share the machine, and an uncapped linker would multiply out again.
+#
 # Scoped to one triple deliberately, and it is *not* an oversight the way the
 # runner below was (#551). `-Wl,--threads=2` is a linker flag whose support
 # depends on the binutils on the box, not on the target: GNU ld only learned
@@ -31,7 +44,16 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # comfort setting for the machine this is developed on; the runner is a
 # correctness one.
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--threads=2"]
+linker = "scripts/linker.sh"
+rustflags = [
+    # `gcc` and not the default `gnu-lld-cc`, because the default is what
+    # makes `linker` above unable to choose: rustc appends its own `-B` and
+    # `-fuse-ld=lld` after anything the script passes, so mold is silently
+    # ignored and LLD links the binary anyway. `scripts/linker.sh` puts lld
+    # back itself when mold is absent, so nothing is lost on a box without it.
+    "-C", "linker-flavor=gcc",
+    "-C", "link-arg=-Wl,--threads=4",
+]
 
 # Every test binary on **every Linux target** runs on a compositor of its own,
 # so `cargo test` is headless by default and nobody has to remember a wrapper.
