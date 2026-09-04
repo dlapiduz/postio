@@ -358,7 +358,7 @@ const HEADER_LABELS: &[&str] = &[
 /// place on the page that is supposed to be the facts.
 const LINK_PREFIXES: &[&str] = &["http://", "https://", "mailto:", "www."];
 
-/// Lift a `label: value` block out of a plain part.
+/// # Finding the block
 ///
 /// Transactional mail buries its facts in a paragraph, and the canvas draws
 /// them as a small table above the body copy: what the tracking number is,
@@ -390,10 +390,6 @@ const LINK_PREFIXES: &[&str] = &["http://", "https://", "mailto:", "www."];
 /// reading. Nothing is lifted out of HTML: markup that *looks* like a table
 /// is a layout decision, and reader view's whole premise is that a sender's
 /// layout is not to be trusted.
-pub fn facts(plain: &str) -> Vec<Fact> {
-    lift(plain).rows
-}
-
 /// A plain part with its facts block taken out of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Lifted {
@@ -404,7 +400,7 @@ pub struct Lifted {
     pub body: String,
 }
 
-/// [`facts`], and the prose that remains once they are lifted out.
+/// The facts block, and the prose that remains once it is lifted out.
 ///
 /// The rows have to *leave* the body copy, or the reader shows the same three
 /// lines twice — once as the block and once in the paragraph underneath,
@@ -676,6 +672,11 @@ mod tests {
 #[cfg(test)]
 mod facts_tests {
     use super::*;
+
+    /// The rows `lift` found, which is what most of these cases are about.
+    fn facts(plain: &str) -> Vec<Fact> {
+        lift(plain).rows
+    }
 
     fn labels(plain: &str) -> Vec<String> {
         facts(plain).into_iter().map(|fact| fact.label).collect()

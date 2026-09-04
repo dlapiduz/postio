@@ -125,6 +125,7 @@ temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
 try_next                          # crates/postio-core/src/bridge.rs:328
+unbind                            # crates/postio-ui/src/keymap.rs:634 -- counterpart to `bind`, no rebinding surface calls it yet (#1100)
 untracked                         # crates/postio-core/src/invocation.rs:155
 vanishing_after_the_payload       # crates/postio-smtp/src/transport.rs:583
 vanishing_at                      # crates/postio-smtp/src/transport.rs:572
