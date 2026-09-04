@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>Postio</title>
+  <rect width="64" height="64" fill="#5980a6"/>
+  <path d="M40 14 L24 50" fill="none" stroke="#f2f2f3" stroke-width="6"/>
+  <rect x="43" y="43" width="7" height="7" fill="#f2f2f3"/>
+</svg>
