@@ -337,7 +337,6 @@ fn show_settings(window: &Window) {
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
-         thread_drill = true\n\n\
          [keys]\n\
          archive = \"a\"\n\
          archive_thread = \"A\"\n\

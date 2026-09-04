@@ -21,7 +21,6 @@ pinned = true
 theme = \"dark\"
 density = \"compact\"
 show_hover_actions = false
-thread_drill = true
 show_key_hints = true
 sender_avatars = false
 ";

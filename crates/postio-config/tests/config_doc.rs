@@ -57,16 +57,10 @@ const ENTRIES: &[Entry] = &[
         description: "Show per-row actions when the pointer rests over a row.",
     },
     Entry {
-        path: "ui.thread_drill",
-        kind: "boolean",
-        default: "true",
-        description: "Let `t` drill the list column into the focused thread.",
-    },
-    Entry {
         path: "ui.show_key_hints",
         kind: "boolean",
         default: "true",
-        description: "Show the focused row's key hints (`e reply`, `a archive`, `t thread`). \
+        description: "Show the focused row's key hints (`e reply`, `a archive`). \
                        Off leaves every binding in force -- this only stops the row from \
                        naming them.",
     },

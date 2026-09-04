@@ -21,7 +21,6 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("prev_message", "k"),
     ("open_message", "Return"),
     ("back", "Escape"),
-    ("thread", "t"),
     ("archive", "a"),
     ("archive_thread", "A"),
     ("undo", "u"),
