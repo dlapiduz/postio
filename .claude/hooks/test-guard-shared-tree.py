@@ -595,5 +595,48 @@ with tempfile.TemporaryDirectory(
         "allow",
     )
 
+# ── the jobserver side effect (#1104) ─────────────────────────────────────
+#
+# A command that runs cargo gets the machine-wide jobserver created (or
+# repaired) first, because cargo reads MAKEFLAGS at startup and the fifo it
+# names has to be there by then. A command that does not run cargo pays
+# nothing. The pool lands in a directory of this test's own so the real one
+# other sessions are drawing from right now is never touched.
+import subprocess
+import tempfile
+
+with tempfile.TemporaryDirectory() as raw:
+    pool = os.path.join(raw, "js")
+    saved = {k: os.environ.get(k) for k in ("POSTIO_JOBSERVER_DIR", "POSTIO_JOBSERVER_TOKENS", "POSTIO_JOBSERVER_IDLE")}
+    os.environ["POSTIO_JOBSERVER_DIR"] = pool
+    os.environ["POSTIO_JOBSERVER_TOKENS"] = "2"
+    os.environ["POSTIO_JOBSERVER_IDLE"] = "1"
+    try:
+        got = decide("ls crates", cwd=SHARED)
+        ok = got == "allow" and not os.path.exists(os.path.join(pool, "fifo"))
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} a command without cargo starts no jobserver -> {got}")
+
+        got = decide("cargo build -p postio-core", cwd=SHARED)
+        ok = got == "allow" and os.path.exists(os.path.join(pool, "fifo"))
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} a cargo command finds the jobserver up -> {got}, fifo={os.path.exists(os.path.join(pool, 'fifo'))}")
+
+        got = decide("cargo fmt --all", cwd=SHARED)
+        ok = got == "deny"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} the side effect does not change a refusal -> {got}")
+    finally:
+        subprocess.run(["bash", os.path.join(os.path.dirname(HOOK), "..", "..", "scripts", "jobserver.sh"), "stop"],
+                       capture_output=True)
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
 print(f"\n{len(DENY) + len(ALLOW) + scoped + claims} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)

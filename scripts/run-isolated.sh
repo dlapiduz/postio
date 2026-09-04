@@ -103,6 +103,8 @@ export GTK_A11Y="${GTK_A11Y:-none}"     # quiets an at-spi warning on headless
 cd "$TREE"
 # The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
+# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
+[ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 if [ "$PROVISION" = 1 ]; then
     # Writes into $STATE, not your real store, because XDG_DATA_HOME is set
     # above. The password comes from the environment and is never echoed.

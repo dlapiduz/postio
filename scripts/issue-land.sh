@@ -87,6 +87,9 @@ TREE=$(git rev-parse --show-toplevel)
 # what puts them on PATH. Guarded because the self-tests copy this file into
 # a sandbox on its own.
 [ -x "$TREE/scripts/install-shims.sh" ] && "$TREE/scripts/install-shims.sh"
+# The gates below draw compile jobs from the machine-wide pool rather than
+# from `jobs = 2` (#1104). Same guard, same reason.
+[ -x "$TREE/scripts/jobserver.sh" ] && eval "$("$TREE/scripts/jobserver.sh" env 2>/dev/null || true)"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # How many times one landing may hand over to a rebased copy of itself before
 # it gives up rather than merging. Two is enough for the case this exists for

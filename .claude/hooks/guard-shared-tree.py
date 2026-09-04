@@ -51,6 +51,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -672,6 +673,37 @@ def log(event: str, **fields: object) -> None:
         pass
 
 
+CARGO_WORD = re.compile(r"(?<![\w/.-])cargo(?![\w.-])")
+
+
+def ensure_jobserver(command: str) -> None:
+    """Before a command that runs cargo, make sure the machine-wide jobserver
+    is there for it to join (#1104).
+
+    `.claude/settings.json` exports MAKEFLAGS naming a fifo for every
+    session, and cargo reads that at startup -- too early for anything the
+    repo's own wrappers could do. So the fifo has to exist *before* cargo
+    runs, and this hook is the one thing that runs before every command a
+    session issues. `scripts/jobserver.sh ensure` is idempotent and takes
+    milliseconds when the pool is already up; it also refills tokens a
+    killed cargo took with it, which is why it runs every time rather than
+    once. Fail-open throughout: without the pool cargo warns and uses
+    `jobs = 2`, which is where it was before.
+    """
+    if not CARGO_WORD.search(command):
+        return
+    # Beside this hook, not under CLAUDE_PROJECT_DIR: a session re-reads
+    # this file from the tree it was started in, and the script that goes
+    # with it is two directories up from here in that same tree.
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "jobserver.sh")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run(["bash", script, "ensure"], capture_output=True, timeout=15)
+    except Exception:  # noqa: BLE001 - a missing pool costs speed, not safety
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -683,6 +715,8 @@ def main() -> int:
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return 0
+
+    ensure_jobserver(command)
 
     # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
     # which already-running sessions would not re-read.
