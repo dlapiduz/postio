@@ -766,6 +766,31 @@ fn reclaim_disk(wiring: &Wiring) {
         if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling) {
             tracing::warn!(%error, "could not bring the store under its ceiling");
         }
+        // The database's own pages, after the blob sweeps and for the same
+        // reason (#381). Deleting a message frees pages inside the file and
+        // hands nothing back to the filesystem: under `auto_vacuum = NONE`
+        // there is no mechanism to, and that is what a store about to hold a
+        // whole mailbox replica cannot afford -- a `UIDVALIDITY` reset wipes
+        // and re-syncs an entire folder from one server-side event.
+        //
+        // The conversion first, because it is what makes the reclaim
+        // possible on a store written before the setting existed, and it is
+        // a full rewrite -- minutes on a mailbox, which is exactly why it is
+        // here on the housekeeping worker and not on the startup path.
+        match database.adopt_incremental_vacuum() {
+            Ok(true) => tracing::info!("converted the store to incremental vacuum"),
+            Ok(false) => {}
+            // Recoverable, and the ordinary reason is another connection
+            // mid-transaction: nothing changed and the next start tries
+            // again.
+            Err(error) => tracing::warn!(%error, "could not convert the store"),
+        }
+        match database.reclaim_free_pages() {
+            Ok(0) => {}
+            // Pages and bytes, never what was in them.
+            Ok(pages) => tracing::info!(pages, "returned free pages to the filesystem"),
+            Err(error) => tracing::warn!(%error, "could not return free pages"),
+        }
     });
 }
 
