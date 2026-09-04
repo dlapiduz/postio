@@ -254,3 +254,85 @@ fn an_account_that_names_nothing_matches_nothing_rather_than_everything() {
         nothing.len()
     );
 }
+
+/// ADR 0005 Q10: a disabled account is not searched.
+///
+/// `AccountScope::Unified` documents itself as "every **enabled** account at
+/// once", and the executor's Unified path is a predicate *removal* — the
+/// account conjunct simply is not pushed — so without a positive filter it
+/// reaches every account in the store, disabled ones included.
+///
+/// That was invisible while nothing in the application could construct
+/// `Unified` (#961). It stops being invisible the moment something does, and
+/// the failure is the quiet kind: mail from an account the user switched off
+/// appearing in a result list, with no row telling them where it came from.
+#[test]
+fn a_disabled_account_is_not_searched_under_the_unified_scope() {
+    let world = world();
+    world
+        .connection
+        .execute(
+            "UPDATE accounts SET enabled = 0 WHERE id = ?1",
+            [world.home.id.get()],
+        )
+        .expect("disable the home account");
+
+    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified);
+
+    assert!(
+        !unified.contains(&world.home_inbox_message.id),
+        "the home account is disabled, so its mail is not in a unified search: \
+         {unified:?}"
+    );
+    assert_eq!(
+        unified.len(),
+        2,
+        "and the enabled account's two messages are still both there: {unified:?}"
+    );
+}
+
+#[test]
+fn a_pending_deletion_account_is_not_searched_either() {
+    // The other half of what `list_enabled` means. An account being removed
+    // still has its rows until the sweep finishes; a search that showed them
+    // would be showing mail from an account the user has already deleted.
+    let world = world();
+    world
+        .connection
+        .execute(
+            "UPDATE accounts SET pending_deletion = 1 WHERE id = ?1",
+            [world.home.id.get()],
+        )
+        .expect("mark the home account for deletion");
+
+    let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified);
+
+    assert!(
+        !unified.contains(&world.home_inbox_message.id),
+        "{unified:?}"
+    );
+}
+
+#[test]
+fn naming_a_disabled_account_explicitly_still_searches_it() {
+    // The scope is a *view* filter, not an authorisation one. Settings can
+    // still show what a disabled account holds, and `AccountScope::Account`
+    // is how it asks — so the enabled filter belongs to Unified alone.
+    let world = world();
+    world
+        .connection
+        .execute(
+            "UPDATE accounts SET enabled = 0 WHERE id = ?1",
+            [world.home.id.get()],
+        )
+        .expect("disable the home account");
+
+    let named = run(
+        &world,
+        "quarterly",
+        Scope::AllMail,
+        AccountScope::Account(world.home.id),
+    );
+
+    assert_eq!(named, vec![world.home_inbox_message.id]);
+}

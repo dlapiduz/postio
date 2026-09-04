@@ -102,14 +102,8 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
 
     install_leave_to_list(window, &finder);
     install_preview(&view, wiring, window);
-    install_run(
-        &view,
-        &finder,
-        account.id,
-        wiring,
-        held.clone(),
-        order.clone(),
-    );
+    install_run(&view, &finder, window, wiring, held.clone(), order.clone());
+    install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone());
     install_order_toggle(window, &finder, feeds, order);
     load_contacts(&finder, account.id, wiring);
@@ -139,6 +133,31 @@ fn install_leave_to_list(window: &Window, finder: &Finder) {
         move || {
             window.list().grab_focus();
             true
+        }
+    });
+}
+
+/// Ask the query again when the account scope changes.
+///
+/// The scope is read per run, so a *new* query already follows it — but the
+/// query on screen when somebody clicks another account is the one they are
+/// looking at, and leaving it is worse than making them retype it: a result
+/// list that says "14 hits" for a scope the window is no longer in is an
+/// answer to a question nobody is asking (#961).
+///
+/// Registered alongside the composition root's own scope handler rather than
+/// inside it: `Sidebar::connect_scope_selected` pushes, so both run, and the
+/// search's reaction stays in the module that owns searching.
+///
+/// [`Live::rerun`] is a no-op when nothing has been asked, so this costs
+/// nothing while the box is closed.
+fn install_scope_rerun(window: &Window, finder: &Finder) {
+    window.sidebar().connect_scope_selected({
+        let finder = finder.clone();
+        move |_scope| {
+            if let Some(live) = finder.live() {
+                live.rerun();
+            }
         }
     });
 }
@@ -210,7 +229,7 @@ type Answer<T> = async_channel::Receiver<Option<T>>;
 fn install_run(
     view: &View,
     finder: &Finder,
-    account: AccountId,
+    window: &Window,
     wiring: &Wiring,
     held: Held,
     order: Order,
@@ -228,6 +247,10 @@ fn install_run(
     let runtime = wiring.runtime.clone();
     let events = wiring.events.clone();
     let view = view.clone();
+    // Weak, because the window owns the finder that owns this handler; a
+    // strong clone here is a cycle that keeps the window alive for the life
+    // of the process.
+    let window = glib::object::ObjectExt::downgrade(window);
 
     live.connect_run({
         let live = live.clone();
@@ -236,6 +259,14 @@ fn install_run(
             // is free to keep typing while it does.
             let query = parsed.clone();
             let scope = view.scope();
+            // The account scope, read fresh on this side of the thread hop
+            // exactly as the role scope above is. A window that has gone
+            // away answers nothing rather than searching every account: a
+            // teardown is not a widening.
+            let Some(account) = window.upgrade().map(|window| window.scope()) else {
+                live.settled(sequence);
+                return;
+            };
             // Read on this side of the thread hop: the cell lives with the
             // GTK loop, and the value — `Copy` — travels with the work.
             let order = order.get();
@@ -315,7 +346,7 @@ const SNIPPET_HITS: usize = 50;
 /// One search against the index, with an excerpt cut for each hit.
 fn run(
     connection: &PooledConnection,
-    account: AccountId,
+    account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
     order: postio_search::ResultOrder,
@@ -323,14 +354,14 @@ fn run(
     let mut results = search(
         connection,
         &SearchRequest {
-            // `Account`, not `Unified`, and deliberately: the composition
-            // root still opens exactly one account (`first_account`), so
-            // searching every account and searching this one are the same
-            // set. #186 gave the executor the capability; #183 is what gives
-            // the application more than one account to point it at, and
-            // switching this to follow `AppState.scope` belongs there — where
-            // there is something to observe the difference.
-            account: AccountScope::Account(account),
+            // The window's own scope, read fresh on every run — the same way
+            // the role scope beside it is (`view.scope()`). It was hardcoded
+            // to `Account` while the composition root opened exactly one
+            // account and there was nothing to observe the difference with;
+            // #185 gave the sidebar a section per account and a Unified row,
+            // and the hardcode outlived its reason by long enough that the
+            // executor's unified path had a benchmark and no caller (#961).
+            account,
             query,
             scope,
             limit: HIT_LIMIT,
@@ -390,7 +421,7 @@ fn facets(
     view: &View,
     live: &postio_gtk::search::Live,
     sequence: u64,
-    account: AccountId,
+    account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
     database: &Database,
@@ -402,8 +433,11 @@ fn facets(
             postio_index::executor::facets(
                 connection,
                 &SearchRequest {
-                    // See `run` for why this is not `Unified` yet.
-                    account: AccountScope::Account(account),
+                    // The scope the hits were counted under, carried rather
+                    // than re-read: the columns have to describe *this*
+                    // result set, and the user is free to switch scope while
+                    // this second round trip is in flight.
+                    account,
                     query: &query,
                     scope,
                     limit: HIT_LIMIT,
@@ -807,7 +841,7 @@ mod tests {
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
         run(
             &connection,
-            account,
+            AccountScope::Account(account),
             &query,
             Scope::AllMail,
             postio_search::ResultOrder::Relevance,
