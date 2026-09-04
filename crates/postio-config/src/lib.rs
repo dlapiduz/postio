@@ -75,7 +75,7 @@ pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
-pub use keys::KeyBindings;
+pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
 pub use storage::StorageConfig;

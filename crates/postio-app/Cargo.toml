@@ -38,11 +38,12 @@ postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
-tracing-journald = "0.3"
-tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 
 [dev-dependencies]
+# Only the `e2e` test builds a subscriber; the application configures its
+# logging through postio-session. A [dependencies] entry is visible to
+# integration tests too, which is what hid this being test-only.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
 # Both are for the `shot` example, which renders surfaces the application
 # itself reaches only through postio-gtk: the search panels, and the settings
 # panel over a real config file.

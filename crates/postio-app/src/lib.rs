@@ -33,11 +33,13 @@ pub mod export;
 pub mod feed;
 pub mod notifications;
 pub mod onboarding;
+pub mod orientation;
 pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
 mod settings_egress;
+mod settings_privacy;
 pub mod sidebar_backfill;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
@@ -552,6 +554,12 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // pane and the window wires their swap when the composer is installed.
     reading::install(window, wiring, &feeds, showing);
 
+    // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
+    // Installed here rather than in `postio-gtk` because the two questions
+    // it turns on -- has this been seen, and has a sync finished -- are a
+    // store read and an engine event, and the view layer has neither.
+    orientation::install(window, wiring, &feeds);
+
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
     export::install(window, wiring);
@@ -560,6 +568,8 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     settings_accounts::install(window, wiring);
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
+    // The privacy pane's unsubscribe-activation log (#971).
+    settings_privacy::install(window, wiring);
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
@@ -579,6 +589,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 
     catch_up_the_body_index(wiring);
     repair_the_header_blocks(wiring);
+    catch_up_the_header_index(wiring);
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
@@ -612,6 +623,37 @@ fn repair_the_header_blocks(wiring: &Wiring) {
             // mail client that would not open over it would be trading the
             // wrong thing.
             tracing::warn!(%error, "could not rebuild the stored header blocks");
+        }
+    });
+}
+
+/// Index the header blocks that are already on this machine, out of the way.
+///
+/// `header:` matches `message_headers`, which is derived from
+/// `messages.body_headers` (ADR 0025 Q2) — so on every store that exists, and
+/// after every bump of the headers schema half, there is a mailbox's worth of
+/// stored blocks with no rows. The fetch path indexes the mail that arrives
+/// from now on; this is the mail that is already here.
+///
+/// After [`repair_the_header_blocks`] rather than before, and the order is
+/// load-bearing rather than tidy: that pass is what *writes* the blocks this
+/// one reads, so on a store that predates #884 running them the other way
+/// round would leave this pass with almost nothing to index and everything to
+/// do again next start. Both are spawned, so the ordering is a head start
+/// rather than a guarantee — and a message either pass misses is picked up by
+/// whichever of them runs next, which is what makes that acceptable.
+///
+/// `spawn_blocking` and once per start, the same two reasons
+/// [`catch_up_the_body_index`] has: it is synchronous SQLite that
+/// decompresses and parses a block per message, and nothing on screen waits
+/// for it. Every pass after the first costs one query that finds nothing.
+fn catch_up_the_header_index(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::index_local_headers(&database) {
+            // Recoverable, like every other idle pass here: `header:` is a
+            // little less complete until the next start tries again.
+            tracing::warn!(%error, "could not index the header blocks already on disk");
         }
     });
 }
@@ -786,6 +828,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     ) {
         Ok(engines) => engines,
@@ -836,6 +879,7 @@ pub fn attach_account(
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     )?;
     if let Some(sync) = started {
@@ -1056,6 +1100,7 @@ fn open_with(
         ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
             .with_mailbox_roles(context.mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
+            .with_watch(postio_session::watch_policy(&context.sync_config))
             .with_storage_ceiling(context.storage_ceiling)
             .with_secrets(context.secrets.clone())
     };

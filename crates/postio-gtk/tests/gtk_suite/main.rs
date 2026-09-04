@@ -93,6 +93,7 @@ mod gtk_onboarding_enter;
 mod gtk_onboarding_guess;
 mod gtk_onboarding_name;
 mod gtk_onboarding_sync_window;
+mod gtk_orientation;
 mod gtk_pane_cycle;
 mod gtk_parts;
 mod gtk_prev_view;
@@ -115,6 +116,8 @@ mod gtk_settings_account_detail;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
+mod gtk_settings_keys;
+mod gtk_settings_keys_context;
 mod gtk_settings_privacy;
 mod gtk_settings_sync;
 mod gtk_settings_ui;
@@ -139,10 +142,19 @@ mod gtk_window_open_message;
 mod gtk_window_run_search;
 mod gtk_window_state;
 mod gtk_window_teardown;
+mod list_contract;
 mod list_model;
 mod no_stray_prints;
 
+/// Cases held out of a default run, by name. See `app_suite`'s copy for what
+/// this is for; nothing here is held out today.
+const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
+
 const CASES: &[(&str, fn())] = &[
+    (
+        "list_contract::the_list_output_stays_libtest_shaped",
+        list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
     (
         "feed::the_message_list_is_fed_from_the_runtime",
         feed::the_message_list_is_fed_from_the_runtime as fn(),
@@ -491,6 +503,37 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_filters::reordering_moves_a_pinned_filter_and_disables_at_the_ends as fn(),
     ),
     (
+        "gtk_settings_keys::rows_render_one_per_command_with_its_current_binding",
+        gtk_settings_keys::rows_render_one_per_command_with_its_current_binding as fn(),
+    ),
+    (
+        "gtk_settings_keys::an_override_in_the_file_is_what_the_row_shows",
+        gtk_settings_keys::an_override_in_the_file_is_what_the_row_shows as fn(),
+    ),
+    (
+        "gtk_settings_keys::capturing_a_free_key_writes_the_new_binding_to_the_buffer",
+        gtk_settings_keys::capturing_a_free_key_writes_the_new_binding_to_the_buffer as fn(),
+    ),
+    (
+        "gtk_settings_keys::capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten",
+        gtk_settings_keys::capturing_a_binding_already_in_use_is_surfaced_not_silently_overwritten
+            as fn(),
+    ),
+    (
+        "gtk_settings_keys::escape_cancels_capture_without_changing_anything",
+        gtk_settings_keys::escape_cancels_capture_without_changing_anything as fn(),
+    ),
+    (
+        "gtk_settings_keys_context::focus_on_a_keys_row_enters_the_keys_context_and_leaving_restores_it",
+        gtk_settings_keys_context::focus_on_a_keys_row_enters_the_keys_context_and_leaving_restores_it
+            as fn(),
+    ),
+    (
+        "gtk_settings_keys_context::a_bare_letter_binding_does_nothing_while_the_keyboard_is_on_a_keys_row_and_not_capturing",
+        gtk_settings_keys_context::a_bare_letter_binding_does_nothing_while_the_keyboard_is_on_a_keys_row_and_not_capturing
+            as fn(),
+    ),
+    (
         "gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none",
         gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none as fn(),
     ),
@@ -501,6 +544,24 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_privacy::revoking_a_sender_removes_its_row_and_persists",
         gtk_settings_privacy::revoking_a_sender_removes_its_row_and_persists as fn(),
+    ),
+    (
+        "gtk_settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state",
+        gtk_settings_privacy::no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state
+            as fn(),
+    ),
+    (
+        "gtk_settings_privacy::every_activation_gets_its_own_row_newest_first",
+        gtk_settings_privacy::every_activation_gets_its_own_row_newest_first as fn(),
+    ),
+    (
+        "gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank",
+        gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank as fn(),
+    ),
+    (
+        "gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent",
+        gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent
+            as fn(),
     ),
     (
         "gtk_settings_sync::the_rows_render_from_a_given_config",
@@ -547,6 +608,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state",
         gtk_sidebar_backfill_exclusion::the_menu_offers_one_entry_worded_for_the_current_state
+            as fn(),
+    ),
+    (
+        "gtk_orientation::the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none",
+        gtk_orientation::the_strip_teaches_the_keys_in_force_and_nothing_when_there_are_none
             as fn(),
     ),
     (
@@ -1031,13 +1097,35 @@ pub fn settle() {
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.iter().any(|a| a == "--list") {
+        // Two questions, and a libtest-compatible runner asks both: every
+        // test, then `--ignored` for the ignored subset. Answering the second
+        // with the full list tells a process-per-test runner that everything
+        // is ignored -- it then runs nothing and reports success, which looks
+        // exactly like a fast green run.
+        // Plain `--list` names every case, ignored ones included -- that is
+        // what libtest does, and a runner takes the ignored set as a subset
+        // of it. `--ignored` narrows to just those.
+        let only_ignored = arguments.iter().any(|a| a == "--ignored");
         for (name, _) in CASES {
-            println!("{name}: test");
+            if !only_ignored || IGNORED.contains(name) {
+                println!("{name}: test");
+            }
         }
-        println!();
-        println!("{} tests, 0 benchmarks", CASES.len());
+        // `--format terse` is a machine-readable contract: real libtest emits
+        // the names and nothing else, and a runner rejects any line not
+        // ending in ": test". The count below is what `cargo test` and the
+        // tooling's test counting read, so it stays for the non-terse form.
+        if !arguments.iter().any(|a| a == "terse") {
+            println!();
+            println!("{} tests, 0 benchmarks", CASES.len());
+        }
         return;
     }
+    // `--exact` means the argument is a whole test name, not a substring: a
+    // process-per-test runner passes it for every case, and without it a name
+    // that is a prefix of another would run both.
+    let exact = arguments.iter().any(|a| a == "--exact");
+    let run_ignored_only = arguments.iter().any(|a| a == "--ignored");
     let filters: Vec<&str> = arguments
         .iter()
         .filter(|a| !a.starts_with('-'))
@@ -1047,7 +1135,15 @@ fn main() {
     let mut failed = Vec::new();
     let mut ran = 0usize;
     for (name, case) in CASES {
-        if !filters.is_empty() && !filters.iter().any(|f| name.contains(f)) {
+        let matched = filters
+            .iter()
+            .any(|f| if exact { *name == *f } else { name.contains(f) });
+        if !filters.is_empty() && !matched {
+            continue;
+        }
+        // An ignored case runs only when it is asked for by name, or when
+        // `--ignored` asks for exactly those -- same rule libtest uses.
+        if IGNORED.contains(name) && filters.is_empty() && !run_ignored_only {
             continue;
         }
         ran += 1;

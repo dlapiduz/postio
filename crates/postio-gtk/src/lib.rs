@@ -81,6 +81,7 @@ pub mod list;
 pub mod list_state;
 pub mod list_view;
 pub mod onboarding;
+pub mod orientation;
 pub mod palette;
 pub mod parts;
 pub mod reader;

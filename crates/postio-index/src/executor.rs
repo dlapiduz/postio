@@ -1063,6 +1063,38 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                 .to_string(),
             vec![Value::Text(value.clone())],
         ),
+        // ADR 0025 Q2, and the one operator that is not an FTS `MATCH`. Header
+        // values are short and structured -- `spf=pass`, `1.5.24`,
+        // `multipart/signed` -- and a tokenizer takes them apart at exactly
+        // the characters that made them meaningful, so this is a substring
+        // match on a column.
+        //
+        // `EXISTS` correlated on `m.id`, narrowing on `name` first, which
+        // `idx_message_headers_name` answers as a range scan over one name.
+        // The name is compared for equality and never as a substring:
+        // `header:x-mail` must not find `X-Mailer`, and it is the row shape
+        // rather than the SQL that makes a name and a value from *different*
+        // fields impossible to pair.
+        Filter::Header { name, value } => match value {
+            None => (
+                "EXISTS (SELECT 1 FROM message_headers h \
+                  WHERE h.message_id = m.id AND h.name = ?)"
+                    .to_string(),
+                vec![Value::Text(name.clone())],
+            ),
+            // `LIKE` folds ASCII case on its own, which is what ADR 0025 Q6
+            // asks for. It does not fold anything else, so a value that
+            // survived RFC 2047 decoding as non-ASCII matches in the case it
+            // was stored -- SQLite's `lower()` is ASCII-only too, so there is
+            // nothing to gain by wrapping it.
+            Some(value) => (
+                "EXISTS (SELECT 1 FROM message_headers h \
+                  WHERE h.message_id = m.id AND h.name = ? \
+                    AND h.value LIKE '%' || ? || '%' ESCAPE '\\')"
+                    .to_string(),
+                vec![Value::Text(name.clone()), Value::Text(escape_like(value))],
+            ),
+        },
         Filter::Filename(value) => fts_column_condition("filenames", value),
         // `list:` names a mailing list by its `List-Id` (#9): the bracketed
         // identifier `postio-model::mime::list_id_from_text` extracts and
@@ -1116,6 +1148,24 @@ fn fts_column_condition(column: &str, value: &str) -> (String, Vec<Value>) {
         "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)".to_string(),
         vec![Value::Text(format!("{column}:{}", fts_literal(value)))],
     )
+}
+
+/// A literal for the middle of a `LIKE '%' || ? || '%' ESCAPE '\\'` pattern.
+///
+/// `%` and `_` are wildcards to `LIKE`, and a header value is exactly where
+/// they turn up in ordinary text: `Content-Type: multipart/signed;
+/// boundary=__part_1`, a spam score of `100%`. Without this,
+/// `header:x-spam-status=100%` would match anything with an `X-Spam-Status`
+/// at all -- a wrong answer that looks like a right one.
+fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 /// Quotes an operator value that would otherwise not survive being typed

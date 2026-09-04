@@ -1032,6 +1032,98 @@ async fn text_fetched_by_section_reaches_the_search_index() {
     );
 }
 
+/// Whether `id` carries an indexed header row for `name`, whose value
+/// contains `value` — the two questions `header:` asks, straight off the
+/// table (ADR 0025 Q2).
+fn header_is_indexed(
+    connection: &postio_storage::PooledConnection,
+    id: MessageId,
+    name: &str,
+    value: &str,
+) -> bool {
+    connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM message_headers
+                             WHERE message_id = ?1 AND name = ?2
+                               AND value LIKE '%' || ?3 || '%')",
+            rusqlite::params![id.get(), name, value],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap_or(false)
+}
+
+#[tokio::test]
+async fn a_fetched_body_reaches_the_header_index() {
+    // #327's shape, in ADR 0025's costume: the catch-up pass is what fills
+    // `message_headers` for mail that was already here, and it runs once per
+    // start. If the fetch path did not index too, mail that arrived while the
+    // application was open would not answer `header:` until it was restarted
+    // -- a feature that works on old mail and not on new is worse than one
+    // that does not work.
+    let backend = server(2).await;
+    let local = local();
+    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[1];
+
+    assert!(
+        !header_is_indexed(&local.connection, id, "content-type", "text/plain"),
+        "the header-sync pass indexes no block -- it has none -- which is the \
+         state this test is about leaving behind"
+    );
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1024),
+        BackfillPolicy::default().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert!(
+        header_is_indexed(&local.connection, id, "content-type", "text/plain"),
+        "a fetched message's own headers did not reach the index -- and \
+         `Content-Type` is a field no envelope column carries, so nothing but \
+         the block could have answered it"
+    );
+}
+
+#[tokio::test]
+async fn text_fetched_by_section_reaches_the_header_index() {
+    // The text axis is a second place a block arrives, and ADR 0017 says it
+    // is 15% of the reference mailbox. It needs its own proof for the same
+    // reason `text_fetched_by_section_reaches_the_search_index` does.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(with_a_big_attachment(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local();
+    postio_index::index::ensure_schema(&local.connection).expect("the search schema");
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, HUGE),
+        BackfillPolicy::default().max_inline_bytes,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    assert!(
+        header_is_indexed(&local.connection, id, "from", "ada@example.com"),
+        "the section fetch stored a block that nothing indexed"
+    );
+}
+
 #[tokio::test]
 async fn text_that_is_not_part_one_is_still_found() {
     // The reason the section number is stored rather than assumed. A message

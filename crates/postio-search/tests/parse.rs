@@ -179,6 +179,141 @@ fn group_composes_with_other_operators_and_with_negation() {
 }
 
 #[test]
+fn header_operator_asks_whether_a_field_is_present() {
+    // ADR 0025 Q6: `header:x-mailer` is "the message has a field with that
+    // name", which is a different question from "its value contains
+    // something" and has to stay distinguishable from it all the way to the
+    // executor -- hence `value: None` rather than an empty string.
+    assert_eq!(
+        filters("header:x-mailer"),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            value: None
+        }]
+    );
+}
+
+#[test]
+fn header_operator_binds_a_value_to_the_name_it_was_typed_with() {
+    assert_eq!(
+        filters("header:x-mailer=mutt"),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            value: Some("mutt".into())
+        }]
+    );
+}
+
+#[test]
+fn a_header_name_is_stored_in_the_one_case_the_index_holds() {
+    // RFC 5322 names are case-insensitive and `message_headers.name` holds
+    // one spelling, so the query side has to arrive at the same one --
+    // through `postio_model::headers::normalize_name`, not through a second
+    // `to_lowercase` of this crate's own (ADR 0025 Q3).
+    assert_eq!(
+        filters("header:X-Mailer=Mutt"),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            // The *value* keeps the case it was typed in: the match is
+            // case-insensitive at the executor, and a chip that lower-cased
+            // what somebody typed would be lying about their query.
+            value: Some("Mutt".into())
+        }]
+    );
+}
+
+#[test]
+fn a_header_value_is_normalized_the_same_way_the_stored_one_is() {
+    // The index holds `normalize_value`'s output. A query that skipped it
+    // would ask for a string the column can never contain -- two spaces
+    // where the stored value has one, an encoded word where the stored
+    // value has the word. Both sides run the one function (ADR 0025 Q3).
+    assert_eq!(
+        filters("header:x-mailer=\"mutt   1.5.24\""),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            value: Some("mutt 1.5.24".into())
+        }]
+    );
+}
+
+#[test]
+fn a_header_value_is_split_at_the_first_equals_not_the_last() {
+    // `authentication-results=spf=pass` is the motivating case in ADR 0025
+    // Q6: everything after the first `=` belongs to the value, because a
+    // structured header value routinely contains its own.
+    assert_eq!(
+        filters("header:authentication-results=spf=pass"),
+        vec![Filter::Header {
+            name: "authentication-results".into(),
+            value: Some("spf=pass".into())
+        }]
+    );
+}
+
+#[test]
+fn a_header_value_may_contain_spaces_when_it_is_quoted() {
+    assert_eq!(
+        filters(r#"header:x-mailer="mutt 1.5""#),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            value: Some("mutt 1.5".into())
+        }]
+    );
+}
+
+#[test]
+fn a_half_typed_header_value_means_presence_never_an_error() {
+    // ADR 0025 Q6's table, and `PRODUCT.md` §7's rule that results update on
+    // every keystroke: the instant after `=` is typed is an ordinary state,
+    // and asking for presence is the most useful thing it can mean.
+    assert_eq!(
+        filters("header:x-mailer="),
+        vec![Filter::Header {
+            name: "x-mailer".into(),
+            value: None
+        }]
+    );
+}
+
+#[test]
+fn a_header_with_no_name_yet_is_a_partial() {
+    for input in ["header:", "header:=", "header:=mutt"] {
+        let parsed = q(input);
+        assert_eq!(parsed.filters().count(), 0, "{input}");
+        assert_eq!(parsed.partials().count(), 1, "{input}");
+    }
+}
+
+#[test]
+fn header_composes_with_other_operators_and_with_negation() {
+    assert_eq!(
+        filters("header:x-mailer=mutt is:unread"),
+        vec![
+            Filter::Header {
+                name: "x-mailer".into(),
+                value: Some("mutt".into())
+            },
+            Filter::Is(State::Unread)
+        ]
+    );
+
+    let parsed = q("-header:precedence=bulk");
+    let clause = parsed.filters().next().unwrap();
+    assert!(
+        clause.negated,
+        "`-header:` excludes, like every other operator"
+    );
+    assert_eq!(
+        clause.filter,
+        Filter::Header {
+            name: "precedence".into(),
+            value: Some("bulk".into())
+        }
+    );
+}
+
+#[test]
 fn larger_operator_with_size_suffixes() {
     assert_eq!(filters("larger:1M"), vec![Filter::Larger(1024 * 1024)]);
     assert_eq!(filters("larger:1m"), vec![Filter::Larger(1024 * 1024)]);

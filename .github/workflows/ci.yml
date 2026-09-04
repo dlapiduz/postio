@@ -73,6 +73,10 @@ env:
   # eight-core workstation. That reasoning does not travel: a runner is one
   # job on its own machine, and inheriting the limit throttled CI to a quarter
   # of the box for no benefit. CARGO_BUILD_JOBS overrides the config file.
+  #
+  # This is the floor, not the setting. The jobs that compile ask the runner
+  # how many cores it has and raise it (see .github/actions/rust-workspace);
+  # the cheap jobs that only read metadata never build enough to care.
   CARGO_BUILD_JOBS: 4
 
 jobs:
@@ -190,7 +194,44 @@ jobs:
       # Each test says what it is for in its own module docstring, which is
       # where that belonged: a step name in a workflow is not a place anybody
       # reads, and a comment there was a second copy free to disagree.
+      # The step below is eight of this job's nine minutes, and what it tests
+      # is `scripts/`, not the workspace: each self-test builds its own
+      # sandbox repository and never reads `crates/`. A pull request that
+      # touches only Rust cannot change its outcome, so it should not pay for
+      # it. #996 lists this as the cheapest thing to fix here.
+      #
+      # It fails safe in all three directions that matter: a push to `main`
+      # runs them, an API call that does not answer runs them, and anything at
+      # all outside `crates/` runs them. Skipping needs a definite answer that
+      # only `crates/` changed.
+      - name: Decide whether the tooling self-tests need to run
+        id: tooling
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "not a pull request -- running them"
+            exit 0
+          fi
+          files=$(gh api --paginate \
+            "repos/${{ github.repository }}/compare/${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+            --jq '.files[].filename' 2>/dev/null) || files=""
+          if [ -z "$files" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "could not read the diff -- running them"
+            exit 0
+          fi
+          if printf '%s\n' "$files" | grep -qvE '^crates/'; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "changes outside crates/ -- running them"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "only crates/ changed -- the tooling cannot be affected, skipping"
+          fi
+
       - name: Prove the tooling still holds itself up
+        if: steps.tooling.outputs.run == 'yes'
         run: |
           ls scripts/tests/*.py | sort > /tmp/self-tests
           echo "running $(wc -l < /tmp/self-tests) self-tests, four at a time"
@@ -215,8 +256,15 @@ jobs:
         run: |
           # Live-server tests are #[ignore]d and must stay out of CI. The
           # pattern is split so this guard does not match itself.
+          # Both spellings -- cargo test's flag, and the `--run-` prefixed
+          # one nextest uses. Neither is written out here for the same reason
+          # the pattern below is split: this file is what gets grepped, so a
+          # comment naming the flag fails the job it is documenting.
+          #
+          # A guard that knows only the runner we used to use stops working
+          # the day the runner changes, which is what this commit does.
           flag="--ign""ored"
-          if grep -rnF -- "$flag" .github/workflows; then
+          if grep -rnE -- "$flag|--run-ign""ored" .github/workflows; then
             echo "::error::CI must not run the ignored tests; they talk to a live mail server."
             exit 1
           fi
@@ -324,10 +372,23 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Its own cache, not the test job's. Clippy emits *check* units through
+      # `clippy-driver` and `cargo test` emits *build* units; cargo
+      # fingerprints those separately, so this job restored 3.1 GB and then
+      # rebuilt 380 crates from `unicode-ident` up anyway. See `cache-name` in
+      # the action for the measurement.
       - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "clippy"
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Drop workspace artifacts before caching
+        if: always()
+        run: scripts/ci-drop-workspace-artifacts.sh
 
   test:
     name: Tests
@@ -335,11 +396,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # The one that writes the cache back: it builds the most, so its
-      # artifacts are the ones worth handing to the next run.
+      # This job's own cache, keyed `build` -- the artifacts `cargo test`
+      # produces. The clippy job keeps a separate one; they cannot share.
       - uses: ./.github/actions/rust-workspace
         with:
           save-cache: "true"
+          cache-name: "build"
 
       # Sixty test files in this workspace open with "no display? skip and
       # return", which is right on a contributor's headless shell and wrong
@@ -374,6 +436,44 @@ jobs:
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      # The published binary, not `cargo install`, and the difference is
+      # minutes. `cargo install cargo-nextest` builds the tool's own
+      # dependency tree -- clap, serde, regex and ~200 others -- in its own
+      # target directory, so every crate it shares with this workspace is
+      # compiled twice per run and neither copy is usable by the other. The
+      # release tarball is one file and ~2 seconds.
+      #
+      # Pinned by **checksum**, which is a stronger guarantee than the SHA
+      # pinning applied to actions here and than `--locked` gives: it fixes
+      # the exact bytes rather than a dependency graph that resolves at build
+      # time. The asset is immutable, so a changed digest means the artifact
+      # changed and the job should stop -- `sha256sum -c` makes that a failure
+      # rather than a surprise.
+      #
+      # To bump: change the version in all three places below, download the
+      # tarball, and put its `sha256sum` here.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-0.9.143
+
+      # The binary is asked, not the cache: `cache-hit` is false on a
+      # restore-keys prefix hit even when the files are there, so a
+      # cache-hit guard is wrong wherever restore-keys are in play.
+      - name: Install cargo-nextest
+        run: |
+          if cargo nextest --version 2>/dev/null | grep -qw "0.9.143"; then
+            echo "cargo-nextest 0.9.143 restored from the cache"
+            exit 0
+          fi
+          curl -fsSL --retry 3 -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.143/linux
+          echo "66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e  /tmp/nextest.tar.gz" \
+            | sha256sum -c -
+          mkdir -p "$HOME/.cargo/bin"
+          tar -xzf /tmp/nextest.tar.gz -C "$HOME/.cargo/bin" cargo-nextest
+          cargo nextest --version
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
@@ -415,10 +515,28 @@ jobs:
       # find out, and it is the difference between "one test is flaky" and
       # "something is badly wrong", which is exactly what you want to know
       # while looking at a red tick.
-      - name: cargo test
+      # One process per test, and test binaries run concurrently instead of one
+      # after another. Measured on this workspace: 3,462 tests across 140
+      # binaries in 118s against ~500s for `cargo test --workspace`. The
+      # binaries are what dominates -- `cargo test` serialises all 140 of them.
+      #
+      # Still inside `dbus-run-session`, for the same reason as before: mutter
+      # wants a session bus and a runner has none. `--profile ci` is where
+      # fail-fast is turned off, alongside the retry override for #957.
+      - name: cargo nextest run
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo test --workspace --no-fail-fast
+        run: dbus-run-session -- cargo nextest run --workspace --profile ci
+
+      # **nextest does not run doctests**, and does not say so. They are
+      # compiled and run by rustdoc, not by a test binary it can list, so this
+      # step is not a leftover to tidy: delete it and ~20 doctests stop running
+      # with nothing to report that they did. Under `dbus-run-session` like the
+      # step above, so the two see the same environment.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc
 
       # Keep the ~400 third-party crates; drop our own, which every commit
       # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
@@ -438,12 +556,4 @@ jobs:
       # no longer there.
       - name: Drop workspace artifacts before caching
         if: always()
-        run: |
-          before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
-          rm -rf target/*/incremental
-          rm -f  target/*/deps/libpostio_*.rlib \
-                 target/*/deps/libpostio_*.rmeta \
-                 target/*/deps/postio_*.d \
-                 target/*/deps/libpostio_*.d
-          rm -rf target/*/.fingerprint/postio-*
-          echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
+        run: scripts/ci-drop-workspace-artifacts.sh

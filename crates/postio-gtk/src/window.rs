@@ -121,6 +121,10 @@ mod imp {
         pub open_mailbox: std::cell::RefCell<Option<OpenMailbox>>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
+        /// ADR 0012's first-run keyboard orientation. This crate builds and
+        /// places it; `postio-app` decides whether it has anything to say,
+        /// because that answer lives in the store.
+        pub orientation: OnceCell<crate::orientation::OrientationStrip>,
         /// Installed lazily, on first [`Window::composer`] — nothing before
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
@@ -202,6 +206,13 @@ mod imp {
         /// The context that had the keyboard before it went to the account
         /// list in settings — see `before_sidebar` (#471).
         pub before_accounts: std::cell::Cell<Option<Context>>,
+        /// The context that had the keyboard before it went to the
+        /// keybinding list in settings — see `before_sidebar` (#1016).
+        pub before_keys: std::cell::Cell<Option<Context>>,
+        /// Set once `keys_list`'s own `EventControllerFocus` has been
+        /// added — never during `Window::new`'s own construction. See
+        /// `Window::ensure_keys_focus_controller`'s own doc for why.
+        pub keys_focus_installed: std::cell::Cell<bool>,
         pub overlay: OnceCell<gtk::Overlay>,
         pub resolver: OnceCell<std::cell::RefCell<Resolver>>,
         /// `None` until `build` sets it; the accessor reads it as `List`.
@@ -1130,7 +1141,11 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move |label| {
-                window.close_finder();
+                // Through `press_escape`, not `close_finder` directly, so
+                // that everyone who registered for a dismissal -- this
+                // window's own focus restore, and #1011's search cleanup --
+                // hears about it, whatever picked the finder is closing for.
+                window.finder().press_escape();
                 window.act(postio_core::Command::AddLabel {
                     target: postio_core::MessageTarget::Selection,
                     label: Some(label),
@@ -1407,6 +1422,17 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
+        // ADR 0012 Q4: above the list rather than over it, so the rows it
+        // is talking about stay visible and scrollable underneath — the
+        // same arrangement `ListStateView`'s banner placement makes, and
+        // for the same reason. Hidden until `postio-app` says otherwise.
+        let orientation = crate::orientation::OrientationStrip::new();
+        shell.list().prepend(&orientation.widget());
+        orientation.connect_dismissed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move || window.orientation().retire()
+        ));
         let _ = self.imp().list_pane.set(list_overlay.clone());
 
         // The mouse runs the same commands the keyboard does, through the
@@ -1505,6 +1531,7 @@ impl Window {
         let _ = self.imp().list.set(list_view);
         let _ = self.imp().finder.set(finder);
         let _ = self.imp().cheatsheet.set(cheatsheet);
+        let _ = self.imp().orientation.set(orientation);
         // The context follows the keyboard into the account list, the same
         // way it follows it into the folders — and scoped to that list
         // rather than to the panel, because the panel also holds a TextView
@@ -1555,6 +1582,7 @@ impl Window {
         // gets around to being read. `apply_keymap` replaces them if it
         // says something different.
         self.finder().set_keymap(keymap.clone());
+        self.orientation().set_keymap(&keymap);
         self.cheatsheet().set_keymap(keymap);
 
         let finder = self.finder();
@@ -1562,7 +1590,9 @@ impl Window {
             #[weak(rename_to = window)]
             self,
             move |id| {
-                window.close_finder();
+                // Through `press_escape`, for the reason `connect_label`
+                // above gives (#1011).
+                window.finder().press_escape();
                 // Through `run_action`, not straight out: a command the
                 // window answers itself means the same thing chosen from the
                 // palette as it does typed, and the bus must not hear it
@@ -1577,7 +1607,9 @@ impl Window {
         finder.connect_folder(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| window.close_finder()
+            // Through `press_escape`, not `close_finder` directly, for the
+            // reason `CommandId::Back` gives (#1011).
+            move |_| window.finder().press_escape()
         ));
         finder.connect_dismissed(glib::clone!(
             #[weak(rename_to = window)]
@@ -1735,6 +1767,14 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        // ADR 0012 Q6: the first-run orientation is over the moment somebody
+        // runs a command from the keyboard or the palette, whether or not it
+        // ever appeared. This is the seam that can tell that apart from a
+        // click: `connect_action` sees only the commands the window passes
+        // *out*, so it never sees `j` -- which is the exact gesture the ADR
+        // names -- and `act` sees the mouse's invocations too, which it says
+        // are not evidence of anything.
+        self.orientation().retire();
         match id {
             ActionId::Builtin(id) => self.run(id),
             ActionId::Ext(id) => {
@@ -1859,7 +1899,12 @@ impl Window {
             }
             CommandId::Back if self.parts().is_visible() => self.close_parts(),
             CommandId::Back if self.cheatsheet().is_visible() => self.close_cheatsheet(),
-            CommandId::Back if self.finder().is_open() => self.close_finder(),
+            // Through `press_escape`, not `close_finder` directly (#1011):
+            // this is the path that runs once the keyboard has moved off
+            // the search entry onto the list to read a result, and
+            // `close_finder` alone restores focus and the keymap context
+            // without ever telling `Feed` the search is over.
+            CommandId::Back if self.finder().is_open() => self.finder().press_escape(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
             // Nearer than a selection made before the keyboard went to the
             // folders: `Esc` in the sidebar means "back to the messages".
@@ -2358,6 +2403,15 @@ impl Window {
             .clone()
     }
 
+    /// ADR 0012's first-run keyboard orientation, above the message list.
+    pub fn orientation(&self) -> crate::orientation::OrientationStrip {
+        self.imp()
+            .orientation
+            .get()
+            .expect("built in constructed")
+            .clone()
+    }
+
     /// Shows the cheat sheet, or hides it if it is already up.
     ///
     /// Toggling rather than only opening: `?` is what the user pressed to get
@@ -2372,8 +2426,10 @@ impl Window {
 
     /// Shows the cheat sheet over the workspace.
     pub fn open_cheatsheet(&self) {
-        // Two overlays at once is one too many.
-        self.close_finder();
+        // Two overlays at once is one too many. Through `press_escape`, not
+        // `close_finder` directly, for the reason `CommandId::Back` above
+        // gives (#1011).
+        self.finder().press_escape();
         let sheet = self.cheatsheet();
         sheet.set_visible(true);
         sheet.grab_focus();
@@ -2396,8 +2452,11 @@ impl Window {
 
     /// Shows the settings panel over the workspace.
     pub fn open_settings(&self) {
-        // Only one overlay at a time.
-        self.close_finder();
+        self.ensure_keys_focus_controller();
+        // Only one overlay at a time. Through `press_escape`, not
+        // `close_finder` directly, for the reason `CommandId::Back` above
+        // gives (#1011).
+        self.finder().press_escape();
         self.close_cheatsheet();
         // Read fresh on every open rather than cached, the same reason
         // `new_reader` loads its own copy each time rather than keeping one
@@ -2417,6 +2476,49 @@ impl Window {
     pub fn close_settings(&self) {
         self.settings().set_visible(false);
         self.shell().grab_focus();
+    }
+
+    /// Adds `keys_list`'s `Context::Keys` `EventControllerFocus`, the
+    /// first time settings is actually opened — never during `Window::new`.
+    ///
+    /// `docs/engineering-notes.md`'s note on `SettingsPanel::build()` (#873,
+    /// #880, #881) explains why nothing that touches a settings sub-widget
+    /// gets added unconditionally during `Window::new`'s own construction:
+    /// a full-`gtk_suite` corruption was chased there before, and even
+    /// though it turned out to be an unrelated pre-existing flake in that
+    /// specific case, the precautionary principle stands. `accounts_focus`,
+    /// right above where this used to sit before that investigation, is the
+    /// same shape and has not been observed to cause a problem — which is
+    /// not the same as proof it cannot, so this stays deferred rather than
+    /// treating that as precedent for adding a second one unconditionally.
+    fn ensure_keys_focus_controller(&self) {
+        if self.imp().keys_focus_installed.get() {
+            return;
+        }
+        self.imp().keys_focus_installed.set(true);
+
+        let keys_focus = gtk::EventControllerFocus::new();
+        keys_focus.connect_enter(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() != Context::Keys {
+                    window.imp().before_keys.set(Some(window.context()));
+                    window.set_context(Context::Keys);
+                }
+            }
+        ));
+        keys_focus.connect_leave(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                if window.context() == Context::Keys {
+                    let previous = window.imp().before_keys.take();
+                    window.set_context(previous.unwrap_or(Context::List));
+                }
+            }
+        ));
+        self.settings().keys_list().add_controller(keys_focus);
     }
 
     /// Shows the settings panel, or hides it if it is already up.
@@ -2440,6 +2542,7 @@ impl Window {
         }
         self.finder().set_keymap(keymap.clone());
         self.cheatsheet().set_keymap(keymap.clone());
+        self.orientation().set_keymap(&keymap);
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
         // Every message in the stack carries its own Reply/Reply all/Forward

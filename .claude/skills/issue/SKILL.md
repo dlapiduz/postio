@@ -22,7 +22,20 @@ scripts/issue-claim.sh --milestone MVP      # scoped to a milestone
 scripts/issue-claim.sh 42                   # a specific issue
 scripts/issue-claim.sh --dry-run            # look before taking
 scripts/issue-claim.sh --base feature/x 42  # cut from an initiative branch
+scripts/issue-claim.sh --reuse             # here, with target/ still warm
 ```
+
+**Reach for `--reuse` first.** A new worktree is a cold `target/`, and that is
+Postio's own ~20 crates rebuilt before the first gate result — nearly fifteen
+minutes on #1012's landing, for a change with no Rust in it. `--reuse` moves
+the tree you are standing in to the new issue's name and checks out its
+branch, so the build stays warm. It is *not* the sharing #76 forbids: that is
+two worktrees writing one target, and this is one worktree.
+
+Claim fresh when you need the old tree kept — an unlanded branch you are
+coming back to. Otherwise try `--reuse`: it refuses if the tree is dirty, if
+it holds commits that are not on `main`, or if you are in the shared
+checkout, and a refusal changes nothing, so the wrong guess is free.
 
 ## Several small issues on one branch
 

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Platform;
+use crate::{ConfigError, Result};
 
 /// The built-in bindings, taken from the design canvas.
 pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
@@ -281,6 +282,47 @@ impl KeyBindings {
     }
 }
 
+/// Rewrites just `[keys]` in `text` to hold exactly `overrides`, leaving
+/// everything else in the file untouched — the settings pane's write path
+/// (#881), the same shape [`crate::patch_filters`] already established:
+/// `toml_edit`'s format-preserving document model, touching only the one
+/// table this pane owns, so a comment anywhere else survives verbatim.
+///
+/// `KeyBindings` is `#[serde(transparent)]`, so `[keys]`'s own shape is
+/// already just `command = "binding"` pairs with no wrapper table the way
+/// `[filters.<key>]` needs one — but `toml_edit`'s fragment splice still
+/// needs *some* struct to serialize from, hence [`KeysOnly`].
+pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    doc.as_table_mut().remove("keys");
+
+    // As `patch_filters` documents: an empty map still serializes as a bare
+    // `[keys]` header, which would reintroduce the dangling header this
+    // exists to avoid -- so the empty case skips serialization entirely.
+    if !overrides.is_empty() {
+        let fragment = toml::to_string(&KeysOnly { keys: overrides })
+            .map_err(|err| ConfigError::Serialize(err.to_string()))?;
+        let fragment_doc = fragment
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|err| ConfigError::parse(None, &err))?;
+        if let Some(item) = fragment_doc.as_table().get("keys") {
+            doc.as_table_mut().insert("keys", item.clone());
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// Serializes as just `[keys]`, with no other section — [`patch_keys`]'s
+/// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
+/// splice in, the same role `filters.rs`'s own `FiltersOnly` plays for
+/// `[filters]`.
+#[derive(Serialize)]
+struct KeysOnly<'a> {
+    keys: &'a BTreeMap<String, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +392,60 @@ mod tests {
     #[test]
     fn unknown_commands_have_no_binding() {
         assert_eq!(KeyBindings::default().binding("teleport"), None);
+    }
+
+    // -- Acceptance: the settings panel patches [keys] only (#881) ---------
+
+    #[test]
+    fn patch_keys_rewrites_only_the_keys_table_leaving_everything_else_verbatim() {
+        let original = "\
+# a hand-written comment nobody wants to lose
+[ui]
+theme = \"dark\" # inline comment, also not to be lost
+
+[keys]
+archive = \"a\"
+";
+        let mut overrides = BTreeMap::new();
+        overrides.insert("archive".to_string(), "shift+a".to_string());
+
+        let patched = patch_keys(original, &overrides).expect("patches");
+
+        assert!(
+            patched.contains("# a hand-written comment nobody wants to lose"),
+            "a comment outside [keys] must survive verbatim: {patched}"
+        );
+        assert!(
+            patched.contains("theme = \"dark\" # inline comment, also not to be lost"),
+            "an unrelated section's own formatting must survive verbatim: {patched}"
+        );
+
+        let reparsed = crate::Config::from_toml_str(&patched).expect("still parses");
+        assert_eq!(reparsed.keys.binding("archive"), Some("shift+a"));
+    }
+
+    #[test]
+    fn patch_keys_removes_the_table_entirely_once_every_override_is_cleared() {
+        let original = "[keys]\narchive = \"shift+a\"\n";
+        let patched = patch_keys(original, &BTreeMap::new()).expect("patches");
+        assert!(
+            !patched.contains("[keys"),
+            "no overrides left means no dangling [keys] header: {patched}"
+        );
+    }
+
+    #[test]
+    fn patch_keys_adds_the_table_when_it_did_not_exist_before() {
+        let original = "[ui]\ntheme = \"dark\"\n";
+        let mut overrides = BTreeMap::new();
+        overrides.insert("archive".to_string(), "shift+a".to_string());
+
+        let patched = patch_keys(original, &overrides).expect("patches");
+        assert!(patched.contains("[keys]"));
+        assert!(patched.contains("theme = \"dark\""));
+
+        let reparsed = crate::Config::from_toml_str(&patched).expect("still parses");
+        assert_eq!(reparsed.keys.binding("archive"), Some("shift+a"));
     }
 }
 

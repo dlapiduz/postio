@@ -16,6 +16,7 @@
 #   scripts/issue-claim.sh --label area:compose
 #   scripts/issue-claim.sh --dry-run          # show what it would take
 #   scripts/issue-claim.sh --base feature/x   # cut from an initiative branch
+#   scripts/issue-claim.sh --reuse            # in this worktree, target warm
 #   scripts/issue-claim.sh --ready-label ready-mac   # a different queue
 set -euo pipefail
 
@@ -38,7 +39,7 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 # bureaucratized yet is still claimable.
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
-WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"
+WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --milestone) MILESTONE="$2"; shift 2 ;;
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
         --ready-label) READY_LABEL="$2"; shift 2 ;;
         --base)      BASE="$2";      shift 2 ;;
         --dry-run)   DRY=1;          shift ;;
+        --reuse)     REUSE=1;        shift ;;
         [0-9]*)      WANT="$1";      shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -60,6 +62,55 @@ if ! git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "$BASE" >/dev/null
     git -C "$REPO_ROOT" ls-remote --heads origin \
         | sed 's|.*refs/heads/|    |' | head -20 >&2
     exit 2
+fi
+
+# --reuse: work the next issue in the worktree this session is already in,
+# instead of a fresh one with a cold `target/`.
+#
+# The saving is the whole point -- a new worktree rebuilds Postio's own ~20
+# crates before it can report a single gate, twelve minutes on #860's landing
+# -- and the *reason this is safe* is that it is one workspace, not two.
+# Sharing a `CARGO_TARGET_DIR` between worktrees is the p1 in #76: two trees
+# present cargo the same relative paths and package versions, land in the same
+# build slot, and hand each other stale libraries, so a suite can pass against
+# a library the change never reached. One tree with a different branch checked
+# out cannot do that, and the build stays warm because it is the same tree.
+#
+# Vetted here, before any claim is taken, so a refusal costs nothing and
+# cannot strand a lock.
+REUSE_TREE=""
+if [ "$REUSE" = 1 ]; then
+    REUSE_TREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -z "$REUSE_TREE" ]; then
+        echo "--reuse works in a git worktree, and this is not one." >&2
+        exit 2
+    fi
+    case "$REUSE_TREE" in
+        "$WORKTREES"/*) : ;;
+        *)
+            # Never the shared checkout: it is for coordination, other
+            # sessions' uncommitted work lives in it, and its guard hook
+            # refuses the destructive commands this would run there.
+            echo "--reuse only reuses a worktree under $WORKTREES." >&2
+            echo "This is $REUSE_TREE, which is not one -- claim without --reuse." >&2
+            exit 2
+            ;;
+    esac
+    if [ -n "$(git -C "$REUSE_TREE" status --porcelain)" ]; then
+        echo "$REUSE_TREE has uncommitted changes, so there is nothing safe to do here." >&2
+        echo "Uncommitted work is unprotected work: commit or land it first." >&2
+        exit 2
+    fi
+    # Nothing unlanded. A reuse that carried away commits nobody merged would
+    # lose them behind a branch switch, which is worse than a cold build.
+    git -C "$REUSE_TREE" fetch --quiet origin main
+    UNLANDED="$(git -C "$REUSE_TREE" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)"
+    if [ "$UNLANDED" != 0 ]; then
+        echo "$REUSE_TREE is $UNLANDED commit(s) ahead of origin/main." >&2
+        echo "Land them first -- reusing the tree now would leave them behind" >&2
+        echo "a branch switch with nothing pointing at them." >&2
+        exit 2
+    fi
 fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
@@ -238,7 +289,17 @@ while IFS=$'\t' read -r NUM TITLE; do
         continue
     fi
     git -C "$REPO_ROOT" fetch --quiet origin "$BASE"
-    git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
+    if [ "$REUSE" = 1 ]; then
+        # Moved rather than left where it is, because the `issue-<n>` name is
+        # load-bearing: `issue-release.sh` finds a tree by it. The move takes
+        # `target/` along, which is the entire saving.
+        if [ "$REUSE_TREE" != "$TREE" ]; then
+            git -C "$REPO_ROOT" worktree move "$REUSE_TREE" "$TREE"
+        fi
+        git -C "$TREE" checkout --quiet -b "$BRANCH" "origin/$BASE"
+    else
+        git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
+    fi
     # Recorded rather than retyped. `issue-land.sh` reads this back, so a
     # session that claimed from an initiative branch lands onto it without
     # having to remember a flag -- and forgetting *this* flag is a merge to
@@ -258,7 +319,11 @@ while IFS=$'\t' read -r NUM TITLE; do
     echo
     echo "  tree:   $TREE"
     echo "  branch: $BRANCH"
-    echo "  target: this worktree's own (deps come from the machine-wide sccache, wired in automatically)"
+    if [ "$REUSE" = 1 ]; then
+        echo "  target: reused, already warm (moved from $REUSE_TREE)"
+    else
+        echo "  target: this worktree's own (deps come from the machine-wide sccache, wired in automatically)"
+    fi
     echo
     echo "Work in that directory from here on:  cd $TREE"
     echo "Land it with:                         scripts/issue-land.sh"

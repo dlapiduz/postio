@@ -852,6 +852,44 @@ fn list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest() {
 }
 
 // ---------------------------------------------------------------------------
+// Acceptance: a requested read receipt is detected without sending one (#970)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn disposition_notification_to_is_detected_as_a_read_receipt_request() {
+    let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
+To: Grace Hopper <grace@example.net>\r\n\
+Subject: Please confirm\r\n\
+Disposition-Notification-To: ada@example.com\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Let me know you got this\r\n";
+    let parsed = mime::parse(raw);
+    assert!(parsed.read_receipt_requested);
+}
+
+#[test]
+fn the_older_return_receipt_to_is_also_detected() {
+    let raw = b"From: Ada Lovelace <ada@example.com>\r\n\
+To: Grace Hopper <grace@example.net>\r\n\
+Subject: Please confirm\r\n\
+Return-Receipt-To: ada@example.com\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Let me know you got this\r\n";
+    let parsed = mime::parse(raw);
+    assert!(parsed.read_receipt_requested);
+}
+
+#[test]
+fn a_message_that_never_asked_for_a_receipt_says_so() {
+    let parsed = parse("plain-text-simple");
+    assert!(!parsed.read_receipt_requested);
+}
+
+// ---------------------------------------------------------------------------
 // Mapping onto `Message`
 // ---------------------------------------------------------------------------
 

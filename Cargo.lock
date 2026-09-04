@@ -2652,7 +2652,6 @@ dependencies = [
  "postio-account",
  "postio-config",
  "postio-model",
- "rand 0.9.5",
  "rustls",
  "rustls-platform-verifier",
  "secrecy",
@@ -2660,7 +2659,6 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "serde_json",
- "sha2 0.10.9",
  "tempfile",
  "thiserror",
  "tokio",
@@ -2697,8 +2695,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "tracing-journald",
- "tracing-log",
  "tracing-subscriber",
  "url",
 ]
@@ -2802,11 +2798,8 @@ dependencies = [
  "pimalaya-stream",
  "postio-account",
  "postio-model",
- "secrecy",
- "thiserror",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -2861,10 +2854,7 @@ dependencies = [
  "postio-account",
  "postio-model",
  "secrecy",
- "serde_json",
- "thiserror",
  "tokio",
- "tracing",
  "url",
 ]
 
@@ -2954,7 +2944,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
- "tracing",
 ]
 
 [[package]]
@@ -3009,7 +2998,6 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-model",
- "postio-search",
  "thiserror",
 ]
 

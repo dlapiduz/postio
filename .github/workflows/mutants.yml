@@ -6,10 +6,10 @@ name: Mutants
 # on it would be an hours-long check for a signal that changes rarely. See
 # #99 and scripts/mutants.sh's own comment.
 #
-# PAUSED 2026-08-25 (same reason as ci.yml and bench.yml): a daily run still
-# spends this private repo's limited free minutes every day, whether a
-# mutant regressed or not. workflow_dispatch-only until the repo is public.
-# Restore by uncommenting the schedule below.
+# Was paused 2026-08-25 -- 2026-09-03 (same reason as ci.yml and bench.yml
+# were): a daily run spent this repository's limited free minutes while it
+# was still private, whether a mutant regressed or not. Restored now that
+# the repository is public, matching bench.yml's own schedule.
 #
 # The very first dispatch of this job is expected to fail: there is no
 # docs/mutants-baseline.txt yet (scripts/mutants.sh says so plainly rather
@@ -20,8 +20,8 @@ name: Mutants
 # distinction this workflow exists to draw. #99's own acceptance criteria
 # are what that first triage has to satisfy.
 on:
-  # schedule:
-  #   - cron: "0 7 * * *"
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:

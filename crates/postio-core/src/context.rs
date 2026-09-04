@@ -68,6 +68,13 @@ pub enum Context {
     /// account instead of inserting a `d`. Scoping to the list closes that by
     /// construction rather than by remembering (ADR 0005 Q6c, #471).
     Accounts,
+    /// The keybinding list in settings, once the keyboard is in it.
+    ///
+    /// Scoped to the rebind list widget rather than the whole panel, for
+    /// the exact reason [`Context::Accounts`] already gives: `[keys]`'s own
+    /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
+    /// binding must not fire while someone is typing there (#881).
+    Keys,
 }
 
 impl Context {
@@ -84,6 +91,7 @@ impl Context {
         // At the end, so the `?` sheet grows a section rather than reordering
         // the ones people have learned (ADR 0005 Q6c).
         Context::Accounts,
+        Context::Keys,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -98,6 +106,7 @@ impl Context {
             Context::Sidebar => "sidebar",
             Context::Parts => "parts",
             Context::Accounts => "accounts",
+            Context::Keys => "keys",
         }
     }
 

@@ -40,6 +40,7 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Sidebar => "folder list",
             Context::Parts => "parts panel",
             Context::Accounts => "account list",
+            Context::Keys => "keybinding list",
         })
         .collect();
     let mut sentence = names.join(", ");

@@ -15,6 +15,11 @@
 
 use std::rc::Rc;
 
+// `UnsubscribeBanner` below is still hand-built GTK (#971), so the prelude
+// stays. #1002 rewrote the two notices in this file onto `NoticeBar` and
+// took the prelude with them; the third one arrived on `main` in between.
+use adw::prelude::*;
+
 use crate::widgets::{NoticeBar, NoticeMenuItem};
 
 /// How much of a sender's address the menu spells out.
@@ -252,6 +257,98 @@ impl DecodeNotice {
 }
 
 impl Default for DecodeNotice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// "Leave this mailing list" — `#971`.
+///
+/// A third sibling of [`RemoteImageBanner`], for the same reason: it names a
+/// fact about the message that has to survive the message being gone (the
+/// activation log outlives the reader), so it cannot be markup inside the
+/// document either. Unlike the other two it takes no local action of its
+/// own — leaving a list is a write to storage this crate cannot reach
+/// (`postio-gtk` has no SQL), so it only asks; whoever wires the reader
+/// decides what "asked" means. Whether the activation also sends the real
+/// RFC 8058 request is #972, deliberately not this one.
+pub struct UnsubscribeBanner {
+    root: gtk::Box,
+    label: gtk::Label,
+    unsubscribe: gtk::Button,
+}
+
+impl UnsubscribeBanner {
+    /// Build the banner, hidden — [`super::view::Reader`] shows it once it
+    /// knows which list, if any, the message on screen belongs to.
+    pub fn new() -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        root.add_css_class("postio-unsubscribe-banner");
+        root.set_visible(false);
+        root.set_accessible_role(gtk::AccessibleRole::Group);
+
+        let icon = gtk::Image::from_icon_name("mail-unread-symbolic");
+        root.append(&icon);
+
+        let label = gtk::Label::new(None);
+        label.set_hexpand(true);
+        label.set_xalign(0.0);
+        label.add_css_class("postio-unsubscribe-banner-label");
+        root.append(&label);
+
+        let unsubscribe = gtk::Button::with_label("Unsubscribe");
+        unsubscribe.add_css_class("flat");
+        root.append(&unsubscribe);
+
+        UnsubscribeBanner {
+            root,
+            label,
+            unsubscribe,
+        }
+    }
+
+    /// The widget to place above the reading pane's `WebView`.
+    pub fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+
+    /// Name the list this message belongs to and show the banner, or hide
+    /// it with no list to leave.
+    pub fn set_list(&self, list: Option<&str>) {
+        match list {
+            Some(list) => {
+                self.label
+                    .set_label(&format!("This message is from {list}"));
+                self.root.set_visible(true);
+            }
+            None => self.root.set_visible(false),
+        }
+    }
+
+    /// Whether the banner is currently on screen.
+    pub fn is_visible(&self) -> bool {
+        self.root.is_visible()
+    }
+
+    /// The banner's label text — what names the list a click would leave.
+    /// Test-facing.
+    pub fn label(&self) -> String {
+        self.label.label().to_string()
+    }
+
+    /// Called when the user asks to leave the list currently named.
+    pub fn connect_unsubscribe<F: Fn() + 'static>(&self, handler: F) {
+        self.unsubscribe.connect_clicked(move |_| handler());
+    }
+
+    /// Simulate a click on "unsubscribe" — what a test uses in place of a
+    /// synthesized pointer click.
+    pub fn emit_unsubscribe(&self) {
+        self.unsubscribe.emit_clicked();
+    }
+}
+
+impl Default for UnsubscribeBanner {
     fn default() -> Self {
         Self::new()
     }

@@ -8,11 +8,14 @@
 //! one actually mutate and save it. Skips without a display. Nothing here
 //! touches the network.
 
+use chrono::{TimeZone, Utc};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::reader::RemoteImageAllowList;
 use postio_gtk::settings::SettingsPanel;
 use postio_gtk::{fonts, style};
+use postio_model::UnsubscribeActivation;
+use postio_model::ids::AccountId;
 
 pub fn allowed_senders_render_as_rows_and_hide_when_there_are_none() {
     let Some((window, panel, _dir)) = panel_with_allowlist(RemoteImageAllowList::default()) else {
@@ -82,6 +85,165 @@ pub fn revoking_a_sender_removes_its_row_and_persists() {
     );
 
     window.destroy();
+}
+
+pub fn no_activations_hides_the_unsubscribe_section_and_shows_the_empty_state() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    panel.set_unsubscribe_activations(Vec::new());
+    pump();
+
+    assert!(
+        unsubscribe_rows(&panel).is_empty(),
+        "nothing was ever activated, no rows"
+    );
+    assert!(
+        !unsubscribe_section_visible(&panel),
+        "an empty log should not show at all"
+    );
+    assert!(
+        unsubscribe_empty_state_visible(&panel),
+        "an empty log should say why, not just vanish"
+    );
+
+    window.destroy();
+}
+
+pub fn every_activation_gets_its_own_row_newest_first() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    let account = AccountId::new(1);
+    let older = UnsubscribeActivation::new(
+        account,
+        "old-newsletter.example.com",
+        Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap(),
+    );
+    let newer = UnsubscribeActivation::new(
+        account,
+        "new-newsletter.example.com",
+        Utc.with_ymd_and_hms(2026, 8, 30, 0, 0, 0).unwrap(),
+    );
+    // Handed in newest-first, the same order `UnsubscribeRepository::for_account`
+    // already returns — the pane draws what it is given, it does not reorder.
+    panel.set_unsubscribe_activations(vec![newer, older]);
+    pump();
+
+    assert!(unsubscribe_section_visible(&panel));
+    assert!(!unsubscribe_empty_state_visible(&panel));
+    let lists: Vec<String> = unsubscribe_rows(&panel)
+        .iter()
+        .map(unsubscribe_list_text)
+        .collect();
+    assert_eq!(
+        lists,
+        vec![
+            "new-newsletter.example.com".to_owned(),
+            "old-newsletter.example.com".to_owned(),
+        ]
+    );
+
+    window.destroy();
+}
+
+pub fn the_read_receipt_count_states_zero_rather_than_going_blank() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    panel.set_read_receipt_count(0);
+    pump();
+
+    assert_eq!(
+        panel.read_receipt_count_label(),
+        "No messages have requested a read receipt.",
+        "zero is itself the answer -- CLAUDE.md's privacy section makes this \
+         a fixed policy, so there is nothing to hide behind an empty state"
+    );
+
+    window.destroy();
+}
+
+pub fn the_read_receipt_count_states_the_number_and_says_none_are_sent() {
+    let Some((window, panel)) = panel() else {
+        return;
+    };
+
+    panel.set_read_receipt_count(3);
+    pump();
+
+    let label = panel.read_receipt_count_label();
+    assert!(
+        label.contains('3'),
+        "the count should be in the text: {label}"
+    );
+    assert!(
+        label.contains("none have been sent"),
+        "CLAUDE.md's privacy section makes never-automatic a fixed policy -- \
+         the line states that fact, it does not offer a switch over it: {label}"
+    );
+
+    window.destroy();
+}
+
+fn panel() -> Option<(gtk::Window, SettingsPanel)> {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return None;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+    pump();
+    Some((window, panel))
+}
+
+fn unsubscribe_list_text(row: &gtk::ListBoxRow) -> String {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-unsubscribe-list-identifier",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .map(|label| label.text().to_string())
+    .expect("every unsubscribe row names a list")
+}
+
+fn unsubscribe_rows(panel: &SettingsPanel) -> Vec<gtk::ListBoxRow> {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-unsubscribe-row",
+    )
+    .into_iter()
+    .filter_map(|w| w.downcast().ok())
+    .collect()
+}
+
+fn unsubscribe_section_visible(panel: &SettingsPanel) -> bool {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-unsubscribe",
+    )
+    .into_iter()
+    .any(|w| w.is_visible())
+}
+
+fn unsubscribe_empty_state_visible(panel: &SettingsPanel) -> bool {
+    collect(
+        panel.upcast_ref::<gtk::Widget>(),
+        "postio-settings-unsubscribe-empty",
+    )
+    .into_iter()
+    .any(|w| w.is_visible())
 }
 
 fn panel_with_allowlist(

@@ -138,8 +138,16 @@ def case_installed_files_land_where_the_desktop_entry_names_them() -> None:
         return
     data_home = proc._data_home
     desktop = data_home / "applications" / "dev.postio.Postio.desktop"
-    png = data_home / "icons" / "hicolor" / "128x128" / "apps" / "dev.postio.Postio.png"
-    svg = data_home / "icons" / "hicolor" / "scalable" / "apps" / "dev.postio.Postio.svg"
+    icons = data_home / "icons" / "hicolor"
+    svg = icons / "scalable" / "apps" / "dev.postio.Postio.svg"
+    # The mark is drawn heavier as it shrinks and drops its dot below 24px,
+    # so 16 and 32 are their own files rather than downscales; 128 is the one
+    # Flatpak's export validation reads. A size missing here is a size the
+    # shell fills with a bad scale of something else (#1023).
+    rasters = [
+        icons / f"{size}x{size}" / "apps" / "dev.postio.Postio.png" for size in (16, 32, 128)
+    ]
+    symbolic = icons / "scalable" / "apps" / "dev.postio.Postio-symbolic.svg"
     if not desktop.exists():
         FAILURES.append(f"{label}: no desktop entry installed at {desktop}")
         return
@@ -150,10 +158,18 @@ def case_installed_files_land_where_the_desktop_entry_names_them() -> None:
             break
     if icon_name != "dev.postio.Postio":
         FAILURES.append(f"{label}: Icon= was {icon_name!r}, not the installed basename")
-    if not png.exists():
-        FAILURES.append(f"{label}: {icon_name}.png missing at the path the theme expects: {png}")
+    for png in rasters:
+        if not png.exists():
+            FAILURES.append(
+                f"{label}: {icon_name}.png missing at the path the theme expects: {png}"
+            )
     if not svg.exists():
         FAILURES.append(f"{label}: {icon_name}.svg missing at the path the theme expects: {svg}")
+    if not symbolic.exists():
+        FAILURES.append(
+            f"{label}: the symbolic is missing at {symbolic}, so every monochrome "
+            f"context falls back to the full-colour mark"
+        )
 
 
 def case_uninstall_also_forces_a_cache_rebuild() -> None:

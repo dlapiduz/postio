@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The monochrome mark, for the contexts a shell draws in one colour.
+
+  No `fill` anywhere, deliberately: GTK recolours a symbolic icon by
+  substituting the fill on bare shapes, and honours neither `currentColor`
+  nor an explicit colour — `postio-archive-symbolic.svg` is the same
+  contract. The dot is kept: this is drawn on a 16 grid where it is 2.4
+  units, which survives where the 64-grid dot would not.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <title>Postio</title>
+  <g>
+    <path d="M10.6 2.6 L11.9 3.2 L5.4 13.4 L4.1 12.8 Z"/>
+    <rect x="11" y="10.6" width="2.4" height="2.4"/>
+  </g>
+</svg>

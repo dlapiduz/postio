@@ -21,6 +21,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/box.png demo command
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
+//! cargo run -p postio-app --example shot -- /tmp/first-run.png demo orientation
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/thread.png demo thread 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
@@ -101,6 +102,7 @@ fn populate(
     window: &Window,
     two_accounts: bool,
     backfill: bool,
+    first_run: bool,
 ) -> Option<&'static postio_app::Wired> {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
@@ -112,6 +114,17 @@ fn populate(
     let report = postio_storage::seed::seed_small_with_bodies(&database, 11);
     let account = report.account.id;
     stamp_as_just_synced(&database, &report);
+    // Every shot is a first run otherwise -- the store is made here and
+    // thrown away -- so the first-run orientation would sit across the top
+    // of the compose shot, the settings shot and every other one. `demo
+    // orientation` is how you ask to see it; the rest of the tool goes on
+    // rendering the application as somebody uses it on any other day.
+    if !first_run {
+        let connection = database.connection().expect("a connection");
+        postio_storage::repository::SettingsRepository::new(&connection)
+            .set("orientation_seen", "shot")
+            .expect("the orientation is not what this shot is about");
+    }
     // A real second account, in the store, rather than a pair of names handed
     // to the sidebar: the per-account sections are drawn from the folders the
     // feed reads, so a faked strip would draw headers over an empty tree and
@@ -519,6 +532,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "detached",
     "selected",
     "thread",
+    "orientation",
     "open",
 ];
 
@@ -684,7 +698,12 @@ fn main() -> glib::ExitCode {
         // picture, it is a picture of the empty state over a store with mail
         // in it -- which used to be rendered, saved, and reported as a
         // success under a warning nobody was required to read (#809).
-        match populate(&window, flag("accounts"), flag("backfill")) {
+        match populate(
+            &window,
+            flag("accounts"),
+            flag("backfill"),
+            flag("orientation"),
+        ) {
             Some(wired) => Some(wired),
             None => {
                 eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
@@ -792,6 +811,19 @@ fn main() -> glib::ExitCode {
     // a frame or two later and an empty list has no row to focus.
     if flag("demo") {
         window.list().grab_focus();
+        settle(&window);
+    }
+
+    // The first-run keyboard orientation (ADR 0012 Q4). Only ever on screen
+    // for one moment of one run, so without a flag it is a surface nobody
+    // can look at -- and a strip along the top of the mail column is exactly
+    // the kind of thing that has to be looked at in dark and at the narrow
+    // breakpoint before it is called done.
+    if flag("orientation") {
+        // Nothing forces it on: `populate` left the store saying it has
+        // never been seen, and the application's own wiring shows it once
+        // the seeded sync lands. A shot that reached in and set the widget
+        // visible would render even if nothing in the app ever did (#596).
         settle(&window);
     }
 

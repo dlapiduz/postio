@@ -148,6 +148,40 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "no remote reference was stripped, so there is nothing for the banner to report"
     );
 
+    // ── #971: the unsubscribe banner names a list and reports activation ──
+    assert!(
+        !reader.unsubscribe_banner_visible(),
+        "nothing has named a list yet"
+    );
+    reader.set_unsubscribe(Some("newsletter.example.com"));
+    assert!(reader.unsubscribe_banner_visible());
+    assert!(
+        reader
+            .unsubscribe_banner_label()
+            .contains("newsletter.example.com"),
+        "the banner should name the list a click would leave: {}",
+        reader.unsubscribe_banner_label()
+    );
+    let activated: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let activated_for_handler = Rc::clone(&activated);
+    reader.connect_unsubscribe_activated(move |list| {
+        activated_for_handler.borrow_mut().push(list.to_owned());
+    });
+    reader.click_unsubscribe();
+    pump();
+    assert_eq!(
+        activated.borrow().as_slice(),
+        &["newsletter.example.com".to_owned()],
+        "clicking unsubscribe should report the list currently named"
+    );
+    // A fresh render clears it, same convention as the decode notice: the
+    // caveat belongs to one message and must not outlive it.
+    reader.render(&parsed.body, Some("weekly@news.example.org"));
+    assert!(
+        !reader.unsubscribe_banner_visible(),
+        "render clears the previous message's banner until the caller sets a new one"
+    );
+
     // ── #1009: a newsletter opens in reader view, and `C-o` leaves it ──────
     // Rendered above, so the state is whatever `render` decided for it.
     assert!(

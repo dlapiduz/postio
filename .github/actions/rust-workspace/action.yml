@@ -1,7 +1,8 @@
 name: Rust workspace
 description: >
-  System dependencies, the pinned toolchain, and the build cache shared by the
-  clippy, test and doc jobs.
+  System dependencies, the pinned toolchain, and the build caches used by the
+  clippy and test jobs -- one cache each, because they do not build the same
+  thing (see `cache-name`).
 
   Factored out when those three stopped being one job (#818). Three copies of
   forty lines is three chances to drift, and the copy that drifts is the cache
@@ -11,16 +12,47 @@ description: >
 inputs:
   save-cache:
     description: >
-      Whether this job writes the cache back. Exactly one should: the others
-      restore and leave it alone, so a 2 GB upload happens once per run rather
-      than three times. They all read the same key, so whichever job runs
-      first warms the other two.
+      Whether this job writes the cache back. A job that restores someone
+      else's cache and never saves its own gets nothing from it unless the
+      two build the *same kind* of artifact -- see `cache-name`.
     required: false
     default: "false"
+  cache-name:
+    description: >
+      Which cache this job reads and writes. It exists because `cargo clippy`
+      and `cargo test` cannot share artifacts, and for a while this action
+      pretended they could.
+
+      Clippy compiles through `clippy-driver` and emits *check* units;
+      `cargo test` emits *build* units. Cargo fingerprints them separately, so
+      a `target/` full of one is worth nothing to the other. Measured on run
+      33828724926, where both jobs restored the same 3.1 GB cache on an exact
+      key hit:
+
+          Tests   21 units rebuilt   <- reused the cache almost perfectly
+          Clippy  380 units rebuilt  <- rebuilt the graph from unicode-ident up
+
+      That was ~7 minutes of runner on every pull request, and it read as
+      "the cache is cold" when the cache was fine and simply the wrong shape.
+      One cache per kind of build fixes it; the default keeps the existing
+      `build` cache key byte-identical, so no entry is orphaned by this.
+    required: false
+    default: "build"
 
 runs:
   using: composite
   steps:
+    # `mold` is the odd one out: not a system library the workspace links
+    # against, but the linker `scripts/linker.sh` prefers. Installed here so
+    # the runner takes the same path a developer's box does rather than the
+    # script's fallback, which shells out to `rustc --print sysroot` on every
+    # single link -- 141 test binaries in the test job alone.
+    #
+    # It is not installed for speed. Measured on the largest binary here, mold
+    # and rust-lld are within noise of each other (docs/engineering-notes.md);
+    # what mold gives is ~265 MB lower peak RSS per link, and this job has
+    # already had a debug build exhaust a runner and kill lld mid-link.
+    #
     # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
     #   gtk4-devel        -> libgtk-4-dev
     #   libadwaita-devel  -> libadwaita-1-dev
@@ -43,7 +75,30 @@ runs:
           libglib2.0-dev \
           libpango1.0-dev \
           mutter \
-          dbus-daemon
+          dbus-daemon \
+          mold
+
+    # Ask the runner how big it is rather than hardcoding a number.
+    #
+    # `ci.yml` used to say `CARGO_BUILD_JOBS: 4`, chosen when a public repo's
+    # standard runner had four vCPUs. That is a number that goes stale in
+    # silence: on a larger runner it leaves cores idle, and on a smaller one it
+    # oversubscribes. Neither shows up as a failure, only as a slower job.
+    #
+    # It matters more since the test job moved to nextest, which runs one
+    # process per test and scales its own concurrency with the core count --
+    # so the runner's width now sets how fast the *tests* go, not just the
+    # compile.
+    #
+    # Printed, not just set: this is the only place the number is visible, and
+    # "how many cores does CI have" turned out to be unanswerable from the
+    # logs when it was asked.
+    - name: Match cargo's parallelism to the runner
+      shell: bash
+      run: |
+        cores=$(nproc)
+        echo "runner has $cores cores, $(free -g | awk '/^Mem:/{print $2}') GB RAM"
+        echo "CARGO_BUILD_JOBS=$cores" >> "$GITHUB_ENV"
 
     # The pin decides; see the note in the `fmt` job.
     - name: Install Rust toolchain
@@ -72,8 +127,8 @@ runs:
           ~/.cargo/registry/cache
           ~/.cargo/git/db
           target
-        key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
+        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-
 
     - name: Restore the shared build cache
       if: inputs.save-cache != 'true'
@@ -84,5 +139,5 @@ runs:
           ~/.cargo/registry/cache
           ~/.cargo/git/db
           target
-        key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
+        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.rust.outputs.version }}-

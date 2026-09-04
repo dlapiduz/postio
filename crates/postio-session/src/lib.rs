@@ -112,6 +112,46 @@ pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPol
     backfill_policy(&sync)
 }
 
+/// Read `[sync]` from `path` and turn it into the policy the engine watches
+/// under.
+///
+/// The join `idle`/`poll_interval_secs` never had (#932): `WatchPolicy`
+/// has documented `idle` as "`[sync] idle` in `config.toml`" since it was
+/// written, and `engine::start` spawned `EngineParts { watch:
+/// Default::default(), .. }` -- so turning push off, or changing how often
+/// the rest of the mailbox is reconciled, did nothing at all.
+///
+/// Read once at startup rather than kept live, for the same reason
+/// [`backfill_policy_at`] gives: the engine is spawned with its parts, so a
+/// change applies at the next start. A file that will not parse leaves the
+/// defaults standing.
+pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
+    let sync = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .map(|config| config.sync)
+        .unwrap_or_default();
+    watch_policy(&sync)
+}
+
+/// [`watch_policy_at`], for a `[sync]` section already in hand.
+///
+/// `Manual` is the one `check_for_mail` value this cannot answer faithfully
+/// yet: `WatchPolicy` has no "do not check automatically at all" state,
+/// only *how* to check, so it gets the closest available answer -- no push
+/// connection, the same interval polling as `Poll` -- rather than a config
+/// value this function silently ignores. Suppressing the periodic poll too
+/// needs a change to the scheduling loop itself
+/// ([`postio_sync::Watcher`]/`postio-runtime`'s engine loop), which
+/// is its own, separately-scoped piece of work.
+pub fn watch_policy(sync: &postio_config::SyncConfig) -> postio_sync::WatchPolicy {
+    postio_sync::WatchPolicy {
+        idle: matches!(sync.check_for_mail, postio_config::CheckForMail::Idle),
+        poll_interval: std::time::Duration::from_secs(sync.poll_interval_secs),
+        ..postio_sync::WatchPolicy::default()
+    }
+}
+
 /// [`backfill_policy_at`], for a `[sync]` section already in hand.
 pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::BackfillPolicy {
     postio_runtime::BackfillPolicy {
@@ -299,6 +339,13 @@ pub struct Wiring {
     /// and `engine::start` reading the file itself could not be driven by a
     /// test.
     pub backfill: postio_runtime::BackfillPolicy,
+    /// How the engine watches for new mail, from `[sync]`.
+    ///
+    /// A part, like `backfill`, and for the same reason: whether this
+    /// installation holds an `IDLE` connection open and how often it polls
+    /// is a choice about *this installation*, and `engine::start` reading
+    /// the file itself could not be driven by a test.
+    pub watch: postio_sync::WatchPolicy,
     /// The ceiling on the blob store, from `[storage] max_bytes`.
     ///
     /// A part, like `backfill`, and for the same reason: how much of this
@@ -337,6 +384,7 @@ impl Wiring {
             secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
+            watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
         }
     }
@@ -358,6 +406,13 @@ impl Wiring {
     /// built-in default.
     pub fn with_backfill(mut self, backfill: postio_runtime::BackfillPolicy) -> Self {
         self.backfill = backfill;
+        self
+    }
+
+    /// The same wiring, watching under `[sync]`'s answer rather than the
+    /// built-in default.
+    pub fn with_watch(mut self, watch: postio_sync::WatchPolicy) -> Self {
+        self.watch = watch;
         self
     }
 
@@ -1119,6 +1174,142 @@ pub fn index_local_bodies(database: &Database) -> Result<usize, Box<dyn std::err
     if indexed > 0 {
         // A count and nothing else: what a log may carry about mail.
         tracing::info!(indexed, "indexed bodies that were already local");
+    }
+    Ok(indexed)
+}
+
+/// How many header blocks one pass of [`index_local_headers`] parses before
+/// letting go of its connection.
+///
+/// The pass holds a pooled connection and decompresses and parses a block per
+/// message, and the rest of the application shares that pool. The same bound
+/// and the same reason as [`INDEX_BODY_BATCH`], and the same size: a block is
+/// smaller than a body but a parse is not free, and there is no reason for
+/// the two catch-ups to hold a checkout for different lengths of time.
+const INDEX_HEADERS_BATCH: u32 = 200;
+
+/// How long [`index_local_headers`] pauses between batches. See
+/// [`INDEX_BODY_BREATHER`].
+const INDEX_HEADERS_BREATHER: Duration = Duration::from_millis(25);
+
+/// Index the headers of every message whose block is already on this machine
+/// and whose header rows are missing. Answers how many it indexed.
+///
+/// # Why this exists at all
+///
+/// `header:` matches `message_headers`, which is derived from
+/// `messages.body_headers` (ADR 0025 Q2). Two populations need it: every
+/// message that arrived before #884 gave the column a writer, and — for ever
+/// after — every message in the store whenever the headers schema half is
+/// bumped, which is the mechanism that keeps ADR 0025 Q3's two caps
+/// revisable. Without the pass, `header:` answers "no such mail" across a
+/// mailbox somebody has been using for a year, and nothing distinguishes
+/// that from the feature being broken.
+///
+/// # It reaches no network, and it is not the repair pass
+///
+/// ADR 0025 Q5 has three populations and this is the first of them: the block
+/// is already stored, so filling the rows is a read of a column the row
+/// already carries. A message whose `body_headers` is NULL belongs to
+/// [`repair_header_blocks`], which rebuilds the block from the raw source on
+/// disk, or — with no raw source either — to the backfill lane's
+/// `Want::HeaderBlock`, which is the only one of the three that dials out.
+/// Keeping them apart is not tidiness: this pass is windowed newest-first, so
+/// one batch of rows it could do nothing with would make no progress, trip
+/// the guard below, and stop it before it reached the mail it could have
+/// indexed.
+///
+/// # Why it is safe to run on every start
+///
+/// [`messages_missing_header_rows`](postio_index::index::messages_missing_header_rows)
+/// asks for blocks that are stored *and* unindexed, so a caught-up store
+/// costs one query that finds nothing. Re-indexing a message replaces its
+/// rows rather than adding to them, so there is nothing to duplicate.
+///
+/// # Not on the startup path
+///
+/// A decompression and a header parse per message, over every message in the
+/// store — minutes on a backfilled archive, and nothing on screen waits for
+/// it. Callers spawn it exactly as they spawn [`index_local_bodies`].
+///
+/// Errors on one message are logged and skipped rather than abandoning the
+/// pass: one unreadable block should cost that message its `header:` matches,
+/// not every message after it.
+pub fn index_local_headers(database: &Database) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut indexed = 0usize;
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates =
+            postio_index::index::messages_missing_header_rows(&connection, INDEX_HEADERS_BATCH)?;
+        if candidates.is_empty() {
+            break;
+        }
+        // The candidate query's contract is that indexing a message removes
+        // it from the answer. An identical batch means the contract is broken
+        // and another lap can only spin -- the failure #500 recorded, where
+        // one batch of messages nothing could do anything with ran a core
+        // flat out for as long as the application was open.
+        if candidates == last_batch {
+            tracing::warn!(
+                batch = candidates.len(),
+                "a header-index batch made no progress; stopping the pass"
+            );
+            break;
+        }
+
+        // Read first, write after, in phases, for the reason
+        // `index_local_bodies` gives: these reads decompress and parse a
+        // block per message and must not happen inside the write transaction,
+        // where they would hold SQLite's one write lock through work that
+        // needs nothing of it.
+        //
+        // One repository for the whole batch, so the compression dictionary
+        // is loaded once rather than two hundred times.
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut blocks: Vec<(i64, postio_model::Headers)> = Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            match messages.headers(message) {
+                Ok(Some(headers)) => blocks.push((*id, headers)),
+                // Expunged between the candidate query and here. Nothing to
+                // index, and `index_headers` would no-op on it anyway.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a header block to index")
+                }
+            }
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, headers) in &blocks {
+                match postio_index::index::index_headers(&connection, *id, headers) {
+                    Ok(()) => indexed += 1,
+                    Err(error) => {
+                        tracing::debug!(message = id, %error, "cannot index a header block")
+                    }
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < INDEX_HEADERS_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(INDEX_HEADERS_BREATHER);
+    }
+    if indexed > 0 {
+        // A count and nothing else. Header values carry `Received` chains
+        // with addresses and internal hostnames, and a log never carries
+        // message content.
+        tracing::info!(indexed, "indexed header blocks that were already local");
     }
     Ok(indexed)
 }

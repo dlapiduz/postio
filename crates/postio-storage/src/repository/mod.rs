@@ -41,6 +41,7 @@ mod settings;
 mod sync_state;
 mod threading;
 mod threads;
+mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
@@ -60,6 +61,7 @@ pub use threads::{
     DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
     ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
 };
+pub use unsubscribe::UnsubscribeRepository;
 
 pub use messages::{
     BackfillCandidate, ColumnFlag, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
