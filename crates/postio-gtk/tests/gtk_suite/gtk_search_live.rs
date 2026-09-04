@@ -265,6 +265,8 @@ fn outcome(hits: u64, millis: u64) -> Outcome {
         // A settled account, which is what this file's assertions about the
         // readout's wording are written against (#352).
         corpus_complete: true,
+        // And every account answering (#812), for the same reason.
+        unreachable: Vec::new(),
     }
 }
 
