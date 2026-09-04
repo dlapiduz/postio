@@ -117,6 +117,7 @@ mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
 mod gtk_settings_keys;
+mod gtk_settings_keys_context;
 mod gtk_settings_privacy;
 mod gtk_settings_sync;
 mod gtk_settings_ui;
@@ -509,6 +510,16 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_keys::escape_cancels_capture_without_changing_anything",
         gtk_settings_keys::escape_cancels_capture_without_changing_anything as fn(),
+    ),
+    (
+        "gtk_settings_keys_context::focus_on_a_keys_row_enters_the_keys_context_and_leaving_restores_it",
+        gtk_settings_keys_context::focus_on_a_keys_row_enters_the_keys_context_and_leaving_restores_it
+            as fn(),
+    ),
+    (
+        "gtk_settings_keys_context::a_bare_letter_binding_does_nothing_while_the_keyboard_is_on_a_keys_row_and_not_capturing",
+        gtk_settings_keys_context::a_bare_letter_binding_does_nothing_while_the_keyboard_is_on_a_keys_row_and_not_capturing
+            as fn(),
     ),
     (
         "gtk_settings_privacy::allowed_senders_render_as_rows_and_hide_when_there_are_none",
