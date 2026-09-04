@@ -302,11 +302,53 @@ while IFS=$'\t' read -r NUM TITLE; do
         continue
     fi
     # Cross-machine backstop: someone already pushed a branch for it.
-    if git -C "$REPO_ROOT" ls-remote --exit-code --heads origin "issue-$NUM-*" >/dev/null 2>&1; then
-        rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
-        echo "#$NUM already has a remote branch, trying the next one." >&2
-        SKIPPED_BRANCH="$SKIPPED_BRANCH $NUM"
-        continue
+    #
+    # Claim locks are per-machine, so another host's live work is invisible
+    # except as a branch. What the mere *existence* of one cannot tell apart
+    # is that work from a branch whose commits already merged -- and
+    # `issue-land.sh` deletes the branch it merges, so a leftover is usually
+    # a landing killed in between, which this workstation does. Refusing on
+    # existence alone made those issues permanently unclaimable (#1063).
+    #
+    # So the question is whether the branch holds unlanded work, by patch id:
+    # a landing rebases, so the shas never match even when the content did
+    # land, and `git cherry` prefixes `+` for a commit that is genuinely not
+    # upstream and `-` for one that is. Only `+` is somebody's work.
+    STALE_BRANCH="$(git -C "$REPO_ROOT" ls-remote --heads origin "issue-$NUM-*" 2>/dev/null \
+                    | sed 's|.*refs/heads/||' | head -1 || true)"
+    if [ -n "$STALE_BRANCH" ]; then
+        BRANCH_UNLANDED=""
+        if git -C "$REPO_ROOT" fetch --quiet --force origin \
+            "+refs/heads/$BASE:refs/remotes/origin/$BASE" \
+            "+refs/heads/$STALE_BRANCH:refs/postio-claim-check" 2>/dev/null; then
+            BRANCH_UNLANDED="$(git -C "$REPO_ROOT" cherry \
+                "origin/$BASE" refs/postio-claim-check 2>/dev/null | grep -c '^+' || true)"
+            git -C "$REPO_ROOT" update-ref -d refs/postio-claim-check 2>/dev/null || true
+        fi
+        # Empty means the branch could not be fetched, so nothing about it is
+        # known -- and "cannot tell" has to read as "somebody may be working
+        # on this", which is the direction that costs time rather than work.
+        if [ -z "$BRANCH_UNLANDED" ] || [ "$BRANCH_UNLANDED" -ne 0 ]; then
+            rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
+            if [ -z "$BRANCH_UNLANDED" ]; then
+                echo "#$NUM has the remote branch $STALE_BRANCH, which could not be" >&2
+                echo "read -- assuming another session is on it." >&2
+            else
+                echo "#$NUM has $BRANCH_UNLANDED commit(s) on $STALE_BRANCH that are" >&2
+                echo "not on $BASE. That is somebody's unlanded work, so this is the" >&2
+                echo "case the backstop exists for." >&2
+            fi
+            SKIPPED_BRANCH="$SKIPPED_BRANCH $NUM"
+            continue
+        fi
+        # Provably merged, so it is not a claim on anything. Deleted rather
+        # than merely tolerated: the claim below cuts a branch of the same
+        # name, and leaving the old one there would make the eventual push a
+        # conflict nobody would connect to this moment.
+        echo "#$NUM's branch $STALE_BRANCH is stale -- every commit on it is"
+        echo "already on $BASE -- so it is not a claim on anything. Removing it."
+        git -C "$REPO_ROOT" push origin --delete "$STALE_BRANCH" >/dev/null 2>&1 \
+            || echo "  (could not delete it; it may already be gone)" >&2
     fi
 
     # Never adopt an existing worktree. A directory already at this path may
@@ -384,13 +426,16 @@ echo "Nothing was claimed. Why, per candidate:" >&2
 [ -n "$SKIPPED_WORKTREE" ] && \
     echo "  a worktree already exists:${SKIPPED_WORKTREE}" >&2
 if [ -n "$SKIPPED_BRANCH" ]; then
-    echo "  already has a branch on origin:${SKIPPED_BRANCH}" >&2
+    echo "  a branch on origin holds unlanded work:${SKIPPED_BRANCH}" >&2
     echo >&2
-    echo "A branch on origin blocks its issue for good -- it is the" >&2
-    echo "cross-machine backstop, and a landing killed after its merge" >&2
-    echo "leaves one behind. If the work really landed, this removes it:" >&2
+    echo "Those are the backstop doing its job: claim locks are per-machine," >&2
+    echo "so another host's live work shows up only as a branch, and the" >&2
+    echo "commits on these are not on $BASE. A branch whose work already" >&2
+    echo "merged is no longer counted here -- it is removed and the issue" >&2
+    echo "claimed (#1063), so anything left is worth looking at before" >&2
+    echo "taking it:" >&2
     for blocked in $SKIPPED_BRANCH; do
-        echo "    scripts/issue-release.sh $blocked" >&2
+        echo "    git log --oneline origin/$BASE..origin/issue-$blocked-*" >&2
     done
 fi
 echo >&2
