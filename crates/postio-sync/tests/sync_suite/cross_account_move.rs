@@ -38,6 +38,9 @@ struct World {
     source_inbox: MailboxId,
     target_inbox: MailboxId,
     source_message: MessageId,
+    /// The provisional copy in the target account — the row the user sees
+    /// there at once, and the one phase 2 has to give an identity to.
+    target_message: MessageId,
     saga: postio_model::ids::CrossAccountMoveId,
 }
 
@@ -71,6 +74,21 @@ fn world(raw: &[u8], with_message_id: bool) -> World {
         .create(&mut message)
         .expect("source message");
 
+    // The provisional copy the user sees in the target the instant they
+    // press the key — `relocate_rows` makes one for every cross-account
+    // move, so a fixture without one is not the shape this code runs
+    // against. Born with no server identity at all (#940): account B's
+    // server has never seen it.
+    let mut copy = message.clone();
+    copy.id = MessageId::UNASSIGNED;
+    copy.account_id = target.id;
+    copy.mailbox_id = target_inbox;
+    copy.thread_id = None;
+    copy.server = postio_model::ServerIdentifiers::default();
+    let target_message = MessageRepository::new(&connection)
+        .create(&mut copy)
+        .expect("the provisional copy");
+
     let blob = blobs.put(raw).expect("raw blob");
     let saga = CrossAccountMoveRepository::new(&connection)
         .create(&NewCrossAccountMove {
@@ -79,7 +97,7 @@ fn world(raw: &[u8], with_message_id: bool) -> World {
             source_mailbox: source_inbox,
             target_account: target.id,
             target_mailbox: target_inbox,
-            target_message: None,
+            target_message: Some(target_message),
             raw_blob_id: Some(blob.as_str().to_owned()),
             rfc_message_id: with_message_id.then(|| "<engine@example.com>".to_owned()),
         })
@@ -112,6 +130,7 @@ fn world(raw: &[u8], with_message_id: bool) -> World {
         source_inbox,
         target_inbox,
         source_message,
+        target_message,
         saga,
     }
 }
@@ -197,6 +216,67 @@ async fn the_move_completes_and_the_only_order_is_copy_confirm_remove() {
     drain_at(&world, &source, world.source_account, 20).await;
     assert_eq!(messages_in(&source, "INBOX").await, 0);
     assert_eq!(phase(&world), MovePhase::Done);
+}
+
+/// #531, and the forward path's own reconciliation.
+///
+/// The confirmation proves where the message landed on the target server —
+/// `APPENDUID` carries the destination's `UIDVALIDITY` as well as its UID,
+/// so the identity is whole (ADR 0026). Writing it only onto the saga leaves
+/// the row the user is looking at claiming no server identity, with two
+/// consequences: the target account's next sync matches a fetched message by
+/// `find_by_remote_id(mailbox, remote_id)` and so produces a *second* row for
+/// the same message, and an inverse saga has no coordinate to name the copy
+/// it must remove.
+#[tokio::test]
+async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
+    let world = world(RAW, true);
+    let copy = world.target_message;
+    let target = target_server(true).await;
+
+    let before = {
+        let connection = world.database.connection().expect("checkout");
+        MessageRepository::new(&connection)
+            .get(copy)
+            .expect("read")
+            .expect("the copy")
+            .server
+    };
+    assert_eq!(
+        before,
+        postio_model::ServerIdentifiers::default(),
+        "the provisional copy starts with no server identity, or this test \
+         cannot show that the confirmation is what gives it one"
+    );
+
+    drain(&world, &target, world.target_account).await;
+    assert_eq!(phase(&world), MovePhase::Confirmed);
+
+    let connection = world.database.connection().expect("checkout");
+    let saga = CrossAccountMoveRepository::new(&connection)
+        .get(world.saga)
+        .expect("read")
+        .expect("the saga");
+    let confirmed = saga
+        .confirmed_remote_id
+        .expect("the saga records what the append proved");
+    let stored = MessageRepository::new(&connection)
+        .get(copy)
+        .expect("read")
+        .expect("the copy")
+        .server;
+
+    assert_eq!(
+        stored.remote_id.as_ref(),
+        Some(&confirmed),
+        "the saga knows where the message landed and the row does not, so \
+         the target account's next sync will not recognise its own copy"
+    );
+    assert!(
+        stored.is_known_to_server(),
+        "the target server has seen this message now, and the row still says \
+         otherwise"
+    );
 }
 
 #[tokio::test]
