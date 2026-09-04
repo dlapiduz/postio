@@ -64,6 +64,14 @@ drive it:
   * ``#[doc(hidden)]`` items, which is how this codebase already marks "a
     test reaches this and nothing else should".
   * ``#[uniffi::export]`` blocks, for the same reason as ``postio-ffi``.
+  * A ``pub fn`` gated on ``#[cfg(feature = "...")]`` where the feature name
+    contains ``test`` -- ``test-support``, ``testing``, ``test-corpus`` and
+    ``test-server`` all appear in this workspace, for a helper that ships in
+    ``src/`` (so it is not a test-support module by path) but is still only
+    ever meant to be reached from a test. #882 found this one: string
+    literals are blanked before ``#[cfg(test)]`` is matched, so
+    ``#[cfg(feature = "test-support")]`` never read as test scaffolding and
+    the only mark that worked was ``#[doc(hidden)]``.
 
 # Why a baseline rather than an allow-list
 
@@ -124,6 +132,12 @@ DEFINITION = re.compile(
 )
 IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 CFG_TEST = re.compile(r"#\[cfg\((?:any\([^)]*\))?[^\]]*\btest\b[^\]]*\)\]")
+# Same idea, a different way a `pub fn` says "tests only": a feature name
+# containing "test" -- `test-support`, `testing`, `test-corpus`, `test-server`
+# all appear in this workspace. Matched against `head` below, which is *not*
+# comment/string-blanked -- see `definitions`' own note on why that is
+# deliberate rather than a gap to close.
+CFG_TEST_FEATURE = re.compile(r'#\[cfg\([^\]]*feature\s*=\s*"[^"]*test[^"]*"[^\]]*\)\]')
 UNIFFI = re.compile(r"#\[uniffi::export[^\]]*\]")
 
 # How far back to look for an attribute that exempts a definition. Long enough
@@ -279,8 +293,21 @@ def definitions(paths: list[Path]) -> tuple[dict[str, list[str]], dict[Path, set
                 continue
             # Attributes sit above the `pub fn` with only whitespace and
             # other attributes between, the doc comment having been blanked.
+            # Raw, not `clean`/`body`: the feature-name pattern needs to read
+            # what a string literal actually says, which blanking erased
+            # from those two on purpose (`blank_comments_and_strings`'s own
+            # docs). The trade is the same one `#[doc(hidden)]` already
+            # makes on this same line -- a doc comment that happens to quote
+            # the attribute as prose reads the same as the real thing -- and
+            # it is the right trade for the same reason: a false exemption
+            # is a debt line worth reviewing, a false uncalled-fn report is
+            # noise on every commit.
             head = raw[max(0, match.start()) - ATTRIBUTE_REACH : match.start()]
-            if "#[doc(hidden)]" in head or "#[uniffi" in head:
+            if (
+                "#[doc(hidden)]" in head
+                or "#[uniffi" in head
+                or CFG_TEST_FEATURE.search(head)
+            ):
                 continue
             line = body.count("\n", 0, match.start(1)) + 1
             found.setdefault(match.group(1), []).append(f"{path.as_posix()}:{line}")
