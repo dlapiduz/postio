@@ -311,6 +311,173 @@ pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
     ),
 ];
 
+/// The conversation's own verbs, drawn in the footer.
+///
+/// Reply, reply-all and forward are per *message* and live inside each entry
+/// ([`MESSAGE_ACTIONS`]); everything else is the conversation's (ADR 0015
+/// Q4). `Reply to conversation` is the same command `e` runs and aims at the
+/// same message — the focused one — so the button and the key cannot
+/// diverge.
+pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 2] = [
+    crate::widgets::Action::new(
+        postio_core::CommandId::Reply,
+        "Reply to conversation",
+        "conversation-footer-reply",
+    )
+    .primary(),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ArchiveThread,
+        "Archive thread",
+        "conversation-footer-archive",
+    ),
+];
+
+/// The pane's own header: what conversation this is, and how much of it.
+///
+/// Subject at the largest size in the pane — this is the one place the
+/// conversation is named, and before the drill-in column went there were two
+/// places and they could disagree. Under it one metadata line, ellipsised
+/// rather than wrapped, and the way to open everything at once.
+pub struct Header {
+    root: gtk::Box,
+    subject: gtk::Label,
+    meta: gtk::Label,
+    expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
+}
+
+impl Header {
+    /// Build the header, empty.
+    pub fn new() -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        root.add_css_class("conversation-header");
+        root.set_accessible_role(gtk::AccessibleRole::Group);
+
+        let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        titles.set_hexpand(true);
+
+        let subject = gtk::Label::new(None);
+        subject.set_xalign(0.0);
+        subject.set_wrap(false);
+        subject.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        subject.add_css_class("conversation-subject");
+        titles.append(&subject);
+
+        let meta = gtk::Label::new(None);
+        meta.set_xalign(0.0);
+        // One line, ellipsised. The participants are the unbounded part —
+        // a twelve-person thread must not grow the header.
+        meta.set_wrap(false);
+        meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        meta.add_css_class("conversation-meta");
+        titles.append(&meta);
+        root.append(&titles);
+
+        let expand_all = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(postio_core::CommandId::ExpandAll),
+            "Expand all",
+            "conversation-expand-all",
+            false,
+        ));
+        crate::widgets::KeycapButton::arm(&expand_all);
+        root.append(&expand_all.widget());
+
+        Header {
+            root,
+            subject,
+            meta,
+            expand_all,
+        }
+    }
+
+    /// The widget to pin above the stack.
+    pub fn widget(&self) -> gtk::Widget {
+        self.root.clone().upcast()
+    }
+
+    /// Name the conversation on screen.
+    ///
+    /// `rows` is the whole conversation, oldest first — the header counts and
+    /// spans it rather than being told, so it cannot disagree with the stack
+    /// below it about how many messages there are.
+    pub fn set_conversation(&self, rows: &[Row], now: chrono::DateTime<chrono::Local>) {
+        if rows.is_empty() {
+            self.root.set_visible(false);
+            return;
+        }
+        self.root.set_visible(true);
+        self.subject.set_label(
+            rows.iter()
+                .find_map(|row| row.subject.as_deref())
+                .filter(|subject| !subject.trim().is_empty())
+                .unwrap_or("(no subject)"),
+        );
+
+        let senders: Vec<postio_model::address::EmailAddress> =
+            rows.iter().filter_map(|row| row.from.clone()).collect();
+        let first = rows
+            .iter()
+            .map(|row| row.received_at)
+            .min()
+            .unwrap_or_else(chrono::Utc::now);
+        let last = rows
+            .iter()
+            .map(|row| row.received_at)
+            .max()
+            .unwrap_or_else(chrono::Utc::now);
+
+        let meta = [
+            postio_ui::conversation::message_count(rows.len()),
+            postio_ui::conversation::participants(&senders),
+            postio_ui::conversation::date_span(
+                first.with_timezone(&chrono::Local),
+                last.with_timezone(&chrono::Local),
+                now,
+            ),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+        self.meta.set_label(&meta);
+        // The line ellipsises, so the whole of it has to reach a screen
+        // reader some other way.
+        self.root
+            .update_property(&[gtk::accessible::Property::Description(&meta)]);
+    }
+
+    /// What the metadata line currently says. Test-facing.
+    pub fn meta(&self) -> String {
+        self.meta.label().to_string()
+    }
+
+    /// What the subject line currently says. Test-facing.
+    pub fn subject(&self) -> String {
+        self.subject.label().to_string()
+    }
+
+    /// Re-cap `Expand all` from the live keymap.
+    pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        self.expand_all
+            .set_key(keymap.binding(postio_core::CommandId::ExpandAll));
+    }
+
+    /// Called when `Expand all` is pressed.
+    pub fn connect_expand_all(&self, handler: impl Fn() + 'static) {
+        self.expand_all.connect_clicked(handler);
+    }
+
+    /// Press `Expand all` without a pointer, for a test.
+    pub fn press_expand_all(&self) {
+        self.expand_all.press();
+    }
+}
+
+impl Default for Header {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 type MessageHandler = Box<dyn Fn(MessageId)>;
 type ReplyHandler = Box<dyn Fn(MessageId, bool)>;
 
@@ -319,6 +486,16 @@ mod imp {
     use std::cell::{Cell, RefCell};
 
     pub struct ConversationView {
+        /// The whole pane: header, scroller, footer, stacked.
+        pub(super) root: gtk::Box,
+        /// The conversation's own name and shape, pinned above the stack so
+        /// it survives scrolling. Nothing else on screen says what you are
+        /// reading once the drill-in column's header went (#1004).
+        pub(super) header: super::Header,
+        /// `Reply to conversation` and `Archive thread`, pinned below —
+        /// where the conversation's own verbs live, as against the
+        /// per-message ones inside each entry (#1006).
+        pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.
         pub(super) scroller: gtk::ScrolledWindow,
@@ -339,6 +516,17 @@ mod imp {
         /// passed over rather than looked at.
         pub(super) dwell: RefCell<Option<glib::SourceId>>,
         pub(super) dwell_delay: Cell<std::time::Duration>,
+        /// The dividers currently standing in for folded runs, in stack
+        /// order. Rebuilt whenever anything folds or unfolds, because
+        /// collapsing a message between two runs joins them (#1005).
+        pub(super) dividers: RefCell<Vec<Divider>>,
+    }
+
+    /// One folded run: the hairline row that replaced it, and which entries
+    /// it is standing in for.
+    pub struct Divider {
+        pub row: gtk::Box,
+        pub range: std::ops::Range<usize>,
     }
 
     /// One message in the stack: its header, and the body when it has one.
@@ -362,6 +550,13 @@ mod imp {
         pub reader: RefCell<Option<crate::reader::Reader>>,
         pub actions: std::rc::Rc<crate::widgets::ActionBar>,
         pub expanded: Cell<bool>,
+        /// Whether a folded run this message was in has been shown.
+        ///
+        /// Distinct from `expanded`: `Show` on a divider puts the individual
+        /// *collapsed* rows back, it does not open them (#1005). Without this
+        /// the next `refold` would immediately fold the run again, because
+        /// the messages are still collapsed and still consecutive.
+        pub shown: Cell<bool>,
         /// The box holding header, actions and body — what the stack owns.
         pub container: gtk::Box,
     }
@@ -376,6 +571,12 @@ mod imp {
     impl Default for ConversationView {
         fn default() -> Self {
             ConversationView {
+                root: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                header: super::Header::new(),
+                footer: crate::widgets::ActionBar::new(
+                    &super::CONVERSATION_ACTIONS,
+                    "conversation-footer",
+                ),
                 scroller: gtk::ScrolledWindow::default(),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 entries: RefCell::new(Vec::new()),
@@ -387,6 +588,7 @@ mod imp {
                 on_dwell: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(crate::list_view::DWELL_TO_READ),
+                dividers: RefCell::new(Vec::new()),
             }
         }
     }
@@ -414,11 +616,21 @@ mod imp {
             // nothing — see docs/engineering-notes.md.
             self.scroller
                 .update_property(&[gtk::accessible::Property::Label("Conversation")]);
-            self.scroller.set_parent(&*view);
+
+            // Header and footer are *outside* the scroller, deliberately: a
+            // header that scrolled away would leave a long conversation with
+            // nothing on screen saying what it is, and a footer that scrolled
+            // away would put the conversation's own verbs somewhere you have
+            // to go looking for.
+            self.root.append(&self.header.widget());
+            self.root.append(&self.scroller);
+            self.root.append(&self.footer.widget());
+            self.footer.set_visible(false);
+            self.root.set_parent(&*view);
         }
 
         fn dispose(&self) {
-            self.scroller.unparent();
+            self.root.unparent();
         }
     }
 
@@ -441,7 +653,14 @@ impl Default for ConversationView {
 impl ConversationView {
     /// An empty pane.
     pub fn new() -> Self {
-        Self::default()
+        let pane: Self = Self::default();
+        // The header's button and `O` are the same verb; wiring the button to
+        // the pane rather than emitting a command keeps them one path.
+        pane.imp().header.connect_expand_all({
+            let pane = pane.clone();
+            move || pane.expand_all()
+        });
+        pane
     }
 
     /// This pane as a widget, for mounting into the reading pane.
@@ -471,8 +690,14 @@ impl ConversationView {
             imp.stack.remove(&entry.container());
         }
         imp.entries.borrow_mut().clear();
+        for divider in imp.dividers.borrow_mut().drain(..) {
+            imp.stack.remove(&divider.row);
+        }
         imp.focused.set(None);
         self.cancel_dwell();
+
+        imp.header.set_conversation(&messages, chrono::Local::now());
+        imp.footer.set_visible(!messages.is_empty());
 
         let focus = opening_focus(&messages);
         let expanded = match focus {
@@ -481,9 +706,9 @@ impl ConversationView {
         };
 
         for (index, row) in messages.iter().enumerate() {
-            // Numbered from one, matching the column exactly: the two are
-            // the same conversation and a reader comparing them must not have
-            // to add one in their head.
+            // Numbered from one. Nothing draws the number since #1003 took
+            // the column away, but a screen reader still says "3 of 8", which
+            // is the position a sighted reader gets from the stack itself.
             let entry = self.build_entry(row, index as u32 + 1);
             imp.stack.append(&entry.container());
             imp.entries.borrow_mut().push(entry);
@@ -494,6 +719,159 @@ impl ConversationView {
         if let Some(focus) = focus.and_then(|index| messages.get(index)) {
             self.focus_message(focus.id);
         }
+        self.refold();
+    }
+
+    /// Fold every run of three-or-more collapsed messages into one divider,
+    /// and unfold any that no longer qualifies.
+    ///
+    /// Recomputed from scratch rather than patched, because the runs are not
+    /// independent: collapsing the message between two runs joins them into
+    /// one, and expanding inside a run splits it in two. Patching that
+    /// correctly is harder than recounting, and the count is over a slice of
+    /// bools — [`postio_ui::conversation::collapsed_runs`] — which is cheap
+    /// and provable without a display.
+    fn refold(&self) {
+        let imp = self.imp();
+        for divider in imp.dividers.borrow_mut().drain(..) {
+            imp.stack.remove(&divider.row);
+        }
+
+        let collapsed: Vec<bool> = imp
+            .entries
+            .borrow()
+            .iter()
+            .map(|entry| !entry.expanded.get() && !entry.shown.get())
+            .collect();
+        let runs =
+            postio_ui::conversation::collapsed_runs(&collapsed, postio_ui::conversation::RUN_MINIMUM);
+
+        for range in runs {
+            let (senders, first) = {
+                let entries = imp.entries.borrow();
+                let senders: Vec<postio_model::address::EmailAddress> = entries[range.clone()]
+                    .iter()
+                    .filter_map(|entry| entry.row.from.clone())
+                    .collect();
+                (senders, entries[range.start].container())
+            };
+            let divider = self.build_divider(range.clone(), &senders);
+            imp.stack.insert_child_after(
+                &divider.row,
+                first.prev_sibling().as_ref(),
+            );
+            for entry in imp.entries.borrow()[range.clone()].iter() {
+                entry.container().set_visible(false);
+            }
+            imp.dividers.borrow_mut().push(divider);
+        }
+    }
+
+    /// The hairline row standing in for one folded run.
+    fn build_divider(
+        &self,
+        range: std::ops::Range<usize>,
+        senders: &[postio_model::address::EmailAddress],
+    ) -> imp::Divider {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("conversation-divider");
+
+        let rule = || {
+            let line = gtk::Separator::new(gtk::Orientation::Horizontal);
+            line.set_hexpand(true);
+            line.set_valign(gtk::Align::Center);
+            line
+        };
+        row.append(&rule());
+
+        let label = gtk::Label::new(Some(&postio_ui::conversation::run_summary(
+            range.len(),
+            senders,
+        )));
+        label.add_css_class("conversation-divider-label");
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        row.append(&label);
+
+        // `Show`, not `Expand`: it puts the individual collapsed rows back,
+        // it does not open them. One gesture, one step -- expanding five
+        // messages because you wanted to see who they were from is not what
+        // anybody asked for.
+        let show = gtk::Button::with_label("Show");
+        show.add_css_class("flat");
+        show.add_css_class("postio-ghost");
+        show.add_css_class("conversation-divider-show");
+        let view = self.clone();
+        let range_for_show = range.clone();
+        show.connect_clicked(move |_| view.show_run(range_for_show.clone()));
+        row.append(&show);
+        row.append(&rule());
+
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{}, collapsed",
+            postio_ui::conversation::run_summary(range.len(), senders)
+        ))]);
+
+        imp::Divider { row, range }
+    }
+
+    /// Put a folded run's individual rows back, still collapsed.
+    pub fn show_run(&self, range: std::ops::Range<usize>) {
+        {
+            let imp = self.imp();
+            let entries = imp.entries.borrow();
+            for entry in entries.get(range.clone()).unwrap_or(&[]) {
+                entry.shown.set(true);
+                entry.container().set_visible(true);
+            }
+        }
+        self.refold();
+    }
+
+    /// Open every collapsed message, folded runs included — `O`.
+    pub fn expand_all(&self) {
+        let messages: Vec<MessageId> = self
+            .imp()
+            .entries
+            .borrow()
+            .iter()
+            .map(|entry| entry.message)
+            .collect();
+        for message in messages {
+            self.expand(message);
+        }
+        for entry in self.imp().entries.borrow().iter() {
+            entry.shown.set(true);
+            entry.container().set_visible(true);
+        }
+        self.refold();
+    }
+
+    /// The pane's header, for a test that wants to read what it says.
+    pub fn header(&self) -> &Header {
+        &self.imp().header
+    }
+
+    /// The conversation's own action bar.
+    pub fn footer(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
+        std::rc::Rc::clone(&self.imp().footer)
+    }
+
+    /// What the folded-run dividers currently say, in stack order.
+    /// Test-facing.
+    pub fn divider_labels(&self) -> Vec<String> {
+        self.imp()
+            .dividers
+            .borrow()
+            .iter()
+            .filter_map(|divider| {
+                divider
+                    .row
+                    .first_child()
+                    .and_then(|child| child.next_sibling())
+                    .and_downcast::<gtk::Label>()
+                    .map(|label| label.label().to_string())
+            })
+            .collect()
     }
 
     /// How many messages the pane is holding.
@@ -690,6 +1068,8 @@ impl ConversationView {
         for entry in self.imp().entries.borrow().iter() {
             entry.actions.set_keymap(keymap);
         }
+        self.imp().header.set_keymap(keymap);
+        self.imp().footer.set_keymap(keymap);
     }
 
     /// Shorten the dwell for a test that cannot wait a second.
@@ -822,6 +1202,7 @@ impl ConversationView {
             reader: std::cell::RefCell::new(None),
             actions,
             expanded: std::cell::Cell::new(false),
+            shown: std::cell::Cell::new(false),
             container,
         }
     }

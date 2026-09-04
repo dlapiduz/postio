@@ -331,6 +331,22 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::ExpandAll,
+        title: "Expand all",
+        // `o` was the drill-in column's order toggle until #1003 retired it,
+        // which is what makes this letter available. Shifted, because it acts
+        // on the whole conversation -- the same relationship `a`/`A` already
+        // has between a message and its thread.
+        default_binding: "O",
+        alternate_bindings: &[],
+        // Only where there is a conversation to expand. Offering it on the
+        // list would be a key that does nothing most of the time.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
         default_binding: "e",

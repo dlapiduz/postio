@@ -81,6 +81,8 @@ command_ids! {
     ToggleResultOrder => "toggle_result_order",
     /// Draw the message on screen as its sender wrote it, not reduced.
     ViewOriginal => "view_original",
+    /// Open every collapsed message in the conversation.
+    ExpandAll => "expand_all",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -361,6 +363,11 @@ pub enum Command {
     /// No payload: it always means the message on screen. Reader view is a
     /// per-message state, so there is nothing else it could mean.
     ViewOriginal,
+    /// Expand every collapsed message in the open conversation (#1004).
+    ///
+    /// No payload: it means the conversation on screen, which is the only
+    /// one there is.
+    ExpandAll,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -694,6 +701,7 @@ impl Command {
             Command::Back => CommandId::Back,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
             Command::ViewOriginal => CommandId::ViewOriginal,
+            Command::ExpandAll => CommandId::ExpandAll,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -779,6 +787,7 @@ impl Command {
             CommandId::Back => Command::Back,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
             CommandId::ViewOriginal => Command::ViewOriginal,
+            CommandId::ExpandAll => Command::ExpandAll,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },

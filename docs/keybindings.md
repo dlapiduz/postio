@@ -54,6 +54,7 @@ command from inside a text field.
 | `Escape` | Back | Everywhere |  | `back` |
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
+| `O` | Expand all | Conversation |  | `expand_all` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` | Forward | List, conversation, reader, composer |  | `forward` |

@@ -11,6 +11,7 @@ prev_view	h | Left
 back	Escape
 toggle_result_order	o
 view_original	ctrl+o
+expand_all	O
 reply	e
 reply_all	E
 forward	f
