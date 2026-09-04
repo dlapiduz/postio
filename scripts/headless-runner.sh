@@ -145,6 +145,20 @@ if [ ! -S "$SOCKET" ]; then
     # between them rather than twenty racing to bind the same socket.
     LOCK="$XDG_RUNTIME_DIR/$DISPLAY_NAME.startlock"
     if mkdir "$LOCK" 2>/dev/null; then
+        # `GTK_A11Y`/`NO_AT_BRIDGE` here and not only further down: the
+        # export below runs 60-odd lines after this line, so mutter was
+        # started without them and spent a run complaining
+        #
+        #   ** (process:2): WARNING **: Can't connect to a11y bus:
+        #      Could not connect: No such file or directory
+        #
+        # once per window it created. That is the *compositor's* warning, not
+        # the test binary's -- which is why setting the variable for the
+        # tests never silenced it, and why the noise looked like it came from
+        # the suite. There is no accessibility bus on a headless runner and
+        # nothing here wants one: `gtk_accessibility.rs` asserts through
+        # GTK's own `gtk_test_accessible_*` API, which needs no bridge.
+        GTK_A11Y=none NO_AT_BRIDGE=1 \
         setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
             --virtual-monitor "${POSTIO_TEST_GEOMETRY:-1280x800}" \
             >"$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" 2>&1 </dev/null &
