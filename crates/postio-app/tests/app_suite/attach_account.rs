@@ -177,7 +177,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     attach_account(&window, &wiring, &joining).expect("the pool can carry a second engine");
 
     // 1. it syncs: the folders and the mail arrive over the wire.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     let mut synced = 0;
     while Instant::now() < deadline {
         settle();

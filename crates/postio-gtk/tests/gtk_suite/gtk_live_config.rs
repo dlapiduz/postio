@@ -31,6 +31,9 @@ use postio_gtk::{app, fonts, style};
 /// this is deliberately much shorter than [`PATIENCE`] so one of them does not
 /// dominate the suite. Comfortably longer than the watcher's 120ms debounce.
 fn settle_for(grace: Duration) {
+    // POSTIO-FIXED-DEADLINE: the doc above is the reason -- a negative
+    // assertion is spent in full, so this is deliberately kept well under
+    // `PATIENCE` rather than tied to it.
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         settle();

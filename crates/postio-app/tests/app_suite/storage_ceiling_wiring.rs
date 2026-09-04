@@ -136,7 +136,8 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
     //    lower-level proof that a generous budget takes nothing; this is
     //    only "the live raise reaches the pass and does not misbehave") ───
     std::fs::write(&path, "[storage]\nmax_bytes = 100000000\n").unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(2));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(std::time::Duration::from_millis(10));

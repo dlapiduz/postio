@@ -215,7 +215,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // ── 1. wire → window: the first sync fills the list ───────────────────
     let list = window.list();
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && list.model().n_items() != SEEDED.len() as u32 {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(20));
@@ -278,7 +278,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // Local-first means the row leaves the list immediately; the *server's*
     // copy moving is the queue draining over the wire, which is what no
     // other test can see.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && server.uids(ARCHIVE_PATH).is_empty() {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(20));
@@ -345,7 +345,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     );
     server.deliver(INBOX_PATH, TestMessage::corpus("list-thread-01-root"));
 
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     let mut delivered = None;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}

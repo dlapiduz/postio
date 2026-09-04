@@ -50,6 +50,9 @@ postio-ffi = { path = ".", features = ["testing"] }
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-storage = { workspace = true, features = ["test-support"] }
+# The shared deadline dial: every wall-clock wait in a test answers to
+# `POSTIO_TEST_PATIENCE` (#842, #957).
+postio-test-support.workspace = true
 tempfile = "3.27.0"
 
 [lints]

@@ -82,7 +82,7 @@ async fn a_due_snooze_wakes_and_repaints_without_being_asked() {
     })
     .expect("the engine starts");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
     let mut told = false;
     while std::time::Instant::now() < deadline && !told {
         for event in drain(&events) {

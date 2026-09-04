@@ -87,8 +87,15 @@ fn row(position: u32) -> Row {
 }
 
 /// Drive the main loop for `time`, so a `glib` timeout actually gets to fire.
+///
+/// A lower bound, not a budget: every assertion after one of these is either
+/// "the dwell fired" or "the timer was cancelled, so nothing fired", and
+/// neither changes meaning when the wait is longer. So it answers to
+/// `POSTIO_TEST_PATIENCE` (#842) -- which is the whole of what #957 found
+/// missing, since a 180ms pump on a workstation compiling three other
+/// worktrees is not 180ms of the main loop actually running.
 fn wait(time: Duration) {
-    let deadline = std::time::Instant::now() + time;
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(time);
     let context = gtk::glib::MainContext::default();
     while std::time::Instant::now() < deadline {
         while context.iteration(false) {}

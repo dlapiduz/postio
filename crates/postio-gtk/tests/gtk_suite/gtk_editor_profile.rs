@@ -203,6 +203,9 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     );
 
     // ── and through all of it, the wire stayed silent ─────────────────────
+    // POSTIO-FIXED-DEADLINE: absence cannot be polled for, so this window is
+    // spent in full every run. Scaling it would buy no confidence and would
+    // multiply the one cost the case actually has.
     let deadline = Instant::now() + Duration::from_millis(400);
     let mut contacted = false;
     while Instant::now() < deadline {

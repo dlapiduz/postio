@@ -67,7 +67,8 @@ fn press(window: &Window, key: gdk::Key) -> bool {
 /// Stays module-local on purpose: it calls this module's own `chips()`,
 /// so hoisting it to the suite root would drag that with it (#842).
 fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if let Some(chip) = chips(window).into_iter().next() {

@@ -1268,7 +1268,8 @@ impl RawClient {
 
     /// Reads lines until one starts with `prefix`, and returns it.
     async fn expect_prefix(&mut self, prefix: &str) -> String {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let deadline =
+            tokio::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
         loop {
             let line = tokio::time::timeout_at(deadline, self.read_line())
                 .await
