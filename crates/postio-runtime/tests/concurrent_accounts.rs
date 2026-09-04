@@ -24,6 +24,10 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
 use postio_storage::{BlobStore, Database, test_support};
 
+mod harness;
+
+use harness::BlobDir;
+
 /// How long every call to the slow account's server takes.
 ///
 /// The assertion below is on *ordering*, not on elapsed time, so this only has
@@ -59,7 +63,7 @@ fn engine_for(
     database: &Database,
     account: AccountId,
     backend: Arc<MockBackend>,
-) -> (Engine, tempfile::TempDir) {
+) -> (Engine, BlobDir) {
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -87,6 +91,7 @@ fn engine_for(
         clock: Arc::new(SystemClock),
     })
     .expect("an engine per account");
+    let directory = BlobDir::new(engine.clone(), directory);
     (engine, directory)
 }
 
