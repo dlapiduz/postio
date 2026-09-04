@@ -92,6 +92,13 @@ sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
 # links the binary and nothing says so; `readelf -p .comment <binary>` is the
 # only thing that tells you which one ran. #1092.
 sudo dnf install ccache mold
+
+# The linker and C compiler .cargo/config.toml names are bare program names
+# (postio-linker, postio-cc), so one compile cache serves every worktree.
+# The claim, land and test scripts run this themselves; a plain `cargo build`
+# in a fresh clone needs it once, or fails with "linker `postio-linker` not
+# found". #1101
+scripts/install-shims.sh
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):

@@ -76,6 +76,12 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc`; this puts
+      # them on PATH (#1101). Before the first cargo invocation, after rustup
+      # has made `$CARGO_HOME/bin` exist.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
       # cargo-llvm-cov instruments with LLVM's own source-based coverage,
       # which needs the toolchain's llvm-tools alongside it -- a component,
       # not a second toolchain, so `check-toolchain-pinned.py`'s rule 2 does

@@ -82,6 +82,11 @@ run_doctests() {
 }
 
 TREE=$(git rev-parse --show-toplevel)
+# `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than
+# paths, so the compile cache is shared across worktrees (#1101); this is
+# what puts them on PATH. Guarded because the self-tests copy this file into
+# a sandbox on its own.
+[ -x "$TREE/scripts/install-shims.sh" ] && "$TREE/scripts/install-shims.sh"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # How many times one landing may hand over to a rebased copy of itself before
 # it gives up rather than merging. Two is enough for the case this exists for

@@ -74,6 +74,12 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc`; this puts
+      # them on PATH (#1101). Before the first cargo invocation, after rustup
+      # has made `$CARGO_HOME/bin` exist.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
       - name: Identify the compiler
         id: rust
         run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
