@@ -189,7 +189,12 @@ the exact tree, so an unchanged retry skips straight to the landing.
   acts on it, `click_preview.rs` reads it) — the composition root is testable
   without a GUI. They are one binary behind a custom harness, so run them with
   `cargo test -p postio-app --test app_suite [name]`, and a new case is a
-  module plus a row in `main.rs`'s `CASES`.
+  module plus a row in `main.rs`'s `CASES`. To hold one out of a default run,
+  put its name in `IGNORED` beside `CASES` — the table-driven spelling of
+  `#[ignore]` — and say in a comment which issue takes it back. Nothing else
+  about the harness is yours to tidy: its `--list` output is a contract with
+  whatever runs the suite, and breaking it makes a runner report success
+  having run nothing. `list_contract.rs` is what notices.
 - **Assert on what a person would see, not on what a layer was handed.** Every
   layer here is tested and passes; the bugs that reach users live *between*
   them (#70 twice, `postio-bl2`). A reader test that checks the reader was
