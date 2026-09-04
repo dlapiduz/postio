@@ -519,14 +519,11 @@ mod imp {
         /// The dividers currently standing in for folded runs, in stack
         /// order. Rebuilt whenever anything folds or unfolds, because
         /// collapsing a message between two runs joins them (#1005).
-        pub(super) dividers: RefCell<Vec<Divider>>,
-    }
-
-    /// One folded run: the hairline row that replaced it, and which entries
-    /// it is standing in for.
-    pub struct Divider {
-        pub row: gtk::Box,
-        pub range: std::ops::Range<usize>,
+        /// Which entries a divider stands in for is not kept: `refold`
+        /// recomputes every run from the collapsed flags each time, so a
+        /// stored range would be a second source of truth that could only
+        /// ever disagree with the first.
+        pub(super) dividers: RefCell<Vec<gtk::Box>>,
     }
 
     /// One message in the stack: its header, and the body when it has one.
@@ -691,7 +688,7 @@ impl ConversationView {
         }
         imp.entries.borrow_mut().clear();
         for divider in imp.dividers.borrow_mut().drain(..) {
-            imp.stack.remove(&divider.row);
+            imp.stack.remove(&divider);
         }
         imp.focused.set(None);
         self.cancel_dwell();
@@ -734,7 +731,7 @@ impl ConversationView {
     fn refold(&self) {
         let imp = self.imp();
         for divider in imp.dividers.borrow_mut().drain(..) {
-            imp.stack.remove(&divider.row);
+            imp.stack.remove(&divider);
         }
 
         let collapsed: Vec<bool> = imp
@@ -759,7 +756,7 @@ impl ConversationView {
             };
             let divider = self.build_divider(range.clone(), &senders);
             imp.stack
-                .insert_child_after(&divider.row, first.prev_sibling().as_ref());
+                .insert_child_after(&divider, first.prev_sibling().as_ref());
             for entry in imp.entries.borrow()[range.clone()].iter() {
                 entry.container().set_visible(false);
             }
@@ -772,7 +769,7 @@ impl ConversationView {
         &self,
         range: std::ops::Range<usize>,
         senders: &[postio_model::address::EmailAddress],
-    ) -> imp::Divider {
+    ) -> gtk::Box {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.add_css_class("conversation-divider");
 
@@ -811,7 +808,7 @@ impl ConversationView {
             postio_ui::conversation::run_summary(range.len(), senders)
         ))]);
 
-        imp::Divider { row, range }
+        row
     }
 
     /// Put a folded run's individual rows back, still collapsed.
@@ -879,7 +876,6 @@ impl ConversationView {
             .iter()
             .filter_map(|divider| {
                 divider
-                    .row
                     .first_child()
                     .and_then(|child| child.next_sibling())
                     .and_downcast::<gtk::Label>()
