@@ -24,7 +24,7 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
 use postio_storage::{BlobStore, Database, test_support};
 
-mod harness;
+use crate::harness;
 
 use harness::BlobDir;
 

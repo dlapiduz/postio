@@ -33,7 +33,7 @@ fn table(platform: Platform) -> String {
 fn the_freedesktop_table_is_byte_identical_to_before() {
     // The argument for landing this before macOS ships bindings: if `mod` is
     // right, a Linux user cannot tell it happened.
-    let golden = include_str!("golden/linux-bindings.txt");
+    let golden = include_str!("../golden/linux-bindings.txt");
     assert_eq!(
         table(Platform::Freedesktop),
         golden,

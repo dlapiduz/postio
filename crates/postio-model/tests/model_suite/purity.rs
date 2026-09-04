@@ -30,7 +30,7 @@ const FORBIDDEN: &[&str] = &[
 
 #[test]
 fn manifest_declares_no_storage_or_protocol_dependency() {
-    let manifest = include_str!("../Cargo.toml");
+    let manifest = include_str!("../../Cargo.toml");
     for line in manifest.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.is_empty() {
@@ -53,23 +53,23 @@ fn manifest_declares_no_storage_or_protocol_dependency() {
 fn sources_contain_no_storage_or_protocol_imports() {
     // A cheap stand-in for the CI grep: no `use` of a forbidden crate anywhere.
     let sources: &[&str] = &[
-        include_str!("../src/lib.rs"),
-        include_str!("../src/ids.rs"),
-        include_str!("../src/address.rs"),
-        include_str!("../src/account.rs"),
-        include_str!("../src/mailbox.rs"),
-        include_str!("../src/flag.rs"),
-        include_str!("../src/label.rs"),
-        include_str!("../src/headers.rs"),
-        include_str!("../src/attachment.rs"),
-        include_str!("../src/message.rs"),
-        include_str!("../src/mime.rs"),
-        include_str!("../src/outgoing.rs"),
-        include_str!("../src/reply.rs"),
-        include_str!("../src/subject.rs"),
-        include_str!("../src/thread.rs"),
-        include_str!("../src/contact.rs"),
-        include_str!("../src/draft.rs"),
+        include_str!("../../src/lib.rs"),
+        include_str!("../../src/ids.rs"),
+        include_str!("../../src/address.rs"),
+        include_str!("../../src/account.rs"),
+        include_str!("../../src/mailbox.rs"),
+        include_str!("../../src/flag.rs"),
+        include_str!("../../src/label.rs"),
+        include_str!("../../src/headers.rs"),
+        include_str!("../../src/attachment.rs"),
+        include_str!("../../src/message.rs"),
+        include_str!("../../src/mime.rs"),
+        include_str!("../../src/outgoing.rs"),
+        include_str!("../../src/reply.rs"),
+        include_str!("../../src/subject.rs"),
+        include_str!("../../src/thread.rs"),
+        include_str!("../../src/contact.rs"),
+        include_str!("../../src/draft.rs"),
     ];
     for src in sources {
         for line in src.lines() {
