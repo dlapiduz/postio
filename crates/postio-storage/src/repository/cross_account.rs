@@ -199,15 +199,44 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// second index on a table with at most a handful of open rows is not
     /// worth its writes.
     pub fn open_for_sources(&self, sources: &[MessageId]) -> Result<Vec<CrossAccountMove>> {
-        if sources.is_empty() {
+        self.for_sources(
+            sources,
+            &[
+                MovePhase::Copying,
+                MovePhase::Unconfirmed,
+                MovePhase::Confirmed,
+            ],
+        )
+    }
+
+    /// Every saga in one of `phases` whose *source* is among `sources`.
+    ///
+    /// [`open_for_sources`](Self::open_for_sources) is this over the three
+    /// phases a saga can still be walked out of. Undo needs a wider window
+    /// than that: a move that finished is exactly the one a user is most
+    /// likely to take back, and `done` is not open by any other definition
+    /// (#531).
+    pub fn for_sources(
+        &self,
+        sources: &[MessageId],
+        phases: &[MovePhase],
+    ) -> Result<Vec<CrossAccountMove>> {
+        if sources.is_empty() || phases.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: std::collections::BTreeSet<i64> = sources.iter().map(|id| id.get()).collect();
-        let mut statement = self.connection.prepare(
+        // Built rather than bound: `phase` is a closed set of five literals
+        // this crate owns, so there is no user text anywhere near this.
+        let list = phases
+            .iter()
+            .map(|phase| format!("'{}'", phase.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut statement = self.connection.prepare(&format!(
             "SELECT id FROM cross_account_moves
-              WHERE phase IN ('copying', 'unconfirmed', 'confirmed')
-              ORDER BY id",
-        )?;
+              WHERE phase IN ({list})
+              ORDER BY id"
+        ))?;
         let ids: Vec<i64> = statement
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
