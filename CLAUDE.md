@@ -82,7 +82,7 @@ cheap.** Measured, warm, on this workstation:
 |---|---|---|
 | `scripts/test-fast.sh` — changed crates, `--lib` | varies | seconds |
 | `scripts/test-sanity.sh` — whole workspace, `--lib` | 1,313 | ~5s, 19 binaries |
-| the full suite — integration too | 3,169 | ~497s on CI; `app_suite` alone ~11 min to link |
+| the full suite — integration too | 3,169 | ~497s on CI; `app_suite` ~200s to **run**, ~1.2s to link |
 
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
@@ -121,12 +121,21 @@ pass and are not joined up, like the Reader that was built, tested and never
 mounted. Do not read the fast default as permission to skip integration
 tests: write them, and let CI be the thing that runs them.
 
-**Iterate at the cheapest layer that can fail.** The tests are not what costs;
-compiling and linking is. On this workstation `postio-body`'s 49 unit tests run
-in 0.00s and `postio-gtk`'s 330 in 0.42s, while one `postio-app --test
-app_suite` run is eleven and a half minutes, nearly all of it link. TDD pays
-that twice — once for red, once for green — so a cycle through an integration
-binary costs twenty minutes for two minutes of thinking.
+**Iterate at the cheapest layer that can fail.** On this workstation
+`postio-body`'s 49 unit tests run in 0.00s and `postio-gtk`'s 330 in 0.42s,
+while `cargo test -p postio-app --test app_suite` takes ~200s. TDD pays that
+twice — once for red, once for green — so a cycle through an integration
+binary costs minutes for two minutes of thinking.
+
+This used to say the suite was "eleven and a half minutes, nearly all of it
+link". Both halves were wrong, and the correction matters because the number
+was load-bearing (#973 cites it). Measured: cargo's own `--timings` puts the
+`app_suite` test target at **3.9s**, a warm rebuild-and-relink at **2s**, and
+the suite's *execution* at **200s**. Linking is ~1.2s — 0.3% of the cycle.
+What costs eleven minutes is a **cold worktree**, where ~470 third-party
+crates are compiled before anything of ours is: 95% of unit time, with
+`openssl-sys`'s build script the single largest item. That is an argument for
+`--reuse` (#1012), not against integration tests.
 
 `scripts/test-fast.sh` runs `--lib` for the crates you changed and links
 nothing else; use it between edits. Run the integration suites to *confirm*, at

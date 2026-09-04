@@ -4375,3 +4375,285 @@ correct the write-up rather than leave a false attribution for the next
 session to build on. #881's own controller was left deferred anyway, on the
 precautionary principle #873/#880 established, even though nothing pinned
 this particular crash on it.
+
+## `debug = "line-tables-only"` was still most of the binary (2026-09-03)
+
+`[profile.dev] debug = "line-tables-only"` was set once as a tuning and never
+measured afterwards. Measured on the `app_suite` test binary -- cold builds of
+`cargo test --no-run -p postio-app --test app_suite` at `-j6`, sccache
+disabled, idle box, baseline reproduced twice at 301s and 307s:
+
+```
+debug                cold build   binary   .debug sections
+"line-tables-only"     301/307s   239 MB       153.6 MB
+0                          282s    70 MB              0
+```
+
+Faster **and** smaller, which is not the usual shape of this trade: line
+tables are not free to emit across ~470 crates, and `target/debug/deps` holds
+~330 executables that each carried them.
+
+**`strip = "debuginfo"` was tried on top and is a pure cost -- do not add it
+back.** The theory was that `debug = 0` cannot reach the *precompiled std*
+rlibs, which ship with their own DWARF, and that only a link-time strip would.
+That theory is wrong: `debug = 0` alone leaves **zero** bytes of `.debug_*` in
+the output. Adding `strip` produced a byte-identical 70 MB binary and cost 44
+seconds (326s against 282s), because cargo passes `-C strip` to all ~470 units
+while only a handful are ever linked.
+
+What the change costs was checked rather than assumed, and it is narrower than
+it sounds. `file:line` survives in **panic and assertion messages** -- what a
+failing test prints -- because those come from `#[track_caller]` and are
+compiled in as data, not read from DWARF. What goes is `file:line` on the
+frames of a `RUST_BACKTRACE` dump (function names remain) and variable
+inspection in gdb. Nothing in this workspace asserts on a backtrace.
+`CARGO_PROFILE_DEV_DEBUG=line-tables-only` restores it for one run, at the
+price of a full rebuild.
+
+## cargo-hakari cannot be adopted here, and the reason is the boundary check (2026-09-03)
+
+The problem it solves is real and measured. `cargo <cmd> -p <crate>` and
+`cargo <cmd> --workspace` resolve **different feature sets** for shared
+dependencies -- 15 to 29 of them depending on the crate:
+
+```
+-p postio-core     vs --workspace : 28 deps differ
+-p postio-gtk      vs --workspace : 29
+-p postio-storage  vs --workspace : 23
+-p postio-sync     vs --workspace : 15
+```
+
+and not cheap ones: `tokio` (the workspace adds `test-util`), `futures-util`
+(adds `async-await` and the `futures-macro` proc macro), `rustix`,
+`linux-raw-sys`, `serde`, `hashbrown`, `getrandom`. Cargo rebuilds a unit when
+its features change, so every switch between a `-p` command and a `--workspace`
+one rebuilds them. `issue-land.sh`'s gate chain alternates exactly that --
+`clippy -p`, `test -p`, then `test --workspace --lib` and `check --workspace
+--all-targets` -- and so does moving between `test-fast.sh` and
+`test-sanity.sh`.
+
+`cargo-hakari` is the standard fix: a generated `workspace-hack` crate that
+every member depends on, declaring the union of every feature, so both
+resolutions agree. **It is incompatible with this repository's crate
+boundaries.** `check-crate-boundaries.py` walks the *resolved, transitive*
+graph, and `postio-model` bans `tokio`, `rusqlite`, `gtk4`, `ammonia` and
+`html5ever` -- for the reason in its own rule, that "postio-model is what the
+whole workspace waits on to compile". A workspace-hack every member depends on
+puts all of them in postio-model's graph. The check would fail, and it would be
+right to.
+
+If this is picked up again, the only shape that can work is hakari's
+`traversal-excludes` holding the guarded leaves (`postio-model`,
+`postio-search`, `postio-body`, `postio-config`) out of the hack, so only the
+heavy crates unify. That needs its own measurement first: hakari makes every
+`-p` build compile the *union*, so it trades churn on the switch for a larger
+`test-fast.sh`. Nobody has measured which is bigger here.
+
+## mold is wired in, for memory -- and `-fuse-ld` order is why it took three tries (2026-09-03)
+
+Re-measured after the debug info came out of the profile, because the
+2026-09-01 verdict was reached on a link that carried 162 MB of DWARF and the
+profile no longer does. Interleaved, six rounds, idle box, timing the whole
+`rustc` invocation for `app_suite`:
+
+```
+rust-lld  1.30 1.24 1.23 1.23 1.25 1.23   median 1.235s   maxRSS 734 MB
+mold      1.16 1.21 1.13 1.75 1.16 1.12   median 1.16s    maxRSS 469 MB
+```
+
+**Time is a wash and always will be**: there is only ~1.2s of compile-and-link
+to contest, so no linker choice can matter. Memory is not: mold's peak is
+~265 MB lower, and on a workstation where four sessions link at once that is
+the scarce resource -- it is why `jobs = 2` and the linker thread cap exist.
+That is the reason it is wired in; it is not a speed change, and `scripts/
+linker.sh` says so.
+
+**The trap, which cost three wrong answers in a row.** rustc appends its own
+linker selection to every link on this target, *even with*
+`-C linker-flavor=gcc`:
+
+```
+-B <sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld
+-fuse-ld=lld
+```
+
+`gcc` honours the **last** `-fuse-ld`. So every natural spelling fails
+silently:
+
+* `-C link-arg=-B<mold>/libexec/mold` -- ignored, LLD links it.
+* a wrapper running `cc -fuse-ld=mold "$@"` -- ignored, because the
+  `-fuse-ld=lld` inside `"$@"` comes later. The wrapper genuinely runs, mold
+  is genuinely on PATH, and LLD genuinely does the link.
+
+What works is putting ours last: `cc "$@" -fuse-ld=mold`. It also means the
+no-mold path needs nothing at all -- rustc's own arguments already select the
+toolchain's lld, so plain `cc` reproduces current behaviour exactly, which is
+what makes the wrapper safe on a runner with no mold.
+
+**Verify with `readelf -p .comment <binary>`, always.** It names the linker
+that actually ran. There is no error, no warning, and no behavioural
+difference between "mold linked this" and "you thought mold linked this" --
+only that string. Note mold's output is slightly larger here (88.7 MB against
+lld's 74.3 MB for `app_suite`), which is itself a quick way to notice.
+
+## The vendored OpenSSL is perl, not C, and no compiler cache can help (2026-09-03)
+
+`cargo build --timings` puts `openssl-sys build-script (run)` at the top of a
+cold build -- 198.8s, more than all twenty of our own crates put together
+(115.6s). That number is misleading twice over, and both corrections matter
+before anyone tries to "fix" it again.
+
+**First: a `--timings` duration is wall-clock under contention, not cost.**
+Rebuilt on its own, `cargo build -p openssl-sys` takes **28s**. The 198.8s is
+how long the unit was in flight at `-j6` while five other jobs competed; what
+it really says is that this is a long *serial* step holding a job slot on the
+critical path into `libsqlite3-sys` → `rusqlite` → `postio-storage`. Read
+`--timings` for the shape of the graph, not for the price of a unit.
+
+**Second: the C in it is already cached, and caching it harder does nothing.**
+ccache hits 96.7% across the build (#736 did that). The remaining hypothesis --
+that those hits were all *preprocessed* hits (86%) and would be much cheaper in
+direct mode -- was tested and is false:
+
+```
+current config (preprocessed mode)   28s
+CCACHE_DEPEND=1, cold                28s
+CCACHE_DEPEND=1, warm                29s     direct hits +2282, i.e. it engaged
+```
+
+Depend mode turned every one of those compiles into a direct hit and bought
+nothing, because the compiles were never the cost. `perl` is the top process
+while it runs: the 28s is OpenSSL's `Configure`, its make orchestration and
+`ar`, none of which any compiler cache exists to serve. **Do not add
+`CCACHE_DEPEND` to `scripts/cc-wrapper.sh`** -- it is measured, and it is a
+no-op here.
+
+So the only ways not to pay it are not to *rebuild* it and not to *build* it:
+
+* Not rebuild -- `scripts/issue-claim.sh --reuse` locally (already the default,
+  #1012), and CI's `actions/cache` on `target/`, which already skips it
+  whenever `Cargo.lock` is unchanged. Both are in place.
+* Not build -- ADR 0014's own recorded alternative, `bundled-sqlcipher` with
+  system libcrypto, which removes `openssl-src` from the graph entirely. ADR
+  0014 parked it explicitly ("the recorded alternative if the vendored
+  OpenSSL's build cost ever earns it") and this is the measurement it asked
+  for: 28s serial per cold tree, on the critical path. It is a decision about
+  hermetic builds for CI, the Flatpak and the release artifact, not a tuning
+  knob, which is why it is written down here rather than done.
+
+
+## Four build-time tips that did not survive being measured (2026-09-03)
+
+All four are standard advice, three of them from corrode.dev's "Tips for
+Faster Rust Compile Times". Each was applied here, measured, and reverted.
+Written down so the next person spends the five minutes reading rather than
+the hour re-deriving.
+
+Method throughout: `cargo clean` then
+`cargo test --no-run -p postio-app --test app_suite`, `-j6`, sccache
+*disabled* (`RUSTC_WRAPPER=`) so both sides compile for real, on an idle box.
+Baseline reproduced twice at **301s** and **307s**, so ~2% is noise and
+anything under ~10s means nothing.
+
+**`[profile.dev.package."*"] opt-level = 1` (from 2) -- reverted, and it is
+the important one.** The argument for it was that no gate can see it: the
+perf budgets are asserted as counts off SQLite's trace hook, not timings, and
+`cargo bench` measures release. That argument is true and beside the point.
+What a dependency's optimization level moves is the wall clock of the suites
+people wait on:
+
+```
+cargo test -p postio-app --test app_suite
+  deps at opt-level = 2    200s
+  deps at opt-level = 1    382s      <- nearly double
+```
+
+for about 20s of cold build saved. The `opt-level = 2` line in the root
+`Cargo.toml` is not a leftover; it is why the integration suites are bearable,
+and nothing in any gate's pass-or-fail would have told you.
+
+**`[profile.dev.build-override] opt-level = 3` -- reverted, +63s.** The tip is
+that proc macros are *executed* during compilation, so optimizing them pays
+off across hundreds of dependents. Here the cold build went 325s -> 388s.
+Optimizing `syn` (three copies, v2 and v3), `serde_derive`, `glib-macros` and
+`zbus_macros` costs more to compile once than it saves in running them, and a
+cold build is where this workspace actually spends its time.
+
+**cargo-hakari -- cannot be adopted, see the entry above.** The feature-
+unification churn it fixes is real and measured, but a `workspace-hack` every
+member depends on puts `tokio`, `rusqlite` and `gtk4` in `postio-model`'s
+transitive graph, and `check-crate-boundaries.py` walks that graph.
+
+**Reordering the gate chain to group `check` steps together -- pointless, and
+this one was my own idea rather than an article's.** The theory was that
+`issue-land.sh` alternates check-mode and build-mode passes and at two
+different feature widths, so each switch re-does work. It does not. Cargo
+gives every unit a distinct metadata hash from its profile, features and mode,
+so check units, build units and the same crate at two feature widths all
+**coexist** in `target/`:
+
+```
+cargo clippy -p postio-core --all-targets   67 units
+cargo check --workspace --all-targets      324 units
+cargo clippy -p postio-core --all-targets    0 units   <- nothing to redo
+```
+
+What is true, and is the useful form of the observation: a cold worktree
+compiles the dependency graph roughly **twice**, once as check units and once
+as build units. That is inherent to running both `clippy`/`check` and
+`test`, it is not an ordering mistake, and the only lever on it is not paying
+for a cold worktree in the first place (`--reuse`, #1012).
+
+
+## The compile cache was full, and had been for a long time (2026-09-03)
+
+`sccache --show-stats` on the development box:
+
+```
+Cache size        10 GiB
+Max cache size    10 GiB      <- the default; nobody had ever set it
+```
+
+11G on disk against a 10 GiB ceiling is a cache in permanent eviction. Nine
+worktrees live here, each holding ~2.1 GB of dependency artifacts, so the
+sessions were continuously throwing out each other's entries. From inside a
+session that presents as "the compile cache died and fell back to compiling
+locally" and as a unit tier that takes 43 minutes instead of seconds -- which
+is how it was noticed, by a session on another machine saying so out loud.
+
+`scripts/rustc-wrapper.sh` now defaults it to 30G, keeps the server up
+(`SCCACHE_IDLE_TIMEOUT=0`) and writes `SCCACHE_ERROR_LOG`, because there was
+no evidence of any kind when it went wrong.
+
+**These are read when the server starts, not per invocation** -- the same
+hazard as the TMPDIR pinning beside them (#359). Changing them needs one
+`sccache --stop-server`; `sccache --show-stats` prints "Max cache size" and is
+how you tell which server you are talking to.
+
+Worth knowing generally: a profile or linker flag change creates an entirely
+new key space in that cache and evicts whatever was there. On a box this
+close to its ceiling, landing a profile change is not free for the other
+sessions, which is an argument for doing it rarely and in one commit.
+
+## The CI cache was the wrong shape, not cold (2026-09-03)
+
+Long-standing complaint that CI "feels colder than it should". The cache was
+fine -- exact key hit, 3.1 GB restored successfully in both jobs. It was the
+wrong *kind* of artifact. Counting units rebuilt on run 33828724926:
+
+```
+Tests    21 units    <- 20 of them our own crates, which CI deliberately drops
+Clippy  380 units    <- rebuilt from unicode-ident up
+```
+
+`cargo clippy` compiles through `clippy-driver` and emits **check** units;
+`cargo test` emits **build** units. Cargo fingerprints them separately, so a
+`target/` full of one is worth nothing to the other, and the Clippy job was
+restoring 3.1 GB and then rebuilding the graph anyway -- about seven minutes
+of runner on every pull request.
+
+The fix is one cache per kind of build (`cache-name` in
+`.github/actions/rust-workspace`), not a third-party cache action. Note what
+it does **not** buy: Tests is 11.9 minutes and Clippy 8.7, they run in
+parallel, so a landing is gated by Tests either way. This frees a runner and
+makes Clippy a fast early signal; it does not shorten a landing.
