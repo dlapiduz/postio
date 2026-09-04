@@ -511,8 +511,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
     ),
     (
-        "gtk_settings_ui::the_six_rows_render_from_a_given_config",
-        gtk_settings_ui::the_six_rows_render_from_a_given_config as fn(),
+        "gtk_settings_ui::the_five_rows_render_from_a_given_config",
+        gtk_settings_ui::the_five_rows_render_from_a_given_config as fn(),
     ),
     (
         "gtk_settings_ui::the_default_config_renders_the_default_row_values",

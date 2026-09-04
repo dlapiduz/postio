@@ -4,7 +4,7 @@
 //! ADR 0015 Q4: "The column is an index. The pane is the conversation."
 //! Opening a thread row — the cursor landing on it, a click, `Enter` —
 //! shows the whole conversation, focused on the first unread, expanded and
-//! scrolled to. The drill-in's own job is the index *column*, nothing else.
+//! scrolled to. There is no second gesture and no second surface (#1003).
 //!
 //! On the bug, `Fill::fill` read `row.id` and never asked `row.is_thread()`,
 //! so every one of those gestures showed a single message — the newest in

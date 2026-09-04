@@ -29,7 +29,7 @@ use postio_model::EmailAddress;
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
-/// One thread, two messages — just enough for a drill-in to have something
+/// One thread, two messages — just enough for the pane to have something
 /// to open and something to leave.
 struct TinyThread;
 
@@ -105,7 +105,7 @@ pub fn h_steps_back_out_of_a_thread_the_same_way_escape_does() {
     let feeds = window.install_feeds(account, "lena@example.com", source.clone(), source);
     window.present();
     pump();
-    settle(&window, "the list to have a row to drill into", || {
+    settle(&window, "the list to have a row to land on", || {
         window.list().model().n_items() > 0
     });
 
