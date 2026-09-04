@@ -2576,6 +2576,13 @@ impl SettingsPanel {
             .set_max_content_height(ACCOUNTS_MAX_HEIGHT);
         imp.keys_scroller.set_propagate_natural_height(true);
         imp.keys_scroller.add_css_class("postio-settings-keys");
+        // Unlike `accounts_scroller`/`filters_scroller`/`privacy_scroller`,
+        // this one is never hidden -- the registry is never empty -- so a
+        // screen reader always reaches it and needs something to say, the
+        // same reason `nav_scroller`/`view_scroller` already announce
+        // themselves.
+        imp.keys_scroller
+            .update_property(&[gtk::accessible::Property::Label("Keybindings")]);
 
         // ── body: section nav, the file itself ───────────────────────────
         imp.nav.add_css_class("postio-settings-nav-list");
