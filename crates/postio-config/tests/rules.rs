@@ -223,3 +223,108 @@ fn a_rule_naming_a_filter_that_exists_is_not_reported() {
         "and the same file with one letter changed is reported"
     );
 }
+
+// ------------------------------------------------- when a rule can be run --
+
+/// ADR 0008 Q3's third bullet: a rule the engine has to defer says so.
+///
+/// The two decisions that half of Q3 already landed (#482) are invisible from
+/// the file: a rule containing `body:` is evaluated when the backfill
+/// completes rather than on arrival, and the user's evidence for that is mail
+/// sitting in the Inbox for as long as the body takes. Without a note, that
+/// is indistinguishable from the rule being broken — which is the neighbour
+/// of the failure Q6 is arranged against, a rule that *is* running, later
+/// than expected, silently.
+///
+/// It is a note and not an error. The rule is valid, it runs, and the file is
+/// not rejected; `is_valid()` must stay true or a correct config stops
+/// applying.
+#[test]
+fn a_rule_that_needs_the_body_says_when_it_will_run() {
+    let text = r#"[[rules]]
+name    = "receipts"
+query   = "body:invoice"
+actions = ["move:Receipts"]
+"#;
+    let checked = postio_config::validate::check_str(text);
+
+    assert!(
+        checked.validation.is_valid(),
+        "a deferred rule is a working rule: {:?}",
+        checked.validation.errors()
+    );
+    let notes = checked.validation.notes();
+    assert_eq!(
+        notes.len(),
+        1,
+        "one note for the one deferred rule: {notes:?}"
+    );
+    assert!(
+        notes[0].message.contains("after the body is fetched"),
+        "the note has to say what actually happens, in ADR 0008 Q3's own \
+         words: {:?}",
+        notes[0].message
+    );
+    assert!(
+        notes[0].path.contains("receipts"),
+        "and name the rule it is about: {:?}",
+        notes[0].path
+    );
+}
+
+/// A rule answerable from the headers carries none. A note on every rule is
+/// a note nobody reads.
+#[test]
+fn a_header_only_rule_carries_no_note() {
+    let text = r#"[[rules]]
+name    = "from-team"
+query   = "from:team is:unread"
+actions = ["flag"]
+"#;
+    let checked = postio_config::validate::check_str(text);
+    assert!(checked.validation.is_valid());
+    assert!(
+        checked.validation.notes().is_empty(),
+        "{:?}",
+        checked.validation.notes()
+    );
+}
+
+/// `header:` is on the deferred side however its name reads.
+///
+/// ADR 0025 Q4: the header block arrives *with* the body, so a message whose
+/// body is not local has no block to match. This is the case a user would
+/// never guess, which is the one most worth a note.
+#[test]
+fn a_header_rule_is_deferred_too_and_says_so() {
+    let text = r#"[[rules]]
+name    = "mailer"
+query   = "header:x-mailer"
+actions = ["flag"]
+"#;
+    let checked = postio_config::validate::check_str(text);
+    assert!(checked.validation.is_valid());
+    assert_eq!(
+        checked.validation.notes().len(),
+        1,
+        "`header:` cannot be answered on arrival either: {:?}",
+        checked.validation.notes()
+    );
+}
+
+/// A rule that is not a rule produces its error and no note: a note about
+/// when a broken rule would run is noise on top of the thing to fix.
+#[test]
+fn a_broken_rule_gets_its_error_and_no_note() {
+    let text = r#"[[rules]]
+name    = "nameless"
+query   = "body:invoice"
+"#;
+    let checked = postio_config::validate::check_str(text);
+    assert!(!checked.validation.is_valid(), "a rule with no actions");
+    assert!(
+        checked.validation.notes().is_empty(),
+        "{:?}",
+        checked.validation.notes()
+    );
+}

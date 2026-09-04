@@ -82,10 +82,26 @@ impl fmt::Display for ValidationError {
     }
 }
 
+/// Something true about a setting that is not wrong with it.
+///
+/// Distinct from [`ValidationError`] in the one way that matters: a note
+/// never makes a configuration invalid. It exists for the case where the
+/// file is correct and its *consequence* is not obvious — ADR 0008 Q3's
+/// deferred rules being the first — because a behaviour nobody predicted
+/// reads as a bug whether or not it is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationNote {
+    /// Dotted path of the setting, e.g. `rules.receipts`.
+    pub path: String,
+    /// Plain language, short enough for the validity line.
+    pub message: String,
+}
+
 /// The outcome of validating a configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Validation {
     errors: Vec<ValidationError>,
+    notes: Vec<ValidationNote>,
     elapsed: Duration,
 }
 
@@ -97,8 +113,17 @@ impl Validation {
     }
 
     /// Whether the configuration is usable as written.
+    ///
+    /// Notes are deliberately not consulted: a note is about a working
+    /// setting, and a file that stopped applying because something was worth
+    /// mentioning would be the worst of both.
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
+    }
+
+    /// What is worth saying about settings that are not wrong.
+    pub fn notes(&self) -> &[ValidationNote] {
+        &self.notes
     }
 
     /// The problem the validity line shows.
@@ -119,9 +144,19 @@ impl Validation {
         }
     }
 
-    /// The whole validity line: [`Validation::status`] plus the parse timing.
+    /// The whole validity line: [`Validation::status`], the notes, and the
+    /// parse timing.
+    ///
+    /// Notes ride here rather than being left for each caller to remember,
+    /// because the settings panel's line is the only place a user ever sees
+    /// validation output — a note nothing renders is a note nobody reads.
+    /// They follow the status so `valid` still reads first.
     pub fn status_line(&self) -> String {
-        format!("{} · parsed in {}", self.status(), self.timing())
+        let mut line = self.status();
+        for note in &self.notes {
+            line.push_str(&format!(" · {}", note.message));
+        }
+        format!("{line} · parsed in {}", self.timing())
     }
 
     /// Just the timing phrase, e.g. `2 ms`.
@@ -183,17 +218,48 @@ pub fn check_path(path: &Path) -> Checked {
 
 fn finish(config: Option<Config>, mut errors: Vec<ValidationError>, started: Instant) -> Checked {
     errors.sort_by_key(|err| (!err.kind.is_blocking(), err.line, err.column));
+    let config = if errors.iter().any(|e| e.kind.is_blocking()) {
+        None
+    } else {
+        config
+    };
+    // Only for a configuration that loaded, and only for rules that parsed:
+    // a note about when a broken rule would have run is noise on top of the
+    // thing to fix.
+    let notes = config.as_ref().map(deferred_rule_notes).unwrap_or_default();
     Checked {
-        config: if errors.iter().any(|e| e.kind.is_blocking()) {
-            None
-        } else {
-            config
-        },
+        config,
         validation: Validation {
             errors,
+            notes,
             elapsed: started.elapsed(),
         },
     }
+}
+
+/// ADR 0008 Q3's note: the rules that cannot be answered when a message
+/// arrives, and will run when its body lands instead.
+///
+/// The classification is `postio_search::rules`', the same function the
+/// engine files each rule by (#482) — deliberately not a second opinion
+/// about which fields need a body, because a validator that disagreed with
+/// the engine would be worse than one that said nothing.
+fn deferred_rule_notes(config: &Config) -> Vec<ValidationNote> {
+    let today = chrono::Utc::now().date_naive();
+    config
+        .rules()
+        .into_iter()
+        .flatten()
+        .filter(|rule| rule.enabled)
+        .filter(|rule| postio_search::needs_body(&postio_search::parse(&rule.query, today)))
+        .map(|rule| ValidationNote {
+            path: format!("rules.{}", rule.name),
+            message: format!(
+                "{}: runs after the body is fetched, not on arrival",
+                rule.name
+            ),
+        })
+        .collect()
 }
 
 /// Everything between reading the text and reporting on it.

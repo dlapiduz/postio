@@ -2739,8 +2739,10 @@ dependencies = [
 name = "postio-config"
 version = "0.2.0"
 dependencies = [
+ "chrono",
  "notify",
  "postio-model",
+ "postio-search",
  "serde",
  "thiserror",
  "toml 1.1.4+spec-1.1.0",

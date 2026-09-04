@@ -455,6 +455,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings::a_deferred_rule_says_so_on_the_validity_line_and_a_header_rule_does_not",
+        gtk_settings::a_deferred_rule_says_so_on_the_validity_line_and_a_header_rule_does_not
+            as fn(),
+    ),
+    (
         "gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings",
         gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings
             as fn(),
