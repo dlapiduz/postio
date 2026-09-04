@@ -1,118 +1,134 @@
-//! The "remote images blocked" banner: `postio-xxz`.
+//! The reading pane's two notices: `postio-xxz` and `#901`.
 //!
-//! A native GTK widget, not something drawn inside the `WebView` — the pane
-//! it sits above is exactly the thing the banner is reporting on, and it has
-//! to keep working even when every remote image in a message stays blocked
-//! forever. `Reader` shows and hides it and fills in the sender; this module
-//! only owns its shape and its two actions.
+//! Both are native GTK chrome, not something drawn inside the `WebView` — the
+//! pane they sit above is exactly the thing they are reporting on, and they
+//! have to keep working even when every remote image in a message stays
+//! blocked forever.
+//!
+//! # They are [`NoticeBar`]s
+//!
+//! One line, never wrapping (#1002). That is not a detail: the remote-image
+//! banner used to spell its sender out inline, and an Apple relay address is
+//! 70 characters, so the notice grew to three lines and pushed the mail down
+//! the pane. The long action lives in the overflow now, which is what the
+//! canvas draws (turn 7).
 
-use adw::prelude::*;
+use std::rc::Rc;
+
+use crate::widgets::{NoticeBar, NoticeMenuItem};
 
 /// "Remote images are blocked", with a way to see them once and a way to
 /// trust this sender from now on.
 pub struct RemoteImageBanner {
-    root: gtk::Box,
-    show_once: gtk::Button,
-    always_allow: gtk::Button,
+    notice: Rc<NoticeBar>,
+    /// What "always allow" would exempt, and what its menu entry says. Kept
+    /// because [`set_sender`](Self::set_sender) rebuilds the menu and the
+    /// handler has to be re-attached with it.
+    sender: std::cell::RefCell<Option<String>>,
+    always_allow: std::cell::RefCell<Vec<Rc<dyn Fn()>>>,
 }
 
 impl RemoteImageBanner {
     /// Build the banner, hidden — [`super::view::Reader`] shows it once it
     /// knows a message actually has remote images to block.
     pub fn new() -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        root.add_css_class("postio-remote-banner");
-        root.set_visible(false);
-        root.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let icon = gtk::Image::from_icon_name("image-missing-symbolic");
-        root.append(&icon);
-
-        let label = gtk::Label::new(Some("Remote images are blocked"));
-        label.set_hexpand(true);
-        label.set_xalign(0.0);
-        label.add_css_class("postio-remote-banner-label");
-        root.append(&label);
-
-        let show_once = gtk::Button::with_label("Show images");
-        show_once.add_css_class("flat");
-        root.append(&show_once);
-
-        let always_allow = gtk::Button::with_label("Always allow");
-        always_allow.add_css_class("flat");
-        root.append(&always_allow);
-
-        RemoteImageBanner {
-            root,
-            show_once,
-            always_allow,
-        }
+        let notice = NoticeBar::new("image-missing-symbolic", "postio-remote-banner");
+        notice.set_text("Remote images are blocked");
+        notice.set_action(Some("Show images"));
+        let banner = RemoteImageBanner {
+            notice,
+            sender: std::cell::RefCell::new(None),
+            always_allow: std::cell::RefCell::new(Vec::new()),
+        };
+        banner.rebuild_menu();
+        banner
     }
 
     /// The widget to place above the reading pane's `WebView`.
     pub fn widget(&self) -> gtk::Widget {
-        self.root.clone().upcast()
+        self.notice.widget()
     }
 
     /// Show or hide the whole banner.
     pub fn set_visible(&self, visible: bool) {
-        self.root.set_visible(visible);
+        self.notice.set_visible(visible);
     }
 
     /// Whether the banner is currently on screen.
     pub fn is_visible(&self) -> bool {
-        self.root.is_visible()
+        self.notice.is_visible()
+    }
+
+    /// The key `Show images` announces, from the live keymap.
+    pub fn set_action_key(&self, key: Option<&str>) {
+        self.notice.set_action_key(key);
     }
 
     /// Name whose remote images "always allow" would exempt from now on.
     ///
-    /// With no sender to name, the button is disabled rather than hidden —
-    /// the banner's shape stays constant, and "show once" is still live.
+    /// With no sender to name, the entry is dropped rather than left saying
+    /// "Always allow" with no object — the notice's shape is the icon, the
+    /// text and `Show images`, and that stays constant.
     pub fn set_sender(&self, sender: Option<&str>) {
-        match sender {
-            Some(sender) => {
-                self.always_allow
-                    .set_label(&format!("Always allow {sender}"));
-                self.always_allow.set_sensitive(true);
-            }
-            None => {
-                self.always_allow.set_label("Always allow");
-                self.always_allow.set_sensitive(false);
-            }
-        }
+        *self.sender.borrow_mut() = sender.map(str::to_owned);
+        self.rebuild_menu();
     }
 
     /// Called when the user asks to see this one message's images once,
     /// without adding the sender to the standing allow list.
     pub fn connect_show_once<F: Fn() + 'static>(&self, handler: F) {
-        self.show_once.connect_clicked(move |_| handler());
+        self.notice.connect_action(handler);
     }
 
     /// Called when the user asks to always allow this message's sender.
     pub fn connect_always_allow<F: Fn() + 'static>(&self, handler: F) {
-        self.always_allow.connect_clicked(move |_| handler());
+        self.always_allow.borrow_mut().push(Rc::new(handler));
+        self.rebuild_menu();
     }
 
-    /// The "always allow" button's current label — names the sender
+    /// The "always allow" entry's current label — names the sender
     /// [`set_sender`](Self::set_sender) was last called with. Test-facing:
     /// production code has no reason to read a label back.
     pub fn always_allow_label(&self) -> String {
-        self.always_allow
-            .label()
-            .map(|s| s.to_string())
+        self.notice
+            .menu_labels()
+            .into_iter()
+            .next()
             .unwrap_or_default()
     }
 
-    /// Simulate a click on "always allow" — what a test uses in place of a
-    /// synthesized pointer click, which WebKitGTK's public API gives no way
-    /// to do for a native GTK button.
+    /// Choose "always allow" — what a test uses in place of a synthesized
+    /// pointer click, which WebKitGTK's public API gives no way to do for a
+    /// native GTK button.
     pub fn emit_always_allow(&self) {
-        self.always_allow.emit_clicked();
+        self.notice.press_menu_item(0);
     }
 
     /// As [`emit_always_allow`](Self::emit_always_allow), for "show once".
     pub fn emit_show_once(&self) {
-        self.show_once.emit_clicked();
+        self.notice.press_action();
+    }
+
+    /// Put the overflow back together.
+    ///
+    /// Rebuilt rather than mutated because [`NoticeBar::set_menu`] replaces
+    /// the whole menu — a notice's overflow describes the message it is
+    /// currently reporting on, and leaving the previous message's entries
+    /// behind would offer to always-allow the wrong sender.
+    fn rebuild_menu(&self) {
+        let Some(sender) = self.sender.borrow().clone() else {
+            self.notice.set_menu(Vec::new());
+            return;
+        };
+        let handlers = self.always_allow.borrow().clone();
+        self.notice.set_menu(vec![NoticeMenuItem::new(
+            format!("Always allow {sender}"),
+            move || {
+                for handler in &handlers {
+                    handler();
+                }
+            },
+        )]);
     }
 }
 
@@ -146,46 +162,33 @@ impl Default for RemoteImageBanner {
 /// the words that were sent, so the original is worth checking before acting
 /// on it.
 pub struct DecodeNotice {
-    root: gtk::Box,
+    notice: Rc<NoticeBar>,
 }
 
 impl DecodeNotice {
     /// Build the notice, hidden.
     pub fn new() -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        root.add_css_class("postio-decode-notice");
-        root.set_visible(false);
-        root.set_accessible_role(gtk::AccessibleRole::Group);
-
-        let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
-        root.append(&icon);
-
-        let label = gtk::Label::new(Some(
-            "Parts of this message could not be decoded, so what is shown \
-             may not be what was sent",
-        ));
-        label.set_hexpand(true);
-        label.set_xalign(0.0);
-        label.set_wrap(true);
-        label.add_css_class("postio-decode-notice-label");
-        root.append(&label);
-
-        DecodeNotice { root }
+        let notice = NoticeBar::new("dialog-warning-symbolic", "postio-decode-notice");
+        // One line, so the sentence is shorter than the wrapping one it
+        // replaced. What a reader needs is the fact that changes what they
+        // do, and the rest was elaboration.
+        notice.set_text("Parts of this message could not be decoded");
+        DecodeNotice { notice }
     }
 
     /// The widget to place above the reading pane's `WebView`.
     pub fn widget(&self) -> gtk::Widget {
-        self.root.clone().upcast()
+        self.notice.widget()
     }
 
     /// Show or hide it.
     pub fn set_visible(&self, visible: bool) {
-        self.root.set_visible(visible);
+        self.notice.set_visible(visible);
     }
 
     /// Whether it is showing — what a test asserts on.
     pub fn is_visible(&self) -> bool {
-        self.root.get_visible()
+        self.notice.is_visible()
     }
 }
 

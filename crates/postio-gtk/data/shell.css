@@ -1289,13 +1289,6 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
-/* `Ret`, in the mono face every other key hint wears. */
-.postio-unavailable-hint {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  opacity: 0.75;
-}
-
 /* ── First run (canvas 3e) ───────────────────────────────────────────
    One screen, on its own plate in the middle of the window. The same plate
    the palette and the parts panel use, because it is the same kind of thing:
@@ -1729,4 +1722,39 @@ button.postio-compose-more {
 
 .conversation-actions button:hover {
   color: var(--postio-accent-text);
+}
+
+/* ── The shared controls (#1002) ─────────────────────────────────────
+   A button with its key beside it, a row of them, and a one-line notice.
+   Postio had three or four hand-rolled copies of each; these are the
+   classes the single implementation wears, and every surface that draws
+   one of these draws this. `postio_gtk::widgets` is the code. */
+
+/* An action bar is a row of real buttons with keycap hints, identical on
+   every screen — the canvas's turn-7 rule. The surfaces that mount one add
+   their own class beside this for the padding and the rule above it. */
+.postio-action-bar {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+/* ── One-line notices ────────────────────────────────────────────────
+   Icon, ellipsised text, one action, an overflow. It never wraps: a notice
+   that grows vertically pushes the mail down the pane, which is the
+   opposite of what a notice is for. The height is fixed for the same
+   reason — a notice appearing must not reflow the message under it by a
+   variable amount. */
+.postio-notice {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.postio-notice-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-notice-label {
+  color: var(--postio-ink-secondary);
+  font-size: 0.8523rem;
 }

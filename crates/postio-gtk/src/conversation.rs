@@ -235,6 +235,31 @@ mod tests {
 /// [`reader_for`]: ConversationView::reader_for
 pub type ReaderFactory = Box<dyn Fn(MessageId) -> crate::reader::Reader>;
 
+/// The three verbs a single message in a stack offers.
+///
+/// Reply is the primary: it is what the pane is for. Archive and delete are
+/// deliberately absent — every verb but these three is the conversation's
+/// (ADR 0015 Q4), and a delete button on every message in a stack is how
+/// people delete the wrong one.
+pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
+    crate::widgets::Action::new(
+        postio_core::CommandId::Reply,
+        "Reply",
+        "conversation-action-reply",
+    )
+    .primary(),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ReplyAll,
+        "Reply all",
+        "conversation-action-reply-all",
+    ),
+    crate::widgets::Action::new(
+        postio_core::CommandId::Forward,
+        "Forward",
+        "conversation-action-forward",
+    ),
+];
+
 type MessageHandler = Box<dyn Fn(MessageId)>;
 type ReplyHandler = Box<dyn Fn(MessageId, bool)>;
 
@@ -284,7 +309,7 @@ mod imp {
         /// `collapse`: the widget itself stays parked in `body`, hidden, for
         /// the same reason.
         pub reader: RefCell<Option<crate::reader::Reader>>,
-        pub actions: gtk::Box,
+        pub actions: std::rc::Rc<crate::widgets::ActionBar>,
         pub expanded: Cell<bool>,
         /// The box holding header, actions and body — what the stack owns.
         pub container: gtk::Box,
@@ -604,6 +629,18 @@ impl ConversationView {
         self.imp().on_dwell.borrow_mut().push(Box::new(handler));
     }
 
+    /// Re-cap every message's action bar from the live keymap.
+    ///
+    /// Called by `Window::apply_keymap` alongside every other surface that
+    /// shows a key: a `[keys]` rebind has to reach the caps in the stack the
+    /// same moment it reaches the keyboard, or the pane advertises a key
+    /// that now runs something else.
+    pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        for entry in self.imp().entries.borrow().iter() {
+            entry.actions.set_keymap(keymap);
+        }
+    }
+
     /// Shorten the dwell for a test that cannot wait a second.
     pub fn set_dwell_delay(&self, delay: std::time::Duration) {
         self.imp().dwell_delay.set(delay);
@@ -691,21 +728,24 @@ impl ConversationView {
         // conversation's, in this pane exactly as in the list (ADR 0015 Q4),
         // and a delete button on every message in a stack is how people
         // delete the wrong one.
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        actions.add_css_class("conversation-actions");
-        actions.set_visible(false);
+        //
+        // The same `ActionBar` the reading pane's own bar is (#1002), so
+        // these three carry their keys — they were three bare buttons with
+        // no caps at all, in a pane whose whole point is that `e` acts on
+        // whichever message you are looking at.
         let message = row.id;
-        for (label, handler) in [
-            ("Reply", ReplyKind::Reply),
-            ("Reply all", ReplyKind::ReplyAll),
-            ("Forward", ReplyKind::Forward),
-        ] {
-            let button = gtk::Button::with_label(label);
-            button.add_css_class("flat");
-            let view = self.clone();
-            button.connect_clicked(move |_| view.emit_action(message, handler));
-            actions.append(&button);
-        }
+        let actions = crate::widgets::ActionBar::new(&MESSAGE_ACTIONS, "conversation-actions");
+        actions.set_visible(false);
+        let view = self.clone();
+        actions.connect_command(move |command| {
+            let kind = match command.id() {
+                postio_core::CommandId::Reply => ReplyKind::Reply,
+                postio_core::CommandId::ReplyAll => ReplyKind::ReplyAll,
+                postio_core::CommandId::Forward => ReplyKind::Forward,
+                _ => return,
+            };
+            view.emit_action(message, kind);
+        });
 
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.add_css_class("conversation-entry");
@@ -714,7 +754,7 @@ impl ConversationView {
         // Under the message, not under its header. Above the body they read
         // as belonging to whatever comes next -- which for a stack of
         // messages is somebody else's mail.
-        container.append(&actions);
+        container.append(&actions.widget());
 
         // A click anywhere on the header makes that message current, which is
         // the mouse's half of what the column's cursor does.

@@ -2706,6 +2706,10 @@ impl Window {
         self.cheatsheet().set_keymap(keymap.clone());
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
+        // Every message in the stack carries its own Reply/Reply all/Forward
+        // caps now (#1002), so the pane has to be re-capped like every other
+        // surface that shows a key.
+        self.conversation().set_keymap(&keymap);
         // #828: the composer's Send / Schedule / Save draft hints were
         // literals, so they went on naming the default key after a rebind.
         //
