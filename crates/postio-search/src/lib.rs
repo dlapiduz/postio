@@ -63,6 +63,7 @@
 mod date;
 pub mod facets;
 pub mod highlight;
+pub mod matcher;
 mod parser;
 pub mod query;
 pub mod results;
@@ -70,6 +71,7 @@ mod size;
 
 pub use facets::{Facets, Refinement, Scope};
 pub use highlight::Highlighted;
+pub use matcher::{Subject, matches, needs_body};
 pub use parser::parse;
 pub use query::ParsedQuery;
 pub use results::{ResultOrder, SearchHit, SearchResults, TOTAL_HITS_CAP};
