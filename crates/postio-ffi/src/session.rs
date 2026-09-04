@@ -213,6 +213,29 @@ fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
     }
 }
 
+/// This installation's `[sync]`, or the built-in defaults.
+///
+/// The same shape as [`load_key_bindings`], and for the same reason: a
+/// config that will not parse is a reason to use the defaults, not a reason
+/// the session cannot open. `postio-app::open_with` reads `[sync]` this way
+/// for the GTK frontend (`notifications::config_at`); this is the
+/// counterpart for every `Wiring` this crate builds, which used to read
+/// nothing at all and so started every engine on `BackfillPolicy::default()`
+/// and `WatchPolicy::default()` regardless of what was on disk (#1014).
+fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
+    let config = match text {
+        Some(text) => postio_config::Config::from_toml_str(text).ok(),
+        None => postio_config::Config::load().ok(),
+    };
+    match config {
+        Some(config) => config.sync,
+        None => {
+            tracing::warn!("using the built-in sync policy: config.toml is absent or unreadable");
+            Default::default()
+        }
+    }
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -551,7 +574,10 @@ impl Session {
             // in-memory session still needs no Secret Service, no Keychain and
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
-            let wiring = Wiring::new(database, blobs, runtime, sink, commands);
+            let sync_config = load_sync_config(options.config_text.as_deref());
+            let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+                .with_backfill(postio_session::backfill_policy(&sync_config))
+                .with_watch(postio_session::watch_policy(&sync_config));
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keys: load_key_bindings(options.config_text.as_deref()),
@@ -596,7 +622,15 @@ impl Session {
         #[cfg(not(feature = "testing"))]
         let keys = load_key_bindings(None);
 
-        let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
+        #[cfg(feature = "testing")]
+        let sync_config = load_sync_config(options.config_text.as_deref());
+        #[cfg(not(feature = "testing"))]
+        let sync_config = load_sync_config(None);
+
+        let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+            .with_secrets(secrets)
+            .with_backfill(postio_session::backfill_policy(&sync_config))
+            .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             keys,
@@ -1206,5 +1240,27 @@ impl Session {
         {
             wiring.events.emit(event);
         }
+    }
+
+    /// Whether this session's `Wiring` was actually built with the backfill
+    /// and watch policy `[sync]` (as `expected` parses it) implies (#1014).
+    ///
+    /// Test-only, the same reason `emit_for_test` is: the wiring is private
+    /// so that nothing outside this crate can reach in, and a test proving
+    /// `open` read `[sync]` rather than merely compiling has to reach in
+    /// anyway. A comparison rather than a raw accessor so this crate need
+    /// not name `postio_sync`/`postio_runtime`'s policy types at its own
+    /// boundary — `postio-app` reaches `with_backfill`/`with_watch` the same
+    /// way, through `postio_session`'s functions, and never names them
+    /// either.
+    #[cfg(feature = "testing")]
+    pub fn honors_sync_config_for_test(&self, expected: &postio_config::SyncConfig) -> bool {
+        let expected_backfill = postio_session::backfill_policy(expected);
+        let expected_watch = postio_session::watch_policy(expected);
+        self.wiring.lock().ok().is_some_and(|guard| {
+            guard.as_ref().is_some_and(|wiring| {
+                wiring.backfill == expected_backfill && wiring.watch == expected_watch
+            })
+        })
     }
 }
