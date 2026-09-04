@@ -103,6 +103,36 @@ security = "implicit-tls"
 A named, pinned search -- one table per saved search, keyed the same
 way accounts are.
 
+## `[[rules]]`
+
+Filing rules, applied in the order they appear in the file -- an
+array of tables rather than a map, so inserting a rule in the middle
+is a matter of where you type it and nothing has to be renumbered.
+
+Each rule needs a `query` (the search bar's own language) or a
+`filter` naming a `[filters]` entry to reuse, plus one or more
+`actions`: `move:<mailbox>`, `label:<name>`, `flag`, `unflag`,
+`mark-read`, `mark-unread`, `archive`, `trash`, `forward:<address>`.
+A rule may not delete mail; `trash` moves it to the Trash folder.
+
+`stop = true` stops the rules below this one when it matches; the
+default is `false`, so a rule that labels everything from a list does
+not silently disable the rest. `enabled = false` is how a rule is
+dry-run.
+
+```toml
+[[rules]]
+name    = "receipts"
+query   = "from:billing has:attach"
+actions = ["move:Receipts", "mark-read"]
+stop    = true
+
+[[rules]]
+name    = "needs-reply"
+filter  = "needs-reply"
+actions = ["flag"]
+```
+
 ## `[mailboxes]`
 
 Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to

@@ -137,4 +137,3 @@ with_connect_timeout              # crates/postio-account/src/imap/settings.rs:1
 with_groups                       # crates/postio-search/src/matcher.rs:114 -- same: `group:` is in the language, so the matcher must answer it (#481)
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
-yes                               # crates/postio-config/src/lib.rs:105

@@ -58,6 +58,7 @@ pub mod mime;
 pub mod operation;
 pub mod outgoing;
 pub mod reply;
+pub mod rule;
 pub mod scope;
 pub mod signature;
 pub mod signature_default;

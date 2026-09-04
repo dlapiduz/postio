@@ -306,6 +306,36 @@ fn render() -> String {
          A named, pinned search -- one table per saved search, keyed the same\n\
          way accounts are.\n\
          \n\
+         ## `[[rules]]`\n\
+         \n\
+         Filing rules, applied in the order they appear in the file -- an\n\
+         array of tables rather than a map, so inserting a rule in the middle\n\
+         is a matter of where you type it and nothing has to be renumbered.\n\
+         \n\
+         Each rule needs a `query` (the search bar\'s own language) or a\n\
+         `filter` naming a `[filters]` entry to reuse, plus one or more\n\
+         `actions`: `move:<mailbox>`, `label:<name>`, `flag`, `unflag`,\n\
+         `mark-read`, `mark-unread`, `archive`, `trash`, `forward:<address>`.\n\
+         A rule may not delete mail; `trash` moves it to the Trash folder.\n\
+         \n\
+         `stop = true` stops the rules below this one when it matches; the\n\
+         default is `false`, so a rule that labels everything from a list does\n\
+         not silently disable the rest. `enabled = false` is how a rule is\n\
+         dry-run.\n\
+         \n\
+         ```toml\n\
+         [[rules]]\n\
+         name    = \"receipts\"\n\
+         query   = \"from:billing has:attach\"\n\
+         actions = [\"move:Receipts\", \"mark-read\"]\n\
+         stop    = true\n\
+         \n\
+         [[rules]]\n\
+         name    = \"needs-reply\"\n\
+         filter  = \"needs-reply\"\n\
+         actions = [\"flag\"]\n\
+         ```\n\
+         \n\
          ## `[mailboxes]`\n\
          \n\
          Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to\n\

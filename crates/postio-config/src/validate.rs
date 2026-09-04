@@ -31,6 +31,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use postio_model::MailboxRole;
+use postio_model::rule::RuleError;
 use toml::{Table, Value};
 
 use crate::source::SourceMap;
@@ -223,6 +224,7 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_keys(config, &map, errors);
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
+        check_rules(config, &map, errors);
         check_mailboxes(config, &map, errors);
     }
     config
@@ -532,6 +534,67 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
                 format!("filter `{name}` has an empty query"),
             );
         }
+    }
+}
+
+/// `[[rules]]`, one entry at a time (ADR 0008 Q4).
+///
+/// Every entry is reported independently, because the point of the array is
+/// that the rules are separate things: one broken rule must not hide the six
+/// under it, and a caller may still run the ones that are fine.
+///
+/// The message reads `rule `x` <what is wrong>`, which is why
+/// `postio_model::rule::RuleError`'s own text is phrased as a clause. That
+/// line is all a user gets — canvas 3f has no dialog, only the validity
+/// line — so it has to name the rule, the thing that is wrong, and where
+/// possible what to write instead.
+fn check_rules(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (index, (entry, parsed)) in config.rules.iter().zip(config.rules()).enumerate() {
+        let label = if entry.name.trim().is_empty() {
+            format!("rule {}", index + 1)
+        } else {
+            format!("rule `{}`", entry.name.trim())
+        };
+
+        // A nameless rule parses perfectly and is unreportable afterwards:
+        // Attention, the settings panel and every log line about it can only
+        // say "rule 3", which is a different rule the moment one is inserted
+        // above it.
+        if entry.name.trim().is_empty() {
+            push(
+                errors,
+                map,
+                format!("rules[{index}].name"),
+                false,
+                format!("{label} has no name, so nothing can say which rule acted"),
+            );
+        }
+
+        let Err(problem) = parsed else {
+            continue;
+        };
+        // Point at the key the fix goes in, so the validity line's cursor
+        // lands where the user has to type.
+        let key = match &problem {
+            RuleError::NoQuery => String::new(),
+            RuleError::QueryAndFilter { .. }
+            | RuleError::UnknownFilter { .. }
+            | RuleError::FilterHasNoQuery { .. } => ".filter".to_owned(),
+            RuleError::NoActions
+            | RuleError::UnknownAction { .. }
+            | RuleError::ActionNeedsArgument { .. }
+            | RuleError::ActionTakesNoArgument { .. }
+            | RuleError::ForwardNeedsAnAddress { .. }
+            | RuleError::StopIsARuleKey
+            | RuleError::DeleteIsNotAnAction => ".actions".to_owned(),
+        };
+        push(
+            errors,
+            map,
+            format!("rules[{index}]{key}"),
+            false,
+            format!("{label} {problem}"),
+        );
     }
 }
 
