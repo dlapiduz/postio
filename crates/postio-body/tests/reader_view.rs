@@ -88,7 +88,7 @@ fn plain(name: &str) -> String {
 
 #[test]
 fn a_shipping_notice_yields_its_tracking_number_item_and_destination() {
-    let found = reader_view::facts(&plain("transactional-shipping-notice"));
+    let found = reader_view::lift(&plain("transactional-shipping-notice")).rows;
     let rows: Vec<(&str, &str)> = found
         .iter()
         .map(|fact| (fact.label.as_str(), fact.value.as_str()))
@@ -115,7 +115,7 @@ fn the_prose_around_the_block_is_not_dragged_into_it() {
         "the fixture still carries the sentence this test is about"
     );
     assert_eq!(
-        reader_view::facts(&body).len(),
+        reader_view::lift(&body).rows.len(),
         3,
         "only the block, not the sentence with a colon in it"
     );
@@ -129,7 +129,7 @@ fn a_newsletter_with_no_block_in_its_plain_part_yields_nothing() {
         return;
     };
     assert!(
-        reader_view::facts(&text).is_empty(),
+        reader_view::lift(&text).rows.is_empty(),
         "a newsletter's plain part is prose, and prose has no facts block"
     );
 }
