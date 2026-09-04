@@ -250,11 +250,12 @@ fn contexts_round_trip_through_strings() {
     // A count, so adding a context is a deliberate act rather than something
     // that happens on the way past. It was 8 and the ceiling was the same
     // number, because `ContextSet` packed one bit per context into a `u8`;
-    // `Accounts` (#471) is the ninth and widened it to a `u16`. The ceiling
+    // `Accounts` (#471) is the ninth and widened it to a `u16`. `Keys`
+    // (#881) is the tenth, still inside that widened ceiling. The ceiling
     // is no longer written down twice -- `context.rs`'s
     // `every_context_fits_the_set` derives it from the integer itself, so
     // this is only the deliberate-act tripwire.
-    assert_eq!(Context::ALL.len(), 9);
+    assert_eq!(Context::ALL.len(), 10);
 }
 
 #[test]
