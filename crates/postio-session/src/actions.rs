@@ -4194,6 +4194,91 @@ mod tests {
         let _ = second;
     }
 
+    /// #531: one unprovable message must not pin the others.
+    ///
+    /// Twelve messages moved across accounts are twelve sagas, each with its
+    /// own phase, and a bulk undo meets whatever mixture the drainers have
+    /// produced. Refusing the whole undo because one of them cannot be
+    /// proven would hold eleven messages hostage to the twelfth; silently
+    /// undoing eleven and saying "done" would tell the user they have twelve
+    /// back when they have eleven.
+    ///
+    /// So it does what it can and names what it could not, in the spirit of
+    /// ADR 0005 Q10's rule that a view which cannot include an account says
+    /// so and stays usable. Nothing is half-applied per message: the skipped
+    /// one is untouched, exactly where it was.
+    #[test]
+    fn a_bulk_undo_inverts_what_it_can_and_names_what_it_skipped() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (_second, second_inbox) = second_account(&world);
+        let first = world.message(world.inbox, &[]);
+        let second_message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[first, second_message], Some(first));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Selection,
+                to: Some(second_inbox),
+            })
+            .expect("both moves start");
+
+        // One reaches the target and proves it; the other cannot be proven.
+        advance_saga(&world, first, MovePhase::Done);
+        {
+            let connection = world.database.connection().expect("a connection");
+            let sagas = CrossAccountMoveRepository::new(&connection);
+            let id = sagas
+                .open_for_sources(&[second_message])
+                .expect("a read")
+                .first()
+                .expect("the second saga")
+                .id;
+            sagas
+                .transition(id, MovePhase::Unconfirmed)
+                .expect("its append could not be proven");
+        }
+
+        world
+            .run(Command::Undo)
+            .expect("the undo proceeds rather than refusing outright");
+
+        let said = world
+            .drained()
+            .into_iter()
+            .find_map(|event| match event {
+                Event::UndoPerformed { description } => Some(description),
+                _ => None,
+            })
+            .expect("undo says what it did");
+        assert!(
+            said.contains('1') && said.to_lowercase().contains("could not be confirmed"),
+            "the sentence has to name the one it could not take back, or the \
+             user believes they have both: {said:?}"
+        );
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        assert!(
+            !messages
+                .get(first)
+                .expect("read")
+                .expect("the first row")
+                .sync
+                .deleted_locally,
+            "the provable one came back"
+        );
+        assert!(
+            messages
+                .get(second_message)
+                .expect("read")
+                .expect("the second row")
+                .sync
+                .deleted_locally,
+            "and the unprovable one is untouched, exactly where it was"
+        );
+    }
+
     /// #531 / ADR 0005 Q9: an append nobody could confirm is the one phase
     /// undo still refuses, and it refuses **out loud**.
     ///

@@ -439,3 +439,141 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
     );
     let _ = world.source_inbox;
 }
+
+/// #531's last criterion: the inverse saga's removal reaches the **target**
+/// server, using the **target's** coordinates.
+///
+/// This is the failure the whole issue is shaped around, and it is a silent
+/// one: an inverse removal that names a coordinate the target server does
+/// not have reaches nothing, expunges nothing, and settles `done` reporting
+/// success. The user is told their message came back and account B keeps its
+/// copy for ever.
+///
+/// It is driven the whole way rather than staged: the forward saga runs
+/// against both mock servers until the move is genuinely complete, the undo
+/// builds the inverse the way `u` does, and then the inverse's two halves
+/// drain against the same two servers. Every coordinate in play is one a
+/// server actually issued.
+#[tokio::test]
+async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates() {
+    let world = world(RAW, true);
+    let source = source_server().await;
+    let target = target_server(true).await;
+
+    // ── the move, all the way ────────────────────────────────────────────
+    drain(&world, &target, world.target_account).await;
+    drain(&world, &source, world.source_account).await;
+    assert_eq!(phase(&world), MovePhase::Done);
+    assert_eq!(messages_in(&source, "INBOX").await, 0, "A gave it up");
+    assert_eq!(messages_in(&target, "INBOX").await, 1, "B has it");
+
+    // The identity B's server issued, now on the row (this branch's earlier
+    // commit) — and the coordinate the inverse must remove by.
+    let copy_identity = {
+        let connection = world.database.connection().expect("checkout");
+        MessageRepository::new(&connection)
+            .get(world.target_message)
+            .expect("read")
+            .expect("the copy")
+            .server
+            .remote_id
+            .expect("phase 2 wrote what the append proved")
+    };
+
+    // ── the undo, built the way `u` builds it ────────────────────────────
+    let forward_blob = {
+        let connection = world.database.connection().expect("checkout");
+        CrossAccountMoveRepository::new(&connection)
+            .get(world.saga)
+            .expect("read")
+            .expect("the forward saga")
+            .raw_blob_id
+    };
+    let inverse = {
+        let connection = world.database.connection().expect("checkout");
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        let inverse = sagas
+            .create(&NewCrossAccountMove {
+                source_message: world.target_message,
+                source_account: world.target_account,
+                source_mailbox: world.target_inbox,
+                target_account: world.source_account,
+                target_mailbox: world.source_inbox,
+                target_message: Some(world.source_message),
+                // The bytes to put back. Content-addressed, so this is the
+                // same blob the forward pass appended to B — `invert_one`
+                // reads it off the copy row for the same reason.
+                raw_blob_id: forward_blob.clone(),
+                rfc_message_id: Some("<engine@example.com>".to_owned()),
+            })
+            .expect("the inverse saga");
+        let queue = OperationQueueRepository::new(&connection);
+        queue
+            .enqueue(
+                world.source_account,
+                OperationTarget::Message(world.source_message),
+                &Operation::CrossAccountCopy { saga: inverse },
+                at(11),
+            )
+            .expect("enqueue the copy back");
+        // Enqueued while the copy still carries B's identity, which is what
+        // `source_remote_id` snapshots — and what phase 3 removes by.
+        queue
+            .enqueue(
+                world.target_account,
+                OperationTarget::Message(world.target_message),
+                &Operation::CrossAccountRemove { saga: inverse },
+                at(11),
+            )
+            .expect("enqueue the removal from B");
+        MessageRepository::new(&connection)
+            .set_deleted_locally(&[world.source_message], false)
+            .expect("the original comes back");
+        inverse
+    };
+
+    // Phase 1 of the inverse, on account A. Unlike the `confirmed` case,
+    // `done` means A genuinely gave the message up — so this is a real
+    // append, from the raw blob the forward pass already stored.
+    drain_at(&world, &source, world.source_account, 12).await;
+    let phase_now = {
+        let connection = world.database.connection().expect("checkout");
+        CrossAccountMoveRepository::new(&connection)
+            .get(inverse)
+            .expect("read")
+            .expect("the inverse saga")
+            .phase
+    };
+    assert_eq!(
+        phase_now,
+        MovePhase::Confirmed,
+        "the inverse could not put the message back on account A, so its \
+         removal from B must not run -- which is the confirm-before-delete \
+         rule doing its job, and this test failing for the right reason"
+    );
+
+    // ── and the half this test exists for ────────────────────────────────
+    drain_at(&world, &target, world.target_account, 13).await;
+
+    assert_eq!(
+        messages_in(&target, "INBOX").await,
+        0,
+        "the inverse removal settled without expunging anything from the \
+         target server: it reached nothing and reported success, and account \
+         B keeps a copy of a message the user was told came back"
+    );
+    assert_eq!(
+        messages_in(&source, "INBOX").await,
+        1,
+        "and the message is back on the server it came from, exactly once"
+    );
+
+    // The count above *is* the coordinate assertion, which is why there is
+    // no separate one. A `RemoteId` from account A's UID space either fails
+    // `wire_uid`'s generation check outright or names a UID B never issued;
+    // either way the expunge matches nothing and the message is still there.
+    // The only way this inbox reaches zero is the removal naming what B's
+    // own server assigned — which is `copy_identity`, read off the row
+    // before the undo, and written there by phase 2.
+    let _ = copy_identity;
+}
