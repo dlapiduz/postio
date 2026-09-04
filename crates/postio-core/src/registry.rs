@@ -311,10 +311,16 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ViewOriginal,
         title: "View original",
-        // `ctrl+o`, not a bare letter: it is a rare gesture on a surface
+        // `mod+o`, not a bare letter: it is a rare gesture on a surface
         // where every bare letter is already a verb people use constantly,
         // and reader view is the default rather than something to escape.
-        default_binding: "ctrl+o",
+        //
+        // `mod`, not a literal `ctrl` -- the canvas writes it `C-o`, which
+        // means the primary accelerator, and that is Command on a Mac (#669).
+        // A literal `ctrl` here would also break the invariant
+        // `platform_bindings.rs` checks: that the two tables differ nowhere
+        // *but* the primary modifier.
+        default_binding: "mod+o",
         alternate_bindings: &[],
         // Wherever a message is drawn. A no-op when nothing is reduced, so
         // it costs nothing to offer everywhere mail is read rather than

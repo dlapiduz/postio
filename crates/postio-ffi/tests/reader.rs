@@ -88,8 +88,11 @@ fn the_document_is_the_one_the_gtk_reader_would_render() {
         text: None,
         html: Some("<p>hello</p>".to_string()),
     };
-    let (content, _held) = shared::body_html(&body, RemoteImages::Blocked);
-    let expected = shared::document_for(&content, RemoteImages::Blocked);
+    // `<p>hello</p>` is not bulk, so both sides draw the original — which is
+    // the point of asserting against `body_html` rather than a literal: the
+    // FFI document is the shared one, whichever way it was drawn.
+    let drawn = shared::body_html(&body, RemoteImages::Blocked, shared::Rendering::Original);
+    let expected = shared::document_for(&drawn.html, RemoteImages::Blocked);
 
     assert_eq!(
         session.reader_document(id, RemoteImagesFfi::Blocked),

@@ -216,7 +216,10 @@ impl Reader {
             crate::widgets::NoticeBar::new("view-reveal-symbolic", "postio-reader-view-notice");
         reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
         reader_notice.set_action(Some("View original"));
-        reader_notice.set_action_key(Some("C-o"));
+        reader_notice.set_action_key(
+            postio_core::Keymap::resolve(&Default::default())
+                .binding(postio_core::CommandId::ViewOriginal),
+        );
         let actions = super::actions::new();
 
         let chips = crate::parts::Chips::new();
@@ -265,6 +268,58 @@ impl Reader {
         // struct that owns the button, a cycle nothing would ever free.
         // `view`, `open` and `allowlist` hold no reference back to the
         // banner, so they can be captured strongly with no such risk.
+        // `View original` on the notice runs the same thing `ctrl+o` does.
+        // Weakly, for the reason the banner's own buttons are weak: the
+        // button lives inside `reader.reader_notice`, so a closure its
+        // `clicked` signal owns must not hold a strong reference back to the
+        // struct that owns the button.
+        {
+            let weak = Rc::downgrade(&reader.reader_notice);
+            let view = reader.view.clone();
+            let open = Rc::clone(&reader.open);
+            let allowlist = Rc::clone(&reader.allowlist);
+            let banner = Rc::clone(&reader.banner);
+            let highlight = Rc::clone(&reader.highlight);
+            let rendered = Rc::clone(&reader.rendered);
+            let page = Rc::clone(&reader.page);
+            let loads = Rc::clone(&reader.loads);
+            reader.reader_notice.connect_action(move || {
+                let Some(notice) = weak.upgrade() else { return };
+                {
+                    let mut guard = open.borrow_mut();
+                    let Some(current) = guard.as_mut() else {
+                        return;
+                    };
+                    if current.rendering == Rendering::Original {
+                        return;
+                    }
+                    current.rendering = Rendering::Original;
+                }
+                let allowed = open
+                    .borrow()
+                    .as_ref()
+                    .and_then(|current| current.sender.clone())
+                    .is_some_and(|sender| allowlist.borrow().is_allowed(&sender));
+                render_open(
+                    &Canvas {
+                        view: &view,
+                        page: &page,
+                        loads: &loads,
+                    },
+                    &banner,
+                    &notice,
+                    &open,
+                    &highlight,
+                    if allowed {
+                        RemoteImages::Allowed
+                    } else {
+                        RemoteImages::Blocked
+                    },
+                    &rendered,
+                );
+            });
+        }
+
         let banner_weak = Rc::downgrade(&reader.banner);
         {
             let view = reader.view.clone();
@@ -621,6 +676,11 @@ impl Reader {
     /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
         self.actions.set_keymap(keymap);
+        // The notice's own cap, from the same keymap. Written down here it
+        // would go on saying `C-o` after a rebind moved the key, which is the
+        // drift `KeycapButton` exists to end (#1002).
+        self.reader_notice
+            .set_action_key(keymap.binding(postio_core::CommandId::ViewOriginal));
     }
 
     /// Called with the invocation whenever a button in the action bar is
