@@ -12,6 +12,7 @@
 use std::sync::OnceLock;
 
 use postio_body::quote;
+use postio_body::reader_view;
 use postio_body::sanitize::{self, RemoteImages};
 use postio_model::message::MessageBody;
 
@@ -441,24 +442,129 @@ impl HeldBack {
     }
 }
 
+/// Which of the two ways a message can be drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rendering {
+    /// The sender's own markup, sanitized and quote-folded. What ordinary
+    /// correspondence gets, and what `View original` goes back to.
+    #[default]
+    Original,
+    /// Reduced to what carries meaning — [`postio_body::reader_view`]. The
+    /// default for bulk mail.
+    Reader,
+}
+
+/// A body, drawn, and everything a surface needs to say about how.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Rendered {
+    /// The markup, ready for [`contain_body`].
+    pub html: String,
+    /// What the remote-image policy held back.
+    pub held_back: HeldBack,
+    /// Which way it was drawn — what the notice reports, and what decides
+    /// whether `View original` has anything to offer.
+    pub rendering: Rendering,
+    /// Links that survived reduction. Zero in [`Rendering::Original`], where
+    /// nothing is dropped and the count would be a claim about nothing.
+    pub links_kept: usize,
+    /// Links reduction collapsed. The canvas draws the pair as
+    /// `1 link kept of 23`.
+    pub links_dropped: usize,
+}
+
+impl Rendered {
+    /// Every link the message had. Zero unless it was reduced.
+    pub fn links_total(&self) -> usize {
+        self.links_kept + self.links_dropped
+    }
+}
+
+/// Whether this body is one reader view should open on.
+///
+/// **Bulk mail only.** A person's correspondence opening reduced is the one
+/// failure that would make the feature hated, so the question is not "could
+/// this be reduced" — anything can — but "was this laid out by a template".
+/// [`postio_body::reader_view::reads_as_bulk`] answers it from the
+/// arrangement.
+///
+/// A message with no HTML part at all is never a candidate: there is no
+/// markup to reduce, and plain text is already what reader view is trying to
+/// get back to.
+pub fn suits_reader_view(body: &MessageBody) -> bool {
+    body.html
+        .as_deref()
+        .filter(|html| !html.trim().is_empty())
+        .is_some_and(reader_view::reads_as_bulk)
+}
+
 /// The body markup: sanitized and quote-folded, but not yet wrapped in the
 /// document template [`wrap_document`] adds, plus what was held back to
 /// produce it — see [`sanitize::Sanitized`].
-pub fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, HeldBack) {
-    if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
+///
+/// # Reader view prefers the plain part
+///
+/// A `multipart/alternative` carries the sender's own plain-text version,
+/// which is the thing reduction is trying to reconstruct — so when there is
+/// one, reader view uses it rather than reducing the HTML alongside it.
+/// Reduction is the fallback for HTML-only bulk mail, not the first
+/// resort.
+///
+/// Note what this does *not* do: it never reaches for the plain part in
+/// [`Rendering::Original`]. The existing preference order there — HTML
+/// first, text as a fallback — is what makes ordinary mail look like the
+/// sender wrote it.
+pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> Rendered {
+    let html = body.html.as_deref().filter(|html| !html.trim().is_empty());
+    let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
+
+    if rendering == Rendering::Reader {
+        if let Some(text) = text {
+            return Rendered {
+                html: quote::text_to_html(text),
+                held_back: HeldBack::default(),
+                rendering: Rendering::Reader,
+                ..Rendered::default()
+            };
+        }
+        if let Some(html) = html {
+            // Sanitized first, always. Reduction is a readability pass over
+            // markup that has already been made safe, and running it on raw
+            // sender HTML would be relying on it for a promise it does not
+            // make.
+            let sanitized = sanitize::sanitize_body(html, remote);
+            let reduced = reader_view::reduce(&sanitized.html);
+            return Rendered {
+                html: reduced.html,
+                held_back: HeldBack {
+                    remote_images: sanitized.remote_blocked,
+                    trackers: sanitized.trackers,
+                },
+                rendering: Rendering::Reader,
+                links_kept: reduced.links_kept,
+                links_dropped: reduced.links_dropped,
+            };
+        }
+    }
+
+    if let Some(html) = html {
         let sanitized = sanitize::sanitize_body(html, remote);
-        return (
-            quote::fold_html_quotes(&sanitized.html),
-            HeldBack {
+        return Rendered {
+            html: quote::fold_html_quotes(&sanitized.html),
+            held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
                 trackers: sanitized.trackers,
             },
-        );
+            rendering: Rendering::Original,
+            ..Rendered::default()
+        };
     }
-    if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return (quote::text_to_html(text), HeldBack::default());
+    if let Some(text) = text {
+        return Rendered {
+            html: quote::text_to_html(text),
+            ..Rendered::default()
+        };
     }
-    (String::new(), HeldBack::default())
+    Rendered::default()
 }
 
 /// Give a sender's content a bounded surface of its own (#323): a visible
@@ -515,11 +621,17 @@ mod tests {
     use super::*;
     use postio_model::message::MessageBody;
 
+    /// A body drawn the ordinary way — what every one of these asserted on
+    /// before reader view existed.
+    fn drawn(body: &MessageBody) -> Rendered {
+        body_html(body, RemoteImages::Blocked, Rendering::Original)
+    }
+
     #[test]
     fn an_empty_body_produces_empty_content() {
-        let (content, held_back) = body_html(&MessageBody::default(), RemoteImages::Blocked);
-        assert_eq!(content, "");
-        assert_eq!(held_back, HeldBack::default());
+        let rendered = drawn(&MessageBody::default());
+        assert_eq!(rendered.html, "");
+        assert_eq!(rendered.held_back, HeldBack::default());
     }
 
     #[test]
@@ -528,7 +640,7 @@ mod tests {
             text: Some("plain fallback".to_owned()),
             html: Some("<p>rich</p>".to_owned()),
         };
-        assert_eq!(body_html(&body, RemoteImages::Blocked).0, "<p>rich</p>");
+        assert_eq!(drawn(&body).html, "<p>rich</p>");
     }
 
     #[test]
@@ -537,7 +649,7 @@ mod tests {
             text: Some("hello".to_owned()),
             html: None,
         };
-        assert!(body_html(&body, RemoteImages::Blocked).0.contains("hello"));
+        assert!(drawn(&body).html.contains("hello"));
     }
 
     #[test]
@@ -550,12 +662,120 @@ mod tests {
         // picture whatever the host is called -- nothing here is domain-based
         // (#174). Blocked identically either way.
         assert_eq!(
-            body_html(&body, RemoteImages::Blocked).1,
+            drawn(&body).held_back,
             HeldBack {
                 remote_images: 1,
                 trackers: 0
             }
         );
+    }
+
+    // -- reader view (#1009) ----------------------------------------------
+
+    /// A campaign: nested layout tables, and more links than a person writes.
+    fn campaign() -> String {
+        let mut html = String::from("<table><tr><td><table><tr><td>");
+        html.push_str(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
+        for index in 0..12 {
+            html.push_str(&format!(
+                r#"<p><a href="https://example.com/{index}">more</a></p>"#
+            ));
+        }
+        html.push_str("</td></tr></table></td></tr></table>");
+        html
+    }
+
+    #[test]
+    fn reader_view_prefers_the_senders_own_plain_part() {
+        // The `multipart/alternative` case, and the whole reason reduction is
+        // a fallback rather than the first resort: the sender already wrote
+        // the version reduction is trying to reconstruct.
+        let body = MessageBody {
+            text: Some("Your package is out for delivery.".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            rendered.html.contains("Your package is out for delivery."),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            !rendered.html.contains("<table"),
+            "the HTML part was drawn instead of the plain one: {}",
+            rendered.html
+        );
+        assert_eq!(
+            rendered.links_total(),
+            0,
+            "there is nothing to count in a plain part"
+        );
+    }
+
+    #[test]
+    fn reader_view_reduces_html_only_bulk_mail() {
+        let body = MessageBody {
+            text: None,
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert_eq!(rendered.rendering, Rendering::Reader);
+        assert!(!rendered.html.contains("<table"), "{}", rendered.html);
+        assert_eq!(rendered.links_kept, 1);
+        assert_eq!(rendered.links_total(), 13, "1 link kept of 13");
+    }
+
+    #[test]
+    fn the_original_rendering_never_reaches_for_the_plain_part() {
+        // The preference order that makes ordinary mail look like the sender
+        // wrote it. Reader view inverts it; `View original` must not.
+        let body = MessageBody {
+            text: Some("plain fallback".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = drawn(&body);
+        assert_eq!(rendered.rendering, Rendering::Original);
+        assert!(
+            !rendered.html.contains("plain fallback"),
+            "the original is the sender's markup, whatever else came with it"
+        );
+    }
+
+    #[test]
+    fn only_bulk_mail_is_offered_reader_view() {
+        // The failure that would make the feature hated: correspondence
+        // opening reduced.
+        let reply = MessageBody {
+            text: None,
+            html: Some("<p>Hi Ada,</p><p>Friday works.</p>".to_owned()),
+        };
+        assert!(!suits_reader_view(&reply));
+
+        let bulk = MessageBody {
+            text: None,
+            html: Some(campaign()),
+        };
+        assert!(suits_reader_view(&bulk));
+
+        // Nothing to reduce is not a candidate either: plain text is already
+        // where reader view is trying to get to.
+        let plain = MessageBody {
+            text: Some("hello".to_owned()),
+            html: None,
+        };
+        assert!(!suits_reader_view(&plain));
+    }
+
+    #[test]
+    fn a_blocked_image_is_still_reported_when_the_markup_is_reduced() {
+        // Reduction runs after sanitizing, so the counts have to survive it —
+        // a notice that went quiet in reader view would be the privacy
+        // invariant silently weakening in one of two modes.
+        let mut html = campaign();
+        html.push_str(r#"<img src="https://tracker.example.org/o.gif">"#);
+        let body = MessageBody { text: None, html: Some(html) };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert_eq!(rendered.held_back.total(), 1);
     }
 
     /// #323: a sender's content sits inside a bounded container, distinct
