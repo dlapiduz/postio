@@ -1153,6 +1153,32 @@ pub fn lookup_binding_on(
     })
 }
 
+/// Whether rebinding `command` to `proposed` (already syntax-checked) would
+/// collide with another command's *currently effective* binding — default
+/// or override, whichever `bindings` resolves to — in a context the two
+/// share. `None` means the rebind is free to take everywhere `command`
+/// itself is reachable; `Some` names the command it would silently shadow
+/// (#881: the capture widget surfaces this rather than overwriting).
+///
+/// Scoped by context on purpose: two commands may validly share a binding
+/// in disjoint contexts (`a` archives in [`Context::List`], something else
+/// entirely in [`Context::Composer`]), the same reason `postio-ui`'s own
+/// `KeyContext::chain` keeps contexts from falling through into each other.
+pub fn binding_conflict(
+    command: CommandId,
+    proposed: &str,
+    bindings: &postio_config::KeyBindings,
+    platform: Platform,
+) -> Option<&'static CommandSpec> {
+    let mine = get(command);
+    let expanded = postio_config::keys::expand_mod(proposed, platform);
+    all().find(|other| {
+        other.id != command
+            && mine.contexts.intersects(other.contexts)
+            && bindings.binding_on(other.id.as_str(), platform).as_deref() == Some(expanded.as_str())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Extension commands
 // ---------------------------------------------------------------------------
@@ -1437,6 +1463,66 @@ mod tests {
         for (spec, id) in SPECS.iter().zip(CommandId::ALL) {
             assert_eq!(spec.id, *id, "registry row out of order at `{id}`");
         }
+    }
+
+    // -- binding_conflict (#881) --------------------------------------------
+
+    #[test]
+    fn rebinding_over_another_commands_binding_in_a_shared_context_is_a_conflict() {
+        // Both are List/Thread/Reader/Search commands, so "k" (PrevMessage's
+        // own default) is a real collision if NextMessage claims it too.
+        let bindings = postio_config::KeyBindings::default();
+        let conflict =
+            binding_conflict(CommandId::NextMessage, "k", &bindings, Platform::Freedesktop);
+        assert_eq!(conflict.map(|spec| spec.id), Some(CommandId::PrevMessage));
+    }
+
+    #[test]
+    fn the_same_binding_in_disjoint_contexts_is_not_a_conflict() {
+        // Bold is Composer-only; NextMessage never reaches there, so reusing
+        // Bold's own binding is not shadowing anything.
+        let bindings = postio_config::KeyBindings::default();
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "mod+b",
+            &bindings,
+            Platform::Freedesktop,
+        );
+        assert_eq!(conflict, None);
+    }
+
+    #[test]
+    fn a_binding_nothing_else_uses_is_not_a_conflict() {
+        let bindings = postio_config::KeyBindings::default();
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "ctrl+shift+9",
+            &bindings,
+            Platform::Freedesktop,
+        );
+        assert_eq!(conflict, None);
+    }
+
+    #[test]
+    fn the_check_sees_overrides_not_just_defaults() {
+        // PrevMessage's default is "k", but a rebind captured by an earlier
+        // session moved it to "p" -- the conflict check has to see the file's
+        // own state, not the built-in table.
+        let mut bindings = postio_config::KeyBindings::default();
+        bindings
+            .overrides_mut()
+            .insert(CommandId::PrevMessage.as_str().to_owned(), "p".to_owned());
+        assert_eq!(
+            binding_conflict(CommandId::NextMessage, "k", &bindings, Platform::Freedesktop),
+            None,
+            "k is free now that PrevMessage moved off it"
+        );
+        assert_eq!(
+            binding_conflict(CommandId::NextMessage, "p", &bindings, Platform::Freedesktop)
+                .map(|spec| spec.id),
+            Some(CommandId::PrevMessage),
+            "p is where PrevMessage actually lives now"
+        );
     }
 
     #[test]
