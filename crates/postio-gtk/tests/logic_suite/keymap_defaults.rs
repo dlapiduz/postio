@@ -163,7 +163,6 @@ fn the_canvas_action_set_works_in_the_list() {
         ("a", CommandId::Archive),
         ("A", CommandId::ArchiveThread),
         ("u", CommandId::Undo),
-        ("t", CommandId::Thread),
         ("s", CommandId::Flag),
         ("m", CommandId::Move),
         ("d", CommandId::Delete),

@@ -77,12 +77,6 @@ command_ids! {
     PrevView => "prev_view",
     /// Leave the current overlay, search or composer.
     Back => "back",
-    /// Show the whole thread the focused message belongs to.
-    Thread => "thread",
-    /// Show only unread messages in the open thread, or show everything again.
-    ToggleThreadUnread => "toggle_thread_unread",
-    /// Reverse which end of the open thread comes first.
-    ToggleThreadOrder => "toggle_thread_order",
     /// Switch a search's results between ranked and date order.
     ToggleResultOrder => "toggle_result_order",
     /// Reply to the sender.
@@ -358,15 +352,6 @@ pub enum Command {
     PrevView,
     /// Leave the current overlay, search or composer.
     Back,
-    /// Show a thread, or the focused message's thread when `thread` is `None`.
-    Thread {
-        /// The thread to show; `None` means the focused message's thread.
-        thread: Option<ThreadId>,
-    },
-    /// Toggle the open thread's unread-only filter.
-    ToggleThreadUnread,
-    /// Reverse the open thread's message order.
-    ToggleThreadOrder,
     /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder,
 
@@ -700,9 +685,6 @@ impl Command {
             Command::SelectAll => CommandId::SelectAll,
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
-            Command::Thread { .. } => CommandId::Thread,
-            Command::ToggleThreadUnread => CommandId::ToggleThreadUnread,
-            Command::ToggleThreadOrder => CommandId::ToggleThreadOrder,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
@@ -787,9 +769,6 @@ impl Command {
             CommandId::SelectAll => Command::SelectAll,
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
-            CommandId::Thread => Command::Thread { thread: None },
-            CommandId::ToggleThreadUnread => Command::ToggleThreadUnread,
-            CommandId::ToggleThreadOrder => Command::ToggleThreadOrder,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },

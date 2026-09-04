@@ -143,12 +143,9 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     );
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("a".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
-        "canvas 1b's own three hints, before any keymap is applied"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "canvas 1b's hints, before any keymap is applied -- two since \
+         #1003 took `t` away with the column it opened"
     );
 
     // A rebind reaches the hint text, not just the resolver.
@@ -159,18 +156,14 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_keymap(&postio_core::Keymap::resolve(&overrides));
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("x".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
+        vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
         "postio-cpk: the hint follows the live binding"
     );
     row.set_keymap(&postio_core::Keymap::resolve(&Default::default()));
 
-    // A message with nothing to thread does not hint at opening one —
-    // `t` would either no-op or drill into a column of one, and a hint
-    // naming a key that does that is teaching the wrong keyboard.
+    // Both hints apply to every row now. The one that did not was `t`, which
+    // a row with a single message had nothing to point at; the conversation
+    // opens on landing, so there is no key to withhold (#1003).
     row.set_row(Some(Row {
         thread_count: 1,
         participants: Vec::new(),
@@ -179,19 +172,15 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     pump();
     assert_eq!(
         row.hints(),
-        vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
-        "one message in the thread is not a thread to open"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "a one-message row hints at the same two verbs"
     );
     row.set_row(Some(canvas_row()));
     pump();
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("a".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
-        "back on a threaded row, the hint returns"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "and so does a conversation row"
     );
 
     // ── `[ui].show_key_hints = false` mutes every row, focused or not ────

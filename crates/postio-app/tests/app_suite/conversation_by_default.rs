@@ -125,8 +125,8 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
     );
 
     // ── the cursor lands on the thread row, and that is the whole gesture ─
-    // No `Command::Thread`, no `open_thread`: ADR 0015 Q4 says landing here
-    // opens the conversation, and `t` is only ever about the index column.
+    // There is no second gesture to make: landing here opens the
+    // conversation, and since #1003 there is no drill-in key at all.
     list.first_row();
     let cursor = list.cursor_row().expect("a row to land on");
     assert!(
@@ -145,11 +145,6 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
         window.conversation().widget().is_visible(),
         "the conversation pane filled but is not the surface on screen"
     );
-    assert!(
-        !window.thread_open(),
-        "landing on a row must not raise the index column; that is `t`'s job"
-    );
-
     // Focus opens on the first unread — the oldest here, both being unread —
     // expanded, per the pane's own opening policy.
     assert_eq!(

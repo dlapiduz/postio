@@ -74,17 +74,15 @@ use postio_session::{actions, refresh};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-/// `Window::act` threads these through `follow_drill_in` rather than
+/// `Window::act` threads these through `leave_conversation` rather than
 /// `handled_here`: the local effect happens (closing a thread, drilling
 /// into one), but the original command is still delivered afterwards for
 /// whatever besides the window might care that it happened (see
-/// `follow_drill_in`'s doc comment). So they escape by design on every
+/// `leave_conversation`'s doc comment). So they escape by design on every
 /// invocation, not because nothing answers them -- `Back` with nothing to
-/// back out of, or `Thread` with no row under the cursor, is a no-op by
-/// design.
-const FOLLOW_DRILL_IN_OWNED: &[CommandId] = &[
+/// back out of is a no-op by design.
+const LEAVE_CONVERSATION_OWNED: &[CommandId] = &[
     CommandId::Back,
-    CommandId::Thread,
     // #765: the keyboard-only sibling of `Back`, same split, same reason.
     CommandId::PrevView,
 ];
@@ -198,36 +196,8 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() > 0),
-        "no rows to open a thread on"
+        "no rows to sweep the commands over"
     );
-
-    // Opened directly, not through a command: `ToggleThreadUnread` and
-    // `ToggleThreadOrder` are only ever handled locally while a thread is
-    // open, and this sweep has to exercise that arm rather than the guard
-    // that keeps it from firing outside a thread.
-    let model = list.model();
-    let mut thread_row = None;
-    for index in 0..model.n_items() {
-        if let Some(row) = model
-            .item(index)
-            .and_then(|object| object.downcast::<postio_gtk::list::MessageRow>().ok())
-            .and_then(|item| item.row())
-            && row.is_thread()
-        {
-            thread_row = Some(row);
-            break;
-        }
-    }
-    if let Some(row) = thread_row {
-        window.open_thread(&row);
-        while glib::MainContext::default().iteration(false) {}
-        assert!(window.thread_open(), "opening a thread row should open one");
-    } else {
-        eprintln!(
-            "note: the seeded folder has no thread row, so ToggleThreadUnread/\
-             ToggleThreadOrder are exercised unopened this run"
-        );
-    }
 
     let escaped: Rc<RefCell<Vec<CommandId>>> = Rc::new(RefCell::new(Vec::new()));
     window.connect_command({
@@ -238,7 +208,7 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
     let known_orphans: Vec<CommandId> = KNOWN_ORPHANS.iter().map(|(id, _)| *id).collect();
     let mut orphans = Vec::new();
     for &id in CommandId::ALL {
-        if FOLLOW_DRILL_IN_OWNED.contains(&id)
+        if LEAVE_CONVERSATION_OWNED.contains(&id)
             || COMPOSER_OWNED.contains(&id)
             || CONFIG_AND_ACCOUNT_OWNED.contains(&id)
             || SEARCH_OWNED.contains(&id)

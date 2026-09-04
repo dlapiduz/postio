@@ -4,13 +4,12 @@
 //! fills it with all of them, oldest first, read ones collapsed to a one-line
 //! header and the rest expanded onto the reader Postio already has.
 //!
-//! # The column is an index; this is the conversation
+//! # There is one surface, and this is it
 //!
-//! `crate::thread::ThreadView` still lists a line per message in the pane the
-//! message list occupies, and the two are not the same conversation drawn
-//! twice: the column is a **table of contents**. Moving its cursor scrolls
-//! this pane and expands what it lands on. There is one current message and
-//! both surfaces show it.
+//! A drill-in column used to list the same messages in the pane the message
+//! list occupies, cast as a table of contents into this one (#1003). It is
+//! gone: the list is only ever the list, and a conversation lives here and
+//! nowhere else. Nothing has to be kept in step with anything.
 //!
 //! # Why the policy is pure and lives at the top of this file
 //!
@@ -34,6 +33,58 @@ use crate::list::Row;
 /// holds neither the interaction budget nor the memory. Three is what a
 /// person reads before they scroll, and scrolling expands more.
 pub const EAGER_EXPANSION_CAP: usize = 3;
+
+/// How a conversation orders its messages.
+///
+/// Was `crate::thread::Order`, when the drill-in column offered `o` to
+/// reverse it (#1003). The column is gone and so is the key: a conversation
+/// stacks oldest first, the way it was had. The type stays because the
+/// ordering itself is still a decision, and one worth being able to state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Order {
+    /// Oldest first — how a conversation was actually had, and how the pane
+    /// stacks it.
+    #[default]
+    Oldest,
+    /// Newest first, matching the message list.
+    Newest,
+}
+
+/// The rows a conversation shows, given what is in it and how it is ordered.
+///
+/// Pure, and tested without a display: the ordering is the part worth being
+/// sure about, and it has nothing to do with GTK.
+pub fn arrange(rows: &[Row], order: Order, unread_only: bool) -> Vec<Row> {
+    let mut rows: Vec<Row> = rows
+        .iter()
+        .filter(|row| !unread_only || !row.seen)
+        .cloned()
+        .collect();
+    // By id after the timestamp, so two messages that claim the same second —
+    // a sender and their own auto-reply, commonly — do not swap places
+    // between one redraw and the next.
+    rows.sort_by_key(|row| (row.received_at, row.id));
+    if order == Order::Newest {
+        rows.reverse();
+    }
+    rows
+}
+
+/// How many distinct people are in a conversation.
+///
+/// By address, folded: one correspondent who has changed their display name
+/// mid-thread is still one person, and the header's count is a count of
+/// correspondents rather than of `From` headers.
+pub fn people(rows: &[Row]) -> usize {
+    let mut seen: Vec<String> = rows
+        .iter()
+        .filter_map(|row| row.from.as_ref())
+        .map(|from| from.address.to_lowercase())
+        .collect();
+    seen.sort();
+    seen.dedup();
+    seen.len()
+}
 
 /// Which message the pane opens on.
 ///

@@ -59,7 +59,6 @@ mod gtk_composer_signature_default;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_conversation;
-mod gtk_conversation_index;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
 mod gtk_display_required;
@@ -130,9 +129,6 @@ mod gtk_sidebar_sections;
 mod gtk_sidebar_tree;
 mod gtk_signature_placement;
 mod gtk_style;
-mod gtk_thread;
-mod gtk_thread_dwell_cancel;
-mod gtk_thread_scope;
 mod gtk_toast;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
@@ -248,10 +244,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
         gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
-    ),
-    (
-        "gtk_conversation_index::the_column_and_the_conversation_share_one_current_message",
-        gtk_conversation_index::the_column_and_the_conversation_share_one_current_message as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
@@ -581,19 +573,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_style::the_generated_stylesheet_works_in_gtk",
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
-    ),
-    (
-        "gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock",
-        gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock as fn(),
-    ),
-    (
-        "gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly",
-        gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly as fn(),
-    ),
-    (
-        "gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it",
-        gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it
-            as fn(),
     ),
     (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",

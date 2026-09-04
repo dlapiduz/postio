@@ -78,7 +78,7 @@ const IN_THE_BOX: &str = "In the search box";
 fn heading(context: Context) -> &'static str {
     match context {
         Context::List => "Message list",
-        Context::Thread => "Thread",
+        Context::Conversation => "Conversation",
         Context::Reader => "Reading",
         Context::Composer => "Composing",
         Context::Search => "Search",
@@ -485,10 +485,6 @@ mod tests {
             !listed.contains(&ActionId::Builtin(CommandId::Send)),
             "sending belongs to the composer; offering it here teaches a key \
              that does nothing"
-        );
-        assert!(
-            !listed.contains(&ActionId::Builtin(CommandId::ToggleThreadUnread)),
-            "the thread filter needs a thread column on screen"
         );
     }
 
