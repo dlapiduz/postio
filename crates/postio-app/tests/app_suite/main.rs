@@ -83,10 +83,7 @@ mod wiring;
 /// libtest spells this `#[ignore]`; a table-driven harness needs a table. A
 /// name here still runs when asked for explicitly, and still appears in
 /// `--list`, exactly as an ignored libtest case does.
-const IGNORED: &[&str] = &[
-    "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
-    "search_return_and_tab::return_and_tab_move_the_keyboard_to_the_message_list",
-];
+const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
     (
