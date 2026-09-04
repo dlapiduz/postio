@@ -345,6 +345,34 @@ if [ "$GATES_GREEN" != 1 ]; then
             echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
         done
     else
+        # The suites the sanity tier cannot fail for (#1047).
+        #
+        # `--lib` proves the units and `cargo check --all-targets` proves
+        # everything compiles; neither can see a test that *enumerates* a
+        # vocabulary -- the golden binding table, `docs/keybindings.md`,
+        # `[keys]`, `docs/config.md`. Adding one `CommandId` touches six or
+        # seven places, the compiler checks two, and the branch builds and
+        # then fails CI ten minutes later on an assertion about a table.
+        #
+        # So the crates you changed get their integration suites too, minus
+        # the handful whose suites are minutes. `full-suite-crates.sh` holds
+        # that rule and the measurements behind it; its self-test holds the
+        # direction it has to fail in.
+        for crate in $(printf '%s\n' $CRATES | scripts/full-suite-crates.sh); do
+            [ -d "$TREE/crates/$crate" ] || continue
+            echo "--- test (suites): $crate ---"
+            PHASE_START=$(date +%s)
+            # `--no-fail-fast`, because this class of change breaks several
+            # tables at once and plain `cargo test` abandons the remaining
+            # binaries at the first failure. #1003 fixed one table, re-landed,
+            # and failed on a *different* one twenty-five minutes later; a
+            # probe of this gate reproduced exactly that -- `command_registry`
+            # and `keybindings_doc` both fail, and only the first is reported
+            # without this. (CLAUDE.md says the same about the reconcile pass.)
+            run_tests --no-fail-fast -p "$crate"
+            echo "[timing] suites $crate: $(( $(date +%s) - PHASE_START ))s"
+        done
+
         echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
         PHASE_START=$(date +%s)
         # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
