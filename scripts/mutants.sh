@@ -59,17 +59,20 @@ trap 'rm -rf "$OUTPUT_DIR"' EXIT
 # --no-shuffle: a stable order makes two runs of the same tree comparable,
 # which matters once this is diffed against a baseline rather than just read.
 #
-# --jobs 2: cargo-mutants gives each parallel job its own scratch copy of the
-# tree and a fresh target/ inside it, and with no cap it defaults to one job
-# per core. On the CI runner this runs on, that meant every worker's copy
-# building at once the moment the baseline finished -- a burst big enough to
-# hit "Disk quota exceeded" even after freeing 20-30GB of preinstalled SDKs
-# first (#510). Two keeps that burst to a size the runner's disk survives
-# while still finishing inside the workflow's 360-minute budget -- each
-# mutant after the first is a fast incremental rebuild of one crate, not
-# another full dependency build, so halving the parallelism roughly doubles
-# the wall time rather than the ~1965-mutant total.
-env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle --jobs 2 \
+# --jobs 1: cargo-mutants gives each parallel job its own scratch copy of
+# the tree and a fresh target/ inside it, and with no cap it defaults to one
+# job per core. `--jobs 2` was the first fix, after the disk quota #510 hit
+# running unbounded parallelism -- but two later dispatches at `--jobs 2`
+# both died with "hosted runner lost communication with the server" at
+# roughly the same elapsed mark (~1h44m, ~1h56m), close enough together to
+# read as this job's own resource pressure rather than a random flake. One
+# job at a time trades wall time for peak memory and disk: still a fast
+# incremental rebuild of one crate per mutant after the first, and now
+# nothing else on the runner is building its own scratch copy at the same
+# moment. If a run at `--jobs 1` still dies the same way, the next thing to
+# try is splitting `mutants.yml` into one job per crate, so a lost runner
+# costs one crate's progress rather than all four's.
+env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle --jobs 1 \
     --output "$OUTPUT_DIR" || true
 
 SURVIVED="$OUTPUT_DIR/mutants.out/missed.txt"
