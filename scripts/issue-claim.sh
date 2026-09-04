@@ -106,10 +106,41 @@ if [ "$REUSE" = 1 ]; then
     fi
     # Nothing unlanded. A reuse that carried away commits nobody merged would
     # lose them behind a branch switch, which is worse than a cold build.
-    git -C "$REUSE_TREE" fetch --quiet origin main
-    UNLANDED="$(git -C "$REUSE_TREE" rev-list --count origin/main..HEAD 2>/dev/null || echo 0)"
-    if [ "$UNLANDED" != 0 ]; then
-        echo "$REUSE_TREE is $UNLANDED commit(s) ahead of origin/main." >&2
+    #
+    # Two references, and this used to get both wrong (#1054).
+    #
+    # **Against the base this tree was cut from**, which `--base` records and
+    # `issue-land.sh` reads back. Comparing against `main` regardless made
+    # every initiative worktree read as holding unlanded work -- for ever,
+    # since its commits are on the initiative branch by construction -- so
+    # the saving was unavailable in exactly the case that needs it most: an
+    # initiative is the longest run of consecutive claims anybody makes.
+    #
+    # **By patch id, not by sha.** `issue-land.sh` merges by rebase, so the
+    # commit that lands has a different sha from the local one even when the
+    # patch is identical, and `rev-list --count` therefore called every tree
+    # unlanded the moment its work landed -- which is precisely when `/issue`
+    # says to reuse it. `git cherry` prefixes a commit with `-` when its
+    # patch is already upstream and `+` when it is not; only the `+` lines
+    # are work that a branch switch would strand.
+    REUSE_BASE="$(cat "$(git -C "$REUSE_TREE" rev-parse --git-dir)/postio-base" 2>/dev/null \
+                  || echo main)"
+    REUSE_BASE="${REUSE_BASE%%[[:space:]]*}"
+    # A base that is gone from origin -- an initiative branch that was merged
+    # and deleted -- leaves nothing to compare against, and "cannot tell"
+    # must not read as "nothing to strand".
+    if ! git -C "$REUSE_TREE" fetch --quiet origin "$REUSE_BASE" 2>/dev/null; then
+        echo "$REUSE_TREE was cut from '$REUSE_BASE', which origin no longer has." >&2
+        echo "Nothing can be proven landed against a base that is gone, so this" >&2
+        echo "refuses rather than guessing. Claim without --reuse, or correct" >&2
+        echo "the record:" >&2
+        echo "    printf 'main\n' > \"\$(git rev-parse --git-dir)/postio-base\"" >&2
+        exit 2
+    fi
+    UNLANDED="$(git -C "$REUSE_TREE" cherry FETCH_HEAD HEAD 2>/dev/null \
+                | grep -c '^+' || true)"
+    if [ "${UNLANDED:-0}" -ne 0 ]; then
+        echo "$REUSE_TREE holds $UNLANDED commit(s) that are not on $REUSE_BASE." >&2
         echo "Land them first -- reusing the tree now would leave them behind" >&2
         echo "a branch switch with nothing pointing at them." >&2
         exit 2
