@@ -141,6 +141,37 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         }
     ));
 
+    // #971: the banner only asks — logging the activation means SQLite,
+    // which `postio-gtk` may not touch. `showing` is read at click time
+    // rather than captured with the message, because the two can only ever
+    // agree: the banner names whichever message is currently on screen.
+    window.reader().connect_unsubscribe_activated({
+        let database = wiring.database.clone();
+        let runtime = wiring.runtime.clone();
+        let showing = showing.clone();
+        move |list_identifier| {
+            let Some(message) = showing.get() else {
+                return;
+            };
+            let list_identifier = list_identifier.to_owned();
+            let _ = crate::search::ask(&database, &runtime, move |connection| {
+                let account_id = MessageRepository::new(connection)
+                    .get(message)
+                    .ok()
+                    .flatten()?
+                    .account_id;
+                let mut activation = postio_model::UnsubscribeActivation::new(
+                    account_id,
+                    list_identifier,
+                    chrono::Utc::now(),
+                );
+                postio_storage::repository::UnsubscribeRepository::new(connection)
+                    .record(&mut activation)
+                    .ok()
+            });
+        }
+    });
+
     window.set_blob_source(cid_source(
         {
             let showing = showing.clone();
@@ -661,6 +692,7 @@ impl Fill {
                 let sender = fetched
                     .as_ref()
                     .and_then(|message| message.from.first().map(|from| from.address.clone()));
+                let list_identifier = fetched.as_ref().and_then(list_identifier);
                 let envelope = fetched.map(Envelope::from);
                 Some(Loaded {
                     body,
@@ -668,6 +700,7 @@ impl Fill {
                     parts,
                     envelope,
                     sender,
+                    list_identifier,
                 })
             }
         })
@@ -708,6 +741,8 @@ impl Fill {
                         // After `render`, which clears it: the caveat belongs
                         // to this message and must not outlive it (#901).
                         reader.set_encoding_problems(encoding_problems);
+                        // Same reason, same convention (#971).
+                        reader.set_unsubscribe(loaded.list_identifier.as_deref());
                     }
                     crate::compose::Body::Absent(reason) => {
                         let root = root_type(
@@ -966,6 +1001,23 @@ struct Loaded {
     /// through, because a repaint has no list row — and one answer that all
     /// three callers share cannot disagree with itself.
     sender: Option<String>,
+    /// The unsubscribe banner's list, per #971: `List-Id` when the message
+    /// has one, the sender's domain otherwise. `None` only when the message
+    /// itself is gone, since every message has at least one of the two.
+    list_identifier: Option<String>,
+}
+
+/// What [`Reader::set_unsubscribe`] shows for `message`, per #971's own
+/// doc comment: the `List-Id` header when there is one, the sender's domain
+/// otherwise.
+fn list_identifier(message: &Message) -> Option<String> {
+    message.list_id.clone().or_else(|| {
+        message
+            .from
+            .first()
+            .and_then(|from| from.domain())
+            .map(str::to_owned)
+    })
 }
 
 /// Draw `loaded` into the window's single reading pane.
@@ -1049,6 +1101,9 @@ fn paint(
             // is not part of the document -- a repaint suppressed there would
             // otherwise leave the caveat off a message that needs it.
             window.reader().set_encoding_problems(encoding_problems);
+            window
+                .reader()
+                .set_unsubscribe(loaded.list_identifier.as_deref());
         }
         crate::compose::Body::Absent(reason) => {
             // The chips still go on. They are drawn from `BODYSTRUCTURE`

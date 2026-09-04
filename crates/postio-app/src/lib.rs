@@ -38,6 +38,7 @@ pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
 mod settings_egress;
+mod settings_privacy;
 pub mod sidebar_backfill;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
@@ -560,6 +561,8 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     settings_accounts::install(window, wiring);
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
+    // The privacy pane's unsubscribe-activation log (#971).
+    settings_privacy::install(window, wiring);
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
