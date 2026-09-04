@@ -547,7 +547,8 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     let heartbeat = gtk::glib::timeout_add_local(std::time::Duration::from_millis(10), || {
         gtk::glib::ControlFlow::Continue
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
     while left.get() > 0 && std::time::Instant::now() < deadline {
         context.iteration(true);
     }

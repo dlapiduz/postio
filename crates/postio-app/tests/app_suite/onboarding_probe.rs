@@ -181,7 +181,8 @@ fn autoconfig_xml() -> String {
 /// The probe is answered on the runtime and crosses back over a channel, so
 /// the status is not there the instant `probe()` returns.
 fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {

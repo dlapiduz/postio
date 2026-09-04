@@ -324,6 +324,9 @@ fn readout(window: &Window) -> String {
 
 /// Runs the main loop past the debounce, so a scheduled search comes due.
 fn wait_out_the_debounce() {
+    // POSTIO-FIXED-DEADLINE: `DEBOUNCE` is the subject. This waits out the
+    // debounce the search field schedules against, so the duration is the
+    // thing under test rather than the patience the test is granted.
     let deadline = Instant::now() + DEBOUNCE + Duration::from_millis(60);
     let context = glib::MainContext::default();
     let heartbeat =

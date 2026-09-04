@@ -79,7 +79,7 @@ impl MailboxSource for TinyThread {
 }
 
 fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         pump();
         if done() {

@@ -1674,6 +1674,43 @@ verified on a quiet box proves nothing about the only condition that fails.
 (engine + SQLite threads, in-process sockets): auto-advance misfires with
 real blocking work in the loop.
 
+**A dial nobody can reach is the same as no dial.** #842 gave the suite
+`POSTIO_TEST_PATIENCE`, so a loaded machine is one environment variable away
+from deadlines that fit it. #957 is what it cost that the dial stopped at the
+edge of `postio_test_support`: forty-six deadlines across the suites were
+written by hand, and all three of the `gtk_suite` cases that flake on this
+workstation were among them. `gtk_composer_toolbar` waited a constant twenty
+seconds. So the one lever a session had — turn the dial up before a local
+full-suite run — reached every wait except the ones that needed it, and
+"leave it, CI is the arbiter" kept looking like the only option on the table.
+`check-test-deadlines-scale.py` now refuses a hand-rolled `Instant::now() +
+…` in a test unless it goes through `scaled`/`patience`, or carries
+`POSTIO-FIXED-DEADLINE:` **with a reason** — the exception is real (a debounce
+window, a negative assertion whose strength is the time it waited, a pump
+spent in full to prove absence) and a bare marker is a silencer, because the
+next person cannot otherwise tell a load-bearing number from one nobody
+revisited.
+
+Two things that came out of chasing #957 and are worth not re-deriving:
+
+*A single latency sample taken after a timeout diagnoses nothing.*
+`gtk_composer_toolbar` pings the WebKit bridge once the wait has failed and
+concluded, from ~12ms, that "the report was never going to arrive" — which
+three sessions then reasoned from. A starved web process is idle and
+responsive the moment it is finally asked; the ping measures the bridge after
+the contention, not during it. The message says so now.
+
+*The config watcher is not the rename-loses-the-inode bug.*
+`gtk_settings::the_settings_panel_edits_the_file_in_place` fails on "the
+external save never reached the running app" roughly one full-suite run in
+three (reproduced: 1 of 3 runs of the whole `gtk_suite` binary on a
+workstation with three other worktrees compiling). `ConfigWatcher` watches the
+**directory**, not the file, so a `rename` over `config.toml` keeps the watch;
+and `touches` scans every path on the event, so notify's paired
+`RenameMode::Both` — whose `paths[0]` is the temp name — still matches. Both
+of the obvious explanations are therefore ruled out, and the cause is still
+open.
+
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
 and panics the first time the line is reached.** `spawn_future_local` runs on
 the glib main loop, which has no reactor, so

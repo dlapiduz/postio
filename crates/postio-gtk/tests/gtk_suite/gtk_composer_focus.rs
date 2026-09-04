@@ -42,7 +42,7 @@ fn settle_until(done: impl Fn() -> bool) {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(5), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_millis(3000);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_millis(3000));
     while !done() && Instant::now() < deadline {
         context.iteration(true);
     }

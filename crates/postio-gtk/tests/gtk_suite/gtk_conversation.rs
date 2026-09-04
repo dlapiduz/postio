@@ -379,7 +379,7 @@ pub fn an_expanded_entrys_reader_does_not_draw_its_own_action_bar() {
 
 /// Pump the main loop for `how_long`, so a timer can fire.
 fn settle_for(how_long: std::time::Duration) {
-    let deadline = std::time::Instant::now() + how_long;
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(how_long);
     while std::time::Instant::now() < deadline {
         while gtk::glib::MainContext::default().iteration(false) {}
         std::thread::sleep(std::time::Duration::from_millis(5));

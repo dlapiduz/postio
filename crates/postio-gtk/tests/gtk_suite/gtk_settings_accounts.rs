@@ -391,7 +391,7 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     while left.get() > 0 && Instant::now() < deadline {
         context.iteration(true);
     }

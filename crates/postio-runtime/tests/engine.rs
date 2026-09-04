@@ -2009,7 +2009,7 @@ fn a_server_with_many_folders() -> MockBackend {
 /// repository is: a fixed pump is long enough on an idle workstation and not
 /// on a loaded runner.
 async fn within(bound: std::time::Duration, done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + bound;
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(bound);
     while std::time::Instant::now() < deadline {
         if done() {
             return true;
