@@ -809,7 +809,7 @@ have, and saying so is better than an APPEND the server refuses and nobody
 hears about.
 
 `[mailboxes]` is read once at startup and is the *configuration* tier: one
-table for every account. Since ADR 0025 each account also has its own map in
+table for every account. Since ADR 0027 each account also has its own map in
 the store (`mailbox_roles`), and discovery reads it on every pass and lays it
 over the file's table -- so a choice made in settings is honoured by the next
 pass with the engine untouched, and the file is what an installation with one

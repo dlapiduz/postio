@@ -145,7 +145,7 @@ pub enum AccountEdit {
     /// The SMTP server's port.
     SmtpPort(u16),
     /// A role pointed at one of the account's own folders, or back to
-    /// resolving automatically (ADR 0025).
+    /// resolving automatically (ADR 0027).
     ///
     /// The path rather than a `MailboxId`: what is stored is what the user
     /// said about the server, and it has to survive the folder's row being

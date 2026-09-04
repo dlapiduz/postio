@@ -87,7 +87,7 @@ fn a_typo_in_a_role_name_maps_nothing() {
 // ── The command and discovery agree (#965 over #964) ────────────────────
 
 /// A choice made through the verb survives the next discovery pass, and the
-/// pass agrees with it -- the seam ADR 0025 lives on. The verb re-roles the
+/// pass agrees with it -- the seam ADR 0027 lives on. The verb re-roles the
 /// rows locally; discovery reads the same map and must reach the same
 /// answer, or the sidebar would say one thing until the next reconnection
 /// and another after it.

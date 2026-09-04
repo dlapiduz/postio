@@ -93,7 +93,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
                 // A role mapping is not an account column: it re-roles the
                 // account's folders, is undoable, and has to announce itself
                 // so the sidebar relabels -- all of which the command owns
-                // (ADR 0025). Everything else here is a field on the row.
+                // (ADR 0027). Everything else here is a field on the row.
                 AccountEdit::MailboxRole(role, path) => {
                     window.act(postio_core::Command::MapMailboxRole {
                         account: Some(id),
@@ -256,7 +256,7 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
 }
 
 /// One account's folders and role map, for the detail view's Mailboxes
-/// group (ADR 0025).
+/// group (ADR 0027).
 ///
 /// Three reads rather than one, because the group answers three questions:
 /// what folders there are to choose from, what the user has already chosen,

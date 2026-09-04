@@ -963,7 +963,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Accounts]),
         destructive: false,
         // The previous mapping is the inverse, and a wrong pick costs one
-        // keystroke rather than a dialog (ADR 0025).
+        // keystroke rather than a dialog (ADR 0027).
         recovery: Recovery::Undo,
         requires: None,
     },

@@ -139,7 +139,7 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         "editing the IMAP host should have reached the database"
     );
 
-    // ADR 0025: picking a folder for a role is a command, not a column
+    // ADR 0027: picking a folder for a role is a command, not a column
     // write, so this half proves the whole path -- the pane's seam, the
     // dispatch, the map, and the folder that now wears the role.
     let folders = folder_paths(&database, seeded_id);
