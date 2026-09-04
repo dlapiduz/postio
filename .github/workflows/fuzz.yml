@@ -51,6 +51,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
+
+      # `fuzz/` sits under the root `.cargo/config.toml`, which names
+      # `postio-linker` and `postio-cc` (#1101); make them resolve.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
       - name: Test the checkers
         working-directory: fuzz
         run: cargo test
@@ -77,6 +82,11 @@ jobs:
       # spelling. Keep this in step with fuzz/rust-toolchain.toml.
       - name: Install the fuzzing toolchain
         run: rustup toolchain install nightly-2026-08-24 --profile minimal
+
+      # `fuzz/` sits under the root `.cargo/config.toml`, which names
+      # `postio-linker` and `postio-cc` (#1101); make them resolve.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Identify the compiler
         id: rust

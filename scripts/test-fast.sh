@@ -40,6 +40,8 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
+# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
+[ -x scripts/install-shims.sh ] && scripts/install-shims.sh
 
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 

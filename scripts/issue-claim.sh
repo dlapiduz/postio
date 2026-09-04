@@ -149,6 +149,11 @@ fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
 
+# The linker and C compiler `.cargo/config.toml` names are bare program
+# names, and this is what makes them resolve (#1101). Guarded: the
+# self-tests copy this script into a sandbox without its neighbours.
+[ -x "$REPO_ROOT/scripts/install-shims.sh" ] && "$REPO_ROOT/scripts/install-shims.sh"
+
 # Candidates: open, labelled `$READY_LABEL`, unclaimed, and not blocked by anything
 # still open. `epic`, `icebox`, `needs-architecture` and `needs-maintainer`
 # are never agent work -- an epic is a container, an icebox item is deferred,

@@ -43,8 +43,20 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # would trade a memory-pressure tuning for a link that fails outright. It is a
 # comfort setting for the machine this is developed on; the runner is a
 # correctness one.
+#
+# A bare program name, not `scripts/linker.sh`, and the difference is the
+# whole compile cache (#1101). Cargo resolves a config-relative path per
+# worktree, so this used to reach rustc as
+# `-C linker=/home/.../postio-worktrees/issue-N/scripts/linker.sh` -- a
+# different string in every tree. sccache hashes that argument and cargo
+# folds it into its fingerprints, so the "machine-wide" cache hit 1.1% of
+# the time and a `target/` copied from a sibling rebuilt everything. A name
+# is identical everywhere; `scripts/install-shims.sh` puts a copy of
+# `scripts/linker.sh` on PATH under it, and the claim, land and test scripts
+# run that before every build. A box that never ran any of them gets
+# `error: linker \`postio-linker\` not found`, which names the fix.
 [target.x86_64-unknown-linux-gnu]
-linker = "scripts/linker.sh"
+linker = "postio-linker"
 rustflags = [
     # `gcc` and not the default `gnu-lld-cc`, because the default is what
     # makes `linker` above unable to choose: rustc appends its own `-B` and
@@ -114,4 +126,10 @@ TMPDIR = { value = "target/tmp", relative = true }
 # ccache on the box and the script is exactly `cc`. Cargo's [env] never
 # overrides an environment variable that is already set, so an exported CC
 # still wins, the way an exported RUSTC_WRAPPER does above.
-CC = { value = "scripts/cc-wrapper.sh", relative = true }
+#
+# A bare name for the same reason as `linker` above: the `cc` crate emits
+# `rerun-if-env-changed=CC`, so a per-worktree path here reran every C build
+# script (OpenSSL, SQLCipher, zstd) in every new tree, seeded or not.
+# `scripts/install-shims.sh` installs `scripts/cc-wrapper.sh` under this
+# name. #1101.
+CC = "postio-cc"
