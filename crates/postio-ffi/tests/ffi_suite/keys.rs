@@ -26,6 +26,21 @@ const NONE: ModifiersFfi = ModifiersFfi {
     command: false,
 };
 
+/// The primary accelerator, as this platform's keyboard delivers it.
+///
+/// `mod` in `[keys]`, expanded when the keymap is built: ⌘ on Apple and
+/// Control on freedesktop. One definition, because writing `command: true`
+/// inline is a test that passes on a Mac and fails on the runner -- which is
+/// exactly what it did, and exactly the mistake
+/// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`
+/// is about, made inside the change that added the note.
+const PRIMARY: ModifiersFfi = ModifiersFfi {
+    control: !cfg!(target_os = "macos"),
+    option: false,
+    shift: false,
+    command: cfg!(target_os = "macos"),
+};
+
 /// A press of a key that types `character`.
 fn typed(
     session: &Session,
@@ -107,18 +122,7 @@ fn typing_wins_over_a_bare_character_binding() {
     // ...and a chord carrying a modifier still fires, or a text field would
     // swallow every shortcut on the machine.
     assert_eq!(
-        session.key(
-            Some("k"),
-            None,
-            ModifiersFfi {
-                control: false,
-                option: false,
-                shift: false,
-                command: true
-            },
-            UiContext::Search,
-            true,
-        ),
+        session.key(Some("k"), None, PRIMARY, UiContext::Search, true),
         KeyOutcomeFfi::Command {
             id: "command_palette".to_string()
         },
@@ -135,14 +139,8 @@ fn the_primary_modifier_is_this_platform_s() {
     // same on both. What it guards is that the expansion and the resolver
     // agree, which they did not: every `mod+…` default was unparseable on
     // Apple until #656.
-    let held = ModifiersFfi {
-        control: !cfg!(target_os = "macos"),
-        option: false,
-        shift: false,
-        command: cfg!(target_os = "macos"),
-    };
     assert_eq!(
-        session.key(Some("k"), None, held, UiContext::List, false),
+        session.key(Some("k"), None, PRIMARY, UiContext::List, false),
         KeyOutcomeFfi::Command {
             id: "command_palette".to_string()
         },
