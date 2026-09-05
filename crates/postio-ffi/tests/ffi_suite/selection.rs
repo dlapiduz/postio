@@ -189,3 +189,36 @@ fn escape_clears_the_selection_before_anything_else() {
     );
     session.shutdown();
 }
+
+#[test]
+fn a_cursor_on_a_row_whose_page_is_in_flight_finds_it_when_it_lands() {
+    let session = listed(20);
+    // The list is opened and the cursor moved before anything is resident,
+    // which is what pressing `j` the instant a folder opens does. The cursor
+    // has a *row* and no message: that is a real state, not an error.
+    session.open_scope(ScopeFfi::Flagged { account: 1 });
+    session.invoke("next_message");
+
+    // Once the page lands, the cursor has to name what is on it. Nothing
+    // re-resolved this before #660's test found it, so the cursor stayed
+    // nameless and every verb aimed at it was a silent no-op -- `a` archived
+    // nothing and space marked nothing, on a list that was reading the
+    // keyboard perfectly.
+    session.open_scope(ScopeFfi::Mailbox { mailbox: 1 });
+    session.invoke("next_message");
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    assert_eq!(session.cursor_row(), Some(0));
+    assert!(
+        session.cursor_message().is_some(),
+        "the page arrived and the cursor still does not know what it is on"
+    );
+    session.invoke("toggle_selection");
+    assert_eq!(
+        session.selected_messages().map(|marked| marked.len()),
+        Some(1),
+        "space marked nothing, because the cursor had no message"
+    );
+    session.shutdown();
+}

@@ -114,8 +114,18 @@ public final class MessageRowCell: NSTableCellView {
     public func show(_ presentation: RowPresentation) {
         sender.stringValue = presentation.sender
         subject.stringValue = presentation.subject
-        preview.stringValue = presentation.preview
-        preview.isHidden = presentation.preview.isEmpty
+        // In search results the row shows *why it matched*, with the matched
+        // spans emphasised, rather than its own first line. In a folder there
+        // is no excerpt and the preview is what there is to show.
+        if let snippet = presentation.snippet {
+            preview.attributedStringValue = NSAttributedString(
+                PaletteRow.highlighted(snippet)
+            )
+            preview.isHidden = snippet.text.isEmpty
+        } else {
+            preview.stringValue = presentation.preview
+            preview.isHidden = presentation.preview.isEmpty
+        }
 
         unreadDot.isHidden = !presentation.unread
         flag.isHidden = !presentation.flagged

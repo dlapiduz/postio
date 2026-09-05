@@ -303,6 +303,24 @@ pub struct Session {
     /// position means scanning the window, `j` happens on every keypress, and
     /// a row whose page has not arrived has no id to be found by at all.
     cursor_row: Mutex<Option<u32>>,
+    /// The current result set, ranked, when a search is what the list shows.
+    ///
+    /// `None` means the list is showing a folder. Ranked rather than sorted,
+    /// which is why no `ListScope` describes it: search hits come back in
+    /// relevance order and the store has no scope that lists them.
+    ///
+    /// Capped at `postio_session::search::HIT_LIMIT`, so holding it is
+    /// bounded — two hundred excerpts, not a mailbox. The *rows* are still
+    /// paged in behind the table exactly as a folder's are; what is resident
+    /// here is the ids and their excerpts.
+    hits: Mutex<Option<Vec<crate::search::Hit>>>,
+    /// The scope to come back to when a search is cleared.
+    ///
+    /// Held here rather than remembered by the frontend, because a frontend
+    /// that remembered it would own navigation state — and would then own it
+    /// differently from the GTK side. Clearing restores the previous scope
+    /// rather than reloading the world.
+    resting: Mutex<Option<postio_runtime::store::ListScope>>,
     /// How many accounts the open view is about: one, or all of them.
     ///
     /// Resolved when the scope changes rather than on every palette keystroke:
@@ -483,6 +501,37 @@ impl Session {
     #[uniffi::method(name = "cursorMessage")]
     pub fn cursor_message_ffi(&self) -> Option<i64> {
         self.cursor_message()
+    }
+
+    /// Run `query`, and show its hits. See [`Session::search`].
+    ///
+    /// Answers the generation the window is now on, exactly as
+    /// [`openScope`](Session::open_scope_ffi) does — the frontend reloads its
+    /// table against it and pages arrive behind, the same as for a folder.
+    #[uniffi::method(name = "search")]
+    pub fn search_ffi(&self, query: String) -> u64 {
+        self.search(&query)
+    }
+
+    /// Leave search and restore the scope that was open.
+    #[uniffi::method(name = "clearSearch")]
+    pub fn clear_search_ffi(&self) -> u64 {
+        self.clear_search()
+    }
+
+    /// Whether the list is showing search results rather than a folder.
+    #[uniffi::method(name = "isSearching")]
+    pub fn is_searching_ffi(&self) -> bool {
+        self.is_searching()
+    }
+
+    /// The excerpt for `message`, with the match located.
+    ///
+    /// Text and ranges, never marked-up text: each frontend marks it its own
+    /// way from one answer about what matched.
+    #[uniffi::method(name = "snippetFor")]
+    pub fn snippet_for_ffi(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.snippet_for(message)
     }
 
     /// The palette's rows for `query`. See [`Session::palette_entries`].
@@ -749,6 +798,8 @@ impl Session {
                 cursor: Mutex::new(None),
                 cursor_row: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
+                hits: Mutex::new(None),
+                resting: Mutex::new(None),
                 anchor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
@@ -808,6 +859,8 @@ impl Session {
             cursor: Mutex::new(None),
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
+            hits: Mutex::new(None),
+            resting: Mutex::new(None),
             anchor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
@@ -829,7 +882,17 @@ impl Session {
     /// `numberOfRows` is: a table asks how tall it is before it draws
     /// anything, and there is no version of that question which can await.
     pub fn open_scope(&self, scope: crate::ScopeFfi) -> u64 {
-        let listed: postio_runtime::store::ListScope = scope.into();
+        self.open_list_scope(scope.into())
+    }
+
+    /// [`open_scope`](Self::open_scope), for a scope already in the store's
+    /// own terms.
+    ///
+    /// Exists because leaving a search restores the scope it *remembered*,
+    /// which never had a `ScopeFfi` spelling — it came off this side. A
+    /// conversion back would be a second mapping to keep in step with the
+    /// first, for no caller that needs one.
+    fn open_list_scope(&self, listed: postio_runtime::store::ListScope) -> u64 {
         let Some((store, runtime)) = self.reader() else {
             return 0;
         };
@@ -839,10 +902,11 @@ impl Session {
         // action carrying a selection across would land on mail the user
         // cannot see. The cursor goes with it: it named a row in a list that
         // no longer exists.
-        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
-        *self.cursor.lock().expect("cursor lock") = None;
-        *self.cursor_row.lock().expect("cursor row lock") = None;
-        *self.anchor.lock().expect("anchor lock") = None;
+        self.drop_selection_and_cursor();
+        // Opening a folder leaves a search, and there is nothing to come back
+        // to: the user chose this scope rather than dismissing the query.
+        *self.hits.lock().expect("hits lock") = None;
+        *self.resting.lock().expect("resting lock") = None;
         *self.account_scope.lock().expect("account scope lock") =
             self.resolve_account_scope(listed);
         self.list.lock().expect("list lock").reset(total)
@@ -904,6 +968,11 @@ impl Session {
             return;
         }
 
+        // Before the list lock: resolving may take it, and a verb aimed at a
+        // cursor whose page has landed since must find the message rather
+        // than silently act on nothing.
+        let cursor = self.resolve_cursor();
+
         let list = self.list.lock().expect("list lock");
         let selection = self.selection.lock().expect("selection lock");
         let aim = postio_core::aim::Aim {
@@ -914,7 +983,7 @@ impl Session {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
-            cursor: *self.cursor.lock().expect("cursor lock"),
+            cursor,
             rows: &*list,
         };
         let command = postio_core::aim::command_for(id, &aim);
@@ -1008,7 +1077,7 @@ impl Session {
                 self.put_cursor_on(last);
             }
             C::ToggleSelection => {
-                if let Some(message) = *self.cursor.lock().expect("cursor lock") {
+                if let Some(message) = self.resolve_cursor() {
                     // The anchor follows a deliberate mark: a shift-extension
                     // afterwards runs from the row the user chose, not from
                     // wherever a previous range happened to start.
@@ -1190,10 +1259,35 @@ impl Session {
 
     /// The message the cursor is on, if its page has arrived.
     pub fn cursor_message(&self) -> Option<i64> {
-        self.cursor
-            .lock()
-            .expect("cursor lock")
-            .map(|message| message.get())
+        self.resolve_cursor().map(|message| message.get())
+    }
+
+    /// The cursor's message, filling the id in if its page has landed since.
+    ///
+    /// **The cursor is a row; the id is a cache of what is on it.** They are
+    /// set together, but a cursor can land on a row whose page is still in
+    /// flight — pressing `j` the instant a folder opens does exactly that —
+    /// and the id is `None` then. Nothing re-resolved it when the page
+    /// arrived, so the cursor stayed nameless and every verb aimed at it was
+    /// a silent no-op: `a` archived nothing, space marked nothing, and the
+    /// list looked like it had stopped responding to a keyboard it was in
+    /// fact reading perfectly.
+    ///
+    /// Resolved on read rather than pushed from the page delivery, because
+    /// delivery happens on the runtime's thread with only the window in hand,
+    /// and reaching back for the cursor from there would put a second lock
+    /// order into the one path that must not stall a redraw.
+    fn resolve_cursor(&self) -> Option<postio_model::ids::MessageId> {
+        if let Some(message) = *self.cursor.lock().expect("cursor lock") {
+            return Some(message);
+        }
+        let row = (*self.cursor_row.lock().expect("cursor row lock"))?;
+        // `peek`, not `row_at`: this must not start a fetch. It is called
+        // from `invoke` on every keystroke, and a verb that triggered a page
+        // read would be doing I/O to find out what it is about.
+        let found = self.list.lock().expect("list lock").peek(row)?;
+        *self.cursor.lock().expect("cursor lock") = Some(found);
+        Some(found)
     }
 
     /// Whether `message` is marked, for a row deciding how to draw itself.
@@ -1339,6 +1433,13 @@ impl Session {
 
     /// Read one page into the window, behind the caller.
     fn fetch(&self, generation: u64, page: u32) {
+        // Search hits are ranked, not sorted, so no `ListScope` describes
+        // them and the store cannot page them. They are read by id instead --
+        // the same page of the same window, filled from a different call.
+        if self.hits.lock().expect("hits lock").is_some() {
+            self.fetch_hits(generation, page);
+            return;
+        }
         let Some((store, runtime)) = self.reader() else {
             return;
         };
@@ -1374,6 +1475,187 @@ impl Session {
             }
             in_flight.fetch_sub(1, ordering);
         });
+    }
+
+    /// One page of the current result set, read by id.
+    ///
+    /// `message_rows` exists for exactly this: search hits come back in
+    /// relevance order, and asking the store for "rows 50..100 of this scope"
+    /// would re-sort them by date. So the window pages over the *ranking*,
+    /// and each page names the ids it wants.
+    fn fetch_hits(&self, generation: u64, page: u32) {
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let wanted: Vec<postio_model::ids::MessageId> = {
+            let held = self.hits.lock().expect("hits lock");
+            let Some(hits) = held.as_ref() else { return };
+            let first = (page * postio_ui::list::PAGE_SIZE) as usize;
+            hits.iter()
+                .skip(first)
+                .take(postio_ui::list::PAGE_SIZE as usize)
+                .map(|hit| postio_model::ids::MessageId::new(hit.message))
+                .collect()
+        };
+        if wanted.is_empty() {
+            return;
+        }
+
+        let local = self.local.0.clone();
+        let list = self.list.clone();
+        let in_flight = self.in_flight.clone();
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+
+        in_flight.fetch_add(1, ordering);
+        self.reads.fetch_add(1, ordering);
+        runtime.spawn(async move {
+            if let Ok(fetched) = store.message_rows(wanted.clone()).await {
+                // Back into the ranking's order. `message_rows` answers in
+                // whatever order the store finds them, and a page that
+                // re-sorted the ranking would put the best match wherever its
+                // date happened to fall -- which is the one thing a *ranked*
+                // list must not do.
+                let mut by_id: std::collections::HashMap<i64, crate::RowFfi> = fetched
+                    .into_iter()
+                    .map(|row| (row.id.get(), crate::RowFfi::from(row)))
+                    .collect();
+                let rows: Vec<crate::RowFfi> = wanted
+                    .iter()
+                    .filter_map(|id| by_id.remove(&id.get()))
+                    .collect();
+                let delivered = list
+                    .lock()
+                    .expect("list lock")
+                    .deliver(generation, page, rows);
+                if !delivered.stale {
+                    let _ = local.try_send(UiEvent::PageReady { page });
+                }
+            }
+            in_flight.fetch_sub(1, ordering);
+        });
+    }
+
+    /// Run `query`, and show its hits as the list.
+    ///
+    /// **One query language.** `postio-search` parses it, here, for both
+    /// frontends -- Swift does not re-implement operator parsing, or `from:`
+    /// would mean one thing on Linux and another on a Mac. The run is
+    /// `postio_session::search::execute`, the same function the GTK finder
+    /// calls, so the hit limit and the excerpt rule are one decision rather
+    /// than two.
+    ///
+    /// Blocking, like [`open_scope`](Self::open_scope) and for the same
+    /// reason: a table asks how tall it is before it draws anything. Local
+    /// search is budgeted under 100 ms (`PRODUCT.md` §1) and this is SQLite's
+    /// FTS5 index, never the network.
+    ///
+    /// The scope being left is remembered, so clearing comes back to it
+    /// rather than reloading the world.
+    pub fn search(&self, query: &str) -> u64 {
+        let Some((_, runtime)) = self.reader() else {
+            return 0;
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return 0;
+        };
+
+        // Remembered on the way *in* only: a second query typed while search
+        // results are on screen must not make the first search the thing to
+        // come back to.
+        {
+            let mut resting = self.resting.lock().expect("resting lock");
+            if resting.is_none() {
+                *resting = *self.scope.lock().expect("scope lock");
+            }
+        }
+
+        let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
+        let account = *self.account_scope.lock().expect("account scope lock");
+        let found = runtime.block_on(async {
+            let connection = database.connection().ok()?;
+            postio_session::search::execute(
+                &connection,
+                account,
+                &parsed,
+                postio_search::facets::Scope::AllMail,
+                postio_search::ResultOrder::Relevance,
+            )
+        });
+
+        let hits: Vec<crate::search::Hit> = found
+            .map(|results| {
+                results
+                    .hits
+                    .into_iter()
+                    .map(|hit| crate::search::Hit {
+                        message: hit.message_id.get(),
+                        snippet: crate::search::snippet_of(&hit.snippet),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let total = hits.len() as u32;
+        *self.hits.lock().expect("hits lock") = Some(hits);
+        // No `ListScope` describes a ranking, so there is none while a search
+        // is on screen. `aim` sees `None` and refuses a whole-view gesture,
+        // which is the conservative answer: "select everything matching this
+        // query" is a predicate the engine has no way to evaluate yet.
+        *self.scope.lock().expect("scope lock") = None;
+        self.drop_selection_and_cursor();
+        self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Leave search, and show what was on screen before it.
+    ///
+    /// Restores the previous scope rather than reloading the world, which is
+    /// the difference between `Escape` costing a `COUNT` against a mailbox the
+    /// user never left and costing nothing.
+    pub fn clear_search(&self) -> u64 {
+        if !self.is_searching() {
+            return self.list.lock().expect("list lock").generation();
+        }
+        *self.hits.lock().expect("hits lock") = None;
+        let resting = self.resting.lock().expect("resting lock").take();
+        match resting {
+            Some(scope) => self.open_list_scope(scope),
+            None => {
+                self.drop_selection_and_cursor();
+                self.list.lock().expect("list lock").reset(0)
+            }
+        }
+    }
+
+    /// The excerpt for `message`, when a search is what is on screen.
+    ///
+    /// `None` outside a search, and for a row that is not a hit. The text and
+    /// the match ranges cross separately so each frontend marks them its own
+    /// way -- GTK into Pango, Swift into an `AttributedString` -- from one
+    /// answer about what matched.
+    pub fn snippet_for(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.hits
+            .lock()
+            .expect("hits lock")
+            .as_ref()?
+            .iter()
+            .find(|hit| hit.message == message)
+            .map(|hit| hit.snippet.clone())
+    }
+
+    /// Whether the list is showing search results rather than a folder.
+    pub fn is_searching(&self) -> bool {
+        self.hits.lock().expect("hits lock").is_some()
+    }
+
+    /// Forget what was marked and where the keyboard was.
+    ///
+    /// Shared by every re-scoping, including into and out of a search: "these
+    /// twelve" means something else the moment the list does.
+    fn drop_selection_and_cursor(&self) {
+        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+        *self.cursor.lock().expect("cursor lock") = None;
+        *self.cursor_row.lock().expect("cursor row lock") = None;
+        *self.anchor.lock().expect("anchor lock") = None;
     }
 
     /// The store and the runtime, while the session is open.

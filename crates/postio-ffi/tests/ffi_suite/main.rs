@@ -23,6 +23,7 @@ mod list;
 mod palette;
 mod reader;
 mod registry;
+mod search;
 mod selection;
 mod session;
 mod store_on_disk;

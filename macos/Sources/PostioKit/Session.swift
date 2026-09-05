@@ -153,6 +153,38 @@ public final class PostioSession {
     /// separate, and moving down the list must not build a selection.
     public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
 
+    /// Run `query`, and show its hits as the list.
+    ///
+    /// **One query language.** `postio-search` parses the operators, behind
+    /// the boundary, for both frontends — Swift does not re-implement
+    /// `from:` or `is:unread`, or the two platforms would accept different
+    /// queries. Answers the generation the window is now on, the same as
+    /// `openScope`, and the rows page in behind exactly as a folder's do:
+    /// a search matching forty thousand messages is a count and a few
+    /// resident pages.
+    @discardableResult
+    public func search(_ query: String) -> UInt64 { inner.search(query: query) }
+
+    /// Leave search and restore the scope that was open.
+    ///
+    /// Restores rather than reloads: the boundary remembered what was on
+    /// screen, so this costs nothing where re-opening the folder would cost a
+    /// count and a page.
+    @discardableResult
+    public func clearSearch() -> UInt64 { inner.clearSearch() }
+
+    /// Whether the list is showing search results rather than a folder.
+    public var isSearching: Bool { inner.isSearching() }
+
+    /// The excerpt for `message`, with the match located.
+    ///
+    /// Text and byte ranges, never marked-up text — the same decision the
+    /// palette's highlighting makes, and for the same reason: one answer
+    /// about what matched, drawn each frontend's own way.
+    public func snippet(for message: Int64) -> SnippetFfi? {
+        inner.snippetFor(message: message)
+    }
+
     /// The palette's rows for `query`, best first.
     ///
     /// Already ranked and already filtered to what `context` can run.

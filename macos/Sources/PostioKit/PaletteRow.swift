@@ -10,6 +10,27 @@ import PostioFFI
 /// prevent. What is Swift's is turning the match *offsets* into something
 /// AppKit can draw — the same numbers `postio-gtk` turns into Pango bold.
 public enum PaletteRow {
+    /// A search excerpt with its matches emphasised.
+    ///
+    /// The same conversion as a palette row's, from the same shape of data
+    /// and for the same reason: `postio-search` says what matched, once, and
+    /// each frontend draws it — GTK into Pango, this into an
+    /// `AttributedString`. Ranges rather than spans of one character, because
+    /// that is what a text match is.
+    public static func highlighted(_ snippet: SnippetFfi) -> AttributedString {
+        var attributed = AttributedString(snippet.text)
+        for range in snippet.ranges {
+            guard
+                let start = String.Index(utf8Offset: Int(range.start), in: snippet.text),
+                let end = String.Index(utf8Offset: Int(range.end), in: snippet.text),
+                start < end,
+                let marked = attributed.range(of: snippet.text[start..<end])
+            else { continue }
+            attributed[marked].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return attributed
+    }
+
     /// The title with the matched characters emphasised.
     ///
     /// The offsets that cross are **byte** offsets into the title, because

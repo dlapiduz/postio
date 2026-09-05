@@ -17,6 +17,8 @@ final class StubRowSource: MessageRowSource {
     /// The messages the *model* says are marked, which is not the same thing
     /// as the row the table has highlighted.
     var marked: Set<Int64> = []
+    /// Excerpts, when this stands in for a search rather than a folder.
+    var snippets: [Int64: SnippetFfi] = [:]
     private(set) var asked: [UInt32] = []
 
     init(rowCount: UInt32, rows: [UInt32: RowFfi] = [:]) {
@@ -30,6 +32,8 @@ final class StubRowSource: MessageRowSource {
     }
 
     func isSelected(_ message: Int64) -> Bool { marked.contains(message) }
+
+    func snippet(for message: Int64) -> SnippetFfi? { snippets[message] }
 }
 
 private func makeRow(

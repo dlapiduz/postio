@@ -27,6 +27,13 @@ public protocol MessageRowSource: AnyObject {
     /// already being fetched by the time this returns.
     func row(at position: UInt32) -> RowFfi?
 
+    /// The search excerpt for `message`, when a search is what is on screen.
+    ///
+    /// `nil` in a folder. A row in search results shows *why it matched*
+    /// rather than its own preview, which is the difference between a result
+    /// list and a mailbox that happens to be shorter.
+    func snippet(for message: Int64) -> SnippetFfi?
+
     /// Whether `message` is *marked*, which is not whether it is under the
     /// cursor.
     ///
@@ -50,6 +57,8 @@ public final class SessionRowSource: MessageRowSource {
     public func row(at position: UInt32) -> RowFfi? { session.row(at: position) }
 
     public func isSelected(_ message: Int64) -> Bool { session.isSelected(message) }
+
+    public func snippet(for message: Int64) -> SnippetFfi? { session.snippet(for: message) }
 }
 
 /// What one row shows, once the decisions are made.
@@ -73,6 +82,12 @@ public struct RowPresentation: Equatable, Sendable {
     public let threadBadge: String?
     /// Whether this row is still waiting for its page.
     public let isPlaceholder: Bool
+    /// The excerpt and its matches, when this row is a search hit.
+    ///
+    /// When it is set, the row draws this instead of `preview`: a result
+    /// showing its own first line rather than the text that matched it is a
+    /// result you have to open to understand.
+    public let snippet: SnippetFfi?
     /// Whether this row is *marked* — part of the multi-message selection.
     ///
     /// Drawn separately from `NSTableView`'s own highlight, which is the
@@ -92,7 +107,8 @@ public struct RowPresentation: Equatable, Sendable {
         flagged: false,
         threadBadge: nil,
         isPlaceholder: true,
-        selected: false
+        selected: false,
+        snippet: nil
     )
 
     public init(
@@ -103,7 +119,8 @@ public struct RowPresentation: Equatable, Sendable {
         flagged: Bool,
         threadBadge: String?,
         isPlaceholder: Bool,
-        selected: Bool = false
+        selected: Bool = false,
+        snippet: SnippetFfi? = nil
     ) {
         self.sender = sender
         self.subject = subject
@@ -113,11 +130,13 @@ public struct RowPresentation: Equatable, Sendable {
         self.threadBadge = threadBadge
         self.isPlaceholder = isPlaceholder
         self.selected = selected
+        self.snippet = snippet
     }
 
     /// How a delivered row is drawn.
-    public init(row: RowFfi, selected: Bool = false) {
+    public init(row: RowFfi, selected: Bool = false, snippet: SnippetFfi? = nil) {
         self.selected = selected
+        self.snippet = snippet
         // A message with no `From` is not a bug to hide: it happens, and
         // "(no sender)" is more honest than a blank column that reads as a
         // rendering failure.

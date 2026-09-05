@@ -43,6 +43,7 @@ mod mailbox;
 mod palette;
 mod reader;
 mod registry;
+mod search;
 mod session;
 
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
@@ -53,6 +54,7 @@ pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use palette::PaletteEntryFfi;
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
+pub use search::{MatchRangeFfi, SnippetFfi};
 pub use session::{Session, SessionError, SessionOptions};
 
 /// Every command the registry knows, in cheat-sheet order.

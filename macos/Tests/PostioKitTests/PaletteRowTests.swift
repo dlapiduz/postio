@@ -45,6 +45,31 @@ import Testing
         #expect(emphasised == ["s"], "emphasised \(emphasised) instead of the `s`")
     }
 
+    @Test func aSearchExcerptEmphasisesTheSpansThatMatched() {
+        // The same conversion as a palette row's, over ranges rather than
+        // single characters -- a text match is a span. One answer about what
+        // matched, from `postio-search`, drawn here.
+        let snippet = SnippetFfi(
+            text: "the quarterly numbers",
+            ranges: [MatchRangeFfi(start: 4, end: 13)]
+        )
+        let drawn = PaletteRow.highlighted(snippet)
+        let emphasised = drawn.runs
+            .filter { $0.inlinePresentationIntent == .stronglyEmphasized }
+            .map { String(drawn[$0.range].characters) }
+        #expect(emphasised == ["quarterly"])
+    }
+
+    @Test func anExcerptRangePastTheEndIsDroppedRatherThanTrapped() {
+        // The ranges come from another language across an FFI, and an excerpt
+        // is drawn per row while scrolling. A mismatch must cost an emphasis.
+        let snippet = SnippetFfi(
+            text: "short",
+            ranges: [MatchRangeFfi(start: 2, end: 99)]
+        )
+        #expect(String(PaletteRow.highlighted(snippet).characters) == "short")
+    }
+
     @Test func anOffsetPastTheEndCostsAnEmphasisAndNotACrash() {
         // The offsets arrive from another language across an FFI. A mismatch
         // should cost a missing bold in a palette, never a trap in one.

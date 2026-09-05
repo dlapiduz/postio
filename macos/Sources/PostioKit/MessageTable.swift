@@ -49,7 +49,14 @@ public final class MessageTableController: NSObject {
         // anything this controller remembers. A cached copy is how a table
         // ends up drawing a selection the engine would not act on -- and the
         // engine's answer is the one an action uses.
-        return RowPresentation(row: row, selected: source.isSelected(row.id))
+        return RowPresentation(
+            row: row,
+            selected: source.isSelected(row.id),
+            // The excerpt, when this is a search hit. A result showing its own
+            // first line rather than the text that matched it is a result you
+            // have to open to understand.
+            snippet: source.snippet(for: row.id)
+        )
     }
 
     /// Called when the row under the cursor changes, with its message.

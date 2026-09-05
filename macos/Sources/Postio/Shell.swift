@@ -172,6 +172,15 @@ struct Shell: View {
                 )
             } else {
                 VStack(spacing: 0) {
+                    // `/` opens it, over the list it filters.
+                    if engine.showingSearch, let session = engine.session {
+                        SearchField(
+                            session: session,
+                            reload: { engine.listChanged() },
+                            dismiss: { engine.dismissOverlays() }
+                        )
+                        Divider()
+                    }
                     // "12 selected", when there is a selection to say it
                     // about. From the model, which knows the answer for a
                     // whole-view selection without enumerating it -- a count

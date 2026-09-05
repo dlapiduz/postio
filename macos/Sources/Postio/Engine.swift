@@ -167,6 +167,13 @@ final class Engine {
     /// action is going to hit.
     var selectionSummary: String? { session?.selectionSummary }
 
+    /// Whether the search field is open.
+    ///
+    /// A surface, like the palette, and handled here for the same reason: a
+    /// session cannot present one. What it is *over* is the boundary's, which
+    /// is why this is the only search state Swift keeps.
+    var showingSearch = false
+
     /// Whether the command palette is open.
     ///
     /// A *surface*, which is why the boundary does not handle
@@ -306,6 +313,14 @@ final class Engine {
         case "cheat_sheet":
             showingPalette = false
             showingCheatSheet = true
+        case "search":
+            showingSearch = true
+            context = .search
+        case "back" where showingSearch:
+            // Escape in search closes it; `SearchField` restores the scope on
+            // its way out, so this only has to put the keyboard back.
+            showingSearch = false
+            context = pane.context
         case "cycle_pane":
             // The visual order — sidebar, list, reader — and it wraps. A
             // focus order that disagrees with the layout is how a
@@ -329,7 +344,18 @@ final class Engine {
     func dismissOverlays() {
         showingPalette = false
         showingCheatSheet = false
-        context = .list
+        showingSearch = false
+        context = pane.context
+    }
+
+    /// Redraw the list against whatever scope the boundary is now on.
+    ///
+    /// Called after a search runs or is cleared. The generation the boundary
+    /// answered with is what the window is already on; this is only the table
+    /// catching up with a row count that changed underneath it.
+    func listChanged() {
+        guard case let .open(controller) = state else { return }
+        controller.tableView?.reloadData()
     }
 
     /// Say where the keyboard is, so a verb with nothing marked knows which
