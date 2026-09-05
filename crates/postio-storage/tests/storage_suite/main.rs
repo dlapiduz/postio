@@ -50,4 +50,5 @@ mod threading;
 mod threads;
 mod unified_threads;
 mod vacuum;
+mod wal_ceiling;
 mod write_gate;
