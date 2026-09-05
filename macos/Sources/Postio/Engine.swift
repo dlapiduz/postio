@@ -87,6 +87,12 @@ final class Engine {
             // keys to answer nothing would make the unavailable screen
             // unusable as well as empty.
             installKeyboard(session)
+            // Resting on a message marks it read; sweeping past marks
+            // nothing. The delay and the arming rule are `postio_ui::dwell`'s
+            // — see `DwellClock`, which owns only the timer.
+            dwell = DwellClock { [weak self] message in
+                self?.session?.markReadOnDwell(message)
+            }
             // The menu bar, rendered from the same registry the palette and
             // the cheat sheet read (#657). Its accelerators come from the
             // bindings in force, and none of its items has a key equivalent:
@@ -130,6 +136,8 @@ final class Engine {
     private let notifications = MailNotifications()
     private let reachability = Reachability()
     private var keys: KeyMonitor?
+    /// The clock that decides a message has been read (#71, #1159).
+    private var dwell: DwellClock?
 
     /// Which pane has the keyboard.
     ///
@@ -300,6 +308,10 @@ final class Engine {
             listVersion += 1
             controller.tableView?.reloadData()
         case let .cursorMoved(row, message):
+            // Every move re-arms, and a move to a row whose page has not
+            // arrived cancels: a clock armed against an unknown message would
+            // mark whichever one turned up.
+            dwell?.cursorMoved(to: message)
             // The table follows the model, never the other way round. `j` and
             // `k` move the cursor behind the boundary -- where the list
             // window, the selection and `aim` all are -- and this is the
@@ -355,6 +367,14 @@ final class Engine {
     /// the engine's. Keeping the list to two is what stops this becoming the
     /// hand-maintained command table #657 exists to prevent.
     func run(_ id: String) {
+        // An overlay taking over means the message is no longer in front of
+        // anybody, so a clock in flight must not fire. `DwellClock.stop` is
+        // idempotent, so this costs nothing when none is armed.
+        if id == Intercepted.palette || id == Intercepted.cheatSheet
+            || id == Intercepted.search
+        {
+            dwell?.stop()
+        }
         switch id {
         case Intercepted.palette:
             showingCheatSheet = false
@@ -436,6 +456,8 @@ final class Engine {
     func shutdown() {
         keys?.stop()
         keys = nil
+        dwell?.stop()
+        dwell = nil
         reachability.stop()
         session?.shutdown()
         session = nil

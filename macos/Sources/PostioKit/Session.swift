@@ -223,6 +223,16 @@ public final class PostioSession {
     /// The message the cursor is on, if its page has arrived.
     public var cursorMessage: Int64? { inner.cursorMessage() }
 
+    /// The cursor rested on `message` long enough for it to count as read.
+    ///
+    /// Not `invoke`: `MarkReadOnDwell` is deliberately outside the registry,
+    /// because it is the one dispatch that is *not* recorded on the undo
+    /// stack — `u` takes back what you did, and reading a mailbox produces
+    /// one of these per message rested on.
+    public func markReadOnDwell(_ message: Int64) {
+        inner.markReadOnDwell(message: message)
+    }
+
     /// Put the cursor on `row` — what a click on the list means.
     ///
     /// The position, not just the message: after a click, `j` has to move
