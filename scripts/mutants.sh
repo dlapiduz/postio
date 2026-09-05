@@ -58,7 +58,21 @@ trap 'rm -rf "$OUTPUT_DIR"' EXIT
 
 # --no-shuffle: a stable order makes two runs of the same tree comparable,
 # which matters once this is diffed against a baseline rather than just read.
-env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle \
+#
+# --jobs 1: cargo-mutants gives each parallel job its own scratch copy of
+# the tree and a fresh target/ inside it, and with no cap it defaults to one
+# job per core. `--jobs 2` was the first fix, after the disk quota #510 hit
+# running unbounded parallelism -- but two later dispatches at `--jobs 2`
+# both died with "hosted runner lost communication with the server" at
+# roughly the same elapsed mark (~1h44m, ~1h56m), close enough together to
+# read as this job's own resource pressure rather than a random flake. One
+# job at a time trades wall time for peak memory and disk: still a fast
+# incremental rebuild of one crate per mutant after the first, and now
+# nothing else on the runner is building its own scratch copy at the same
+# moment. If a run at `--jobs 1` still dies the same way, the next thing to
+# try is splitting `mutants.yml` into one job per crate, so a lost runner
+# costs one crate's progress rather than all four's.
+env -u RUSTUP_TOOLCHAIN cargo mutants "${PACKAGE_ARGS[@]}" --no-shuffle --jobs 1 \
     --output "$OUTPUT_DIR" || true
 
 SURVIVED="$OUTPUT_DIR/mutants.out/missed.txt"
@@ -77,9 +91,13 @@ fi
 if [ ! -f "$BASELINE" ]; then
     echo "no baseline recorded yet at $BASELINE." >&2
     echo >&2
-    echo "This run found $(wc -l < "$SURVIVED") surviving mutant(s). Read them," >&2
-    echo "file an issue for any that are a genuine missing test, then seed the" >&2
-    echo "baseline with what remains:" >&2
+    echo "This run found $(wc -l < "$SURVIVED") surviving mutant(s):" >&2
+    echo >&2
+    sort "$SURVIVED" >&2
+    echo >&2
+    echo "Read them, file an issue for any that are a genuine missing test," >&2
+    echo "then seed the baseline with what remains -- on a CI runner, not a" >&2
+    echo "workstation other sessions share (see this script's own header):" >&2
     echo >&2
     echo "    MUTANTS_UPDATE_BASELINE=1 scripts/mutants.sh" >&2
     exit 1

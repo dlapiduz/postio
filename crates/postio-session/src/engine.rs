@@ -22,12 +22,12 @@
 
 use std::sync::Arc;
 
-use postio_imap::auth::{StoredPasswordSource, TokenSource};
-use postio_imap::backend::MailBackend;
-use postio_imap::imap::{
+use postio_account::auth::{StoredPasswordSource, TokenSource};
+use postio_account::backend::MailBackend;
+use postio_account::imap::{
     ConnectionPool, ConnectionSettings, ImapBackend, PoolConfig, RustlsConnector,
 };
-use postio_imap::secret::{AccountKey, SecretStore};
+use postio_account::secret::{AccountKey, SecretStore};
 use postio_model::{Account, AccountId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::{BlobStore, Database};
@@ -55,6 +55,7 @@ pub fn start(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: Arc<dyn postio_model::egress::EgressSink>,
 ) -> Option<Engine> {
     let key = AccountKey::new(account.address.address.clone());
@@ -100,7 +101,7 @@ pub fn start(
         retry: Default::default(),
         backfill,
         reconnect: Default::default(),
-        watch: Default::default(),
+        watch,
         network: NetworkSource::NetworkManager,
         mailbox_roles,
         clock: Arc::new(SystemClock),
@@ -121,7 +122,7 @@ pub fn start(
 fn backend_for(
     account: &Account,
     key: AccountKey,
-    tokens: Arc<dyn postio_imap::auth::TokenSource>,
+    tokens: Arc<dyn postio_account::auth::TokenSource>,
     connector: Arc<RustlsConnector>,
 ) -> Arc<dyn MailBackend> {
     match &account.backend {
@@ -158,7 +159,7 @@ fn backend_for(
 /// The account's IMAP server, as the connection pool wants it.
 ///
 /// Field for field. The two types exist separately because `postio-model`
-/// describes an account and `postio-imap` describes a connection, and neither
+/// describes an account and `postio-account` describes a connection, and neither
 /// should have to change when the other does.
 /// Which strategy obtains this account's credential (ADR 0006 Q1, #534).
 ///
@@ -170,12 +171,15 @@ fn backend_for(
 /// external tool keeps fresh — all the same shape to the sessions.
 ///
 /// [`OAuthConfig`]: postio_model::account::OAuthConfig
-fn token_source(account: &Account, secrets: &Arc<dyn SecretStore>) -> Arc<dyn TokenSource> {
+pub(crate) fn token_source(
+    account: &Account,
+    secrets: &Arc<dyn SecretStore>,
+) -> Arc<dyn TokenSource> {
     if let Some(oauth) = &account.oauth {
         match oauth.token_url.parse() {
             Ok(token_url) => {
                 return Arc::new(
-                    postio_imap::oauth::OwnClientTokenSource::with_stored_secret(
+                    postio_account::oauth::OwnClientTokenSource::with_stored_secret(
                         secrets.clone(),
                         token_url,
                         oauth.client_id.clone(),
@@ -197,7 +201,7 @@ fn token_source(account: &Account, secrets: &Arc<dyn SecretStore>) -> Arc<dyn To
     Arc::new(StoredPasswordSource::new(secrets.clone()))
 }
 
-fn settings(
+pub(crate) fn settings(
     server: &postio_model::account::ServerConfig,
     auth: postio_model::account::AuthMethod,
 ) -> ConnectionSettings {
@@ -282,6 +286,7 @@ pub fn start_all(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
     let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
@@ -306,6 +311,7 @@ pub fn start_all(
             Arc::clone(&secrets),
             mailbox_roles.clone(),
             backfill,
+            watch,
             egress.for_account(account.id),
         ) {
             engines.push((account.id, engine));
@@ -341,6 +347,7 @@ pub fn start_joining(
     secrets: Arc<dyn SecretStore>,
     mailbox_roles: postio_model::RoleOverrides,
     backfill: postio_runtime::BackfillPolicy,
+    watch: postio_sync::WatchPolicy,
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Option<Engine>, StartupRefusal> {
     let budget = engine_budget(database.pool().max_connections());
@@ -355,6 +362,7 @@ pub fn start_joining(
         secrets,
         mailbox_roles,
         backfill,
+        watch,
         egress.for_account(account.id),
     ))
 }
@@ -368,8 +376,8 @@ mod tests {
         // #545, ADR 0018 Q5: the adapter is the account's data, chosen at
         // add time from the preset row's preference. One code path above
         // the seam — this match is the whole of it.
-        let secrets: Arc<dyn postio_imap::secret::SecretStore> =
-            Arc::new(postio_imap::secret::MemorySecretStore::new());
+        let secrets: Arc<dyn postio_account::secret::SecretStore> =
+            Arc::new(postio_account::secret::MemorySecretStore::new());
         let mut account = postio_model::Account::new(
             "Ada",
             postio_model::EmailAddress::new(None::<String>, "ada@example.com"),
@@ -419,8 +427,8 @@ mod tests {
         // refreshes through that client; an OAuth account with *no* client
         // of its own is broker-fed — its token is already in the keyring,
         // which is exactly the stored-password shape (#533's path).
-        let secrets: Arc<dyn postio_imap::secret::SecretStore> =
-            Arc::new(postio_imap::secret::MemorySecretStore::new());
+        let secrets: Arc<dyn postio_account::secret::SecretStore> =
+            Arc::new(postio_account::secret::MemorySecretStore::new());
         let mut account = postio_model::Account::new(
             "Ada",
             postio_model::EmailAddress::new(None::<String>, "ada@example.com"),

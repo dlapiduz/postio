@@ -168,6 +168,53 @@ pub enum Error {
         known: u32,
     },
 
+    /// A migration left a row pointing at something that is not there.
+    ///
+    /// Foreign keys are enforced everywhere else, but they have to be off
+    /// while a migration rebuilds a table — a `DROP TABLE` with them on fires
+    /// `ON DELETE CASCADE` on the children of the table being replaced. This
+    /// is the check that runs afterwards, so a rebuild that dropped a
+    /// reference fails the migration instead of leaving a database that looks
+    /// right and is not.
+    #[error("migrating left {rows} row(s) in `{table}` pointing at a `{parent}` that is not there")]
+    MigrationBrokeReferences {
+        /// The table holding the dangling rows.
+        table: String,
+        /// The table they point at.
+        parent: String,
+        /// How many rows are dangling.
+        rows: usize,
+    },
+
+    /// A store cannot be encrypted while there are operations the server has
+    /// not seen yet.
+    ///
+    /// The queue and the drafts are the only things in the store that are not
+    /// a copy of something on a server, so they are the only things a
+    /// migration could actually lose. ADR 0014 Q4's ordering is drain first
+    /// for exactly that reason, and this is what stops the migration from
+    /// running before the drain has happened.
+    #[error(
+        "the store has {pending} operation(s) that have not reached the server yet; \
+         they must be sent or discarded before the store can be encrypted"
+    )]
+    QueueNotDrained {
+        /// How many rows are still pending or in flight.
+        pending: usize,
+    },
+
+    /// The encrypted store this migration built did not read back correctly,
+    /// so nothing was swapped and the plaintext store is untouched.
+    ///
+    /// The one failure mode a migration is not allowed to have is losing mail,
+    /// which is why the check happens before anything is moved rather than
+    /// after.
+    #[error("the encrypted store did not verify, so nothing was replaced: {reason}")]
+    MigrationDidNotVerify {
+        /// What did not read back.
+        reason: String,
+    },
+
     /// An already-applied migration no longer matches the one that ran.
     /// Migrations are forward-only: add a new one rather than editing history.
     #[error("migration {version} ({name}) no longer matches the database: {detail}")]

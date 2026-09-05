@@ -37,6 +37,12 @@ and keeps exactly one GTK-touching unit test. Such a file carries a
 and it is per-file rather than per-crate so the second one has to be argued
 for too.
 
+**The marker clears one init, not the file.** It used to clear the file, and
+a second GTK test duly appeared in `postio-app/src/compose.rs` and panicked
+CI with the exact message quoted above. That is not an argument the marker
+can carry: its whole premise is that one init per process is all there is,
+so a marker covering two concedes the point it was granted for.
+
 # Exit status
 
 0 clean, 1 a unit test initializes GTK, 2 the check could not run.
@@ -270,20 +276,21 @@ def test_regions(clean: str) -> list[tuple[int, int]]:
     return spans
 
 
-def offences(path: Path) -> list[tuple[int, str]]:
-    """Every GTK init inside a test region of `path`, as ``(line, call)``."""
+def scan(path: Path) -> tuple[bool, list[tuple[int, str]]]:
+    """``(is the file marked, every GTK init in a test region of it)``.
+
+    The marker is reported rather than acted on here: it does not mean "stop
+    looking", it means "one of these is allowed". See `main`.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return []
+        return False, []
 
-    if MARKER in text:
-        # The decision is recorded in the file. Whether it is a *good* reason
-        # is a review question, not one a scanner can answer.
-        return []
+    marked = MARKER in text
 
     if not INIT.search(text):
-        return []  # the common case, and the cheap one
+        return marked, []  # the common case, and the cheap one
 
     clean = blank_noise(text)
     found: list[tuple[int, str]] = []
@@ -292,7 +299,7 @@ def offences(path: Path) -> list[tuple[int, str]]:
             line = clean.count("\n", 0, match.start()) + 1
             call = f"{match.group(0).rstrip('(').strip()}()"
             found.append((line, call))
-    return sorted(set(found))
+    return marked, sorted(set(found))
 
 
 def main() -> int:
@@ -303,9 +310,45 @@ def main() -> int:
         return 2
 
     problems: list[str] = []
+    seconds: list[str] = []
     for path in sources:
-        for line, call in offences(path):
-            problems.append(f"{path}:{line}: `{call}` in a unit test")
+        marked, found = scan(path)
+        if not marked:
+            problems.extend(f"{path}:{line}: `{call}` in a unit test" for line, call in found)
+            continue
+        # A marked file has argued for one. The rest are the same bug the
+        # marker was never meant to cover: the first one past this line is
+        # the exception, every later one is a second thread racing it.
+        seconds.extend(
+            f"{path}:{line}: a second `{call}`, in a file cleared for one"
+            for line, call in found[1:]
+        )
+
+    if seconds:
+        print("no-gtk-init-in-unit-tests check FAILED\n", file=sys.stderr)
+        for problem in seconds:
+            print(f"  {problem}", file=sys.stderr)
+        print(
+            f"\n{len(seconds)} occurrence(s).\n\n"
+            f"The `{MARKER}` marker records an argument for *one* GTK-touching\n"
+            "unit test in a crate that cannot have integration tests. It is not\n"
+            "a blanket exemption, because the problem it concedes to is the\n"
+            "very thing a second test brings back: `cargo test` gives each\n"
+            "`#[test]` its own thread, and the second one to reach `init`\n"
+            "panics with \"Attempted to initialize GTK from two different\n"
+            "threads\".\n\n"
+            "This passes locally and fails on a runner. Whichever test runs\n"
+            "second usually finds the display already torn down and takes its\n"
+            "own skip branch, so the pair looks green until something gives\n"
+            "both of them a display at once.\n\n"
+            "Ordering will not save it and neither will a mutex: GTK objects\n"
+            "belong to the thread that initialized them, so the second test\n"
+            "has no thread it may touch them from. Make the new scenario a\n"
+            "function the existing `#[test]` calls. See\n"
+            "`crates/postio-app/src/compose.rs`.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not problems:
         print(f"no-gtk-init-in-unit-tests check passed ({len(sources)} files).")

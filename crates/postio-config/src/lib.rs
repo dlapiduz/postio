@@ -33,21 +33,21 @@
 //! let cfg = Config::from_toml_str(r#"
 //!     [ui]
 //!     density = "compact"
-//!
-//!     [accounts.personal]
-//!     email = "ada@example.com"
-//!
-//!     [accounts.personal.imap]
-//!     host = "imap.example.com"
 //! "#).unwrap();
 //!
 //! assert_eq!(cfg.ui.density, Density::Compact);
 //! assert_eq!(cfg.ui.theme, postio_config::Theme::System); // untouched default
-//! assert_eq!(cfg.account("personal").unwrap().imap.port, 993);
-//! assert_eq!(cfg.account("personal").unwrap().imap_keyring_entry(), "postio:personal:imap");
 //! ```
+//!
+//! # Accounts are not configured here
+//!
+//! `[accounts.<id>]` used to describe an account's host, port, security and
+//! display name, and nothing ever read it: those come from the store, written
+//! once by onboarding. Editing the section saved, re-parsed without
+//! complaint, and changed nothing about the running account, so it was
+//! retired (#470). The section still round-trips as an unknown table, and
+//! [`validate`] reports it so an edit cannot look like it worked.
 
-pub mod accounts;
 pub mod change;
 pub mod compose;
 pub mod error;
@@ -71,17 +71,16 @@ use postio_model::{MailboxRole, RoleOverrides};
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
-pub use accounts::{AccountConfig, AuthMethod, ImapConfig, MailSecurity, SmtpConfig};
 pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement};
 pub use error::{ConfigError, Result};
-pub use filters::FilterConfig;
-pub use keys::KeyBindings;
+pub use filters::{FilterConfig, patch_filters};
+pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
 pub use storage::StorageConfig;
-pub use sync::{AttachmentFetch, BodyFetch, SyncConfig};
-pub use ui::{Density, Theme, UiConfig};
+pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
+pub use ui::{Density, Theme, UiConfig, patch_ui};
 pub use validate::{Checked, ErrorKind, Validation, ValidationError};
 pub use watch::{ConfigWatcher, WatchOptions};
 
@@ -120,15 +119,12 @@ const STARTER_HEADER: &str = "\
 /// The whole of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// `[ui]` — density, theme, hover actions, thread drill-in.
+    /// `[ui]` — density, theme, hover actions, key hints.
     #[serde(default)]
     pub ui: UiConfig,
     /// `[keys]` — command id to binding, overriding [`keys::DEFAULT_BINDINGS`].
     #[serde(default)]
     pub keys: KeyBindings,
-    /// `[accounts]` — one table per account, keyed by a short id.
-    #[serde(default)]
-    pub accounts: BTreeMap<String, AccountConfig>,
     /// `[sync]` — IDLE, polling, connection budget.
     #[serde(default)]
     pub sync: SyncConfig,
@@ -260,15 +256,6 @@ impl Config {
         toml::to_string_pretty(&table).map_err(|err| ConfigError::Serialize(err.to_string()))
     }
 
-    /// Write the configuration to `path`, creating parent directories.
-    ///
-    /// The file is written `0600` on Unix: it holds no secrets, but it does
-    /// describe the user's accounts.
-    pub fn save_to_path(&self, path: &Path) -> Result<()> {
-        let text = self.to_toml_string()?;
-        Self::write_text_to_path(&text, path)
-    }
-
     /// Write a starter `config.toml` at `path` if nothing is there yet.
     ///
     /// Returns `Ok(true)` if it wrote one, `Ok(false)` if a file already
@@ -296,10 +283,15 @@ impl Config {
         }
     }
 
-    /// Shared by [`Config::save_to_path`] and [`Config::seed_if_missing`],
-    /// which write different text to the same place under the same rules:
-    /// parent directories created, `0600` on Unix.
-    fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
+    /// Writes already-rendered TOML text to `path`, creating parent
+    /// directories and setting `0600` on Unix.
+    ///
+    /// Shared by [`Config::seed_if_missing`], which writes a starter file
+    /// with a header prepended, and by [`patch_filters`]'s callers, which
+    /// write a *patched* text rather than a freshly serialized `Config` —
+    /// see that function's own doc for why a whole-struct reserialize is
+    /// exactly what a structured edit here must not do.
+    pub fn write_text_to_path(text: &str, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
                 path: parent.to_path_buf(),
@@ -331,25 +323,13 @@ impl Config {
         &self.rejected_secrets
     }
 
-    /// An account by its `[accounts.<id>]` table key.
-    pub fn account(&self, id: &str) -> Option<&AccountConfig> {
-        self.accounts.get(id)
-    }
-
-    /// The account flagged `default = true`, else the first one.
-    pub fn default_account(&self) -> Option<&AccountConfig> {
-        self.accounts
-            .values()
-            .find(|account| account.is_default)
-            .or_else(|| self.accounts.values().next())
-    }
-
     /// Fill in the derived fields that TOML does not carry.
-    fn normalize(&mut self) {
-        for (id, account) in self.accounts.iter_mut() {
-            account.id = id.clone();
-        }
-    }
+    ///
+    /// Nothing needs it now that `[accounts]` is retired (#470) -- it existed
+    /// to copy each table's key onto the account it described. Kept as the
+    /// hook the next derived field will want, rather than deleted and
+    /// rediscovered.
+    fn normalize(&mut self) {}
 }
 
 #[cfg(test)]
@@ -357,10 +337,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_default_config_has_no_accounts_and_no_rejected_secrets() {
+    fn a_default_config_has_nothing_in_it_and_no_rejected_secrets() {
         let cfg = Config::default();
-        assert!(cfg.accounts.is_empty());
-        assert!(cfg.default_account().is_none());
         assert!(cfg.rejected_secrets().is_empty());
         assert!(cfg.keys.is_empty(), "the file holds overrides only");
     }
@@ -374,7 +352,7 @@ mod tests {
         cfg.keys
             .overrides_mut()
             .insert("archive".into(), "x".into());
-        cfg.save_to_path(&path).unwrap();
+        Config::write_text_to_path(&cfg.to_toml_string().unwrap(), &path).unwrap();
 
         assert_eq!(Config::load_from_path(&path).unwrap(), cfg);
         std::fs::remove_dir_all(&dir).ok();

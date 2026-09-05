@@ -11,11 +11,11 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{Command, MessageTarget};
 use postio_gtk::feed::{
@@ -33,7 +33,7 @@ const WAYLAND: i64 = 3;
 
 pub fn m_opens_the_folder_picker_and_the_folder_picked_becomes_the_move() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -193,11 +193,4 @@ fn field(window: &Window) -> gtk::Text {
         None
     }
     find(window.upcast_ref::<gtk::Widget>()).expect("the header has a field")
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
 }

@@ -11,11 +11,11 @@
 //! these running at once would have one thread driving the other's futures,
 //! which glib refuses — loudly, and only sometimes.
 
+use crate::pump as settle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{Feed, ListScope, MessageSource, Page, PageFuture, PageRequest};
@@ -120,14 +120,6 @@ fn row(mailbox: MailboxId, position: u32) -> Row {
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
-    }
-}
-
-/// Let every future that is ready to finish, finish.
-fn settle() {
-    let context = glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 

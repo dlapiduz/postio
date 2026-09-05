@@ -39,8 +39,8 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::pump;
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::reader::RemoteImageAllowList;
 use postio_gtk::window::Window;
@@ -50,7 +50,7 @@ use postio_model::{Draft, MessageBody};
 
 pub fn the_reading_pane_shows_a_message_and_yields_it_to_the_composer() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -215,11 +215,4 @@ fn find(widget: &gtk::Widget, wanted: &dyn Fn(&gtk::Widget) -> bool) -> Option<g
         child = current.next_sibling();
     }
     None
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
 }

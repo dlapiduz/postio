@@ -10,7 +10,7 @@
 //! a real wall-clock benchmark on a shared runner.
 //!
 //! The wall-clock half — actually measuring a workload — lives in
-//! `benches/perf_budgets.rs` under criterion, with placeholder workloads
+//! `postio-bench`'s `perf_budgets.rs` under criterion, with placeholder workloads
 //! standing in for startup, message-list scroll and search until the crates
 //! that own those (postio-91i, postio-y47) land and replace them in place.
 

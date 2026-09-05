@@ -48,13 +48,17 @@
 //! ```no_run
 //! # fn main() -> Result<(), postio_storage::Error> {
 //! use postio_storage::blob::{BlobStore, GarbageCollection};
+//! use postio_storage::key::{BlobKeys, Purpose, StoreKey};
 //!
-//! let store = BlobStore::open("~/.local/share/postio/blobs")?;
+//! # let store_key = StoreKey::generate();
+//! let store = BlobStore::open(
+//!     "~/.local/share/postio/blobs",
+//!     &BlobKeys::derive(&store_key),
+//! )?;
 //! let id = store.put(b"raw message bytes")?;
 //! assert_eq!(store.get(&id)?, b"raw message bytes");
 //!
-//! # use postio_storage::key::{Purpose, StoreKey};
-//! # let key = StoreKey::generate().derive(Purpose::Database);
+//! # let key = store_key.derive(Purpose::Database);
 //! let database = postio_storage::Database::open("postio.db", &key)?;
 //! let connection = database.connection()?;
 //! let report = store.collect_garbage(&connection, GarbageCollection::default())?;
@@ -64,6 +68,7 @@
 //! ```
 
 mod format;
+mod seal;
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -76,6 +81,7 @@ use postio_model::BlobId;
 use rusqlite::Connection;
 
 use crate::error::{Error, Result};
+use crate::key::BlobKeys;
 
 /// How many hex characters of the digest name each shard directory.
 ///
@@ -97,7 +103,10 @@ const DIGEST_CHARS: usize = 64;
 const TEMPORARY: &str = "tmp";
 
 /// How much is read from a source at a time while streaming a blob in.
-const CHUNK: usize = 64 * 1024;
+///
+/// The same 64 KiB the sealing layer works in, so a blob passes through one
+/// chunk-sized buffer rather than two of different sizes.
+const CHUNK: usize = seal::CHUNK;
 
 /// A directory of content-addressed blobs.
 ///
@@ -108,6 +117,7 @@ const CHUNK: usize = 64 * 1024;
 pub struct BlobStore {
     root: PathBuf,
     temporary: PathBuf,
+    keys: BlobKeys,
 }
 
 impl BlobStore {
@@ -121,7 +131,7 @@ impl BlobStore {
     /// # Errors
     ///
     /// [`crate::error::Error::Io`] if the directory tree cannot be created.
-    pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
+    pub fn open(root: impl Into<PathBuf>, keys: &BlobKeys) -> Result<Self> {
         let root = root.into();
         // Named explicitly rather than left to `create_dir_all(&temporary)`
         // creating it as an ancestor: an ancestor is only tightened when
@@ -130,7 +140,11 @@ impl BlobStore {
         crate::perm::ensure_private_dir(&root)?;
         let temporary = root.join(TEMPORARY);
         create_dir_all(&temporary)?;
-        Ok(Self { root, temporary })
+        Ok(Self {
+            root,
+            temporary,
+            keys: keys.clone(),
+        })
     }
 
     /// The directory the blobs live under.
@@ -204,7 +218,11 @@ impl BlobStore {
         Ok(BlobWriter {
             root: self.root.clone(),
             path: temporary.path.clone(),
-            hasher: blake3::Hasher::new(),
+            // Keyed, so the same bytes are named differently in another
+            // installation's store (ADR 0014 Q2). Dedup is untouched: same
+            // content and same key still give the same name.
+            hasher: blake3::Hasher::new_keyed(self.keys.id().expose()),
+            keys: self.keys.clone(),
             state: State::Deciding(temporary),
             probe: Vec::new(),
         })
@@ -216,23 +234,11 @@ impl BlobStore {
     /// anything that might be an attachment — a 30 MiB payload must never
     /// exist whole in memory just to be handed to a viewer.
     pub fn get(&self, id: &BlobId) -> Result<Vec<u8>> {
-        let path = self.path_of(id)?;
-        let stored = std::fs::read(&path).map_err(|source| self.read_error(id, path, source))?;
-        match format::framing_of(&stored)? {
-            // Bare plaintext from before the container existed. The bytes are
-            // already the answer; see `blob::format`.
-            format::Framing::Legacy => Ok(stored),
-            format::Framing::Container(format::Codec::None, _) => {
-                Ok(stored[format::HEADER_LEN..].to_vec())
-            }
-            format::Framing::Container(format::Codec::Zstd, _) => {
-                zstd::stream::decode_all(&stored[format::HEADER_LEN..]).map_err(|source| {
-                    Error::UnreadableBlob {
-                        reason: format!("its compressed payload could not be read: {source}"),
-                    }
-                })
-            }
-        }
+        let mut content = Vec::new();
+        self.reader(id)?
+            .read_to_end(&mut content)
+            .map_err(|source| unreadable(id, source))?;
+        Ok(content)
     }
 
     /// Opens a blob for streaming.
@@ -251,16 +257,32 @@ impl BlobStore {
         let read = read_up_to(&mut file, &mut start)
             .map_err(|source| self.read_error(id, path.clone(), source))?;
 
-        match format::framing_of(&start[..read])? {
+        let container = match format::framing_of(&start[..read])? {
             format::Framing::Legacy => {
                 // Rewind: those bytes are content, not a header.
                 let file = File::open(&path)
                     .map_err(|source| self.read_error(id, path.clone(), source))?;
-                Ok(Box::new(file))
+                return Ok(Box::new(file));
             }
-            format::Framing::Container(format::Codec::None, _) => Ok(Box::new(file)),
-            format::Framing::Container(format::Codec::Zstd, _) => {
-                let decoder = zstd::stream::read::Decoder::new(file).map_err(|source| {
+            format::Framing::Container(container) => container,
+        };
+
+        // `read_up_to` filled a version 2 header's worth; a version 1
+        // container's payload started earlier, so hand those bytes back before
+        // the file's own.
+        let payload_at = container.payload_at();
+        let carried = start[payload_at..read].to_vec();
+        let payload = std::io::Cursor::new(carried).chain(file);
+
+        let payload: Box<dyn Read + Send> = match container.nonce {
+            Some(nonce) => Box::new(seal::Opener::new(payload, self.keys.content(), nonce)),
+            None => Box::new(payload),
+        };
+
+        match container.codec {
+            format::Codec::None => Ok(payload),
+            format::Codec::Zstd => {
+                let decoder = zstd::stream::read::Decoder::new(payload).map_err(|source| {
                     Error::UnreadableBlob {
                         reason: format!("its compressed payload could not be opened: {source}"),
                     }
@@ -473,7 +495,7 @@ impl BlobStore {
     }
 
     /// Every blob in the store, as `(id, path)`.
-    fn stored_blobs(&self) -> Result<Vec<(BlobId, PathBuf)>> {
+    pub(crate) fn stored_blobs(&self) -> Result<Vec<(BlobId, PathBuf)>> {
         let mut blobs = Vec::new();
         for first in read_dir(&self.root)? {
             let first_path = first.path();
@@ -686,14 +708,17 @@ pub struct EvictionReport {
 }
 
 fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
-    const SQL: &str = "\
-SELECT raw_blob_id FROM messages            WHERE raw_blob_id IS NOT NULL
-UNION
-SELECT blob_id     FROM attachments         WHERE blob_id     IS NOT NULL
-UNION
-SELECT raw_blob_id FROM cross_account_moves WHERE raw_blob_id IS NOT NULL";
+    // Built from `encrypt::BLOB_REFERENCES` rather than written out, because
+    // a column added to one list and not the other is either mail the sweep
+    // deletes while a row still points at it or mail the migration leaves
+    // behind. One list, two readers.
+    let clauses: Vec<String> = crate::encrypt::BLOB_REFERENCES
+        .iter()
+        .map(|(table, column)| format!("SELECT {column} FROM {table} WHERE {column} IS NOT NULL"))
+        .collect();
+    let sql = clauses.join("\nUNION\n");
 
-    let mut statement = connection.prepare(SQL)?;
+    let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     let mut referenced = HashSet::new();
     for row in rows {
@@ -743,6 +768,7 @@ pub struct BlobWriter {
     /// owns the file once compression starts.
     path: PathBuf,
     hasher: blake3::Hasher,
+    keys: BlobKeys,
     state: State,
     /// The opening bytes, held only until the codec is chosen.
     ///
@@ -760,10 +786,12 @@ enum State {
     /// Still sampling. Nothing has been written to the file yet, not even the
     /// header.
     Deciding(TemporaryBlob),
-    /// Straight through, for a payload already compressed by whoever made it.
-    Plain(TemporaryBlob),
-    /// Through a zstd stream.
-    Zstd(Box<zstd::stream::write::Encoder<'static, TemporaryBlob>>),
+    /// Straight into the seal, for a payload already compressed by whoever
+    /// made it.
+    Plain(seal::Sealer<TemporaryBlob>),
+    /// Through a zstd stream and then the seal — the `id, then compress, then
+    /// encrypt` ordering ADR 0017 pinned.
+    Zstd(Box<zstd::stream::write::Encoder<'static, seal::Sealer<TemporaryBlob>>>),
     /// Momentarily empty, while one of the above is being swapped for another.
     /// Never observable outside a single method.
     Taken,
@@ -832,8 +860,8 @@ impl BlobWriter {
             self.decide_and_flush()?;
         }
 
-        let mut temporary = match std::mem::replace(&mut self.state, State::Taken) {
-            State::Plain(temporary) => temporary,
+        let sealer = match std::mem::replace(&mut self.state, State::Taken) {
+            State::Plain(sealer) => sealer,
             State::Zstd(encoder) => encoder.finish().map_err(|source| Error::Io {
                 path: self.path.clone(),
                 source,
@@ -842,6 +870,10 @@ impl BlobWriter {
                 unreachable!("deciding was resolved above, and Taken never escapes a method")
             }
         };
+        let mut temporary = sealer.finish().map_err(|source| Error::Io {
+            path: self.path.clone(),
+            source,
+        })?;
 
         let id = BlobId::new(self.hasher.finalize().to_hex().to_string());
         let destination = path_of(&self.root, &id)?;
@@ -872,20 +904,25 @@ impl BlobWriter {
         } else {
             format::Codec::None
         };
-        temporary.write(&format::header(codec, format::NO_DICTIONARY))?;
+        // The header goes in before the sealer takes the file, because it is the
+        // one part of a blob that is not ciphertext -- it has to be, since it
+        // says which nonce the ciphertext is under.
+        let nonce = seal::fresh_nonce_prefix();
+        temporary.write(&format::header(codec, format::NO_DICTIONARY, &nonce))?;
+        let sealer = seal::Sealer::with_prefix(temporary, self.keys.content(), nonce);
 
-        self.state = match codec {
-            format::Codec::None => State::Plain(temporary),
-            format::Codec::Zstd => {
-                let encoder = zstd::stream::write::Encoder::new(temporary, format::LEVEL).map_err(
-                    |source| Error::Io {
-                        path: self.path.clone(),
-                        source,
-                    },
-                )?;
-                State::Zstd(Box::new(encoder))
-            }
-        };
+        self.state =
+            match codec {
+                format::Codec::None => State::Plain(sealer),
+                format::Codec::Zstd => {
+                    let encoder = zstd::stream::write::Encoder::new(sealer, format::LEVEL)
+                        .map_err(|source| Error::Io {
+                            path: self.path.clone(),
+                            source,
+                        })?;
+                    State::Zstd(Box::new(encoder))
+                }
+            };
 
         let sample = std::mem::take(&mut self.probe);
         self.write_payload(&sample)
@@ -894,7 +931,10 @@ impl BlobWriter {
     /// Writes `bytes` through whichever payload encoder was chosen.
     fn write_payload(&mut self, bytes: &[u8]) -> Result<()> {
         match &mut self.state {
-            State::Plain(temporary) => temporary.write(bytes),
+            State::Plain(sealer) => sealer.write_all(bytes).map_err(|source| Error::Io {
+                path: self.path.clone(),
+                source,
+            }),
             State::Zstd(encoder) => encoder.write_all(bytes).map_err(|source| Error::Io {
                 path: self.path.clone(),
                 source,
@@ -969,6 +1009,16 @@ impl TemporaryBlob {
             path: destination.to_path_buf(),
             source,
         })
+    }
+}
+
+/// A blob that would not decode, named so the sentence reads.
+///
+/// Every path into it is an authentication failure or a corrupt payload, so
+/// the io error's own words -- which say which -- are the whole message.
+fn unreadable(id: &BlobId, source: io::Error) -> Error {
+    Error::UnreadableBlob {
+        reason: format!("blob {}: {source}", id.as_str()),
     }
 }
 

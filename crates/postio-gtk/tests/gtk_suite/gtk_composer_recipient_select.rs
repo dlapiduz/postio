@@ -20,6 +20,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::settle;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -28,10 +29,6 @@ use postio_gtk::composer::{self, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::EmailAddress;
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn grace() -> EmailAddress {
     EmailAddress::new(Some("Grace Hopper"), "grace@example.com")
@@ -45,7 +42,7 @@ fn graham() -> EmailAddress {
 /// suggestions provider was actually consulted.
 fn a_composer_offering_two() -> Option<(Window, Composer, Rc<Cell<usize>>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();
@@ -150,7 +147,7 @@ pub fn return_commits_the_suggestion_the_popover_has_selected() {
 /// A composer offering one group, "Family", with two members.
 fn a_composer_offering_a_group() -> Option<(Window, Composer)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();

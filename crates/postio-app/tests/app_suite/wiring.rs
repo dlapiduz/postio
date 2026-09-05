@@ -32,6 +32,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -42,31 +43,13 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-/// Run the main loop until `done` or the budget runs out.
-///
-/// The page reads cross to the runtime and answer over a channel, so the
-/// rows are not there the instant `feed_the_window` returns. A deadline
-/// rather than a fixed number of iterations: what is being waited for is a
-/// round trip, and a spin count is a sleep with extra steps.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
-
 pub fn a_window_over_a_populated_store_lists_its_mail() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -82,7 +65,11 @@ pub fn a_window_over_a_populated_store_lists_its_mail() {
         "the fixture seeded no mail, so this test could not fail"
     );
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // The runtime the reads are polled on. A no-op command handler: this
     // test is about the panes being fed, not about what a keystroke does.

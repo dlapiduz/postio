@@ -32,33 +32,18 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use adw::prelude::*;
 use gtk::{gdk, glib};
+use postio_account::secret::MemorySecretStore;
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::MemorySecretStore;
 use postio_session::Wiring;
 use postio_storage::{BlobStore, test_support};
 use std::sync::Arc;
-
-/// Run the main loop until `done` or the budget runs out.
-///
-/// The route is decided on the runtime and answered over a channel, so the
-/// screen is not there the instant `open_or_onboard` returns.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// The onboarding screen, if that is what the window is showing.
 fn screen(window: &Window) -> Option<Onboarding> {
@@ -86,7 +71,11 @@ pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
     let account = test_support::account(&connection);
     drop(connection);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();

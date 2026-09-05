@@ -20,8 +20,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use chrono::{Duration, Utc};
-use gtk::{gdk, glib};
+use gtk::gdk;
 use postio_app::feed_the_window;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
@@ -35,10 +36,6 @@ use postio_storage::{BlobStore, test_support};
 const SUBJECT: &str = "Tide gate interlock, follow-up";
 const RECIPIENT: &str = "quinn@example.net";
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
 fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
     window.handle_key(gdk::Key::from_name(key).unwrap(), modifiers);
     settle();
@@ -50,7 +47,7 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -62,7 +59,11 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
     let report = seed_small(&database, 29);
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();

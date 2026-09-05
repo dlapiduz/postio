@@ -57,7 +57,13 @@ into the `GResource`). For the *installed* desktop icon —
 `/app/share/icons/hicolor/...`, which is what the shell's app grid and
 alt-tab switcher read via the freedesktop icon theme spec — this manifest
 also installs a 128×128 rasterization,
-`crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png`.
+`crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png`, alongside
+16×16 and 32×32 (#1023). Those two smaller ones are not a fallback for the
+same reason: the mark is *drawn* heavier as it shrinks — the slash thickens
+and the unread dot is dropped below 24px — so they are separate artwork
+rather than a downscale, and no scalable SVG can express them. Every other
+size is left to the SVG on purpose: a raster there would only override
+something sharper.
 
 That duplication exists because `flatpak-builder`'s export step validates
 every icon it installs by loading it through the host's `gdk-pixbuf`, and on

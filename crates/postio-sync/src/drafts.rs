@@ -40,7 +40,7 @@
 
 use std::collections::BTreeSet;
 
-use postio_imap::backend::{AppendMessage, Capabilities, Capability, FlagChange, MailBackend};
+use postio_account::backend::{AppendMessage, Capabilities, Capability, FlagChange, MailBackend};
 use postio_model::ids::DraftId;
 use postio_model::{Flag, FlagSet, MailboxId, OutgoingAttachment, RemoteId, outgoing};
 use postio_storage::BlobStore;
@@ -354,7 +354,7 @@ pub(crate) async fn remove(
     capabilities: &Capabilities,
     path: &str,
     copy: &RemoteId,
-) -> std::result::Result<Removal, postio_imap::backend::BackendError> {
+) -> std::result::Result<Removal, postio_account::backend::BackendError> {
     let ids = std::slice::from_ref(copy);
     let mut flags = FlagSet::new();
     flags.insert(Flag::Deleted);

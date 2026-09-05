@@ -108,6 +108,7 @@ Fixtures are tagged, not filed — most carry several tags.
 
 | File | Exercises |
 |---|---|
+| `transactional-shipping-notice.eml` | A `multipart/alternative` shipping notice: the HTML part is nested layout tables, and the plain part carries a repeated `label: value` block (tracking, item, ship to). Reader view lifts that block above the body copy, so this is what the extractor is built and tuned against. |
 | `transfer-encoding-base64.eml` | A plain-text body encoded base64 for no reason, as export tools do. |
 | `transfer-encoding-quoted-printable.eml` | Soft line breaks, a literal `=` as `=3D`, encoded trailing whitespace, accented runs and currency symbols. |
 
@@ -116,8 +117,10 @@ Fixtures are tagged, not filed — most carry several tags.
 | File | Exercises |
 |---|---|
 | `multipart-alternative.eml` | The canonical text + HTML pair, with a preamble before the first boundary and an epilogue after the closing one; both must be discarded. |
+| `multipart-boundary-never-appears.eml` | A `multipart/alternative` whose `boundary` parameter names a delimiter that appears nowhere in the body — what a gateway that rewrote one and not the other leaves behind. RFC 2046 §5.1.1 says an unrecognisable boundary must be treated as `text/plain`; #680 records what Postio does instead. |
 | `nested-multipart.eml` | `mixed` > `alternative` > `related`, three levels deep, with an inline PNG in the innermost part and an attachment after the whole nest. |
 | `inline-image-cid.eml` | Two inline PNGs addressed by `cid:`, one with `name=` and one without, plus a third `cid:` reference with **no matching part** — the dangling case. |
+| `inline-disposed-body.eml` | Both alternatives carry `Content-Disposition: inline` — the part that *is* the message, marked the way an attachment is. The IMAP header sync used to demote such a part to an attachment, leaving `html_part_id` unset, so the text axis fetched only the plain-text alternative and the pane rendered a body with no images and no links (#751). |
 | `attachment-pdf.eml` | Two attachments, `Content-Description`, `size=` and `creation-date=` disposition parameters, `Cc` recipients. |
 | `attachment-large.eml` | ~256 KiB of base64. This is the fixture that proves attachments stream to the blob store instead of sitting in memory; it is the only file here over 64 KiB, and a test enforces that. |
 | `attachment-rfc2231-filename.eml` | Three spellings of one non-ASCII filename: RFC 2231 continuations (`name*0*`, `name*1*`), the `charset'language'value` form, and the RFC 2047 encoded-word-in-a-parameter abuse that is illegal and ubiquitous. |
@@ -145,6 +148,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | File | Exercises |
 |---|---|
 | `encoded-word-subject-and-names.eml` | The correct cases: adjacent encoded words that must be joined **without** a space, two charsets in one field, a folded `Subject` whose continuation begins with an encoded word, B and Q encodings side by side, and one plain ASCII display name. |
+| `encoded-word-crlf-in-header.eml` | An encoded word whose *decoded* text contains CR and LF, in both a `Subject` and a display name. Unfolding cannot remove them — the octets were never folding whitespace — so a decoded header value reaches the model with line breaks inside it, and anything that writes one back into a header has to say what it does about that. |
 | `encoded-word-broken.eml` | The hostile cases: unterminated, invalid base64 payload, unknown charset, unknown encoding letter, and one that blows past the 75-character limit. Every one must degrade to raw text rather than failing the message. |
 
 ### Malformed and missing

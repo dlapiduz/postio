@@ -92,3 +92,43 @@ impl Thread {
         self.message_ids.last().copied()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread(message_ids: Vec<MessageId>) -> Thread {
+        Thread {
+            message_ids,
+            ..Thread::new(AccountId::new(1))
+        }
+    }
+
+    #[test]
+    fn root_and_latest_are_none_for_an_empty_thread() {
+        let empty = Thread::new(AccountId::new(1));
+        assert_eq!(empty.root_message_id(), None);
+        assert_eq!(empty.latest_message_id(), None);
+    }
+
+    #[test]
+    fn root_is_the_oldest_member_and_latest_is_the_newest() {
+        // `message_ids` is oldest-first (the struct's own doc comment), so
+        // root reads the front of the list and latest reads the back --
+        // the two must not answer the same end twice, which is the bug a
+        // copy-pasted `.first()` for both would produce.
+        let ids = vec![MessageId::new(1), MessageId::new(2), MessageId::new(3)];
+        let thread = thread(ids);
+
+        assert_eq!(thread.root_message_id(), Some(MessageId::new(1)));
+        assert_eq!(thread.latest_message_id(), Some(MessageId::new(3)));
+    }
+
+    #[test]
+    fn a_single_message_thread_is_its_own_root_and_latest() {
+        let thread = thread(vec![MessageId::new(7)]);
+
+        assert_eq!(thread.root_message_id(), Some(MessageId::new(7)));
+        assert_eq!(thread.latest_message_id(), Some(MessageId::new(7)));
+    }
+}

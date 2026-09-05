@@ -24,6 +24,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{Wiring, feed_the_window};
@@ -54,23 +55,28 @@ Content-Disposition: attachment; filename=\"figures.csv\"\r\n\
 one,two\r\n\
 --edge--\r\n";
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
-
 /// Presses `key` exactly as the window's own top-level controller would.
 /// `GTK4` gives no supported way to synthesize a real key event, so this
 /// drives the same entry point one would deliver to -- see `postio-14b`.
 fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
+}
+
+/// The first attachment chip to appear, or `None` within the deadline.
+///
+/// Stays module-local on purpose: it calls this module's own `chips()`,
+/// so hoisting it to the suite root would drag that with it (#842).
+fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    while std::time::Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        if let Some(chip) = chips(window).into_iter().next() {
+            return Some(chip);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
 }
 
 pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
@@ -95,7 +101,11 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     // ── a store with one account, one folder, and a real attached message ──
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     {
         let connection = database.connection().expect("a connection");
@@ -191,19 +201,6 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
     );
 
     bridge.shutdown();
-}
-
-/// The one chip a message with a named attachment gets, once it appears.
-fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if let Some(chip) = chips(window).into_iter().next() {
-            return Some(chip);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    None
 }
 
 fn chips(window: &Window) -> Vec<gtk::Button> {

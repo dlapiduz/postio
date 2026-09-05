@@ -74,6 +74,22 @@ def build_sandbox(root: Path, channel: str) -> None:
     )
     (dummy / "lib.rs").write_text("pub fn x() {}\n", encoding="utf-8")
 
+    # A lockfile, so the sandbox looks like a real checkout.
+    #
+    # Without one, cargo writes it during the gates -- after issue-land.sh's
+    # `git add -A`, which runs before them -- so it lands untracked and the
+    # "clean tree" assertions below fail depending on when cargo got there.
+    # That is a property of the fixture, not of the guard under test: this
+    # repository commits its Cargo.lock, and a sandbox that does not is
+    # testing a situation that cannot arise. Found by running the self-tests
+    # in parallel, where the timing shifted enough to expose it.
+    subprocess.run(
+        ["cargo", "generate-lockfile"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
     scripts = root / "scripts"
     scripts.mkdir()
     (scripts / "checks").mkdir()
@@ -159,7 +175,7 @@ def main() -> int:
             root = base / name
             root.mkdir()
             origin = base / f"{name}.git"
-            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
             build_sandbox(root, channel)
             git("init", "-q", "-b", "main", cwd=root)
             # Local, not just the `-c` flags this helper passes on its own
@@ -226,6 +242,102 @@ def main() -> int:
             land(root, target),
             expected_status=2,
             expect_output="Nothing to land",
+        )
+
+        # ── rustfmt's own output is amended, not asked about ───────────────
+        #
+        # The session committed everything and then this script reformatted
+        # the tree underneath it. Demanding `-m` there asks for a message for
+        # changes the session did not make, about work it already committed --
+        # and it used to ask *after* the gates, so the ten minutes were spent
+        # before the question. The formatter's output belongs to the commit it
+        # reformats.
+        root = fresh_branch("rustfmt-amends")
+        (root / "dummy" / "src" / "extra.rs").write_text(
+            "pub fn  y ( ) {}\n", encoding="utf-8"
+        )
+        # Declared, or rustfmt never sees it: cargo fmt walks `mod` from the
+        # crate root and skips orphan files entirely.
+        (root / "dummy" / "src" / "lib.rs").write_text(
+            "pub mod extra;\npub fn x() {}\n", encoding="utf-8"
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "feat(dummy): add a badly formatted file", cwd=root)
+        before = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        case(
+            "rustfmt's changes to a committed tree are amended, not refused",
+            land(root, target),
+            expected_status=0,
+            expect_output="amending",
+        )
+        after = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if after != before:
+            FAILURES.append(
+                f"rustfmt's changes should be amended into the existing commit, "
+                f"not added as a new one: {before} commit(s) became {after}"
+            )
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if subject != "feat(dummy): add a badly formatted file":
+            FAILURES.append(
+                f"amending must keep the commit's own subject, got {subject!r}"
+            )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if dirty:
+            FAILURES.append(
+                f"the tree should be clean after the amend, still dirty:\n{dirty}"
+            )
+
+        # ── but a clean branch with no commits of its own is not amendable ──
+        #
+        # There is nothing of this session's to amend into, and HEAD is main's
+        # own commit -- amending it would rewrite somebody else's history to
+        # carry a whitespace fix.
+        # The badly formatted file has to be *committed on main*, so the
+        # branch is clean, has nothing of its own, and rustfmt still finds
+        # something to rewrite -- the one state where the amend above would
+        # reach past this session's work into somebody else's commit.
+        root = fresh_branch("rustfmt-nothing-to-amend")
+        git("checkout", "-q", "main", cwd=root)
+        (root / "dummy" / "src" / "untidy.rs").write_text(
+            "pub fn  y ( ) {}\n", encoding="utf-8"
+        )
+        (root / "dummy" / "src" / "lib.rs").write_text(
+            "pub mod untidy;\npub fn x() {}\n", encoding="utf-8"
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "chore(dummy): untidy file", cwd=root)
+        git("push", "-q", "origin", "main", cwd=root)
+        git("checkout", "-q", "issue-1-x", cwd=root)
+        git("reset", "-q", "--hard", "main", cwd=root)
+        case(
+            "rustfmt's changes with no commit of our own still refuse",
+            land(root, target),
+            expected_status=2,
+            expect_output="Uncommitted changes",
         )
 
     if FAILURES:

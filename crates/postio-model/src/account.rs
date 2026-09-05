@@ -267,7 +267,7 @@ pub struct Account {
     #[serde(default)]
     pub signatures: Vec<Signature>,
     /// An account-wide override of what a new draft starts signed with
-    /// (#12's last item, #394) — see [`signature_default::resolve`] for the
+    /// (#12's last item, #394) — see [`crate::signature_default::resolve`] for the
     /// full precedence this participates in, alongside a mailbox's own
     /// override and an identity's own signature.
     ///

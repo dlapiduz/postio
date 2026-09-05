@@ -511,8 +511,12 @@ pub enum KeyContext {
     Global,
     /// The message list.
     List,
-    /// A thread drilled into from the list.
-    Thread,
+    /// The conversation pane: the whole thread stacked beside the list.
+    ///
+    /// Was `Thread`, for the column that replaced the list (#1003). The
+    /// column is gone; the surface it named lives in the reading pane now,
+    /// and its keys walk messages inside the stack.
+    Conversation,
     /// The reading pane.
     Reader,
     /// The composer, which takes over the reading pane.
@@ -525,6 +529,10 @@ pub enum KeyContext {
     Sidebar,
     /// The parts panel, once the keyboard is in it.
     Parts,
+    /// The account list in settings, once the keyboard is in it.
+    Accounts,
+    /// The keybinding list in settings, once the keyboard is in it.
+    Keys,
 }
 
 impl KeyContext {
@@ -539,8 +547,8 @@ impl KeyContext {
         match self {
             Self::Global => &[Self::Global],
             Self::List => &[Self::List, Self::Global],
-            Self::Thread => &[Self::Thread, Self::List, Self::Global],
-            Self::Reader => &[Self::Reader, Self::Thread, Self::List, Self::Global],
+            Self::Conversation => &[Self::Conversation, Self::List, Self::Global],
+            Self::Reader => &[Self::Reader, Self::Conversation, Self::List, Self::Global],
             Self::Composer => &[Self::Composer, Self::Global],
             Self::Search => &[Self::Search, Self::Global],
             Self::Palette => &[Self::Palette, Self::Global],
@@ -553,6 +561,15 @@ impl KeyContext {
             // `a` fall through to `archive` would act on the message
             // underneath while the user's eyes are on its parts.
             Self::Parts => &[Self::Parts, Self::Global],
+            // Not layered over anything, for the same reason as the two
+            // above and one of its own: `d` here removes an *account*, and
+            // a fall-through that let a mail binding fire while the keyboard
+            // sits on an account row would act on something off-screen.
+            Self::Accounts => &[Self::Accounts, Self::Global],
+            // Same reasoning as `Accounts`: `[keys]`'s own raw-TOML escape
+            // hatch sits in the same panel, and a fall-through here would
+            // let a mail binding fire while the keyboard is on a rebind row.
+            Self::Keys => &[Self::Keys, Self::Global],
         }
     }
 }
@@ -567,13 +584,15 @@ impl From<Context> for KeyContext {
     fn from(context: Context) -> Self {
         match context {
             Context::List => Self::List,
-            Context::Thread => Self::Thread,
+            Context::Conversation => Self::Conversation,
             Context::Reader => Self::Reader,
             Context::Composer => Self::Composer,
             Context::Search => Self::Search,
             Context::Palette => Self::Palette,
             Context::Sidebar => Self::Sidebar,
             Context::Parts => Self::Parts,
+            Context::Accounts => Self::Accounts,
+            Context::Keys => Self::Keys,
         }
     }
 }
@@ -974,7 +993,9 @@ mod tests {
         ] {
             keymap.bind(KeyContext::List, binding, command).unwrap();
         }
-        keymap.bind(KeyContext::Thread, "Escape", "back").unwrap();
+        keymap
+            .bind(KeyContext::Conversation, "Escape", "back")
+            .unwrap();
         keymap
             .bind(KeyContext::Composer, "Escape", "close_composer")
             .unwrap();
@@ -1143,7 +1164,7 @@ mod tests {
 
         for (context, expected) in [
             (KeyContext::List, "clear_selection"),
-            (KeyContext::Thread, "back"),
+            (KeyContext::Conversation, "back"),
             (KeyContext::Composer, "close_composer"),
             (KeyContext::Search, "close_search"),
             (KeyContext::Palette, "close_palette"),

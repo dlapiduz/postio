@@ -67,7 +67,7 @@ pub use postio_ui::list::CACHE_PAGES;
 pub struct Row {
     /// Local id. The row's identity, across reloads and updates.
     pub id: MessageId,
-    /// The thread it belongs to, for drill-in and the count badge.
+    /// The thread it belongs to, for the conversation pane and the count badge.
     pub thread: Option<ThreadId>,
     /// Who it is from.
     pub from: Option<EmailAddress>,

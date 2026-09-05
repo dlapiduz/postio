@@ -17,6 +17,7 @@
 //! the same folder again immediately after toggling would still show the
 //! wording for the state it just left.
 
+use gtk::glib;
 use postio_gtk::window::Window;
 use postio_storage::Database;
 use postio_storage::repository::MailboxRepository;
@@ -27,9 +28,13 @@ use crate::Wiring;
 /// background backfill from its own context menu.
 pub fn install(window: &Window, wiring: &Wiring) {
     let database = wiring.database.clone();
+    // Weak: the window owns the sidebar that owns this handler (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.sidebar().connect_backfill_exclusion_changed({
-        let window = window.clone();
         move |id, excluded| {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
             let Ok(connection) = database.connection() else {
                 return;
             };

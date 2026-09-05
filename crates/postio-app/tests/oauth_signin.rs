@@ -18,6 +18,30 @@
 //!
 //! One test function, for the reason `wiring.rs` gives: GTK initialises once
 //! per process.
+//!
+//! # Why this needs its own process (#973)
+//!
+//! It cannot share `app_suite`. The test writes a user-overlay preset row whose provider signs in with OAuth
+//! into a temporary `XDG_CONFIG_HOME` and needs discovery to read it, and
+//! the table discovery reads is a `LazyLock` in
+//! `postio_account::discovery::builtin` whose own doc says it is "computed
+//! once and shared for the life of the process". The first case in a process
+//! to resolve a preset fixes that table for every case after it, overlay and
+//! all -- so a second case with a different overlay silently gets the first
+//! one's, discovery answers `Manual` with a guessed suggestion, and the test
+//! fails on something that has nothing to do with what it is testing.
+//!
+//! That is a fourth reason to stay out, beside the watchdog (#272), a private
+//! display (#45/#114) and a wall-clock budget (#841): **process-global state
+//! computed once from the environment**. #973 moved five of this crate's
+//! seven top-level tests into the suite and found this one by moving it and
+//! watching it fail; it is recorded here so the next person does not repeat
+//! the experiment.
+//!
+//! Making the overlay injectable -- `builtin::overlay_rows_from` already
+//! takes a lookup closure, so the seam exists -- would let this move too,
+//! but that is a change to production code for a test's benefit and belongs
+//! in its own issue rather than in a mechanical consolidation.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe; these run before the app starts.
@@ -30,18 +54,18 @@ use std::thread;
 use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::oauth::BrowserOpener;
+use postio_account::secret::{AccountKey, MemorySecretStore, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::oauth::BrowserOpener;
-use postio_imap::secret::{AccountKey, MemorySecretStore, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::AuthMethod;
 use postio_session::Wiring;
 use postio_storage::repository::AccountRepository;
@@ -74,6 +98,14 @@ impl DiscoveryTransport for DeadTransport {
         _domain: &str,
         _cancel: &CancelToken,
     ) -> Result<DiscoverySrvReport, TransportError> {
+        Err(TransportError::new("this test resolves from presets only"))
+    }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<String>, TransportError> {
         Err(TransportError::new("this test resolves from presets only"))
     }
 }
@@ -182,7 +214,8 @@ fn play_the_browser(authorize_url: &Url, code: &str) {
 
 /// Run the main loop until `done` or the budget runs out.
 fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
@@ -261,7 +294,11 @@ sources = ["own-client"]
     // ── the app ─────────────────────────────────────────────────────────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();
     let secrets = Arc::new(MemorySecretStore::new());
@@ -336,12 +373,12 @@ sources = ["own-client"]
     play_the_browser(&authorize_url, "the-code");
 
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the sign-in never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "the sign-in failed: {:?}",
         screen.status()
     );
@@ -384,4 +421,10 @@ sources = ["own-client"]
     assert!(exchange.contains("code_verifier="), "{exchange}");
 
     bridge.shutdown();
+
+    // The window this test built joins GTK's toplevel list at
+    // construction and stays there, holding a WebProcess, until it is
+    // destroyed -- which at exit() is a segfault after a passing test
+    // (#794). No harness here to sweep, so the test does it.
+    postio_gtk::window::close_all_windows();
 }

@@ -3,7 +3,7 @@
 
 `0.1.0` panicked on the main thread the instant a login succeeded:
 
-    thread 'main' panicked at postio-imap/src/secret.rs:314:
+    thread 'main' panicked at postio-account/src/secret.rs:314:
     there is no reactor running, must be called from the context of a
     Tokio 1.x runtime
 
@@ -153,6 +153,33 @@ def blanked(text: str) -> str:
                     out[index] = " "
                 index += 1
             if index < length:
+                out[index] = " "
+                index += 1
+        elif text[index] == "'":
+            # A quote is a char literal or a lifetime, and only one of them
+            # ends. `'"'` holds one double quote, so reading it as the start
+            # of a string inverts the quote parity of everything after it in
+            # the file: real code gets blanked as "string", string contents
+            # get scanned as code, and a crossing past that point silently
+            # stops being seen. A lifetime (`&'a str`, `'static`, a loop
+            # label) must fall through with only its own quote blanked, or
+            # the scan runs off looking for a partner quote that never comes.
+            if text[index : index + 2] == "'\\":
+                out[index] = " "
+                index += 1
+                out[index] = " "
+                index += 1
+                while index < length and text[index] != "'":
+                    if text[index] != "\n":
+                        out[index] = " "
+                    index += 1
+                if index < length:
+                    out[index] = " "
+                    index += 1
+            elif index + 2 < length and text[index + 2] == "'":
+                out[index] = out[index + 1] = out[index + 2] = " "
+                index += 3
+            else:
                 out[index] = " "
                 index += 1
         else:

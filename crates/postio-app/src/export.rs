@@ -275,7 +275,8 @@ mod tests {
             test_support::account_with_inbox(&connection)
         };
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path()).expect("a blob store");
+        let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
         World {
             database,
             blobs,

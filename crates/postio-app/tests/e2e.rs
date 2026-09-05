@@ -9,7 +9,7 @@
 //! instances). This file is that lesson applied to the last unjoined seam.
 //!
 //! It starts the way the binary starts: an account row whose server settings
-//! point at [`postio_imap::test_server::TestServer`] on an ephemeral loopback
+//! point at [`postio_account::test_server::TestServer`] on an ephemeral loopback
 //! port, a password in a [`MemorySecretStore`], a real [`Window`], and then
 //! [`postio_app::start_syncing`] — the production path, which builds the real
 //! connector, the real `io-imap` pool, and the real engine from that account
@@ -45,14 +45,14 @@ use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestMessage, TestServer};
 use postio_app::{commands, feed_the_window, start_syncing};
 use postio_core::CommandId;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestMessage, TestServer};
 use postio_model::TransportSecurity;
 use postio_session::{Wiring, actions};
 use postio_storage::repository::AccountRepository;
@@ -149,7 +149,11 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         .expect("the memory store accepts a password");
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // ── the application, assembled the way `run` assembles it ─────────────
     let state = SharedState::default();
@@ -179,7 +183,13 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let feeds = feed_the_window(&window, &wiring)
         .expect("the store has an account")
         .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+    commands::install(
+        &window,
+        &feeds,
+        state.clone(),
+        wiring.commands.clone(),
+        wired,
+    );
     // Both event queues drain into the window, exactly as `open_account`
     // drains them — without this the engine can sync the world and the list
     // never hears about it, which is itself a postio-bl2-shaped wiring hole
@@ -190,8 +200,14 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         wiring.runtime.clone(),
         Default::default(),
     );
-    commands::drain(&window, &feeds, engine_events, notifier.clone());
-    commands::drain(&window, &feeds, replies, notifier);
+    commands::drain(
+        &window,
+        &feeds,
+        engine_events,
+        notifier.clone(),
+        state.clone(),
+    );
+    commands::drain(&window, &feeds, replies, notifier, state);
 
     // The production entry: reads the account row, builds the real connector
     // and pool, spawns the engine, starts the watch.
@@ -199,7 +215,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // ── 1. wire → window: the first sync fills the list ───────────────────
     let list = window.list();
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && list.model().n_items() != SEEDED.len() as u32 {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(20));
@@ -262,7 +278,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // Local-first means the row leaves the list immediately; the *server's*
     // copy moving is the queue draining over the wire, which is what no
     // other test can see.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && server.uids(ARCHIVE_PATH).is_empty() {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(20));
@@ -329,7 +345,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     );
     server.deliver(INBOX_PATH, TestMessage::corpus("list-thread-01-root"));
 
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     let mut delivered = None;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
@@ -369,4 +385,10 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // The server's runtime must not block teardown on its live sessions.
     server_runtime.shutdown_background();
+
+    // The window this test built joins GTK's toplevel list at
+    // construction and stays there, holding a WebProcess, until it is
+    // destroyed -- which at exit() is a segfault after a passing test
+    // (#794). No harness here to sweep, so the test does it.
+    postio_gtk::window::close_all_windows();
 }

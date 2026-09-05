@@ -13,11 +13,13 @@ workspace = true
 
 [dependencies]
 base64 = "0.22"
+# The conversation header writes a date span, and a span is a decision (which
+# ends carry a year, when a month is written once) rather than a format string.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 thiserror = "2.0.20"
-postio-body = { version = "0.1.0", path = "../postio-body" }
-postio-core = { version = "0.1.0", path = "../postio-core" }
-postio-model = { version = "0.1.0", path = "../postio-model" }
-postio-search = { version = "0.1.0", path = "../postio-search" }
+postio-body = { version = "0.2.0", path = "../postio-body" }
+postio-core = { version = "0.2.0", path = "../postio-core" }
+postio-model = { version = "0.2.0", path = "../postio-model" }
 
 [dev-dependencies]
-postio-config = { version = "0.1.0", path = "../postio-config" }
+postio-config = { version = "0.2.0", path = "../postio-config" }

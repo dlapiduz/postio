@@ -26,6 +26,19 @@
   <url type="bugtracker">https://example.com/postio/issues</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-09-02">
+      <description>
+        <p>
+          One IMAP + SMTP account, fully usable offline after the first sync:
+          inbox, folders and threads; read, archive, delete, flag and move;
+          HTML and plaintext reading with attachments and quoted-message
+          folding; compose, reply, reply-all, forward and drafts; local
+          full-text search with an instant search box and operators;
+          vim-style keyboard navigation, a command palette and configurable
+          shortcuts; background sync and local undo.
+        </p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-23">
       <description>
         <p>Initial development release.</p>

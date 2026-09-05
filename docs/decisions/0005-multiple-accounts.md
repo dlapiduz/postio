@@ -50,7 +50,7 @@ redesign. Measured at `0e0ec08`.
 | `accounts` and `identities` tables | Built, no cardinality assumption |
 | `account_id` on `mailboxes`, `threads`, `messages`, `sync_state`, `operation_queue`, `contacts` | Built, indexed |
 | `contacts.account_id NULL` meaning "shared across accounts" | Built, with the partial unique indexes to match |
-| `[accounts.<id>]` as a map, with `default = true` | Built (`config/src/accounts.rs`) |
+| `[accounts.<id>]` as a map, with `default = true` | **Gone** — #470 retired the section; see the note under Unified, below |
 | `AppState.connections: BTreeMap<AccountId, ConnectionState>` | Built — status is already per account |
 | `Engine` keyed to one account, owning one connection on one thread | Built (`runtime/src/engine.rs`) |
 | SQLite in WAL with a connection pool and a 5s busy timeout | Built (`storage/src/db.rs:73`) |
@@ -182,6 +182,22 @@ Concretely:
   is a bug the user notices after it is sent, so the identity picker shows the
   resolved identity rather than assuming it (`composer.rs` already has
   `identity_row` and `identity_only` for exactly this).
+
+> **`[accounts]` no longer exists, and the default account needs a new home
+> (2026-09-04).** [#470](https://github.com/dlapiduz/postio/issues/470) found
+> `[accounts.<id>]` wired to nothing — editing it saved, re-parsed and changed
+> nothing about the running account — and retired the whole section, correctly
+> on the evidence it had. What went with it was the only home this ADR ever
+> gave the default marker, and it was dead at that moment only because the
+> thing that reads it, compose from Unified, is not built yet.
+>
+> Nothing in the decision above changes: there is a default account, and
+> compose from Unified resolves through it. Where it is stored does.
+> [#960](https://github.com/dlapiduz/postio/issues/960) carries the design — on
+> the `accounts` row rather than in `config.toml`, mirroring
+> `Identity.is_default` one level up, with unset a normal state that falls back
+> to today's behaviour — and is the issue to read before implementing this
+> paragraph.
 
 **Per-account visual identification.** One accent hue per account, drawn as the
 3px left border the PLATE design already gives the selected row, plus the
@@ -621,13 +637,21 @@ The three commands:
 |---|---|---|---|
 | `ToggleAccountEnabled` | `Return` | no | `None` — pressing it again is the reversal |
 | `RemoveAccount` | `d` | **yes** | `Undo` |
-| `UpdateCredential` | none; palette only | no | `None` |
+| `UpdateCredential` | `c` | no | `None` |
 
 `d` matches `DeleteSavedSearch`'s spelling in `Context::Sidebar`, which is the
-neighbouring list and the same verb. `UpdateCredential` gets no default binding
-— ten commands already have none — because it opens a dialog, happens once
-every few months, and the palette is the right discoverability for exactly that
-shape of verb. Getting into the list needs no new key either: the account rows
+neighbouring list and the same verb.
+
+> **Corrected while implementing (#471).** This originally gave
+> `UpdateCredential` no default binding, reasoning that "ten commands already
+> have none". None do: it would have been the only entry in the registry
+> without one, and `PRODUCT.md` §8 makes a shortcut a structural requirement
+> that `every_command_has_an_id_a_title_and_a_default_binding` enforces. The
+> reasoning behind the exemption — that it opens a dialog, happens once every
+> few months, and wants discoverability rather than muscle memory — argues for
+> the palette entry it has either way, not against a binding. So it takes `c`,
+> for credential. Nothing is shadowed: `Compose`'s `c` is scoped to the
+> message surfaces, and this context layers over `Global` alone. Getting into the list needs no new key either: the account rows
 sit above the text in the focus chain, so `Tab` already reaches them.
 
 **`Recovery::Undo` on `RemoveAccount` has to become true.** Q6a built the
@@ -860,10 +884,22 @@ future aggregate:
 
 Concretely:
 
-- The unified list shows what it has, with a persistent, non-modal line:
-  *"Personal is offline — showing 1 of 2 accounts."* Not a toast, which
-  disappears; not a modal, which blocks; not silence, which is the current
-  design's default and the one that is actually dangerous.
+- The unified list shows what it has, with a persistent, non-modal line
+  naming the account. Not a toast, which disappears; not a modal, which
+  blocks; not silence, which is the current design's default and the one that
+  is actually dangerous.
+
+  **Amended by Q10a (#187):** this bullet originally gave the line as
+  *"Personal is offline — showing 1 of 2 accounts."* That sentence is false
+  in this design. Postio is local-first, so an offline account's synced mail
+  is still in the unified list: the account is not *excluded*, it is
+  *unrefreshed*, and "showing 1 of 2" claims an omission that has not
+  happened whenever the absent account has mail on disk — which is almost
+  always. The rule above is unchanged and the account is still named; what
+  the line says about it is that its mail is what was already synced, in the
+  vocabulary canvas 3d settled on ("Offline — reading local mail"). A count
+  of accounts would be the right sentence only for a view that genuinely
+  dropped one, and this view never does.
 - **Counts are marked partial.** An unread count that silently excludes an
   account is worse than no count, because it looks authoritative.
 - **Search results carry the same marker.** A user who searches for an invoice,

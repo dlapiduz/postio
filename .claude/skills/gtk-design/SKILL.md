@@ -172,8 +172,18 @@ It is `-p postio-app`, not `-p postio-gtk`: reading a store means `rusqlite`,
 which the view layer may not have at any depth, dev-dependencies included.
 
 **Read the PNG back.** Rendering it and not looking is the same as not
-rendering it. Then compare against the artboard in `Design/Mail Client.dc.html`
-and name the differences.
+rendering it — and check the command succeeded: it exits non-zero and says
+`NO IMAGE WAS WRITTEN` when there is nothing to look at, so a shot you did
+not check is a claim you cannot make (#809).
+
+It renders on the private headless compositor, not on your session, so a
+locked or blanked screen no longer stops it. If you run the binary directly
+rather than through `cargo run` and it says the compositor was not presenting,
+believe it: the widgets are drawn correctly but the reader's web view will be
+a black rectangle, because another process composites it.
+
+Then compare against the artboard in `Design/Mail Client.dc.html` and name
+the differences.
 
 Check every screen in **light, dark, and high contrast**, and at the narrow
 breakpoint. Dark is not an afterthought here: it follows canvas 3c, where steel

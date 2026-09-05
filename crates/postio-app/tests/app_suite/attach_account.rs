@@ -27,16 +27,17 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::{attach_account, feed_the_window};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::{Account, EmailAddress, TransportSecurity};
 use postio_session::Wiring;
 use postio_storage::repository::{AccountRepository, MailboxRepository};
@@ -50,10 +51,6 @@ const SEEDED: [&str; 1] = ["plain-text-simple"];
 
 const JOINING_ADDRESS: &str = "grace@example.com";
 const JOINING_PASSWORD: &str = "hunter2";
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// Every widget in the tree carrying `class` (or, when `class` is empty,
 /// every widget), depth first -- copied from `settings_accounts_wiring.rs`
@@ -122,7 +119,11 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     let report = seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let (bridge, _replies) =
@@ -176,7 +177,7 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
     attach_account(&window, &wiring, &joining).expect("the pool can carry a second engine");
 
     // 1. it syncs: the folders and the mail arrive over the wire.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     let mut synced = 0;
     while Instant::now() < deadline {
         settle();

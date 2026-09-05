@@ -168,6 +168,12 @@ def land(root: Path, target: Path, stub_dir: Path, origin: Path):
     # (`test-issue-land-lagging-ref.py`, #406).
     environment["POSTIO_LANDED_TIMEOUT"] = "3"
     environment["POSTIO_LANDED_POLL"] = "1"
+    # A PR that says MERGED buys extra patience before the script calls the
+    # landing failed -- deliberately, so replication lag stops being reported
+    # as a failed merge. This stub *is* the case that patience must not hide,
+    # so it is cut short here: what is under test is that the failure is still
+    # detected, not how long the script is willing to wait for it.
+    environment["POSTIO_MERGED_TIMEOUT"] = "2"
     return subprocess.run(
         ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file"],
         cwd=root, env=environment, capture_output=True, text=True, timeout=90,
@@ -184,7 +190,7 @@ def scenario(base: Path, channel: str, stub: str, name: str):
     (stub_dir / "bin" / "gh").chmod(0o755)
     (stub_dir / "calls").write_text("", encoding="utf-8")
 
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     root.mkdir()
     build_sandbox(root, channel)
     git("init", "-q", "-b", "main", cwd=root)

@@ -42,9 +42,14 @@ pub enum ViewMode {
     /// The message list.
     #[default]
     List,
-    /// One thread, drilled into from the list.
-    Thread {
-        /// The thread on screen.
+    /// One conversation, stacked in the reading pane.
+    ///
+    /// Was `Thread`, when a thread meant a column that replaced the list
+    /// (#1003). The list is never anything but the list now; what changes is
+    /// what the reading pane holds — one message, or all of a
+    /// conversation's.
+    Conversation {
+        /// The conversation on screen.
         thread: ThreadId,
     },
     /// One message in the reading pane.
@@ -73,7 +78,7 @@ impl ViewMode {
     pub fn context(&self) -> Context {
         match self {
             ViewMode::List => Context::List,
-            ViewMode::Thread { .. } => Context::Thread,
+            ViewMode::Conversation { .. } => Context::Conversation,
             ViewMode::Reader { .. } => Context::Reader,
             ViewMode::Search { .. } => Context::Search,
             ViewMode::Composer { .. } => Context::Composer,
@@ -225,12 +230,35 @@ pub enum Resolved {
 /// [`ViewScope::mailbox`] answers `None` for a smart folder, because a smart
 /// folder is not somewhere a message can be *put*. What changed is that the
 /// scope itself survives, so a predicate can be about it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// # Why the aggregate carries a list and the others do not
+///
+/// `Unified` is the one variant whose identity is not a single id, because
+/// the aggregate list can be showing fewer accounts than are configured: an
+/// account Postio cannot currently reach is still *drawn* — its synced mail
+/// is real mail, and ADR 0005 Q10 is emphatic that hiding it would be the
+/// worse lie — but a whole-view selection made while it was away is not
+/// about it. So the accounts the view could actually show are part of what
+/// the scope **is**, fixed at the moment the gesture was made rather than
+/// looked up when the verb runs (#811).
+///
+/// That is what makes two aggregates over different account sets different
+/// views, which is the property that stops an account reconnecting between
+/// the `Ctrl+A` and the `a` from silently joining a selection the user was
+/// never shown. It also costs this type its `Copy`, which is the price of
+/// the guarantee.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ViewScope {
     /// One folder, as the server has it.
     Mailbox(MailboxId),
     /// Everything flagged in an account, wherever it is filed.
     Flagged(AccountId),
+    /// Every account the aggregate view could show when it was asked.
+    Unified {
+        /// Those accounts, in the sidebar's order. Never empty: a view with
+        /// nothing in it is not something a selection can be relative to.
+        accounts: Vec<AccountId>,
+    },
 }
 
 impl ViewScope {
@@ -238,21 +266,35 @@ impl ViewScope {
     ///
     /// `None` for a smart folder, and load-bearing: a destination has to be a
     /// real mailbox, and a view assembled by a predicate is not one.
-    pub fn mailbox(self) -> Option<MailboxId> {
+    pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
-            ViewScope::Mailbox(mailbox) => Some(mailbox),
-            ViewScope::Flagged(_) => None,
+            ViewScope::Mailbox(mailbox) => Some(*mailbox),
+            ViewScope::Flagged(_) | ViewScope::Unified { .. } => None,
         }
     }
 
     /// The account this scope is within.
     ///
     /// `None` for a mailbox, whose account is the store's to answer — a
-    /// `MailboxId` does not carry one.
-    pub fn account(self) -> Option<AccountId> {
+    /// `MailboxId` does not carry one — and `None` for the aggregate, which
+    /// is within several and whose callers all want *the* one.
+    /// [`ViewScope::accounts`] is the question the aggregate can answer.
+    pub fn account(&self) -> Option<AccountId> {
         match self {
-            ViewScope::Mailbox(_) => None,
-            ViewScope::Flagged(account) => Some(account),
+            ViewScope::Mailbox(_) | ViewScope::Unified { .. } => None,
+            ViewScope::Flagged(account) => Some(*account),
+        }
+    }
+
+    /// Every account a whole-view selection here is about.
+    ///
+    /// One for a smart folder, none for a folder — whose account the store
+    /// answers from the folder — and the recorded list for the aggregate.
+    pub fn accounts(&self) -> &[AccountId] {
+        match self {
+            ViewScope::Mailbox(_) => &[],
+            ViewScope::Flagged(account) => std::slice::from_ref(account),
+            ViewScope::Unified { accounts } => accounts,
         }
     }
 }
@@ -326,12 +368,12 @@ impl AppState {
     /// [`AppState::viewing`] is the one that says what the list is scoped to
     /// whether or not that is a folder.
     pub fn mailbox(&self) -> Option<MailboxId> {
-        self.viewing.and_then(ViewScope::mailbox)
+        self.viewing.as_ref().and_then(ViewScope::mailbox)
     }
 
     /// What the list is a view of, folder or smart folder.
-    pub fn viewing(&self) -> Option<ViewScope> {
-        self.viewing
+    pub fn viewing(&self) -> Option<&ViewScope> {
+        self.viewing.as_ref()
     }
 
     /// What an action would hit.
@@ -387,7 +429,7 @@ impl AppState {
                 // and asking it for one is what made `Ctrl+A` in Flagged
                 // resolve to nothing (#52).
                 Selection::Everything { except } => Some(Resolved::Everything {
-                    scope: self.viewing?,
+                    scope: self.viewing.clone()?,
                     except: except.clone(),
                 }),
                 Selection::These(messages) if !messages.is_empty() => {
@@ -448,7 +490,12 @@ impl AppState {
 
     /// Move to the next scope: unified, then each account in turn, and round.
     ///
-    /// What `g a` does. Cycling rather than a menu because the set is small
+    /// The rule `g a` cycles by, spelled once so a frontend can share it —
+    /// today's GTK frontend does not: `postio_gtk::sidebar::Sidebar::select_next_scope`
+    /// walks the strip's own rows directly and never reaches this (#974), so
+    /// this has no production caller. It is kept, tested and correct for
+    /// whichever caller closes that gap, rather than deleted for being
+    /// unreached today. Cycling rather than a menu because the set is small
     /// and ordered, and because a keystroke has no argument to name a scope
     /// with — the sidebar's rows are the surface for going somewhere
     /// directly.
@@ -530,7 +577,7 @@ impl AppState {
     /// would name rows the user can no longer see.
     pub fn open_view(&mut self, scope: ViewScope) -> Vec<Event> {
         self.commit(|state| {
-            if state.viewing == Some(scope) {
+            if state.viewing.as_ref() == Some(&scope) {
                 return;
             }
             state.viewing = Some(scope);
@@ -585,8 +632,8 @@ impl AppState {
     }
 
     /// Drill into a thread, remembering where we came from.
-    pub fn open_thread(&mut self, thread: ThreadId) -> Vec<Event> {
-        self.commit(|state| state.push(ViewMode::Thread { thread }))
+    pub fn open_conversation(&mut self, thread: ThreadId) -> Vec<Event> {
+        self.commit(|state| state.push(ViewMode::Conversation { thread }))
     }
 
     /// Open a message in the reading pane, remembering where we came from.
@@ -906,7 +953,10 @@ mod tests {
         state.open_flagged(AccountId::new(3));
 
         assert_eq!(state.mailbox(), None);
-        assert_eq!(state.viewing(), Some(ViewScope::Flagged(AccountId::new(3))));
+        assert_eq!(
+            state.viewing(),
+            Some(&ViewScope::Flagged(AccountId::new(3)))
+        );
     }
 
     #[test]
@@ -922,6 +972,67 @@ mod tests {
             state.resolve(&MessageTarget::Selection),
             None,
             "the whole-view predicate must not survive the change of view"
+        );
+    }
+
+    #[test]
+    fn select_all_in_the_unified_view_resolves_to_the_accounts_it_could_show() {
+        // #811. `open_unified` leaves no `ViewScope` behind, so `Ctrl+A` in
+        // the aggregate resolved to nothing and every bulk verb rejected with
+        // "Nothing selected" -- a refusal the user did not earn. The
+        // frontend mirrors the view it was actually showing, and the accounts
+        // it could show travel with it.
+        let mut state = AppState::new();
+        state.open_unified();
+        state.open_view(ViewScope::Unified {
+            accounts: vec![AccountId::new(1), AccountId::new(2)],
+        });
+        state.select_all();
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            Some(Resolved::Everything {
+                scope: ViewScope::Unified {
+                    accounts: vec![AccountId::new(1), AccountId::new(2)],
+                },
+                except: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_unified_scope_names_neither_a_folder_nor_one_account() {
+        // Both accessors are read as "somewhere a message could be put" and
+        // "the one account this is within". An aggregate is neither, and
+        // answering either would be a guess a caller would act on.
+        let scope = ViewScope::Unified {
+            accounts: vec![AccountId::new(1), AccountId::new(2)],
+        };
+
+        assert_eq!(scope.mailbox(), None);
+        assert_eq!(scope.account(), None);
+    }
+
+    #[test]
+    fn the_accounts_a_unified_selection_was_scoped_to_are_part_of_the_view() {
+        // Two aggregates over different account sets are different views, so
+        // one does not inherit the other's selection. That is what stops an
+        // account reconnecting mid-gesture from joining a selection the user
+        // was never shown.
+        let mut state = AppState::new();
+        state.open_view(ViewScope::Unified {
+            accounts: vec![AccountId::new(1)],
+        });
+        state.select_all();
+
+        state.open_view(ViewScope::Unified {
+            accounts: vec![AccountId::new(1), AccountId::new(2)],
+        });
+
+        assert_eq!(
+            state.resolve(&MessageTarget::Selection),
+            None,
+            "the predicate must not survive the view widening under it"
         );
     }
 
@@ -952,14 +1063,14 @@ mod tests {
         let mut state = AppState::new();
         let last = AppState::MAX_BACK_DEPTH as i64 + 5;
         for id in 0..=last {
-            state.open_thread(ThreadId::new(id));
+            state.open_conversation(ThreadId::new(id));
         }
 
         assert_eq!(state.back_depth(), AppState::MAX_BACK_DEPTH);
         state.back();
         assert_eq!(
             *state.view(),
-            ViewMode::Thread {
+            ViewMode::Conversation {
                 thread: ThreadId::new(last - 1)
             },
             "Esc undoes the most recent drill-in"

@@ -12,7 +12,10 @@ repository.workspace = true
 # Test-only: exposes the `test_support` throwaway-database helpers. Off by
 # default; downstream crates enable it from their dev-dependencies so nothing
 # ships in a normal build.
-test-support = ["dep:tempfile", "postio-model/test-corpus"]
+# `rusqlite/trace` is what `test_support::counting` reads statement and row
+# counts from (#100). It rides on this feature rather than on the plain
+# dependency so an ordinary build still carries no tracing binding at all.
+test-support = ["dep:tempfile", "postio-model/test-corpus", "rusqlite/trace"]
 
 [dependencies]
 blake3 = "1.8.7"
@@ -21,10 +24,14 @@ blake3 = "1.8.7"
 # it to be reproduced.
 getrandom = "0.3.4"
 # Key material overwrites itself when it drops, the same discipline
-# `postio-imap`'s `Password` already keeps.
+# `postio-account`'s `Password` already keeps.
 zeroize = "1.9.0"
+# Blob contents are XChaCha20-Poly1305 (ADR 0014 Q2). Pure Rust, no new
+# native dependency, and the 24-byte nonce is what makes a random per-blob
+# nonce safe without a counter to keep.
+chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-postio-model = { version = "0.1.0", path = "../postio-model" }
+postio-model = { version = "0.2.0", path = "../postio-model" }
 # SQLCipher, not plain SQLite (ADR 0014 Q1). `bundled-sqlcipher-vendored-openssl`
 # keeps the Flatpak and contributor machines hermetic; the system-libcrypto
 # variant is the recorded alternative if vendored OpenSSL's build cost ever

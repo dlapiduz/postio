@@ -114,6 +114,13 @@ be right. A rename touches every crate that names it and buys clarity only, so
 it is not a blocker; it is the sort of thing to do while the crate is open for
 other reasons rather than as its own change.
 
+> **Resolved 2026-09-03 (#153):** renamed to `postio-account`, keeping the
+> `imap` feature and module names as they were — the maintainer's call was
+> the rename alone, not the split #153 also sketched. Every reference in this
+> ADR below is left as `postio-imap`, the name that was true when each of
+> these decisions was made; read it as history, not as the crate's current
+> name.
+
 ---
 
 ## Q3 — The flow: system browser, loopback redirect, PKCE

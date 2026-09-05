@@ -30,16 +30,47 @@ ask for.** Concretely, that means:
 - **Your local mail store is encrypted at rest.** Because Postio backfills
   a complete copy of your mailbox rather than a recent slice, this machine
   ends up holding all of it — so that copy is encrypted, and the key lives
-  in your OS keyring, not next to the data it protects. Worth knowing
-  plainly: a backup of your Postio data directory is a backup of your
-  entire mailbox. Losing the keyring entry costs you a re-sync; it never
-  costs you mail.
+  in your OS keyring, not next to the data it protects. What that does and
+  does not cover is worth reading in full, below.
 - **Credentials live in your OS keyring**, never in a config file and
   never in a log. Postio connects over TLS wherever the server offers it.
 - **Logs never contain message content** — no bodies, subjects, or
   recipient addresses, at any log level. Just ids, counts, and outcomes,
   which is enough to debug a sync problem without ever writing down what
   your mail says.
+
+## What encryption at rest protects — and what it doesn't
+
+"Encrypted at rest" gets oversold a lot, so here's exactly what it means for
+Postio, stated honestly rather than left to your assumptions.
+
+**Protected:** a stolen or discarded disk; a backup, an rsync copy, or a
+cloud sync of Postio's data directory that wanders somewhere it shouldn't;
+another user on a shared machine who gets past your account's file
+permissions; anyone reading those files while your OS keyring is locked or
+you're logged out. In every one of those cases, what they get is
+ciphertext — the database and every blob (message and attachment) are
+encrypted, and without the key sitting in your keyring, that's all it is.
+
+**Not protected — and this matters:** a live, unlocked session. If someone
+is running as you while your keyring is unlocked, they can read the
+encryption key exactly the way Postio does, because that's what unlocking
+the keyring means. This is not a gap Postio can close from inside a mail
+client; it's why **full-disk encryption stays recommended even though
+Postio encrypts its own store** — the two protect different moments. Postio
+covers the disk at rest and copies that wander; full-disk encryption
+additionally covers the machine while it's off or between boot and login.
+Neither one covers a session an attacker already has open.
+
+**The keyring entry is part of your mailbox, not an accessory to it.** If
+you copy the Postio data directory to another machine without also moving
+the key, you've copied ciphertext with no way to open it — that's not a
+bug, it's the same property that makes a wandering backup safe. If you lose
+the keyring entry on your own machine (a wiped keyring, a fresh OS install
+without a keyring backup), the recovery path is the same in both cases: a
+resync from the server. Nothing about that loses mail — everything but
+drafts and queued outgoing messages is a cache of what the server already
+has — but it does mean the key is not something to treat as disposable.
 
 ## This applies to the documentation site too
 

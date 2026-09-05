@@ -19,19 +19,20 @@ wrote it.
 | `density` | string | `"airy"` | Message-list row height: `airy`, `comfortable` or `compact`. |
 | `theme` | string | `"system"` | Light/dark preference: `system` (follows the desktop), `light` or `dark`. |
 | `show_hover_actions` | boolean | `true` | Show per-row actions when the pointer rests over a row. |
-| `thread_drill` | boolean | `true` | Let `t` drill the list column into the focused thread. |
-| `show_key_hints` | boolean | `true` | Show the focused row's key hints (`e reply`, `a archive`, `t thread`). Off leaves every binding in force -- this only stops the row from naming them. |
+| `show_key_hints` | boolean | `true` | Show the focused row's key hints (`e reply`, `a archive`). Off leaves every binding in force -- this only stops the row from naming them. |
+| `sender_avatars` | boolean | `true` | Show each row's sender-initials chip. |
 
 ## `[sync]`
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `idle` | boolean | `true` | Hold an `IDLE` connection on INBOX for push delivery. |
+| `check_for_mail` | string | `"idle"` | How Postio learns about new mail: `idle` (hold an `IDLE` connection on INBOX for push delivery), `poll` (no `IDLE`, every mailbox reconciled on `poll_interval_secs`), or `manual` (never checks on its own). |
 | `poll_interval_secs` | integer | `300` | Polling interval for folders without `IDLE`, in seconds. |
 | `max_connections` | integer | `5` | Maximum simultaneous IMAP connections per account. |
 | `sync_on_startup` | boolean | `true` | Start a sync as soon as the app opens. |
 | `body_fetch` | string | `"lazy"` | When message bodies are downloaded: `lazy` (headers first, bodies backfilled) or `eager`. |
 | `attachment_fetch` | string | `"on_open"` | When an attachment's bytes are downloaded: `on_open`, `eager`, or `never`. |
+| `max_inline_bytes` | integer | `262144` | The largest inline part fetched with the message's text rather than left on the payload axis. A `cid:` image under this size arrives with the body, so HTML mail reads correctly offline; `0` turns the rule off. |
 | `initial_sync_messages` | integer | `5000` | How many messages the first sync reaches back for, newest first. |
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |

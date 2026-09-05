@@ -1,8 +1,10 @@
 //! Barlow, Barlow Condensed and IBM Plex Mono, resolved from the binary.
 //!
 //! The design depends on all three faces; a fallback would silently wreck the
-//! layout. They ship in the GResource bundle (see [`crate::resources`]) under
-//! the SIL Open Font License, together with their licence files.
+//! layout. The bytes are `postio-ui`'s (#799, ADR 0023) — [`FACES`] and
+//! [`LICENSES`] are the same table the reader's `postio-font:` scheme handler
+//! serves — under the SIL Open Font License, together with their licence
+//! files.
 //!
 //! Pango can only take a font from a *path*, so the embedded faces are
 //! unpacked once into the user's cache directory — content-addressed, so a
@@ -18,17 +20,13 @@
 use std::path::{Path, PathBuf};
 
 use pango::prelude::*;
-
-use crate::resources;
+use postio_ui::reader::document::{FACES, LICENSES};
 
 /// The three families this design needs, by the name CSS asks for.
 pub const FAMILIES: [&str; 3] = ["Barlow", "Barlow Condensed", "IBM Plex Mono"];
 
 #[derive(Debug)]
 pub enum FontError {
-    /// The embedded bundle could not be read — a build problem, not a runtime
-    /// one.
-    Resource(glib::Error),
     /// The cache directory could not be written.
     Cache(std::io::Error),
     /// Pango refused a face.
@@ -38,7 +36,6 @@ pub enum FontError {
 impl std::fmt::Display for FontError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FontError::Resource(e) => write!(f, "embedded fonts are unreadable: {e}"),
             FontError::Cache(e) => write!(f, "cannot unpack the embedded fonts: {e}"),
             FontError::Pango(e) => write!(f, "pango rejected an embedded font: {e}"),
         }
@@ -60,13 +57,9 @@ pub fn install_into(font_map: &pango::FontMap) -> Result<Vec<PathBuf>, FontError
     let dir = cache_dir()?;
     let mut installed = Vec::new();
 
-    for path in resources::walk(resources::FONTS) {
-        if !path.ends_with(".ttf") {
-            continue;
-        }
-        let bytes = resources::read(&path).map_err(FontError::Resource)?;
-        let file = dir.join(path.rsplit('/').next().unwrap_or("font.ttf"));
-        write_if_missing(&file, &bytes).map_err(FontError::Cache)?;
+    for face in FACES {
+        let file = dir.join(face.name);
+        write_if_missing(&file, face.bytes).map_err(FontError::Cache)?;
         let name = file.to_string_lossy().into_owned();
         font_map.add_font_file(&name).map_err(FontError::Pango)?;
         installed.push(file);
@@ -80,33 +73,19 @@ pub fn install_into(font_map: &pango::FontMap) -> Result<Vec<PathBuf>, FontError
 /// The About dialog attributes the fonts from here rather than from a string
 /// someone has to remember to update.
 pub fn licenses() -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for path in resources::walk(resources::FONTS) {
-        if !path.ends_with("OFL.txt") {
-            continue;
-        }
-        let family = path
-            .trim_end_matches("/OFL.txt")
-            .rsplit('/')
-            .next()
-            .unwrap_or_default()
-            .to_string();
-        if let Ok(bytes) = resources::read(&path) {
-            out.push((family, String::from_utf8_lossy(&bytes).into_owned()));
-        }
-    }
-    out
+    LICENSES
+        .iter()
+        .map(|(family, text)| ((*family).to_owned(), (*text).to_owned()))
+        .collect()
 }
 
 /// `~/.cache/postio/fonts/<digest>/` — the digest covers the bundled font
 /// bytes, so an upgraded font never collides with a stale copy.
 fn cache_dir() -> Result<PathBuf, FontError> {
     let mut digest = Fnv::new();
-    for path in resources::walk(resources::FONTS) {
-        digest.write(path.as_bytes());
-        if let Ok(bytes) = resources::read(&path) {
-            digest.write(&bytes);
-        }
+    for face in FACES {
+        digest.write(face.name.as_bytes());
+        digest.write(face.bytes);
     }
     let dir = glib::user_cache_dir()
         .join("postio")

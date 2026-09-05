@@ -5,6 +5,7 @@
 //! it is `Window::run_search`'s job (`gtk_window_run_search.rs`), not this
 //! widget's. Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ use postio_gtk::{fonts, style};
 
 pub fn saved_searches_list_keyboard_navigate_and_report_their_query() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -117,7 +118,7 @@ pub fn saved_searches_list_keyboard_navigate_and_report_their_query() {
 /// chasing its timing.
 fn three_searches() -> Option<(gtk::Window, Sidebar, Vec<gtk::ListBoxRow>)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();
@@ -280,7 +281,7 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     while left.get() > 0 && Instant::now() < deadline {
         context.iteration(true);
     }
@@ -341,10 +342,4 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
-}
-
-fn pump() {
-    for _ in 0..80 {
-        glib::MainContext::default().iteration(false);
-    }
 }

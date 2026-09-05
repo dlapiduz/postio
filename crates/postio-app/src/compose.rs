@@ -32,6 +32,7 @@
 //! its own record of the same id only for the one thing the composer cannot
 //! tell it after the fact — which row to delete when the draft is dropped.
 
+use gtk::glib;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -237,13 +238,17 @@ fn install_resume(
     database: Database,
     last_id: Rc<Cell<Option<DraftId>>>,
 ) {
+    // Weak: the window owns the list that owns this handler (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.list().connect_activated({
         let composer = composer.clone();
-        let window = window.clone();
         move |row| {
             if !row.draft {
                 return;
             }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
             let Some(draft) = draft_behind(&database, row.id) else {
                 return;
             };
@@ -693,7 +698,14 @@ mod tests {
     //! module, which is also why it is the *only* GTK-touching test in this
     //! crate: `adw::init()` and a display are process-wide state, and
     //! `cargo test` runs every unit test in one process unless told
-    //! otherwise. Add a second one here only with that in mind.
+    //! otherwise.
+    //!
+    //! **A second one is not a judgement call, it is a red run.** One was
+    //! added, passed locally for weeks, and panicked the moment a runner
+    //! gave both tests a display at once. A new GTK-touching scenario
+    //! becomes another call from the one `#[test]` below, never another
+    //! `#[test]`; `check-no-gtk-init-in-unit-tests.py` now enforces the
+    //! single init this file is allowed.
     //!
     //! POSTIO-GTK-INIT: the paragraph above is the argument. A binary crate
     //! has nothing for `tests/` to link against, so this one cannot move out
@@ -817,31 +829,67 @@ mod tests {
         ));
     }
 
+    /// Both halves of #491's rule, in one `#[test]` because they cannot be
+    /// two.
+    ///
+    /// They were two, briefly, and it cost a red CI run: `adw::init()` is
+    /// process-wide and belongs to the thread that called it, `cargo test`
+    /// gives every `#[test]` a thread of its own, and the second one to
+    /// reach `init` panics with "Attempted to initialize GTK from two
+    /// different threads". Locally the pair passed — whichever ran second
+    /// found the display already gone and took the skip branch — so the
+    /// race only ever showed on a runner. Two tests here cannot be made
+    /// safe by ordering or a mutex: GTK objects belong to the initializing
+    /// thread, so the second test has no thread it is allowed to use them
+    /// from. One test, two scenarios, run in sequence, is the shape that
+    /// works.
+    ///
+    /// The scenarios are twins — the same two runs of the app, differing
+    /// only in whether the first one exited cleanly, which is precisely the
+    /// question recovery has to answer.
     #[test]
-    fn a_parked_draft_after_a_clean_exit_leaves_the_next_start_on_the_inbox() {
-        // #491, reported directly: "i reopened the app and it opened in a
-        // compose window from a draft. cold start should start with the
-        // inbox". `DraftState::Editing` is not evidence of a crash — Esc on
-        // a draft with content parks it in exactly that state on purpose —
-        // so recovery has to ask how the last session *ended*, not what the
-        // drafts table holds. The crash test below is this test's twin: the
-        // same two runs, with the clean shutdown removed.
-        let state_dir_guard = tempfile::tempdir().expect("a state directory");
-        let state_dir = state_dir_guard.path();
-        // SAFETY: first statement of a single-threaded test.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("XDG_STATE_HOME", state_dir)
-        };
-
-        if adw::init().is_err() || gdk::Display::default().is_none() {
-            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+    fn recovery_reopens_a_crashed_draft_and_leaves_a_parked_one_alone() {
+        if !gui_ready() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
             return;
+        }
+
+        a_crashed_session_reopens_its_draft();
+        a_clean_exit_leaves_the_next_start_on_the_inbox();
+    }
+
+    /// `adw::init()` and the style/icon setup the scenarios share.
+    ///
+    /// Returns whether there is a display to draw on; see the caller for why
+    /// exactly one test may call this.
+    fn gui_ready() -> bool {
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            return false;
         }
         let display = gdk::Display::default().unwrap();
         postio_gtk::fonts::install().expect("the embedded fonts should install");
         postio_gtk::style::install(&display);
         postio_gtk::app::install_icons(&display);
+        true
+    }
+
+    fn a_clean_exit_leaves_the_next_start_on_the_inbox() {
+        // #491, reported directly: "i reopened the app and it opened in a
+        // compose window from a draft. cold start should start with the
+        // inbox". `DraftState::Editing` is not evidence of a crash — Esc on
+        // a draft with content parks it in exactly that state on purpose —
+        // so recovery has to ask how the last session *ended*, not what the
+        // drafts table holds.
+        let state_dir_guard = tempfile::tempdir().expect("a state directory");
+        let state_dir = state_dir_guard.path();
+        // SAFETY: the scenarios run in sequence on one thread, and each
+        // needs its own state directory — the clean-exit marker is the
+        // variable under test, so they cannot share one. Nothing else in
+        // this binary reads `XDG_STATE_HOME`.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", state_dir)
+        };
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
@@ -852,7 +900,8 @@ mod tests {
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -883,7 +932,8 @@ mod tests {
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -914,24 +964,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_draft_saved_before_the_process_stops_is_open_again_on_the_next_start() {
+    fn a_crashed_session_reopens_its_draft() {
         let state_dir_guard = tempfile::tempdir().expect("a state directory");
         let state_dir = state_dir_guard.path();
-        // SAFETY: first statement of a single-threaded test.
+        // SAFETY: as above — sequential, and its own directory.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var("XDG_STATE_HOME", state_dir)
         };
-
-        if adw::init().is_err() || gdk::Display::default().is_none() {
-            eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
-            return;
-        }
-        let display = gdk::Display::default().unwrap();
-        postio_gtk::fonts::install().expect("the embedded fonts should install");
-        postio_gtk::style::install(&display);
-        postio_gtk::app::install_icons(&display);
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
@@ -949,7 +989,8 @@ mod tests {
         // committed is what has to survive it, not an orderly exit.
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();
@@ -976,7 +1017,8 @@ mod tests {
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
             let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
-            let blobs = BlobStore::open(&blobs_path).unwrap();
+            let blobs =
+                BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
             window.present();
             settle();

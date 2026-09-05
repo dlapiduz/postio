@@ -183,6 +183,51 @@ impl<'a> CrossAccountMoveRepository<'a> {
             .optional()
             .map_err(Into::into)
     }
+    /// Every saga in one of `phases` whose *source* is among `sources`.
+    ///
+    /// Phases are the caller's because the two callers want different sets.
+    /// The forward path asks about sagas it can still walk out of; undo has
+    /// to see `done` as well, since a move that finished is exactly the one
+    /// a user is most likely to take back and is not "open" by any
+    /// definition the forward path needed (#531).
+    pub fn for_sources(
+        &self,
+        sources: &[MessageId],
+        phases: &[MovePhase],
+    ) -> Result<Vec<CrossAccountMove>> {
+        if sources.is_empty() || phases.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: std::collections::BTreeSet<i64> = sources.iter().map(|id| id.get()).collect();
+        // Built rather than bound: `phase` is a closed set of five literals
+        // this crate owns, so there is no user text anywhere near this.
+        let list = phases
+            .iter()
+            .map(|phase| format!("'{}'", phase.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT id FROM cross_account_moves
+              WHERE phase IN ({list})
+              ORDER BY id"
+        ))?;
+        let ids: Vec<i64> = statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut found = Vec::new();
+        for id in ids {
+            let Some(saga) = self.get(CrossAccountMoveId::new(id))? else {
+                continue;
+            };
+            if saga
+                .source_message
+                .is_some_and(|source| wanted.contains(&source.get()))
+            {
+                found.push(saga);
+            }
+        }
+        Ok(found)
+    }
 
     /// Move the saga to `next`, enforcing [`MovePhase::allows`].
     ///
@@ -220,12 +265,35 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// search proved presence without naming where.
     pub fn confirm(&self, id: CrossAccountMoveId, remote_id: Option<&RemoteId>) -> Result<()> {
         self.transition(id, MovePhase::Confirmed)?;
-        if let Some(remote_id) = remote_id {
-            self.connection.execute(
-                "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
-                params![id.get(), remote_id.as_str()],
-            )?;
-        }
+        let Some(remote_id) = remote_id else {
+            return Ok(());
+        };
+        self.connection.execute(
+            "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
+            params![id.get(), remote_id.as_str()],
+        )?;
+
+        // And onto the row the user is looking at (ADR 0026, #531).
+        //
+        // The confirmation is a whole identity, not half of one: `APPENDUID`
+        // carries the destination mailbox's `UIDVALIDITY` as well as the
+        // assigned UID, and the no-UIDPLUS fallback searches a mailbox whose
+        // live generation `ensure_selected` has just observed. So there is no
+        // half-identified row to be afraid of here — the fear that kept this
+        // write out is answered in the ADR.
+        //
+        // Two things go wrong without it. The target account's next sync
+        // matches fetched mail to existing rows by
+        // `find_by_remote_id(mailbox_id, remote_id)`, so a provisional copy
+        // carrying nothing gets no match and becomes a **second** row for the
+        // same message. And an inverse saga (#531) has no coordinate for the
+        // copy it must remove — which is the failure that reaches no server
+        // and reports success.
+        self.connection.execute(
+            "UPDATE messages SET remote_id = ?2
+              WHERE id = (SELECT target_message_id FROM cross_account_moves WHERE id = ?1)",
+            params![id.get(), remote_id.as_str()],
+        )?;
         Ok(())
     }
 }

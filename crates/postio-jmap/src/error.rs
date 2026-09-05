@@ -1,6 +1,6 @@
 //! Mapping `io-jmap` failures onto the seam's [`BackendError`].
 
-use postio_imap::backend::BackendError;
+use postio_account::backend::BackendError;
 
 use io_jmap::client::JmapClientStdError;
 

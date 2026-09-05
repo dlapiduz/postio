@@ -31,7 +31,7 @@
 //! them through the bus instead would record an undo of the undo, and `u` `u`
 //! would toggle rather than walk back through history.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
@@ -40,13 +40,15 @@ use postio_core::dispatch::{CommandError, DispatcherBuilder};
 use postio_core::state::{Resolved, SharedState, ViewScope};
 use postio_core::undo::{UndoEntry, UndoKind, UndoStack};
 use postio_core::{Command, CommandId, Event, MessageTarget};
+use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
-    AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
+    AccountId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
+    OperationTarget, ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, FlagSource, MailboxRepository, MessageRepository, MessageSet,
-    OperationQueueRepository, ThreadOrder, ThreadRepository,
+    ColumnFlag, DraftRepository, FlagSource, LabelRepository, MailboxRepository, MessageRepository,
+    MessageSet, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
@@ -64,6 +66,11 @@ const WIRED: &[CommandId] = &[
     CommandId::MarkUnread,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    // After Unsnooze, matching the registry's own order: `bus.wired()`
+    // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
+    // compares the two lists directly.
+    CommandId::AddLabel,
+    CommandId::MarkSent,
     CommandId::Undo,
 ];
 
@@ -119,20 +126,30 @@ enum Destination {
 enum Aim {
     /// These messages, read out of the store.
     Rows(Vec<Message>),
-    /// A predicate the store resolves in one statement.
-    Bulk {
-        /// What to act on.
-        set: MessageSet,
-        /// Whose account it is. Read from the mailbox, or carried by a scope
-        /// that already knows it, because there is no row to read.
-        account: AccountId,
-        /// The folder those messages are in now, when they are all in one.
-        ///
-        /// `None` for a smart folder, whose rows are spread across the
-        /// account's folders — a move out of one has to be grouped by source
-        /// before it can be enqueued (#52).
-        from: Option<MailboxId>,
-    },
+    /// One predicate per account, each resolved in one statement.
+    ///
+    /// Split by account here rather than further down because everything
+    /// below this line is an account's: which folder `Archive` names, which
+    /// queue the rows go on, which run `u` takes back, and which account the
+    /// events announcing the work say it happened in (ADR 0005 Q11). A
+    /// single-account view yields exactly one unit and costs nothing; the
+    /// unified view is why the shape is a list (#811).
+    Bulk(Vec<BulkUnit>),
+}
+
+/// One account's share of a bulk aim.
+struct BulkUnit {
+    /// What to act on, within this account.
+    set: MessageSet,
+    /// Whose account it is. Read from the mailbox, or carried by a scope
+    /// that already knows it, because there is no row to read.
+    account: AccountId,
+    /// The folder those messages are in now, when they are all in one.
+    ///
+    /// `None` for a smart folder or the aggregate, whose rows are spread
+    /// across folders — a move out of one has to be grouped by source
+    /// before it can be enqueued (#52).
+    from: Option<MailboxId>,
 }
 
 /// What a verb did, once it had done it.
@@ -255,23 +272,29 @@ impl Actions {
                 })?;
                 self.relocate(target, Destination::Mailbox(to), UndoKind::Move)?
             }
-            Command::Flag { target, flagged } => {
-                vec![self.set_flag(target, Flag::Flagged, *flagged)?]
-            }
+            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged)?,
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
-                vec![self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?]
+                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
+            }
+            Command::AddLabel { target, label, on } => {
+                // `None` is half a request, not a failure: ADR 0005's picker
+                // case, the same shape `Move { to: None }` has. The window
+                // opens the picker before this is reached.
+                let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
+                vec![self.set_label(target, label, *on)?]
             }
             Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE)?],
             Command::Unsnooze { target } => vec![self.unsnooze(target)?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
-            Command::MarkReadOnDwell { message } => vec![self.set_flag(
+            Command::MarkSent { draft } => vec![self.mark_sent(*draft)?],
+            Command::MarkReadOnDwell { message } => self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
                 Some(true),
-            )?],
+            )?,
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -295,6 +318,16 @@ impl Actions {
             .stack()
             .undo()
             .ok_or_else(|| CommandError::rejected("Nothing to undo"))?;
+        // A cross-account move is not a move, and its undo is not a replay.
+        // The undo stack records source rows; the saga table is the only
+        // place that knows the move spanned two accounts, so it is asked
+        // before the inverse commands are (#531, ADR 0005 Q9).
+        if let Some(cancelled) = self.cancel_cross_account_moves(entry.messages(), events)? {
+            events.emit(Event::UndoPerformed {
+                description: cancelled,
+            });
+            return Ok(());
+        }
         for command in entry.inverse() {
             self.act(command, events, Recording::Replay)?;
         }
@@ -302,6 +335,150 @@ impl Actions {
             description: entry.description(),
         });
         Ok(())
+    }
+
+    /// Withdraw the cross-account moves still open for `messages`, if any.
+    ///
+    /// `None` when none of them started a saga, which is every ordinary
+    /// undo: the caller then replays the inverse commands as before.
+    ///
+    /// **Only before the copy is confirmed.** Up to that point nothing has
+    /// reached either server — the source row is hidden and the target row is
+    /// provisional, both local — so cancelling is bookkeeping and can be
+    /// complete: withdraw both queue operations, delete the provisional copy,
+    /// show the source row again, and end the saga in `aborted`, the phase
+    /// whose whole meaning is *nothing was deleted*.
+    ///
+    /// Once the copy **is** confirmed the message is on two servers, and
+    /// taking it back means running the saga backwards from the confirmed
+    /// target UID — the inverse saga ADR 0005 Q9 describes, which does not
+    /// exist yet. So this refuses, out loud.
+    ///
+    /// It refuses rather than doing the local half, and that is the point:
+    /// un-hiding the source row while the target keeps its copy would leave
+    /// the same message on two servers with nothing recording that it should
+    /// not be, and this is the one operation in the product that can lose
+    /// mail. Before #531 the refusal was not there either — `u` replayed an
+    /// empty inverse and reported success, which is the same wrong answer
+    /// with better manners.
+    fn cancel_cross_account_moves(
+        &self,
+        messages: &[MessageId],
+        events: &EventSink,
+    ) -> Result<Option<String>, CommandError> {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+
+        let (mut connection, _permit) = self.connect()?;
+        // `done` included: a move that *finished* is exactly the one
+        // somebody is most likely to take back, and the forward path never
+        // had a reason to look at one (#531).
+        let sagas = CrossAccountMoveRepository::new(&connection)
+            .for_sources(
+                messages,
+                &[
+                    MovePhase::Copying,
+                    MovePhase::Unconfirmed,
+                    MovePhase::Confirmed,
+                    MovePhase::Done,
+                ],
+            )
+            .map_err(store_failure)?;
+        if sagas.is_empty() {
+            return Ok(None);
+        }
+
+        let mut undone = 0usize;
+        let mut skipped = 0usize;
+        let mut reloaded: BTreeSet<MailboxId> = BTreeSet::new();
+        let mut accounts: BTreeSet<postio_model::ids::AccountId> = BTreeSet::new();
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        {
+            let repository = MessageRepository::new(&transaction);
+            let queue = OperationQueueRepository::new(&transaction);
+            let sagas_repository = CrossAccountMoveRepository::new(&transaction);
+            for saga in &sagas {
+                match saga.phase {
+                    // Nothing has left this machine. Withdraw both queue
+                    // halves, drop the provisional copy, un-hide the source.
+                    MovePhase::Copying => {
+                        cancel_one(&repository, &queue, &sagas_repository, saga)?;
+                        undone += 1;
+                    }
+                    // ADR 0005 Q9's answer to an unprovable copy is stop and
+                    // ask. An inverse saga on an unproven copy would guess in
+                    // the one place the design says never to, so this one is
+                    // left exactly as it is -- and counted, so the sentence
+                    // at the end can say so.
+                    MovePhase::Unconfirmed => skipped += 1,
+                    // The copy is proven and the source has not been removed
+                    // yet. Abort the forward saga **first**: its pending
+                    // removal would otherwise delete the source copy after
+                    // the inverse had restored it.
+                    MovePhase::Confirmed => {
+                        withdraw_pending(&queue, saga.source_message)?;
+                        sagas_repository
+                            .transition(saga.id, MovePhase::Aborted)
+                            .map_err(store_failure)?;
+                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        undone += 1;
+                    }
+                    // The move is complete on both servers. Only the inverse
+                    // saga can undo it.
+                    MovePhase::Done => {
+                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        undone += 1;
+                    }
+                    MovePhase::Aborted => {}
+                }
+                for mailbox in [saga.source_mailbox, saga.target_mailbox]
+                    .into_iter()
+                    .flatten()
+                {
+                    reloaded.insert(mailbox);
+                }
+                for account in [saga.source_account, saga.target_account]
+                    .into_iter()
+                    .flatten()
+                {
+                    accounts.insert(account);
+                }
+            }
+        }
+
+        // Everything was unprovable: nothing changed, and the refusal is the
+        // whole answer. Rolled back rather than committed, so a partial undo
+        // and a refused one cannot be told apart by what is in the store.
+        if undone == 0 {
+            drop(transaction);
+            return Err(CommandError::rejected(
+                "That move reached the other account but Postio could not confirm it,                  so taking it back would be a guess. Nothing was changed.",
+            ));
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        // Both mailboxes changed: one got a row back, the other lost one.
+        for account in accounts {
+            for mailbox in &reloaded {
+                events.emit(Event::MessageListChanged {
+                    account,
+                    mailbox: *mailbox,
+                });
+            }
+        }
+
+        let plural = if undone == 1 { "message" } else { "messages" };
+        // One sentence whatever the phase (ADR 0005 Q9): the user asked for
+        // their mail back and does not know there are two servers. The
+        // skipped count is the exception, because that is mail they still do
+        // not have back and must not believe they do.
+        Ok(Some(match skipped {
+            0 => format!("Moved {undone} {plural} back"),
+            skipped => format!(
+                "Moved {undone} {plural} back; {skipped} could not be confirmed and \
+                 were left where they are"
+            ),
+        }))
     }
 
     // ── The two shapes every verb reduces to ─────────────────────────────
@@ -359,16 +536,38 @@ impl Actions {
                     _ => Ok(units),
                 }
             }
-            // A bulk action is already one account's: the predicate names a
-            // mailbox, and a mailbox belongs to one account.
-            Aim::Bulk { set, account, from } => Ok(vec![self.relocate_set(
-                &mut connection,
-                set,
-                account,
-                from,
-                to,
-                kind,
-            )?]),
+            // One unit per account, for the same reason the rows path
+            // groups: `to` names a *role*, and the folder it resolves to is a
+            // different one in each account.
+            Aim::Bulk(units) => {
+                // Same pre-flight as the rows path, and for the same reason:
+                // each unit commits its own transaction, so an account with
+                // no Archive has to stop the action while stopping it is
+                // still free.
+                for unit in &units {
+                    mailbox_for(&connection, unit.account, to)?;
+                }
+                let mut applied = Vec::with_capacity(units.len());
+                let mut nothing_to_do = None;
+                for unit in units {
+                    match self.relocate_set(
+                        &mut connection,
+                        unit.set,
+                        unit.account,
+                        unit.from,
+                        to,
+                        kind,
+                    ) {
+                        Ok(one) => applied.push(one),
+                        Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
+                        Err(error) => return Err(error),
+                    }
+                }
+                match (applied.is_empty(), nothing_to_do) {
+                    (true, Some(reason)) => Err(CommandError::Rejected(reason)),
+                    _ => Ok(applied),
+                }
+            }
         }
     }
 
@@ -535,37 +734,24 @@ impl Actions {
         }
 
         let at = Utc::now();
+        // The rows and their queue rows are `postio-storage`'s half now
+        // (ADR 0028), so that the rules pass writes them the same way a
+        // keystroke does. This side opens the transaction and commits it;
+        // the sync pass hands over the one it is already inside, which is
+        // what ADR 0008 Q3 requires and why the verb takes a borrow.
         let transaction = connection.transaction().map_err(store_failure)?;
-        {
-            let messages = MessageRepository::new(&transaction);
-            let queue = OperationQueueRepository::new(&transaction);
-            for (source, ids) in &by_source {
-                let operation = match kind {
-                    UndoKind::Delete => Operation::Delete {
-                        from: *source,
-                        trash: destination,
-                    },
-                    _ => Operation::Move {
-                        from: *source,
-                        to: destination,
-                    },
-                };
-                // The local write and its queue row in one transaction: a
-                // queue row without its write tells the server about
-                // something the user never saw, and a write without its row
-                // silently never reaches the server. The queue row comes
-                // FIRST — enqueue snapshots the rows' server coordinates,
-                // and the move nulls them (#289).
-                //
-                // One statement per source mailbox rather than one per
-                // message: a multi-select spanning a handful of folders is a
-                // handful of `enqueue_many` calls, not one `enqueue` per row.
-                queue
-                    .enqueue_many(account, ids, &operation, at)
-                    .map_err(store_failure)?;
-                messages.move_to(ids, destination).map_err(store_failure)?;
-            }
-        }
+        postio_storage::actions::relocate(
+            &transaction,
+            account,
+            &by_source,
+            destination,
+            match kind {
+                UndoKind::Delete => postio_storage::actions::Relocation::Trash,
+                _ => postio_storage::actions::Relocation::Move,
+            },
+            at,
+        )
+        .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
         let removed: Vec<(MailboxId, Vec<MessageId>)> = by_source.into_iter().collect();
@@ -633,8 +819,14 @@ impl Actions {
                 copy.account_id = target.account_id;
                 copy.mailbox_id = target.id;
                 copy.thread_id = None;
-                copy.server.uid = None;
-                copy.server.uid_validity = None;
+                // All of it, not the fields somebody remembered. A row no
+                // server has seen has no server identity, and
+                // `ServerIdentifiers::default()` says that in one place --
+                // where clearing them field by field said it in two of four,
+                // leaving the copy claiming the `remote_id` and `mod_seq`
+                // account A's server minted (#940). A `MODSEQ` in particular
+                // means nothing outside the mailbox that issued it.
+                copy.server = postio_model::ServerIdentifiers::default();
                 let copy_id = messages.create(&mut copy).map_err(store_failure)?;
                 if let Some(body) = messages.body(row.id).map_err(store_failure)? {
                     messages
@@ -723,7 +915,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, target)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to snooze"));
             }
         };
@@ -765,7 +957,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, target)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to unsnooze"));
             }
         };
@@ -796,6 +988,129 @@ impl Actions {
         })
     }
 
+    /// Put a label on the selection, or take it off (#780).
+    ///
+    /// `Flag`'s shape, deliberately: a label is *stored* as a row in
+    /// `message_labels` and *travels* as an IMAP keyword, so this writes both
+    /// — the join the list and reader render from, and the flag the queue
+    /// carries to the server. Writing only the join would show a label that
+    /// no other client ever sees; writing only the keyword would leave the
+    /// label with no name or colour to draw.
+    ///
+    /// `want` of `None` toggles, exactly as `Flag` does.
+    fn set_label(
+        &self,
+        target: &MessageTarget,
+        label: LabelId,
+        want: Option<bool>,
+    ) -> Result<Applied, CommandError> {
+        let (mut connection, _permit) = self.connect()?;
+        let rows = match self.aim(&connection, target)? {
+            Aim::Rows(rows) => rows,
+            // A whole mailbox at once would need the counted, three-statement
+            // shape `set_flag_set` has, and there is no verb that asks for it
+            // yet: `L` labels a selection.
+            Aim::Bulk { .. } => {
+                return Err(CommandError::rejected(
+                    "Labelling a whole mailbox at once is not supported yet",
+                ));
+            }
+        };
+        let account = rows[0].account_id;
+
+        let name = {
+            let repository = LabelRepository::new(&connection);
+            repository
+                .get(label)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That label no longer exists"))?
+                .name
+        };
+        let keyword = Flag::Keyword(name);
+
+        let carried: Vec<bool> = {
+            let repository = LabelRepository::new(&connection);
+            rows.iter()
+                .map(|message| {
+                    repository
+                        .for_message(message.id)
+                        .map(|labels| labels.contains(&label))
+                        .map_err(store_failure)
+                })
+                .collect::<Result<_, _>>()?
+        };
+        let wanted = want.unwrap_or_else(|| !carried.iter().all(|has| *has));
+
+        let touched: Vec<&Message> = rows
+            .iter()
+            .zip(&carried)
+            .filter(|(_, has)| **has != wanted)
+            .map(|(message, _)| message)
+            .collect();
+        if touched.is_empty() {
+            return Err(CommandError::rejected("Already set"));
+        }
+
+        let one: FlagSet = std::iter::once(keyword.clone()).collect();
+        let at = Utc::now();
+        let transaction = connection.transaction().map_err(store_failure)?;
+        {
+            let labels = LabelRepository::new(&transaction);
+            let messages = MessageRepository::new(&transaction);
+            let queue = OperationQueueRepository::new(&transaction);
+            for message in &touched {
+                if wanted {
+                    labels.attach(message.id, label).map_err(store_failure)?;
+                } else {
+                    labels.detach(message.id, label).map_err(store_failure)?;
+                }
+                let mut flags = message.flags.clone();
+                if wanted {
+                    flags.insert(keyword.clone());
+                } else {
+                    flags.remove(&keyword);
+                }
+                messages
+                    .set_flags(message.id, &flags, FlagSource::Local)
+                    .map_err(store_failure)?;
+                let operation = if wanted {
+                    Operation::SetFlags { flags: one.clone() }
+                } else {
+                    Operation::ClearFlags { flags: one.clone() }
+                };
+                queue
+                    .enqueue(
+                        account,
+                        OperationTarget::Message(message.id),
+                        &operation,
+                        at,
+                    )
+                    .map_err(store_failure)?;
+            }
+        }
+        transaction.commit().map_err(store_failure)?;
+
+        let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
+        // Every touched row held the opposite value, so one command takes all
+        // of them back — the same argument `set_flag_rows` makes.
+        let inverse = Command::AddLabel {
+            target: MessageTarget::Messages(changed.clone()),
+            label: Some(label),
+            on: Some(!wanted),
+        };
+        Ok(Applied {
+            account,
+            kind: UndoKind::Label,
+            count: changed.len(),
+            messages: changed.clone(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed,
+            inverse: vec![inverse],
+        })
+    }
+
     /// Set or clear one flag across the target.
     ///
     /// `want` of `None` toggles, and a toggle over more than one row means
@@ -803,19 +1118,81 @@ impl Actions {
     /// them all, otherwise it goes onto them all. The alternative — flipping
     /// each row independently — turns one keystroke over a mixed selection
     /// into a result nobody can predict without reading every row first.
+    ///
+    /// **Across accounts that is still one decision.** A unified selection
+    /// arrives as one bulk unit per account, and deciding the toggle inside
+    /// each of them would let a single keystroke flag one account while
+    /// unflagging another — the unpredictable result the rule above exists to
+    /// prevent, one level up (#811).
     fn set_flag(
         &self,
         target: &MessageTarget,
         flag: Flag,
         want: Option<bool>,
-    ) -> Result<Applied, CommandError> {
+    ) -> Result<Vec<Applied>, CommandError> {
         let (mut connection, _permit) = self.connect()?;
         match self.aim(&connection, target)? {
-            Aim::Rows(rows) => self.set_flag_rows(&mut connection, rows, flag, want),
-            Aim::Bulk { set, account, from } => {
-                self.set_flag_set(&mut connection, set, account, from, flag, want)
+            Aim::Rows(rows) => self
+                .set_flag_rows(&mut connection, rows, flag, want)
+                .map(|one| vec![one]),
+            Aim::Bulk(units) => {
+                let wanted = match want {
+                    Some(wanted) => wanted,
+                    None => self.agreeing_on(&connection, &units, &flag)?,
+                };
+                let mut applied = Vec::with_capacity(units.len());
+                let mut nothing_to_do = None;
+                for unit in units {
+                    match self.set_flag_set(
+                        &mut connection,
+                        unit.set,
+                        unit.account,
+                        unit.from,
+                        flag.clone(),
+                        Some(wanted),
+                    ) {
+                        Ok(one) => applied.push(one),
+                        // This account already agreed. That is not a failure
+                        // for the accounts that did not — but if none of them
+                        // had anything to do, the user still deserves the
+                        // sentence.
+                        Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
+                        Err(error) => return Err(error),
+                    }
+                }
+                match (applied.is_empty(), nothing_to_do) {
+                    (true, Some(reason)) => Err(CommandError::Rejected(reason)),
+                    _ => Ok(applied),
+                }
             }
         }
+    }
+
+    /// Which way a toggle over `units` goes: on, unless they all carry it.
+    ///
+    /// One `count(*)` over an index per unit, never a read — the same trick
+    /// [`set_flag_set`] uses within one account, asked across the whole
+    /// selection so the answer is one answer.
+    ///
+    /// [`set_flag_set`]: Actions::set_flag_set
+    fn agreeing_on(
+        &self,
+        connection: &PooledConnection,
+        units: &[BulkUnit],
+        flag: &Flag,
+    ) -> Result<bool, CommandError> {
+        let column = ColumnFlag::of(flag)
+            .ok_or_else(|| CommandError::rejected("That flag does not work on a whole mailbox"))?;
+        let repository = MessageRepository::new(connection);
+        for unit in units {
+            let disagreeing = repository
+                .count_set(&unit.set.clone().with_flag(column, false))
+                .map_err(store_failure)?;
+            if disagreeing > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Set or clear one flag across a whole mailbox, without naming a row.
@@ -965,40 +1342,30 @@ impl Actions {
             return Err(CommandError::rejected("Already set"));
         }
 
-        let one: FlagSet = std::iter::once(flag.clone()).collect();
         let at = Utc::now();
+        // The rows, their queue entries and the thread recompute are
+        // `postio-storage`'s half now (ADR 0028); the siblings it answers are
+        // what the repaint below widens to. This side owns the transaction,
+        // the rules pass hands over the one it is already inside.
         let transaction = connection.transaction().map_err(store_failure)?;
-        {
-            let messages = MessageRepository::new(&transaction);
-            let queue = OperationQueueRepository::new(&transaction);
-            for message in &touched {
-                let mut flags = message.flags.clone();
-                if wanted {
-                    flags.insert(flag.clone());
-                } else {
-                    flags.remove(&flag);
-                }
-                messages
-                    .set_flags(message.id, &flags, FlagSource::Local)
-                    .map_err(store_failure)?;
-                let operation = if wanted {
-                    Operation::SetFlags { flags: one.clone() }
-                } else {
-                    Operation::ClearFlags { flags: one.clone() }
-                };
-                queue
-                    .enqueue(
-                        account,
-                        OperationTarget::Message(message.id),
-                        &operation,
-                        at,
-                    )
-                    .map_err(store_failure)?;
-            }
-        }
+        let siblings =
+            postio_storage::actions::set_flag(&transaction, account, &touched, &flag, wanted, at)
+                .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
+        // What repaints is wider than what changed: the list's row for a
+        // conversation is its representative, and `pages_holding` resolves
+        // an announcement against *row* ids — so a non-representative
+        // member marked read refetched no page and the row went on drawing
+        // unread (#754). Naming the siblings is what makes the row
+        // findable. The inverse and the queue stay exactly as wide as the
+        // touch: repainting is not something `u` takes back, and the server
+        // must not hear about flags nobody changed.
+        let mut repaint = changed.clone();
+        repaint.extend(siblings);
+        repaint.sort_unstable();
+        repaint.dedup();
         // Every touched row held the opposite value — that is what "touched"
         // means here — so one command takes all of them back.
         let inverse = match flag {
@@ -1015,11 +1382,11 @@ impl Actions {
             account,
             kind: kind_for(&flag, wanted),
             count: changed.len(),
-            messages: changed.clone(),
+            messages: changed,
             removed: Vec::new(),
             arrived: None,
             reloaded: Vec::new(),
-            changed,
+            changed: repaint,
             inverse: vec![inverse],
         })
     }
@@ -1118,7 +1485,7 @@ impl Actions {
             .state
             .read(|app| app.resolve(target))
             .ok_or_else(|| CommandError::rejected("Nothing selected"))?;
-        let (set, account, from) = match resolved {
+        let units = match resolved {
             Resolved::Messages(ids) => return self.rows(connection, ids).map(Aim::Rows),
             Resolved::Thread(thread) => {
                 let ids = thread_messages(connection, thread)?;
@@ -1135,27 +1502,55 @@ impl Actions {
                 return self.rows(connection, ids).map(Aim::Rows);
             }
             Resolved::Everything { scope, except } => match scope {
-                ViewScope::Mailbox(mailbox) => (
-                    MessageSet::InMailbox { mailbox, except },
+                ViewScope::Mailbox(mailbox) => vec![BulkUnit {
+                    set: MessageSet::InMailbox { mailbox, except },
                     // One row read, and it is a folder rather than a message:
                     // the account is needed to find the Archive, and there is
                     // no message to ask.
-                    account_of(connection, mailbox)?,
-                    Some(mailbox),
-                ),
+                    account: account_of(connection, mailbox)?,
+                    from: Some(mailbox),
+                }],
                 // A smart folder carries its own account, so there is no
                 // folder to read one off — and no one folder its rows are in.
-                ViewScope::Flagged(account) => {
-                    (MessageSet::Flagged { account, except }, account, None)
-                }
+                ViewScope::Flagged(account) => vec![BulkUnit {
+                    set: MessageSet::Flagged { account, except },
+                    account,
+                    from: None,
+                }],
+                // The aggregate, split into one predicate per account it was
+                // scoped to. The accounts come off the scope and are not
+                // looked up again: they are what the view could show when the
+                // gesture was made, and an account that has reconnected since
+                // was not part of the selection the user was shown (#811).
+                ViewScope::Unified { accounts } => accounts
+                    .into_iter()
+                    .map(|account| BulkUnit {
+                        set: MessageSet::InAccounts {
+                            accounts: vec![account],
+                            except: except.clone(),
+                        },
+                        account,
+                        from: None,
+                    })
+                    .collect(),
             },
             Resolved::Batch {
                 range,
                 account,
                 from,
-            } => (MessageSet::Queued(range), account, from),
+            } => vec![BulkUnit {
+                set: MessageSet::Queued(range),
+                account,
+                from,
+            }],
         };
-        Ok(Aim::Bulk { set, account, from })
+        // An aggregate that could reach no account at all resolves to no
+        // units, and a verb that quietly did nothing would be exactly the
+        // silence this issue is about.
+        if units.is_empty() {
+            return Err(CommandError::rejected("Nothing selected"));
+        }
+        Ok(Aim::Bulk(units))
     }
 
     /// The thread `A` means: the one the focused message belongs to.
@@ -1167,7 +1562,7 @@ impl Actions {
         let (connection, _permit) = self.connect()?;
         let rows = match self.aim(&connection, &MessageTarget::Selection)? {
             Aim::Rows(rows) => rows,
-            Aim::Bulk { .. } => {
+            Aim::Bulk(_) => {
                 return Err(CommandError::rejected(
                     "Pick a message, and `A` archives its thread",
                 ));
@@ -1176,6 +1571,83 @@ impl Actions {
         rows[0]
             .thread_id
             .ok_or_else(|| CommandError::rejected("That message is not in a thread"))
+    }
+
+    /// Settle a draft whose send could not be confirmed: it did arrive.
+    ///
+    /// ADR 0021 Decision 3, #674. Postio resolves most of these by itself --
+    /// the next sync of Sent finding the reserved `Message-ID` -- but where
+    /// the server files no copy the question stands, and the only person who
+    /// can answer it is the one who asked the recipient. Without this they
+    /// have two exits and both are wrong: discard throws the message away,
+    /// and sending again duplicates it.
+    ///
+    /// `None` means the draft the list is on, resolved through the message
+    /// its row carries, so the palette entry works where a draft is visible.
+    fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect()?;
+        let drafts = DraftRepository::new(&connection);
+
+        let draft = match draft {
+            Some(id) => drafts
+                .get(id)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That draft is no longer here"))?,
+            None => {
+                let rows = match self.aim(&connection, &MessageTarget::Selection)? {
+                    Aim::Rows(rows) => rows,
+                    Aim::Bulk { .. } => {
+                        return Err(CommandError::rejected("Pick the message this is about"));
+                    }
+                };
+                drafts
+                    .by_message(rows[0].id)
+                    .map_err(store_failure)?
+                    .ok_or_else(|| {
+                        CommandError::rejected("That row is not a draft Postio is unsure about")
+                    })?
+            }
+        };
+
+        // Only the state this exists for. Saying "it arrived" about a draft
+        // still being edited, or one already sent, is not a correction --
+        // it is a way to lose the draft, since `Sent` is what stops it being
+        // offered for editing.
+        if draft.state != DraftState::Unconfirmed {
+            return Err(CommandError::rejected(
+                "Only a send Postio could not confirm can be marked as sent",
+            ));
+        }
+
+        drafts
+            .set_state(draft.id, DraftState::Sent)
+            .map_err(store_failure)?;
+        Ok(Applied {
+            account: draft.account_id,
+            kind: UndoKind::MarkedSent,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            // No inverse, and #674 asked for one -- worth saying why.
+            //
+            // An inverse is a `Command`, every `Command` has a `CommandId`,
+            // and every `CommandId` needs a registry entry with a keyboard
+            // binding (PRODUCT.md §8, asserted by `command_registry.rs`). A
+            // "mark unconfirmed again" verb would be a key in the reference
+            // and a row in the palette for something no user ever reaches
+            // for -- a second command invented to satisfy the shape of the
+            // first.
+            //
+            // And undo is the wrong instrument anyway: this settles a claim
+            // about the world rather than changing the world. If the answer
+            // was wrong, the honest correction is to send the message again,
+            // which is a real act with a real effect, not to un-know
+            // something.
+            inverse: Vec::new(),
+        })
     }
 
     /// A connection to write a verb through, and the right to write it ahead
@@ -1324,8 +1796,151 @@ pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
     })
 }
 
+/// Withdraw every queue operation still pending for `message`.
+///
+/// Deleting rather than letting them run and be skipped: an operation left
+/// in the queue is one that reaches a server, and the whole point of undoing
+/// at `confirmed` is that the forward removal must never run.
+fn withdraw_pending(
+    queue: &OperationQueueRepository<'_>,
+    message: Option<MessageId>,
+) -> Result<(), CommandError> {
+    let Some(message) = message else {
+        return Ok(());
+    };
+    while let Some(operation) = queue
+        .pending_for(postio_model::OperationTarget::Message(message))
+        .map_err(store_failure)?
+    {
+        queue.delete(operation.id).map_err(store_failure)?;
+    }
+    Ok(())
+}
+
+/// Undo a saga nothing has left the machine for: pure bookkeeping.
+fn cancel_one(
+    messages: &MessageRepository<'_>,
+    queue: &OperationQueueRepository<'_>,
+    sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
+    saga: &postio_storage::repository::CrossAccountMove,
+) -> Result<(), CommandError> {
+    // The queue rows first, so a crash between here and the end cannot leave
+    // an operation pointing at a row that is gone.
+    withdraw_pending(queue, saga.source_message)?;
+    withdraw_pending(queue, saga.target_message)?;
+    if let Some(copy) = saga.target_message {
+        messages.delete(&[copy]).map_err(store_failure)?;
+    }
+    if let Some(source) = saga.source_message {
+        messages
+            .set_deleted_locally(&[source], false)
+            .map_err(store_failure)?;
+    }
+    sagas
+        .transition(saga.id, postio_storage::repository::MovePhase::Aborted)
+        .map_err(store_failure)?;
+    Ok(())
+}
+
+/// Start the inverse of a saga whose copy is proven: the same machine, with
+/// source and target exchanged (ADR 0026, #531).
+///
+/// The local half is immediate and is all the user sees — the message is
+/// back where it came from and gone from where it went, before either server
+/// has heard anything. The two queue halves make the servers agree, in the
+/// same confirm-before-delete order the forward saga walks, so the one
+/// thing that cannot happen is the copy being deleted before the restore is
+/// proven.
+///
+/// **The original row is restored rather than a new one created.** It is
+/// still there, hidden, which is what `set_deleted_locally` means; and phase
+/// 1 is idempotent by Message-ID, so when the source copy is still on the
+/// server (the `confirmed` case) the inverse's append finds it and confirms
+/// without making a second.
+fn invert_one(
+    messages: &MessageRepository<'_>,
+    queue: &OperationQueueRepository<'_>,
+    sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
+    saga: &postio_storage::repository::CrossAccountMove,
+    at: chrono::DateTime<Utc>,
+) -> Result<(), CommandError> {
+    let (Some(copy), Some(original)) = (saga.target_message, saga.source_message) else {
+        // A saga that has lost either end cannot be inverted: there is
+        // nothing to remove, or nowhere to put it back. Left alone rather
+        // than guessed at.
+        return Ok(());
+    };
+    let (Some(from_account), Some(from_mailbox)) = (saga.target_account, saga.target_mailbox)
+    else {
+        return Ok(());
+    };
+    let (Some(to_account), Some(to_mailbox)) = (saga.source_account, saga.source_mailbox) else {
+        return Ok(());
+    };
+
+    let row = messages
+        .get(copy)
+        .map_err(store_failure)?
+        .ok_or_else(|| CommandError::rejected("That message is no longer in the store"))?;
+
+    let inverse = sagas
+        .create(&postio_storage::repository::NewCrossAccountMove {
+            source_message: copy,
+            source_account: from_account,
+            source_mailbox: from_mailbox,
+            target_account: to_account,
+            target_mailbox: to_mailbox,
+            // The row that is coming back, which already exists and is
+            // merely hidden.
+            target_message: Some(original),
+            raw_blob_id: row
+                .raw_blob_id
+                .as_ref()
+                .map(|blob| blob.as_str().to_owned()),
+            rfc_message_id: row.rfc_message_id.as_ref().map(|id| id.as_str().to_owned()),
+        })
+        .map_err(store_failure)?;
+
+    queue
+        .enqueue(
+            to_account,
+            postio_model::OperationTarget::Message(original),
+            &Operation::CrossAccountCopy { saga: inverse },
+            at,
+        )
+        .map_err(store_failure)?;
+    // Enqueued while the copy still carries the identity phase 2 wrote onto
+    // it, which is what `source_remote_id` snapshots — the ordering #289
+    // exists to enforce, and the reason the removal below can name account
+    // B's own coordinate rather than account A's.
+    queue
+        .enqueue(
+            from_account,
+            postio_model::OperationTarget::Message(copy),
+            &Operation::CrossAccountRemove { saga: inverse },
+            at,
+        )
+        .map_err(store_failure)?;
+
+    messages
+        .set_deleted_locally(&[original], false)
+        .map_err(store_failure)?;
+    messages
+        .set_deleted_locally(&[copy], true)
+        .map_err(store_failure)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    /// The phases a saga can still be walked out of — what the tests below
+    /// mean when they ask for "the" saga mid-flight.
+    const OPEN_PHASES: &[postio_storage::repository::MovePhase] = &[
+        postio_storage::repository::MovePhase::Copying,
+        postio_storage::repository::MovePhase::Unconfirmed,
+        postio_storage::repository::MovePhase::Confirmed,
+    ];
+
     use super::*;
 
     use chrono::Utc;
@@ -1354,6 +1969,13 @@ mod tests {
         /// Where mirroring the window's own state goes: nowhere. See
         /// `commands::mirror`.
         quiet: EventSink,
+    }
+
+    /// A second account, for the tests that are about which one a row is in.
+    struct Elsewhere {
+        account: Account,
+        inbox: MailboxId,
+        archive: MailboxId,
     }
 
     fn world() -> World {
@@ -1413,6 +2035,57 @@ mod tests {
                 .update(&self.quiet, |app: &mut AppState| app.select_all());
         }
 
+        /// A second account with its own INBOX and Archive.
+        ///
+        /// The unified view's whole subject is which account a row belongs
+        /// to, so these tests need two — and `test_support::account` builds
+        /// every one of them at the same address, which the accounts table
+        /// will not have twice.
+        fn second_account(&self) -> Elsewhere {
+            let connection = self.database.connection().expect("a connection");
+            let mut account = Account::new(
+                "Away",
+                postio_model::EmailAddress::new(Some("Away User"), "away@example.com"),
+            );
+            account.incoming.host = "imap.example.com".to_owned();
+            account.outgoing.host = "smtp.example.com".to_owned();
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .expect("a second account");
+            let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+            let archive = test_support::mailbox(&connection, &account, "Archive").id;
+            Elsewhere {
+                account,
+                inbox,
+                archive,
+            }
+        }
+
+        /// A message in another account's `mailbox`.
+        fn message_for(&self, account: &Account, mailbox: MailboxId, flags: &[Flag]) -> MessageId {
+            let connection = self.database.connection().expect("a connection");
+            let mut message = Message::new(account.id, mailbox, Utc::now());
+            for flag in flags {
+                message.flags.insert(flag.clone());
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message")
+        }
+
+        /// What `Ctrl+A` mirrors in the unified view: the aggregate open over
+        /// exactly the accounts it could show, and the predicate over that.
+        fn everything_unified(&self, accounts: &[AccountId]) {
+            let accounts = accounts.to_vec();
+            self.state.update(&self.quiet, |app: &mut AppState| {
+                app.open_view(ViewScope::Unified {
+                    accounts: accounts.clone(),
+                })
+            });
+            self.state
+                .update(&self.quiet, |app: &mut AppState| app.select_all());
+        }
+
         /// What `Ctrl+A` mirrors in a smart folder: Flagged open, and the
         /// predicate over it. No mailbox, because there is not one.
         fn everything_flagged(&self) {
@@ -1464,6 +2137,22 @@ mod tests {
                 .expect("a read")
                 .expect("the message is still there")
                 .mailbox_id
+        }
+
+        /// A label on this world's account.
+        fn label(&self, name: &str) -> postio_model::LabelId {
+            let connection = self.database.connection().expect("a connection");
+            let mut label = postio_model::Label::new(self.account.id, name);
+            postio_storage::repository::LabelRepository::new(&connection)
+                .create(&mut label)
+                .expect("create a label")
+        }
+
+        fn labels_of(&self, message: MessageId) -> Vec<postio_model::LabelId> {
+            let connection = self.database.connection().expect("a connection");
+            postio_storage::repository::LabelRepository::new(&connection)
+                .for_message(message)
+                .expect("a read")
         }
 
         fn flags_of(&self, message: MessageId) -> postio_model::FlagSet {
@@ -1939,6 +2628,77 @@ mod tests {
         assert!(matches!(error, CommandError::Rejected(_)));
     }
 
+    // ── Settling a send nobody could confirm (#674) ──────────────────────
+
+    #[test]
+    fn marking_an_unconfirmed_send_as_sent_settles_the_draft() {
+        // The exit that exists because the other two are wrong: discard
+        // throws away a message that may have arrived, and sending again
+        // duplicates one that did. A user who checked with the recipient
+        // needs to be able to say so.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            draft.to = vec![postio_model::EmailAddress::new(
+                None::<String>,
+                "grace@example.net",
+            )];
+            let id = drafts.save(&mut draft).expect("save");
+            drafts
+                .set_state(id, DraftState::Unconfirmed)
+                .expect("the state an interrupted submission leaves");
+            id
+        };
+
+        world
+            .run(Command::MarkSent { draft: Some(id) })
+            .expect("marking it sent applies");
+
+        let connection = world.database.connection().expect("a connection");
+        assert_eq!(
+            postio_storage::repository::DraftRepository::new(&connection)
+                .get(id)
+                .expect("read")
+                .expect("still there")
+                .state,
+            DraftState::Sent,
+            "the question is settled, so it stops being offered as unsent"
+        );
+    }
+
+    #[test]
+    fn only_an_unconfirmed_send_can_be_marked_as_sent() {
+        // Saying "it arrived" about a draft still being edited is not a
+        // correction, it is a way to lose it: `Sent` is what stops a draft
+        // being offered for editing.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            drafts.save(&mut draft).expect("save")
+        };
+
+        let error = world
+            .run(Command::MarkSent { draft: Some(id) })
+            .expect_err("an editable draft is not something to mark sent");
+
+        assert!(matches!(error, CommandError::Rejected(_)), "{error:?}");
+        assert_eq!(
+            postio_storage::repository::DraftRepository::new(
+                &world.database.connection().expect("a connection")
+            )
+            .get(id)
+            .expect("read")
+            .expect("still there")
+            .state,
+            DraftState::Editing,
+            "and it is left exactly as it was"
+        );
+    }
+
     // ── Marking read because you looked at it (#71) ──────────────────────
 
     #[test]
@@ -1962,6 +2722,95 @@ mod tests {
             ),
             "the server has to hear about it, or the message is unread again \
              on the next device"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_on_a_thread_member_recomputes_the_threads_unread_count() {
+        // `threads.unread_count` is denormalised, and the account-scoped
+        // page reads it straight off `threads` (#754, consequence 4) — so a
+        // local `\Seen` write that does not recompute it leaves a unified
+        // view drawing the conversation unread for ever. Folder pages
+        // recompute live and never noticed.
+        let world = world();
+        let first = world.message(world.inbox, &[]);
+        let second = world.message(world.inbox, &[]);
+        let third = world.message(world.inbox, &[]);
+        let thread = {
+            let connection = world.database.connection().expect("a connection");
+            let threads = ThreadRepository::new(&connection);
+            let mut thread = postio_model::Thread::new(world.account.id);
+            threads.create(&mut thread).expect("a thread");
+            for message in [first, second, third] {
+                threads.add_message(thread.id, message).expect("membership");
+            }
+            thread.id
+        };
+
+        world
+            .run(Command::MarkReadOnDwell { message: first })
+            .expect("the dwell mark applies");
+
+        let connection = world.database.connection().expect("a connection");
+        let record = ThreadRepository::new(&connection)
+            .get(thread)
+            .expect("a read")
+            .expect("the thread is still there");
+        assert_eq!(
+            record.unread_count, 2,
+            "the thread's own aggregate has to follow a local read, or the \
+             account-scoped page shows the conversation unread for ever"
+        );
+    }
+
+    #[test]
+    fn a_dwell_mark_announces_the_conversations_other_members_for_repaint() {
+        // The list's row for a conversation is its representative, and
+        // `pages_holding` resolves the event's message ids against *row*
+        // ids — so marking a non-representative member read refetched no
+        // page and the row went on drawing unread (#754, consequence 3).
+        // The event has to carry the siblings for the row to be findable.
+        let world = world();
+        let first = world.message(world.inbox, &[]);
+        let second = world.message(world.inbox, &[]);
+        let third = world.message(world.inbox, &[]);
+        {
+            let connection = world.database.connection().expect("a connection");
+            let threads = ThreadRepository::new(&connection);
+            let mut thread = postio_model::Thread::new(world.account.id);
+            threads.create(&mut thread).expect("a thread");
+            for message in [first, second, third] {
+                threads.add_message(thread.id, message).expect("membership");
+            }
+        }
+
+        world
+            .run(Command::MarkReadOnDwell { message: first })
+            .expect("the dwell mark applies");
+
+        let changed: Vec<MessageId> = world
+            .drained()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::MessagesChanged { messages, .. } => Some(messages),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        for member in [second, third] {
+            assert!(
+                changed.contains(&member),
+                "the repaint announcement has to name the whole conversation, \
+                 or the row standing for it cannot be found: {changed:?}"
+            );
+        }
+        // The *operation* stays one message wide: the siblings are a repaint
+        // concern, and a queue row per untouched member would tell the
+        // server about flags nobody changed.
+        assert_eq!(
+            world.queued().len(),
+            1,
+            "only the marked message goes to the server"
         );
     }
 
@@ -2128,6 +2977,116 @@ mod tests {
             6,
             "one queue row per message, written before the write emptied the \
              predicate they were selected by"
+        );
+    }
+
+    // ── The unified view (#811) ──────────────────────────────────────
+
+    #[test]
+    fn a_unified_archive_leaves_out_an_account_the_selection_was_not_scoped_to() {
+        // The account was away when `Ctrl+A` was pressed, so it is not in the
+        // scope -- and it is deliberately not consulted again here. Were
+        // reachability read at verb time instead, an account that reconnected
+        // in between would join a selection the user was never shown, which
+        // is the same defect pointing the other way (ADR 0005 Q10, #811).
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("Ctrl+A in the unified view then archive must not reject");
+
+        assert_eq!(world.mailbox_of(mine), world.archive);
+        assert_eq!(
+            world.mailbox_of(theirs),
+            away.inbox,
+            "an account the selection was never scoped to must not be archived"
+        );
+    }
+
+    #[test]
+    fn a_unified_archive_files_each_account_in_its_own_archive() {
+        // A bulk verb across accounts is not one action with one destination:
+        // "the Archive" is a different folder in each account, and a single
+        // `Applied` naming one account could not describe it either.
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id, away.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("an archive across both accounts");
+
+        assert_eq!(world.mailbox_of(mine), world.archive);
+        assert_eq!(
+            world.mailbox_of(theirs),
+            away.archive,
+            "each account's mail goes to that account's own Archive"
+        );
+    }
+
+    #[test]
+    fn a_unified_flag_write_only_touches_the_accounts_the_scope_names() {
+        let world = world();
+        let away = world.second_account();
+        let mine = world.message(world.inbox, &[]);
+        let theirs = world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id]);
+
+        world
+            .run(Command::Flag {
+                target: MessageTarget::Selection,
+                flagged: Some(true),
+            })
+            .expect("a bulk flag over the reachable accounts");
+
+        assert!(world.flags_of(mine).contains(&Flag::Flagged));
+        assert!(
+            !world.flags_of(theirs).contains(&Flag::Flagged),
+            "an account the selection was never scoped to must not be flagged"
+        );
+    }
+
+    #[test]
+    fn a_unified_bulk_action_announces_itself_once_per_account() {
+        // ADR 0005 Q11: every event announcing work names the account it
+        // happened in. One event for two accounts would have to name one of
+        // them, and the list showing the other would never repaint.
+        let world = world();
+        let away = world.second_account();
+        world.message(world.inbox, &[]);
+        world.message_for(&away.account, away.inbox, &[]);
+        world.everything_unified(&[world.account.id, away.account.id]);
+
+        world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
+            .expect("an archive across both accounts");
+
+        let accounts: Vec<AccountId> = world
+            .drained()
+            .into_iter()
+            .filter_map(|event| match event {
+                // A bulk unit reports a folder that changed wholesale rather
+                // than naming the rows that left it -- that read is the one
+                // the predicate exists to avoid.
+                Event::MessageListChanged { account, .. } => Some(account),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            accounts.contains(&world.account.id) && accounts.contains(&away.account.id),
+            "both accounts' lists have to hear about it: {accounts:?}"
         );
     }
 
@@ -2726,6 +3685,608 @@ mod tests {
         assert_eq!(copies, 1, "the provisional copy is already in the target");
     }
 
+    /// A world with a second account and its inbox, for the saga tests.
+    fn second_account(world: &World) -> (postio_model::ids::AccountId, MailboxId) {
+        let connection = world.database.connection().expect("a connection");
+        let mut account = postio_model::Account::new(
+            "Second",
+            postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
+        );
+        postio_storage::repository::AccountRepository::new(&connection)
+            .create(&mut account)
+            .expect("second account");
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").id;
+        (account.id, inbox)
+    }
+
+    /// #940: the provisional copy carries no server identity at all.
+    ///
+    /// It is a row account B's server has never seen, so every field naming
+    /// a server's opinion of it has to be empty. Clearing them one at a time
+    /// is what went wrong: `uid` and `uid_validity` were cleared and
+    /// `mod_seq` and `remote_id` were not, so the copy landed in account B
+    /// claiming the identity account A's server had minted.
+    ///
+    /// What that costs, in order of how quickly it bites: `is_known_to_server`
+    /// answers `true` for a message nothing on the target has heard of;
+    /// account B's reconciliation matches fetched mail by
+    /// `find_by_remote_id(mailbox, remote_id)` and this row answers to an id
+    /// from another server's UID space; and #531's inverse saga, driven from
+    /// this row, would send account A's UID to account B's server, where only
+    /// `identity::wire_uid`'s generation check stands between that and
+    /// expunging an unrelated message.
+    ///
+    /// Asserted on the row **as stored**, read back through the repository,
+    /// because that is the only place the bug is visible: the struct is
+    /// correct right up until `create` persists all four fields.
+    #[test]
+    fn the_provisional_copy_carries_no_server_identity() {
+        let world = world();
+        let (_second, second_inbox) = second_account(&world);
+
+        // A source message its own server knows thoroughly — all four
+        // fields, or the copy has nothing to wrongly inherit and the test
+        // cannot fail.
+        let source = {
+            let connection = world.database.connection().expect("a connection");
+            let mut message = Message::new(world.account.id, world.inbox, Utc::now());
+            message.server.uid = Some(4242.into());
+            message.server.uid_validity = Some(9.into());
+            message.server.mod_seq = Some(777.into());
+            message.server.remote_id = Some(postio_model::RemoteId::new("9:4242"));
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message the source server has seen")
+        };
+        world.looking_at(world.inbox, &[], Some(source));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![source]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+
+        // Read back through the repository, not from the struct `create` was
+        // handed: the struct is correct right up until `insert` persists all
+        // four fields, so anything asserted before the round trip cannot see
+        // this bug.
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let stored: Vec<Message> = messages
+            .page(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(second_inbox),
+                limit: 10,
+                after: None,
+            })
+            .expect("a read")
+            .into_iter()
+            .map(|row| {
+                messages
+                    .get(row.id)
+                    .expect("a read")
+                    .expect("the row the page just listed")
+            })
+            .collect();
+        let copy = stored
+            .first()
+            .expect("the provisional copy is in the target mailbox");
+
+        assert!(
+            !copy.server.is_known_to_server(),
+            "the target server has never seen this row and it says otherwise: \
+             uid {:?}, remote_id {:?}",
+            copy.server.uid,
+            copy.server.remote_id
+        );
+        assert_eq!(
+            copy.server,
+            postio_model::ServerIdentifiers::default(),
+            "a row no server has seen has no server identity -- and clearing \
+             the fields one at a time is exactly how two of the four were \
+             missed"
+        );
+
+        // The consequence, stated as itself. Account B's reconciliation
+        // matches fetched mail to existing rows on `(mailbox_id, remote_id)`,
+        // so a foreign id here is a row in B's mailbox answering to an id
+        // A's server minted.
+        let source_remote = messages
+            .get(source)
+            .expect("a read")
+            .expect("the source row")
+            .server
+            .remote_id
+            .expect("the source keeps its own identity");
+        assert!(
+            stored
+                .iter()
+                .all(|row| row.server.remote_id.as_ref() != Some(&source_remote)),
+            "a row in the target mailbox answers to {source_remote}, which is \
+             an id account A's server minted"
+        );
+    }
+
+    /// Drive `world`'s single saga to `phase`, the way the drainers would.
+    ///
+    /// The phase walk is `MovePhase::allows`', so this cannot reach a state
+    /// the servers could not have produced — and `confirm` is called with an
+    /// identity because that is what an append proves (ADR 0026).
+    fn advance_saga(
+        world: &World,
+        source: MessageId,
+        phase: postio_storage::repository::MovePhase,
+    ) {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let connection = world.database.connection().expect("a connection");
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        let id = sagas
+            .for_sources(&[source], OPEN_PHASES)
+            .expect("a read")
+            .first()
+            .expect("a saga")
+            .id;
+        let saga = sagas.get(id).expect("a read").expect("a saga");
+        let queue = OperationQueueRepository::new(&connection);
+
+        // Phase 1-2 ran, so the target account's copy operation is off its
+        // queue. Modelling that matters: a fixture that leaves it there is
+        // asserting against a queue no drainer could produce.
+        if let Some(copy) = saga.target_message {
+            while let Some(operation) = queue
+                .pending_for(postio_model::OperationTarget::Message(copy))
+                .expect("a read")
+            {
+                queue.delete(operation.id).expect("the copy operation ran");
+            }
+        }
+        sagas
+            .confirm(id, Some(&postio_model::RemoteId::new("77:9")))
+            .expect("the target server proved where it landed");
+
+        if phase == MovePhase::Done {
+            // And phase 3 ran too, which is what `done` means.
+            if let Some(source) = saga.source_message {
+                while let Some(operation) = queue
+                    .pending_for(postio_model::OperationTarget::Message(source))
+                    .expect("a read")
+                {
+                    queue.delete(operation.id).expect("the removal ran");
+                }
+            }
+            sagas
+                .transition(id, MovePhase::Done)
+                .expect("the source copy went");
+        }
+    }
+
+    /// The saga the world holds, whatever phase it is in.
+    fn only_saga(world: &World, source: MessageId) -> postio_storage::repository::CrossAccountMove {
+        use postio_storage::repository::MovePhase;
+        let connection = world.database.connection().expect("a connection");
+        let mut all = postio_storage::repository::CrossAccountMoveRepository::new(&connection)
+            .for_sources(
+                &[source],
+                &[
+                    MovePhase::Copying,
+                    MovePhase::Unconfirmed,
+                    MovePhase::Confirmed,
+                    MovePhase::Done,
+                    MovePhase::Aborted,
+                ],
+            )
+            .expect("a read");
+        assert_eq!(all.len(), 1, "the fixture makes exactly one saga");
+        all.remove(0)
+    }
+
+    /// #531: `u` after a completed cross-account move runs the saga backwards.
+    ///
+    /// Not a plain inverse `Move` — between two accounts there is no
+    /// server-side move, which is why the forward path is a saga in the first
+    /// place. The inverse is the same machine with source and target
+    /// exchanged: the copy in account B becomes the thing to remove, the
+    /// original row in account A becomes the thing to restore, and the same
+    /// confirm-before-delete walk applies. Nothing about that is visible to
+    /// the user, who asked for their message back.
+    ///
+    /// Local-first, like every other action: the row is back in the source
+    /// and gone from the target before either server has heard anything.
+    #[test]
+    fn undo_after_the_move_completed_starts_the_inverse_saga() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+        advance_saga(&world, message, MovePhase::Done);
+        let forward = only_saga(&world, message);
+        let copy = forward.target_message.expect("the provisional copy");
+
+        world
+            .run(Command::Undo)
+            .expect("undo starts the inverse saga");
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+
+        // ── what the user sees, immediately ─────────────────────────────
+        assert!(
+            !messages
+                .get(message)
+                .expect("read")
+                .expect("the source row")
+                .sync
+                .deleted_locally,
+            "the message is back in the account it came from, at once"
+        );
+        assert!(
+            messages
+                .get(copy)
+                .expect("read")
+                .expect("the copy is still a row until its server agrees")
+                .sync
+                .deleted_locally,
+            "and gone from the account it went to"
+        );
+
+        // ── and the saga that will make the servers agree ────────────────
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        let inverse = sagas
+            .for_sources(&[copy], OPEN_PHASES)
+            .expect("a read")
+            .into_iter()
+            .find(|saga| saga.id != forward.id)
+            .expect("undo started an inverse saga from the copy");
+
+        assert_eq!(
+            inverse.source_message,
+            Some(copy),
+            "the inverse removes the copy account B holds"
+        );
+        assert_eq!(
+            inverse.target_account,
+            Some(world.account.id),
+            "and restores it to the account the message came from"
+        );
+        assert_eq!(inverse.target_message, Some(message));
+        assert_eq!(inverse.phase, MovePhase::Copying);
+
+        // Both queue halves, on the right accounts: the copy back to A runs
+        // on A's queue, the removal from B on B's.
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let on_a: Vec<String> = queue
+            .pending(world.account.id, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        let on_b: Vec<String> = queue
+            .pending(second, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        assert_eq!(
+            on_a,
+            vec!["cross_account_copy"],
+            "account A is asked to take the message back"
+        );
+        assert_eq!(
+            on_b,
+            vec!["cross_account_remove"],
+            "account B is asked to give it up -- and only after A confirms"
+        );
+    }
+
+    /// #531, first half: nothing has reached either server yet, so undo is
+    /// local bookkeeping and can be complete.
+    ///
+    /// Before this, `u` popped the entry, replayed its empty inverse, and
+    /// reported success — the message stayed hidden, the saga stayed open,
+    /// and the toast said it had been undone. A silent lie is worse than the
+    /// refusal the issue thought was there.
+    #[test]
+    fn undo_of_a_move_that_has_not_reached_a_server_cancels_the_saga() {
+        let world = world();
+        let (second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+
+        world.run(Command::Undo).expect("undo cancels the saga");
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        let source_row = messages.get(message).expect("read").expect("the row");
+        assert!(
+            !source_row.sync.deleted_locally,
+            "the source row is visible again -- it never left"
+        );
+
+        let copies = messages
+            .count(&postio_storage::repository::ListQuery {
+                scope: postio_storage::repository::ListScope::Mailbox(second_inbox),
+                limit: 10,
+                after: None,
+            })
+            .expect("a count");
+        assert_eq!(copies, 0, "the provisional copy in the target is gone");
+
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        assert!(
+            queue
+                .pending(world.account.id, Utc::now())
+                .expect("queue")
+                .is_empty(),
+            "the remove never runs: it was withdrawn, not left to be skipped"
+        );
+        assert!(
+            queue.pending(second, Utc::now()).expect("queue").is_empty(),
+            "and neither does the copy"
+        );
+
+        let phase: String = connection
+            .query_row("SELECT phase FROM cross_account_moves", [], |row| {
+                row.get(0)
+            })
+            .expect("the saga row");
+        assert_eq!(
+            phase, "aborted",
+            "the saga ends in the phase that means nothing was deleted"
+        );
+    }
+
+    /// #531: undoing at `confirmed` must withdraw the forward removal first.
+    ///
+    /// This is the phase with a live hazard in it. The target has proven its
+    /// copy, so the message really is on both servers — but phase 3 has not
+    /// run, which means the source copy is *still on account A's server* and
+    /// a `CrossAccountRemove` is still sitting on A's queue waiting to
+    /// delete it.
+    ///
+    /// Start the inverse and leave that operation there, and the two race in
+    /// the worst possible order: the inverse restores the message to A, and
+    /// then A's own queue deletes it again — with the copy in B already
+    /// removed by the inverse's own phase 3. That is the one outcome the
+    /// whole saga design exists to prevent, reached by undoing.
+    ///
+    /// `Confirmed → Aborted` is already a legal transition, so aborting the
+    /// forward saga is enough to make the queued removal a no-op even if it
+    /// somehow survived; withdrawing it as well means it never reaches a
+    /// server at all.
+    #[test]
+    fn undo_at_confirmed_withdraws_the_removal_that_would_delete_the_restored_copy() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+        advance_saga(&world, message, MovePhase::Confirmed);
+        let forward = only_saga(&world, message);
+
+        // The hazard, before the undo: A's queue is holding the removal.
+        {
+            let connection = world.database.connection().expect("a connection");
+            let pending: Vec<String> =
+                postio_storage::repository::OperationQueueRepository::new(&connection)
+                    .pending(world.account.id, Utc::now())
+                    .expect("queue")
+                    .into_iter()
+                    .map(|row| row.operation.op_type().to_owned())
+                    .collect();
+            assert_eq!(
+                pending,
+                vec!["cross_account_remove"],
+                "the forward removal has to be pending, or this test cannot fail"
+            );
+        }
+
+        world.run(Command::Undo).expect("undo inverts the saga");
+
+        let connection = world.database.connection().expect("a connection");
+        let sagas = CrossAccountMoveRepository::new(&connection);
+        assert_eq!(
+            sagas
+                .get(forward.id)
+                .expect("a read")
+                .expect("the forward saga")
+                .phase,
+            MovePhase::Aborted,
+            "the forward saga has to stop, or its removal is still legal"
+        );
+
+        // And nothing on A's queue now points at the message that has just
+        // been restored to A.
+        let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
+        let on_a: Vec<String> = queue
+            .pending(world.account.id, Utc::now())
+            .expect("queue")
+            .into_iter()
+            .map(|row| row.operation.op_type().to_owned())
+            .collect();
+        assert_eq!(
+            on_a,
+            vec!["cross_account_copy"],
+            "account A's queue still holds the forward removal, which will \
+             delete the message the inverse just put back: {on_a:?}"
+        );
+        assert!(
+            !MessageRepository::new(&connection)
+                .get(message)
+                .expect("read")
+                .expect("the source row")
+                .sync
+                .deleted_locally,
+            "and the message is back in the account it came from"
+        );
+        let _ = second;
+    }
+
+    /// #531: one unprovable message must not pin the others.
+    ///
+    /// Twelve messages moved across accounts are twelve sagas, each with its
+    /// own phase, and a bulk undo meets whatever mixture the drainers have
+    /// produced. Refusing the whole undo because one of them cannot be
+    /// proven would hold eleven messages hostage to the twelfth; silently
+    /// undoing eleven and saying "done" would tell the user they have twelve
+    /// back when they have eleven.
+    ///
+    /// So it does what it can and names what it could not, in the spirit of
+    /// ADR 0005 Q10's rule that a view which cannot include an account says
+    /// so and stays usable. Nothing is half-applied per message: the skipped
+    /// one is untouched, exactly where it was.
+    #[test]
+    fn a_bulk_undo_inverts_what_it_can_and_names_what_it_skipped() {
+        use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
+        let world = world();
+        let (_second, second_inbox) = second_account(&world);
+        let first = world.message(world.inbox, &[]);
+        let second_message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[first, second_message], Some(first));
+
+        world
+            .run(Command::Move {
+                target: MessageTarget::Selection,
+                to: Some(second_inbox),
+            })
+            .expect("both moves start");
+
+        // One reaches the target and proves it; the other cannot be proven.
+        advance_saga(&world, first, MovePhase::Done);
+        {
+            let connection = world.database.connection().expect("a connection");
+            let sagas = CrossAccountMoveRepository::new(&connection);
+            let id = sagas
+                .for_sources(&[second_message], OPEN_PHASES)
+                .expect("a read")
+                .first()
+                .expect("the second saga")
+                .id;
+            sagas
+                .transition(id, MovePhase::Unconfirmed)
+                .expect("its append could not be proven");
+        }
+
+        world
+            .run(Command::Undo)
+            .expect("the undo proceeds rather than refusing outright");
+
+        let said = world
+            .drained()
+            .into_iter()
+            .find_map(|event| match event {
+                Event::UndoPerformed { description } => Some(description),
+                _ => None,
+            })
+            .expect("undo says what it did");
+        assert!(
+            said.contains('1') && said.to_lowercase().contains("could not be confirmed"),
+            "the sentence has to name the one it could not take back, or the \
+             user believes they have both: {said:?}"
+        );
+
+        let connection = world.database.connection().expect("a connection");
+        let messages = MessageRepository::new(&connection);
+        assert!(
+            !messages
+                .get(first)
+                .expect("read")
+                .expect("the first row")
+                .sync
+                .deleted_locally,
+            "the provable one came back"
+        );
+        assert!(
+            messages
+                .get(second_message)
+                .expect("read")
+                .expect("the second row")
+                .sync
+                .deleted_locally,
+            "and the unprovable one is untouched, exactly where it was"
+        );
+    }
+
+    /// #531 / ADR 0005 Q9: an append nobody could confirm is the one phase
+    /// undo still refuses, and it refuses **out loud**.
+    ///
+    /// Every other phase is now undoable — `copying` by bookkeeping,
+    /// `confirmed` and `done` by the inverse saga. This one is different in
+    /// kind rather than in difficulty: the append ran and nothing proved
+    /// where it landed, so an inverse saga would be removing a copy Postio
+    /// cannot name and restoring a message that may exist twice. The design
+    /// says stop and ask, and this is the asking.
+    #[test]
+    fn undo_of_an_unconfirmable_move_is_refused_not_faked() {
+        let world = world();
+        let (_second, second_inbox) = second_account(&world);
+        let message = world.message(world.inbox, &[]);
+        world.looking_at(world.inbox, &[], Some(message));
+        world
+            .run(Command::Move {
+                target: MessageTarget::Messages(vec![message]),
+                to: Some(second_inbox),
+            })
+            .expect("the move starts");
+
+        // Walk the saga to the one phase that cannot be walked back.
+        {
+            let connection = world.database.connection().expect("a connection");
+            let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&connection);
+            let id = sagas
+                .for_sources(&[message], OPEN_PHASES)
+                .expect("read")
+                .first()
+                .expect("a saga")
+                .id;
+            sagas
+                .transition(id, postio_storage::repository::MovePhase::Unconfirmed)
+                .expect("the append ran and could not be proven");
+        }
+
+        let outcome = world.run(Command::Undo);
+
+        assert!(
+            outcome.is_err(),
+            "an unprovable copy cannot be undone by guessing"
+        );
+        let connection = world.database.connection().expect("a connection");
+        let source_row = MessageRepository::new(&connection)
+            .get(message)
+            .expect("read")
+            .expect("the row");
+        assert!(
+            source_row.sync.deleted_locally,
+            "and a refused undo changes nothing"
+        );
+        let phase: String = connection
+            .query_row("SELECT phase FROM cross_account_moves", [], |row| {
+                row.get(0)
+            })
+            .expect("the saga row");
+        assert_eq!(phase, "unconfirmed", "least of all the saga");
+    }
+
     #[test]
     fn a_move_within_one_account_stays_a_single_move_operation() {
         // The cheap case must stay cheap (ADR 0005 Q9): nothing about the
@@ -2860,5 +4421,133 @@ mod tests {
                 "`{id}` is registered on the bus but `act` has no arm for it"
             );
         }
+    }
+    // ── Labels (#780) ────────────────────────────────────────────────────
+
+    #[test]
+    fn the_bus_answers_add_label() {
+        // The gap this test exists for: `AddLabel` has a handler *and* an
+        // arm, and was still unanswered, because `WIRED` is what subscribes
+        // it to the bus and it was not in the list. `command_wiring.rs`'s
+        // sweep did not catch that either -- the window intercepts
+        // `AddLabel { label: None }` to open the picker, which satisfies
+        // "handled locally", so only the *answered* form was adrift.
+        let world = world();
+        let bus = dispatcher(world.actions.clone());
+        assert!(
+            bus.wired().any(|id| id == CommandId::AddLabel),
+            "AddLabel is not on the bus, so a command carrying a label \
+             reaches nothing that writes"
+        );
+    }
+
+    #[test]
+    fn a_label_goes_on_the_selection_and_undo_takes_it_off() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        assert_eq!(world.labels_of(message), vec![work]);
+        // The wire form of a label is an IMAP keyword, so the flag the server
+        // will be told about is on the row too -- otherwise the next resync
+        // would disagree with what the user is looking at.
+        assert!(
+            world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the label is not on the message as a keyword: {:?}",
+            world.flags_of(message)
+        );
+
+        world.run(Command::Undo).expect("undo");
+        assert!(
+            world.labels_of(message).is_empty(),
+            "`u` left the label on, and the registry promises Recovery::Undo"
+        );
+        assert!(
+            !world
+                .flags_of(message)
+                .contains(&Flag::Keyword("Work".to_owned())),
+            "the keyword outlived the label it stands for"
+        );
+    }
+
+    #[test]
+    fn labelling_tells_the_server_and_undo_tells_it_the_other_thing() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let keyword: postio_model::FlagSet =
+            std::iter::once(Flag::Keyword("Work".to_owned())).collect();
+
+        world
+            .run(Command::AddLabel {
+                target: MessageTarget::Messages(vec![message]),
+                label: Some(work),
+                on: None,
+            })
+            .expect("label it");
+
+        let connection = world.database.connection().expect("a connection");
+        let queued = OperationQueueRepository::new(&connection)
+            .pending(world.account.id, Utc::now())
+            .expect("the queue");
+        assert_eq!(
+            queued
+                .iter()
+                .map(|row| row.operation.clone())
+                .collect::<Vec<_>>(),
+            vec![Operation::SetFlags {
+                flags: keyword.clone()
+            }],
+            "a label is a keyword on the wire, and the queue is how it gets there"
+        );
+    }
+
+    #[test]
+    fn a_label_already_on_the_message_is_not_applied_twice() {
+        let world = world();
+        let message = world.message(world.inbox, &[]);
+        let work = world.label("Work");
+        let on = |on| Command::AddLabel {
+            target: MessageTarget::Messages(vec![message]),
+            label: Some(work),
+            on: Some(on),
+        };
+
+        world.run(on(true)).expect("label it");
+        assert_eq!(
+            world.run(on(true)),
+            Err(CommandError::rejected("Already set")),
+            "a second `L` on a labelled message must not enqueue a second \
+             operation, or `u` would take back something nobody did"
+        );
+        assert_eq!(world.labels_of(message), vec![work]);
+    }
+
+    #[test]
+    fn a_label_with_no_label_asks_rather_than_failing() {
+        // `None` is half a request -- ADR 0005's picker case, the same shape
+        // `Move { to: None }` has. The window opens the picker before this is
+        // ever reached; what it must not do is look like an error nobody can
+        // act on.
+        let world = world();
+        world.message(world.inbox, &[]);
+        assert_eq!(
+            world.run(Command::AddLabel {
+                target: MessageTarget::Selection,
+                label: None,
+                on: None,
+            }),
+            Err(CommandError::rejected("Pick a label to add"))
+        );
     }
 }

@@ -27,6 +27,15 @@
 //! `BodyState::NotFetched`, which is exactly Cause A's condition — so the
 //! partial state here is the real one, not a simulated one.
 //!
+//! # Why it runs in the Flagged view
+//!
+//! Since #755, a folder row stands for a conversation and landing on it
+//! opens the conversation pane — `conversation_by_default.rs` is that test.
+//! What *this* file constrains is the single-message reader following the
+//! cursor, and a query view is where single-message rows genuinely live:
+//! `Row::is_thread()` is false there by construction. The fixture flags
+//! every message so the Flagged view holds them all.
+//!
 //! One test function, for the reason `wiring.rs` gives.
 
 #![allow(unsafe_code)]
@@ -34,6 +43,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -44,18 +54,6 @@ use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// `j`, through the keymap the application actually runs.
 fn press_j(window: &Window) {
@@ -68,7 +66,7 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -83,11 +81,45 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
         "need at least two rows to move between"
     );
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    // Every message but the newest flagged, before anything is wired: the
+    // Flagged view is where rows are genuinely single messages (see the
+    // module comment). The newest is left out because the folder view the
+    // window opens on has already reported it — its row *is* that message —
+    // and the cursor's dedup would then swallow the Flagged view's own
+    // first report, leaving the pane unfilled.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+    let wiring = Wiring::new(
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    );
 
     let window = Window::default();
     window.present();
@@ -95,15 +127,28 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
 
     // ── the same call `run` makes ────────────────────────────────────────
     let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let _ = &wired;
 
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() > 0),
-        "the list is empty, so there is no cursor to move"
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled"
     );
 
-    // ── an untouched window shows the row it selected ────────────────────
+    // ── an untouched list shows the row it selected ──────────────────────
     // The cursor is autoselected onto row 0 the moment the list has rows.
     // That is not somebody *choosing* a message, but the pane fills for it
     // all the same (#601): a window that opens with a row selected and
@@ -115,7 +160,7 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
     // opened. `dwell_wiring` is where that is asserted, over the real timer.
     assert!(
         settle_until(|| window.reading()),
-        "the window opened with a row under the cursor and an empty pane \
+        "the view opened with a row under the cursor and an empty pane \
          beside it"
     );
 

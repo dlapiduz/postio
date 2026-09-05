@@ -11,8 +11,8 @@
 
 use std::sync::OnceLock;
 
-use base64::Engine as _;
 use postio_body::quote;
+use postio_body::reader_view;
 use postio_body::sanitize::{self, RemoteImages};
 use postio_model::message::MessageBody;
 
@@ -172,11 +172,18 @@ pub fn scroll_markers() -> String {
 /// context those live on. `reader-tokens.css` is generated from the same
 /// design tokens as a literal `--r-*` palette (#296); `reader.css` is
 /// structure only, referencing those variables.
-pub fn wrap_document(content: &str, remote: RemoteImages) -> String {
-    let css = reader_css();
+pub fn wrap_document(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
+    let mut css = reader_css();
     let csp = content_security_policy(remote);
+    let root_class = match sheet {
+        Sheet::Theme => String::new(),
+        Sheet::Senders => {
+            css.push_str(&senders_sheet_css());
+            format!(" class=\"{SENDERS_SHEET_CLASS}\"")
+        }
+    };
     format!(
-        "<!DOCTYPE html>\n<html><head>\n\
+        "<!DOCTYPE html>\n<html{root_class}><head>\n\
          <meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\">\n\
          <style>{css}</style>\n\
@@ -184,95 +191,274 @@ pub fn wrap_document(content: &str, remote: RemoteImages) -> String {
     )
 }
 
+/// The rules that turn the sender's box into their own page.
+///
+/// Scoped to `.postio-body` and not to `:root`, which is the whole design:
+/// `body` keeps painting `var(--r-ground)` from the theme, so the chrome
+/// around the sheet stays dark and the sheet has an edge to be inset from.
+/// Custom properties inherit, so every rule inside the box — the link
+/// colour, the quote ground, the hairlines — resolves against the light
+/// palette without `reader.css` knowing this mode exists.
+///
+/// The values are read out of the generated palette rather than restated,
+/// the same rule and the same reason as [`reader_ground`]: #296 says a
+/// colour has one source, and a second copy is one that can drift.
+fn senders_sheet_css() -> String {
+    format!(
+        "\n.{SENDERS_SHEET_CLASS} .postio-body {{{}\n  background: var(--r-ground);\n  \
+         color: var(--r-ink);\n}}\n",
+        light_tokens()
+    )
+}
+
+/// The light half of the generated palette, as declarations.
+///
+/// A sibling of [`reader_ground`], split out of the same file the same way:
+/// everything before the dark block is the light scheme, and the `:root`
+/// body of it is the set of values a sender's page should be drawn with.
+fn light_tokens() -> &'static str {
+    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
+    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
+    let (light, _) = PALETTE
+        .split_once(DARK_BLOCK)
+        .expect("the generated palette always emits a dark block");
+    light
+        .split_once(":root {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(declarations, _)| declarations.trim_end())
+        .expect("the generated palette always opens with a light :root block")
+}
+
 /// The stylesheet [`wrap_document`] inlines: the generated token palette,
 /// the structural rules, and the embedded font faces.
 ///
-/// `include_str!` from the design data both frontends share — compiled in,
-/// so a frontend cannot render with a stale or missing stylesheet.
+/// `include_str!` from this crate's own data directory — compiled in, so a
+/// frontend cannot render with a stale or missing stylesheet.
 fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
-    css.push_str(include_str!("../../../postio-gtk/data/reader-tokens.css"));
-    css.push_str(include_str!("../../../postio-gtk/data/reader.css"));
+    css.push_str(include_str!("../../data/reader-tokens.css"));
+    css.push_str(include_str!("../../data/reader.css"));
     css
 }
 
-/// `@font-face` rules embedding the vendored faces as `data:` URIs.
+/// The reader's ground colour for the given scheme, as the generated palette
+/// spells it (`#rrggbb`).
+///
+/// A frontend needs this outside the document as well as inside it. The
+/// document paints `--r-ground` on `body`, but only once it has *parsed* —
+/// and a web view between one document and the next has no document to take
+/// a colour from, so it paints whatever its widget background is. Left
+/// unset, that is the engine default, which under the GTK4 GL path shows as
+/// a black frame on every message change (#749).
+///
+/// Read out of the same generated CSS the document inlines, rather than
+/// restated as a literal here: #296's rule is that a colour has one source,
+/// and a second copy would be one that could silently drift from the design
+/// system the first is regenerated from.
+pub fn reader_ground(dark: bool) -> &'static str {
+    const PALETTE: &str = include_str!("../../data/reader-tokens.css");
+    const DARK_BLOCK: &str = "@media (prefers-color-scheme: dark)";
+
+    let (light, dark_block) = PALETTE
+        .split_once(DARK_BLOCK)
+        .expect("the generated palette always emits a dark block");
+    let scope = if dark { dark_block } else { light };
+    scope
+        .split_once("--r-ground:")
+        .and_then(|(_, rest)| rest.split_once(';'))
+        .map(|(value, _)| value.trim())
+        .expect("the generated palette always defines --r-ground in both schemes")
+}
+
+/// The scheme the reader's web view fetches Postio's own typefaces over
+/// (ADR 0023).
+///
+/// A sibling of [`sanitize::CID_SCHEME`], and answered the same way: from
+/// compiled-in bytes, in-process, never from a path and never from the
+/// network. It exists because a web view's content process cannot see the
+/// fonts the host application registered with its toolkit — so the faces
+/// have to reach the engine somehow, and *serving* them is what keeps the
+/// document proportional to the message.
+pub const FONT_SCHEME: &str = "postio-font";
+
+/// One vendored typeface, as the reader refers to it and as the handler
+/// serves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Face {
+    /// The name a `postio-font:` URL carries, and the only thing a request
+    /// may name — see [`font_bytes`].
+    pub name: &'static str,
+    /// The CSS family this face belongs to.
+    pub family: &'static str,
+    /// Its weight, as `font-weight`.
+    pub weight: u16,
+    /// `normal` or `italic`.
+    pub style: &'static str,
+    /// The face itself, compiled in.
+    pub bytes: &'static [u8],
+}
+
+/// Every face the reader may draw with — the fixed table both the
+/// `@font-face` rules and the scheme handler are generated from.
+///
+/// A compile-time table, deliberately: it is what makes "a font URL can only
+/// ever resolve to one of eight files this project vendored" a property of
+/// the type system rather than of a handler remembering to check. Nothing
+/// here is a path, so there is no traversal to get wrong.
+///
+/// The bytes have one owner (#799): `postio-gtk`'s Pango integration
+/// (`fonts::install_into`) reads them from here rather than keeping a second
+/// copy in its own `GResource` bundle.
+///
+/// `static`, not `const`: a `const` is re-evaluated at every use site, so a
+/// second crate reading `FACES` would get its own freshly promoted copy of
+/// every byte array — the exact duplication this table exists to remove, just
+/// moved from the `GResource` bundle into the linker's `.rodata` instead. A
+/// `static` has one address for the life of the binary, so `postio-gtk`
+/// referencing it costs a pointer, not 909 KB.
+///
+/// Provenance — https://github.com/google/fonts, `main`, fetched 2026-08-22:
+///   fonts/barlow/            ofl/barlow/            © 2017 The Barlow Project Authors
+///   fonts/barlow-condensed/  ofl/barlowcondensed/   © 2017 The Barlow Project Authors
+///   fonts/ibm-plex-mono/     ofl/ibmplexmono/       © 2017 IBM Corp. ("Plex")
+pub static FACES: &[Face] = &[
+    Face {
+        name: "Barlow-Regular.ttf",
+        family: "Barlow",
+        weight: 400,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Regular.ttf"),
+    },
+    Face {
+        name: "Barlow-Medium.ttf",
+        family: "Barlow",
+        weight: 500,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Medium.ttf"),
+    },
+    Face {
+        name: "Barlow-Bold.ttf",
+        family: "Barlow",
+        weight: 700,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Bold.ttf"),
+    },
+    Face {
+        name: "Barlow-Italic.ttf",
+        family: "Barlow",
+        weight: 400,
+        style: "italic",
+        bytes: include_bytes!("../../data/fonts/barlow/Barlow-Italic.ttf"),
+    },
+    Face {
+        name: "BarlowCondensed-Regular.ttf",
+        family: "Barlow Condensed",
+        weight: 400,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/barlow-condensed/BarlowCondensed-Regular.ttf"),
+    },
+    Face {
+        name: "BarlowCondensed-SemiBold.ttf",
+        family: "Barlow Condensed",
+        weight: 600,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf"),
+    },
+    Face {
+        name: "IBMPlexMono-Regular.ttf",
+        family: "IBM Plex Mono",
+        weight: 400,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf"),
+    },
+    Face {
+        name: "IBMPlexMono-Medium.ttf",
+        family: "IBM Plex Mono",
+        weight: 500,
+        style: "normal",
+        bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"),
+    },
+];
+
+/// Each vendored family's licence text, as `(family, OFL text)` — the same
+/// families [`FACES`] embeds, read from beside them so the licence a family
+/// ships under can never drift from the bytes it names.
+///
+/// `postio-gtk`'s About dialog (`fonts::licenses`) attributes the fonts from
+/// here rather than from a copy that could go stale. `static` for the same
+/// reason as [`FACES`].
+pub static LICENSES: &[(&str, &str)] = &[
+    ("Barlow", include_str!("../../data/fonts/barlow/OFL.txt")),
+    (
+        "Barlow Condensed",
+        include_str!("../../data/fonts/barlow-condensed/OFL.txt"),
+    ),
+    (
+        "IBM Plex Mono",
+        include_str!("../../data/fonts/ibm-plex-mono/OFL.txt"),
+    ),
+];
+
+/// The face `name` refers to, or `None`.
+///
+/// What a frontend's `postio-font:` handler answers requests from. A name
+/// that is not in [`FACES`] resolves to nothing — the same "not found" a
+/// `cid:` with no matching part gets, and for the same reason: a scheme that
+/// falls through to somewhere is a scheme that can be aimed.
+pub fn font_bytes(name: &str) -> Option<&'static [u8]> {
+    FACES
+        .iter()
+        .find(|face| face.name == name)
+        .map(|face| face.bytes)
+}
+
+/// The MIME type every served face carries.
+pub const FONT_MIME: &str = "font/ttf";
+
+/// `@font-face` rules pointing at [`FONT_SCHEME`] URLs.
 ///
 /// A web view's rendering happens in its own web process, which never sees
 /// the fonts the host application registered — referencing the family name
 /// by itself would fall back to whatever generic sans the sandbox happens
-/// to have. Embedding the bytes is what makes "rendered text inherits
+/// to have. Naming the faces here is what makes "rendered text inherits
 /// Postio typography" true regardless of what the web process can see.
 ///
-/// Computed once: the font bytes are static for the process' life, and
-/// base64-encoding four faces on every render would be wasted work.
+/// These used to carry the bytes, as ~1.21 MB of base64 inlined into every
+/// document — an empty pane and every absent plate included (#768, ADR
+/// 0023). Now the document names the faces and the engine fetches only the
+/// ones the page actually draws with: two for a state plate, one for a
+/// plain-text body, rather than eight for everything.
+///
+/// `font-display: block` because the fetch is asynchronous where a `data:`
+/// URI was immediate. Without it there is a window where body text paints in
+/// a fallback face and then reflows — a flash of wrong font in the one pane
+/// whose whole job is rendering text stably. `block` paints nothing briefly
+/// and then swaps, which for bytes compiled into the process and served from
+/// memory is imperceptible; `optional` would let one hiccup leave the reader
+/// in system sans for good, which is the outcome this whole mechanism exists
+/// to prevent.
+///
+/// Computed once: the rules are static for the process' life.
 fn embedded_font_faces() -> &'static str {
-    static FACES: OnceLock<String> = OnceLock::new();
-    FACES.get_or_init(build_font_faces)
+    static RULES: OnceLock<String> = OnceLock::new();
+    RULES.get_or_init(build_font_faces)
 }
 
 fn build_font_faces() -> String {
-    const FACES: &[(&[u8], &str, u16, &str)] = &[
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Regular.ttf"),
-            "Barlow",
-            400,
-            "normal",
-        ),
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Medium.ttf"),
-            "Barlow",
-            500,
-            "normal",
-        ),
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Bold.ttf"),
-            "Barlow",
-            700,
-            "normal",
-        ),
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/barlow/Barlow-Italic.ttf"),
-            "Barlow",
-            400,
-            "italic",
-        ),
-        (
-            include_bytes!(
-                "../../../postio-gtk/data/fonts/barlow-condensed/BarlowCondensed-Regular.ttf"
-            ),
-            "Barlow Condensed",
-            400,
-            "normal",
-        ),
-        (
-            include_bytes!(
-                "../../../postio-gtk/data/fonts/barlow-condensed/BarlowCondensed-SemiBold.ttf"
-            ),
-            "Barlow Condensed",
-            600,
-            "normal",
-        ),
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf"),
-            "IBM Plex Mono",
-            400,
-            "normal",
-        ),
-        (
-            include_bytes!("../../../postio-gtk/data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"),
-            "IBM Plex Mono",
-            500,
-            "normal",
-        ),
-    ];
-
     let mut out = String::new();
-    for (bytes, family, weight, style) in FACES {
-        let base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    for face in FACES {
+        let Face {
+            name,
+            family,
+            weight,
+            style,
+            ..
+        } = face;
         out.push_str(&format!(
             "@font-face{{font-family:'{family}';font-weight:{weight};\
-             font-style:{style};src:url(data:font/ttf;base64,{base64}) format('truetype');}}\n"
+             font-style:{style};font-display:block;\
+             src:url({FONT_SCHEME}:{name}) format('truetype');}}\n"
         ));
     }
     out
@@ -294,6 +480,41 @@ pub struct HeldBack {
 }
 
 impl HeldBack {
+    /// What the notice says: `14 remote images and 1 tracker blocked`.
+    ///
+    /// Both numbers, because they are different claims: a picture the sender
+    /// wanted you to see and a beacon that wanted to see you are not the same
+    /// thing to a person deciding whether to load them. Trackers alone still
+    /// say "tracker" rather than folding into a picture count — the whole
+    /// reason #174 taught the parts panel to tell them apart.
+    ///
+    /// Empty when nothing was held back: a notice with nothing to report
+    /// should not be on screen at all.
+    pub fn summary(self) -> String {
+        let images = self.remote_images;
+        let trackers = self.trackers;
+        let picture = |n: u32| {
+            if n == 1 {
+                "1 remote image".to_owned()
+            } else {
+                format!("{n} remote images")
+            }
+        };
+        let beacon = |n: u32| {
+            if n == 1 {
+                "1 tracker".to_owned()
+            } else {
+                format!("{n} trackers")
+            }
+        };
+        match (images, trackers) {
+            (0, 0) => String::new(),
+            (n, 0) => format!("{} blocked", picture(n)),
+            (0, n) => format!("{} blocked", beacon(n)),
+            (i, t) => format!("{} and {} blocked", picture(i), beacon(t)),
+        }
+    }
+
     /// Everything held back, whatever kind it was.
     ///
     /// What the banner asks: whether it has anything at all to offer.
@@ -302,24 +523,227 @@ impl HeldBack {
     }
 }
 
+/// Which of the two ways a message can be drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rendering {
+    /// The sender's own markup, sanitized and quote-folded. What ordinary
+    /// correspondence gets, and what `View original` goes back to.
+    #[default]
+    Original,
+    /// Reduced to what carries meaning — [`postio_body::reader_view`]. The
+    /// default for bulk mail.
+    Reader,
+}
+
+/// Which paper a message is drawn on.
+///
+/// Turn 7, screen 20 of the canvas: "When you do open the original, it
+/// renders on its own paper-white sheet inset from the dark chrome — sender
+/// CSS never fights the app theme, and link colors stay the sender's."
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sheet {
+    /// Postio's own ground, following the reader's colour scheme.
+    ///
+    /// What correspondence gets. A reply drawn on a white sheet inside a
+    /// dark window would be worse than what the theme already does, so this
+    /// stays the default and the sender's sheet is the exception.
+    #[default]
+    Theme,
+    /// The sender's own paper: the light palette whatever the scheme, so
+    /// their white-background logo, their mid-grey body text and their links
+    /// land on the page they were designed for.
+    ///
+    /// Only the sender's *box* changes. The chrome around it keeps the
+    /// theme's ground, which is what makes the sheet read as a sheet.
+    Senders,
+}
+
+/// The class [`Sheet::Senders`] puts on the document root.
+///
+/// Namespaced like every other class Postio injects, because the sanitizer
+/// leaves a sender's own `class` attributes alone.
+pub const SENDERS_SHEET_CLASS: &str = "postio-senders-sheet";
+
+/// Which paper this rendering belongs on.
+///
+/// Exactly one situation earns the sender's sheet: the person left reader
+/// view to see the original of something reader view had offered to reduce.
+/// That is a deliberate "show me what they actually sent", and it is the
+/// only time Postio's palette is the wrong one to draw it in.
+///
+/// `suits_reader_view` is passed rather than recomputed from the body:
+/// [`suits_reader_view`] parses the markup, both frontends already call it
+/// to choose the rendering, and asking twice per render would put an
+/// html5ever pass on the path every ordinary message takes.
+pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
+    match (rendering, suits_reader_view) {
+        (Rendering::Original, true) => Sheet::Senders,
+        _ => Sheet::Theme,
+    }
+}
+
+/// A body, drawn, and everything a surface needs to say about how.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Rendered {
+    /// The markup, ready for [`contain_body`].
+    pub html: String,
+    /// What the remote-image policy held back.
+    pub held_back: HeldBack,
+    /// Which way it was drawn — what the notice reports, and what decides
+    /// whether `View original` has anything to offer.
+    pub rendering: Rendering,
+    /// Links that survived reduction. Zero in [`Rendering::Original`], where
+    /// nothing is dropped and the count would be a claim about nothing.
+    pub links_kept: usize,
+    /// Links reduction collapsed. The canvas draws the pair as
+    /// `1 link kept of 23`.
+    pub links_dropped: usize,
+}
+
+impl Rendered {
+    /// Every link the message had. Zero unless it was reduced.
+    pub fn links_total(&self) -> usize {
+        self.links_kept + self.links_dropped
+    }
+}
+
+/// Whether this body is one reader view should open on.
+///
+/// **Bulk mail only.** A person's correspondence opening reduced is the one
+/// failure that would make the feature hated, so the question is not "could
+/// this be reduced" — anything can — but "was this laid out by a template".
+/// [`postio_body::reader_view::reads_as_bulk`] answers it from the
+/// arrangement.
+///
+/// A message with no HTML part at all is never a candidate: there is no
+/// markup to reduce, and plain text is already what reader view is trying to
+/// get back to.
+pub fn suits_reader_view(body: &MessageBody) -> bool {
+    body.html
+        .as_deref()
+        .filter(|html| !html.trim().is_empty())
+        .is_some_and(reader_view::reads_as_bulk)
+}
+
+/// The class the facts block is drawn with.
+///
+/// Public because it is the seam a frontend test asserts on: the block is
+/// markup inside the sender's document, so "did it reach the reading pane"
+/// is a question about this string.
+pub const FACTS_CLASS: &str = "postio-facts";
+
+/// The facts block as markup, or nothing when there were none.
+///
+/// A description list, because that is what it is: labels and the values
+/// they name. The two columns the canvas draws are a CSS grid over it, so
+/// the markup stays meaningful to a screen reader reading it in order.
+fn facts_html(rows: &[reader_view::Fact]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("<dl class=\"{FACTS_CLASS}\">");
+    for fact in rows {
+        out.push_str("<dt>");
+        escape_into(&mut out, &fact.label);
+        out.push_str("</dt><dd>");
+        escape_into(&mut out, &fact.value);
+        out.push_str("</dd>");
+    }
+    out.push_str("</dl>");
+    out
+}
+
+/// Text into markup, with the four characters that would otherwise be it.
+///
+/// Written out rather than reached for from a crate, the same reason
+/// `reader_view` writes its own: this is the output side of markup Postio
+/// composes itself, and the escaping is four characters.
+fn escape_into(out: &mut String, text: &str) {
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            other => out.push(other),
+        }
+    }
+}
+
 /// The body markup: sanitized and quote-folded, but not yet wrapped in the
 /// document template [`wrap_document`] adds, plus what was held back to
 /// produce it — see [`sanitize::Sanitized`].
-pub fn body_html(body: &MessageBody, remote: RemoteImages) -> (String, HeldBack) {
-    if let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) {
+///
+/// # Reader view prefers the plain part
+///
+/// A `multipart/alternative` carries the sender's own plain-text version,
+/// which is the thing reduction is trying to reconstruct — so when there is
+/// one, reader view uses it rather than reducing the HTML alongside it.
+/// Reduction is the fallback for HTML-only bulk mail, not the first
+/// resort.
+///
+/// Note what this does *not* do: it never reaches for the plain part in
+/// [`Rendering::Original`]. The existing preference order there — HTML
+/// first, text as a fallback — is what makes ordinary mail look like the
+/// sender wrote it.
+pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> Rendered {
+    let html = body.html.as_deref().filter(|html| !html.trim().is_empty());
+    let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
+
+    if rendering == Rendering::Reader {
+        if let Some(text) = text {
+            // The facts first, then what is left of the prose. `lift` takes
+            // the rows out of the copy, so the block is a summary rather than
+            // the same three lines printed twice.
+            let lifted = reader_view::lift(text);
+            let mut html = facts_html(&lifted.rows);
+            html.push_str(&quote::text_to_html(&lifted.body));
+            return Rendered {
+                html,
+                held_back: HeldBack::default(),
+                rendering: Rendering::Reader,
+                ..Rendered::default()
+            };
+        }
+        if let Some(html) = html {
+            // Sanitized first, always. Reduction is a readability pass over
+            // markup that has already been made safe, and running it on raw
+            // sender HTML would be relying on it for a promise it does not
+            // make.
+            let sanitized = sanitize::sanitize_body(html, remote);
+            let reduced = reader_view::reduce(&sanitized.html);
+            return Rendered {
+                html: reduced.html,
+                held_back: HeldBack {
+                    remote_images: sanitized.remote_blocked,
+                    trackers: sanitized.trackers,
+                },
+                rendering: Rendering::Reader,
+                links_kept: reduced.links_kept,
+                links_dropped: reduced.links_dropped,
+            };
+        }
+    }
+
+    if let Some(html) = html {
         let sanitized = sanitize::sanitize_body(html, remote);
-        return (
-            quote::fold_html_quotes(&sanitized.html),
-            HeldBack {
+        return Rendered {
+            html: quote::fold_html_quotes(&sanitized.html),
+            held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
                 trackers: sanitized.trackers,
             },
-        );
+            rendering: Rendering::Original,
+            ..Rendered::default()
+        };
     }
-    if let Some(text) = body.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        return (quote::text_to_html(text), HeldBack::default());
+    if let Some(text) = text {
+        return Rendered {
+            html: quote::text_to_html(text),
+            ..Rendered::default()
+        };
     }
-    (String::new(), HeldBack::default())
+    Rendered::default()
 }
 
 /// Give a sender's content a bounded surface of its own (#323): a visible
@@ -348,10 +772,11 @@ pub fn contain_body(content: &str) -> String {
 /// a style: #323 gave the sender's content a visible edge so that markup
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
-pub fn document_for(content: &str, remote: RemoteImages) -> String {
+pub fn document_for(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!("{}{}", contain_body(content), scroll_markers()),
         remote,
+        sheet,
     )
 }
 
@@ -366,7 +791,7 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
     };
     format!(
         "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
-         img-src {img_src}; font-src data:; base-uri 'none'; form-action 'none'; \
+         img-src {img_src}; font-src {FONT_SCHEME}:; base-uri 'none'; form-action 'none'; \
          frame-src 'none'; connect-src 'none'"
     )
 }
@@ -376,11 +801,95 @@ mod tests {
     use super::*;
     use postio_model::message::MessageBody;
 
+    /// The sender's sheet is for one gesture only: leaving reader view.
+    ///
+    /// Correspondence is `Original` too, and is the case that must *not*
+    /// change — a reply on a white page inside a dark window is the failure
+    /// this rule exists to avoid.
+    #[test]
+    fn only_the_original_of_something_reader_view_offered_gets_the_senders_sheet() {
+        assert_eq!(sheet_for(Rendering::Original, true), Sheet::Senders);
+        assert_eq!(sheet_for(Rendering::Original, false), Sheet::Theme);
+        assert_eq!(sheet_for(Rendering::Reader, true), Sheet::Theme);
+        assert_eq!(sheet_for(Rendering::Reader, false), Sheet::Theme);
+    }
+
+    #[test]
+    fn an_ordinary_document_carries_no_sheet_of_its_own() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        assert!(
+            !document.contains(SENDERS_SHEET_CLASS),
+            "the theme document must not carry the sender's sheet: {document}"
+        );
+    }
+
+    /// The light values land **inside** the sender's box and nowhere else.
+    ///
+    /// Scoped to `:root` they would repaint `body` too, and the sheet would
+    /// have no dark chrome to be inset from — which is the whole picture the
+    /// canvas asks for, not a detail of it.
+    #[test]
+    fn the_senders_sheet_lights_the_body_box_and_leaves_the_chrome_alone() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        assert!(
+            document.contains(&format!(r#"<html class="{SENDERS_SHEET_CLASS}">"#)),
+            "the root says which sheet it is: {document}"
+        );
+        assert!(
+            document.contains(&format!(".{SENDERS_SHEET_CLASS} .postio-body {{")),
+            "the override is scoped to the sender's box: {document}"
+        );
+        assert!(
+            !document.contains(&format!(".{SENDERS_SHEET_CLASS} :root")),
+            "nothing may repaint the root, or the chrome stops being chrome"
+        );
+    }
+
+    /// The sheet's colours are the palette's light ones, read from the same
+    /// place `reader_ground` reads them — not a second copy that can drift
+    /// away from the design system (#296).
+    #[test]
+    fn the_senders_sheet_is_the_generated_light_palette_and_not_a_second_copy() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        let light = reader_ground(false);
+        let dark = reader_ground(true);
+        assert_ne!(light, dark, "the palette must actually differ by scheme");
+
+        let sheet = document
+            .split_once(&format!(".{SENDERS_SHEET_CLASS} .postio-body {{"))
+            .expect("the sheet rule is in the document")
+            .1
+            .split_once('}')
+            .expect("the sheet rule closes")
+            .0;
+        assert!(
+            sheet.contains(&format!("--r-ground: {light}")),
+            "the sheet paints the light ground: {sheet}"
+        );
+        assert!(
+            !sheet.contains(dark),
+            "no dark value belongs on the sender's page: {sheet}"
+        );
+        // The link colour is what the acceptance names, and it rides the
+        // same variable `reader.css` already resolves `a { color: ... }`
+        // against -- so proving the accent is overridden proves the links.
+        assert!(
+            sheet.contains("--r-accent:"),
+            "the accent is what `a` resolves against: {sheet}"
+        );
+    }
+
+    /// A body drawn the ordinary way — what every one of these asserted on
+    /// before reader view existed.
+    fn drawn(body: &MessageBody) -> Rendered {
+        body_html(body, RemoteImages::Blocked, Rendering::Original)
+    }
+
     #[test]
     fn an_empty_body_produces_empty_content() {
-        let (content, held_back) = body_html(&MessageBody::default(), RemoteImages::Blocked);
-        assert_eq!(content, "");
-        assert_eq!(held_back, HeldBack::default());
+        let rendered = drawn(&MessageBody::default());
+        assert_eq!(rendered.html, "");
+        assert_eq!(rendered.held_back, HeldBack::default());
     }
 
     #[test]
@@ -389,7 +898,7 @@ mod tests {
             text: Some("plain fallback".to_owned()),
             html: Some("<p>rich</p>".to_owned()),
         };
-        assert_eq!(body_html(&body, RemoteImages::Blocked).0, "<p>rich</p>");
+        assert_eq!(drawn(&body).html, "<p>rich</p>");
     }
 
     #[test]
@@ -398,7 +907,7 @@ mod tests {
             text: Some("hello".to_owned()),
             html: None,
         };
-        assert!(body_html(&body, RemoteImages::Blocked).0.contains("hello"));
+        assert!(drawn(&body).html.contains("hello"));
     }
 
     #[test]
@@ -411,12 +920,240 @@ mod tests {
         // picture whatever the host is called -- nothing here is domain-based
         // (#174). Blocked identically either way.
         assert_eq!(
-            body_html(&body, RemoteImages::Blocked).1,
+            drawn(&body).held_back,
             HeldBack {
                 remote_images: 1,
                 trackers: 0
             }
         );
+    }
+
+    // -- reader view (#1009) ----------------------------------------------
+
+    /// A campaign: nested layout tables, and more links than a person writes.
+    fn campaign() -> String {
+        let mut html = String::from("<table><tr><td><table><tr><td>");
+        html.push_str(r#"<p><a href="https://example.com/track">Track delivery</a></p>"#);
+        for index in 0..12 {
+            html.push_str(&format!(
+                r#"<p><a href="https://example.com/{index}">more</a></p>"#
+            ));
+        }
+        html.push_str("</td></tr></table></td></tr></table>");
+        html
+    }
+
+    #[test]
+    fn reader_view_prefers_the_senders_own_plain_part() {
+        // The `multipart/alternative` case, and the whole reason reduction is
+        // a fallback rather than the first resort: the sender already wrote
+        // the version reduction is trying to reconstruct.
+        let body = MessageBody {
+            text: Some("Your package is out for delivery.".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            rendered.html.contains("Your package is out for delivery."),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            !rendered.html.contains("<table"),
+            "the HTML part was drawn instead of the plain one: {}",
+            rendered.html
+        );
+        assert_eq!(
+            rendered.links_total(),
+            0,
+            "there is nothing to count in a plain part"
+        );
+    }
+
+    #[test]
+    fn reader_view_reduces_html_only_bulk_mail() {
+        let body = MessageBody {
+            text: None,
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert_eq!(rendered.rendering, Rendering::Reader);
+        assert!(!rendered.html.contains("<table"), "{}", rendered.html);
+        assert_eq!(rendered.links_kept, 1);
+        assert_eq!(rendered.links_total(), 13, "1 link kept of 13");
+    }
+
+    #[test]
+    fn the_original_rendering_never_reaches_for_the_plain_part() {
+        // The preference order that makes ordinary mail look like the sender
+        // wrote it. Reader view inverts it; `View original` must not.
+        let body = MessageBody {
+            text: Some("plain fallback".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = drawn(&body);
+        assert_eq!(rendered.rendering, Rendering::Original);
+        assert!(
+            !rendered.html.contains("plain fallback"),
+            "the original is the sender's markup, whatever else came with it"
+        );
+    }
+
+    #[test]
+    fn only_bulk_mail_is_offered_reader_view() {
+        // The failure that would make the feature hated: correspondence
+        // opening reduced.
+        let reply = MessageBody {
+            text: None,
+            html: Some("<p>Hi Ada,</p><p>Friday works.</p>".to_owned()),
+        };
+        assert!(!suits_reader_view(&reply));
+
+        let bulk = MessageBody {
+            text: None,
+            html: Some(campaign()),
+        };
+        assert!(suits_reader_view(&bulk));
+
+        // Nothing to reduce is not a candidate either: plain text is already
+        // where reader view is trying to get to.
+        let plain = MessageBody {
+            text: Some("hello".to_owned()),
+            html: None,
+        };
+        assert!(!suits_reader_view(&plain));
+    }
+
+    /// The plain part of a shipping notice: the facts, then the prose.
+    fn shipping_notice() -> String {
+        "Your order has shipped.\n\
+         \n\
+         tracking: EXTEST0042199317\n\
+         item: Type-C Upgrade Small Board Replacement x 1\n\
+         ship to: 1 Example Way, Springfield\n\
+         \n\
+         Follow the parcel from your orders page.\n"
+            .to_owned()
+    }
+
+    #[test]
+    fn reader_view_lifts_the_facts_above_the_body_copy() {
+        let body = MessageBody {
+            text: Some(shipping_notice()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+
+        let block = rendered
+            .html
+            .find(FACTS_CLASS)
+            .expect("the facts block is in the markup");
+        let copy = rendered
+            .html
+            .find("Follow the parcel")
+            .expect("and so is the body copy");
+        assert!(
+            block < copy,
+            "the canvas draws the facts above the body, not below it: {}",
+            rendered.html
+        );
+        for expected in [
+            "tracking",
+            "EXTEST0042199317",
+            "ship to",
+            "1 Example Way, Springfield",
+        ] {
+            assert!(
+                rendered.html.contains(expected),
+                "`{expected}` is missing from {}",
+                rendered.html
+            );
+        }
+
+        // Once each. A block that summarises lines still printed underneath
+        // it reads as a rendering bug, not a summary.
+        assert_eq!(
+            rendered.html.matches("EXTEST0042199317").count(),
+            1,
+            "the tracking number is drawn twice: {}",
+            rendered.html
+        );
+        assert!(
+            !rendered.html.contains("tracking:"),
+            "the lifted line is still in the body copy: {}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("Your order has shipped."),
+            "the prose around the block survived: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn a_plain_part_with_no_block_grows_nothing() {
+        let body = MessageBody {
+            text: Some("Hi Ada,\n\nFriday works for me.\n".to_owned()),
+            html: Some(campaign()),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            !rendered.html.contains(FACTS_CLASS),
+            "ordinary prose grew a table: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn nothing_is_lifted_out_of_html() {
+        // The same three facts, laid out as a table by the sender rather than
+        // written as lines. Reader view reduces that markup like any other —
+        // a sender's layout is exactly what it declines to trust — so no
+        // facts block appears.
+        let body = MessageBody {
+            text: None,
+            html: Some(
+                "<table><tr><td><table>\
+                 <tr><td>tracking</td><td>EXTEST0042199317</td></tr>\
+                 <tr><td>item</td><td>One Small Board</td></tr>\
+                 <tr><td>ship to</td><td>1 Example Way, Springfield</td></tr>\
+                 </table></td></tr></table>"
+                    .to_owned(),
+            ),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert!(
+            !rendered.html.contains(FACTS_CLASS),
+            "a block was lifted out of markup: {}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn the_original_rendering_has_no_facts_block() {
+        // `View original` is the escape hatch: it shows what arrived. Postio
+        // adding a table of its own to that would defeat the point.
+        let body = MessageBody {
+            text: Some(shipping_notice()),
+            html: None,
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Original);
+        assert!(!rendered.html.contains(FACTS_CLASS));
+    }
+
+    #[test]
+    fn a_blocked_image_is_still_reported_when_the_markup_is_reduced() {
+        // Reduction runs after sanitizing, so the counts have to survive it —
+        // a notice that went quiet in reader view would be the privacy
+        // invariant silently weakening in one of two modes.
+        let mut html = campaign();
+        html.push_str(r#"<img src="https://tracker.example.org/o.gif">"#);
+        let body = MessageBody {
+            text: None,
+            html: Some(html),
+        };
+        let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Reader);
+        assert_eq!(rendered.held_back.total(), 1);
     }
 
     /// #323: a sender's content sits inside a bounded container, distinct
@@ -425,7 +1162,11 @@ mod tests {
     /// render produces, not just that the CSS rule exists unused.
     #[test]
     fn a_rendered_body_sits_inside_its_own_container() {
-        let document = wrap_document(&contain_body("<p>hi</p>"), RemoteImages::Blocked);
+        let document = wrap_document(
+            &contain_body("<p>hi</p>"),
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
         assert!(
             document.contains(r#"<div class="postio-body"><p>hi</p></div>"#),
             "{document}"
@@ -439,20 +1180,20 @@ mod tests {
         assert_eq!(
             content_security_policy(RemoteImages::Blocked),
             "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
-             img-src postio-cid: data:; font-src data:; base-uri 'none'; \
+             img-src postio-cid: data:; font-src postio-font:; base-uri 'none'; \
              form-action 'none'; frame-src 'none'; connect-src 'none'"
         );
         assert_eq!(
             content_security_policy(RemoteImages::Allowed),
             "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
-             img-src postio-cid: data: http: https:; font-src data:; base-uri 'none'; \
+             img-src postio-cid: data: http: https:; font-src postio-font:; base-uri 'none'; \
              form-action 'none'; frame-src 'none'; connect-src 'none'"
         );
     }
 
     #[test]
     fn the_wrapper_carries_the_policy_the_styles_and_the_content() {
-        let document = wrap_document("<p>hello</p>", RemoteImages::Blocked);
+        let document = wrap_document("<p>hello</p>", RemoteImages::Blocked, Sheet::Theme);
         assert!(document.starts_with("<!DOCTYPE html>"));
         assert!(document.contains("Content-Security-Policy"));
         assert!(document.contains("img-src postio-cid: data:; font-src"));
@@ -463,8 +1204,38 @@ mod tests {
         );
     }
 
+    /// The colour a frontend paints behind the document has to be the one the
+    /// document paints on itself, or the seam shows on every message change
+    /// (#749). Both are read from the generated palette, so this asserts they
+    /// are the same string rather than restating either.
     #[test]
-    fn every_vendored_face_is_embedded_as_a_data_uri() {
+    fn the_ground_a_frontend_paints_is_the_one_the_document_paints() {
+        for dark in [false, true] {
+            let ground = reader_ground(dark);
+            assert!(
+                ground.starts_with('#'),
+                "the ground should be a hex literal the frontend can parse: {ground}"
+            );
+            let palette = include_str!("../../data/reader-tokens.css");
+            assert!(
+                palette.contains(&format!("--r-ground: {ground};")),
+                "reader_ground({dark}) returned {ground}, which the generated \
+                 palette does not define"
+            );
+        }
+        assert_ne!(
+            reader_ground(false),
+            reader_ground(true),
+            "the two schemes should not share a ground"
+        );
+    }
+
+    #[test]
+    fn every_vendored_face_is_referenced_and_resolvable() {
+        // ADR 0023 replaced "embedded as a data URI" with this, and it is
+        // the same guarantee: a face that silently goes missing takes the
+        // reader to system sans, whether it went missing from a base64 blob
+        // or from the table the handler serves.
         let faces = embedded_font_faces();
         for family in ["Barlow", "Barlow Condensed", "IBM Plex Mono"] {
             assert!(
@@ -473,10 +1244,60 @@ mod tests {
             );
         }
         assert_eq!(
-            faces.matches("data:font/ttf;base64,").count(),
+            faces.matches(&format!("src:url({FONT_SCHEME}:")).count(),
             8,
-            "eight faces, each embedded"
+            "eight faces, each referenced"
         );
+
+        // Referenced *and* resolvable: a rule naming a face the handler
+        // cannot serve is a font that never arrives, which is exactly the
+        // failure a count of rules alone would miss.
+        assert_eq!(FACES.len(), 8, "eight vendored faces");
+        for face in FACES {
+            assert!(
+                faces.contains(&format!("src:url({FONT_SCHEME}:{})", face.name)),
+                "{} is served but never referenced",
+                face.name
+            );
+            let bytes = font_bytes(face.name).expect("a referenced face resolves");
+            assert!(
+                bytes.starts_with(&[0x00, 0x01, 0x00, 0x00]) || bytes.starts_with(b"true"),
+                "{} does not begin with a TrueType signature",
+                face.name
+            );
+        }
+
+        // And nothing else resolves. The table is the whole of what a font
+        // URL may reach — no paths, so no traversal to get wrong.
+        for name in [
+            "",
+            "Barlow-Regular",
+            "../fonts/barlow/Barlow-Regular.ttf",
+            "/etc/passwd",
+        ] {
+            assert!(font_bytes(name).is_none(), "{name} resolved to something");
+        }
+    }
+
+    /// #768: the document is what a message change costs. It used to carry
+    /// ~1.21 MB of base64 whatever the message was — an empty pane and every
+    /// absent plate included.
+    #[test]
+    fn the_document_is_proportional_to_the_message_not_to_the_font_catalogue() {
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        assert!(
+            !document.contains("data:font/"),
+            "the faces are still travelling with the document"
+        );
+        assert!(
+            document.len() < 64 * 1024,
+            "a one-line message renders a {} byte document",
+            document.len()
+        );
+        // Still Postio's type: the rules are there, naming faces the handler
+        // serves. What left is the payload, not the typography.
+        assert!(document.contains(&format!("src:url({FONT_SCHEME}:")));
+        assert!(document.contains("--r-"), "the palette is still inlined");
     }
 
     #[test]
@@ -508,5 +1329,55 @@ mod tests {
         assert!(markers.contains("top:0vh"));
         assert!(markers.contains("top:90vh"));
         assert!(markers.contains(&format!("top:{}vh", 59 * 90)));
+    }
+
+    #[test]
+    fn the_notice_counts_pictures_and_beacons_separately() {
+        // A picture the sender wanted you to see and a beacon that wanted to
+        // see you are different claims (#174).
+        assert_eq!(
+            HeldBack {
+                remote_images: 14,
+                trackers: 1
+            }
+            .summary(),
+            "14 remote images and 1 tracker blocked",
+            "the canvas's own wording"
+        );
+        assert_eq!(
+            HeldBack {
+                remote_images: 3,
+                trackers: 0
+            }
+            .summary(),
+            "3 remote images blocked"
+        );
+        assert_eq!(
+            HeldBack {
+                remote_images: 0,
+                trackers: 2
+            }
+            .summary(),
+            "2 trackers blocked",
+            "a beacon is still named a beacon when it is the only thing there"
+        );
+    }
+
+    #[test]
+    fn one_of_each_is_singular() {
+        assert_eq!(
+            HeldBack {
+                remote_images: 1,
+                trackers: 1
+            }
+            .summary(),
+            "1 remote image and 1 tracker blocked"
+        );
+    }
+
+    #[test]
+    fn nothing_held_back_says_nothing() {
+        // A notice with nothing to report should not be on screen at all.
+        assert_eq!(HeldBack::default().summary(), "");
     }
 }

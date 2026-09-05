@@ -38,6 +38,9 @@ POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
 cargo bench -p postio-runtime --bench store_reads   # the database read
 cargo bench -p postio-index   --bench search_budget # the query
 cargo bench -p postio-gtk     --bench list_scroll   # the row draw
+
+# which window pays the first-realize toll (#790)
+cargo run -p postio-gtk --example first_realize -- splash real
 ```
 
 `seed_store` needs this installation's store key, which lives in the OS
@@ -56,22 +59,101 @@ On a 20,000-message store with an account and six folders:
 | of which first frame | 106 ms | |
 | fonts and styles together | 9 ms | |
 
-Two things about this deserve saying plainly rather than being averaged away.
+Three things about this deserve saying plainly rather than being averaged away.
 
 **Encryption costs about 78 ms of it.** Measured by disabling `PRAGMA key` in
 `db::configure` and re-running the same binary against an equivalent
-plaintext store: floor 350 ms against 427 ms, and the difference sits almost
-entirely in window construction, which is where the first store reads happen.
-That is the price ADR 0014 said would land on this budget, and it lands inside
-it.
+plaintext store: floor 350 ms against 427 ms. That is the price ADR 0014 said
+would land on this budget, and it lands inside it. This paragraph used to add
+that the difference "sits almost entirely in window construction, which is
+where the first store reads happen"; #790 split that phase and found the
+store reads are not in it — see below.
 
-**The rest of the gap is not explained.** This document previously recorded
-147 ms. Nothing in that measurement survives to compare against — different
-commit, different schema, and no record of what else the machine was doing —
-so the honest statement is that startup is 427 ms today, 78 ms of which is
-encryption and the remainder of which nobody has bisected. The worst of five
-runs exceeded the 500 ms budget. See [#636](https://github.com/dlapiduz/postio/issues/636) rather than
-treating this paragraph as a resolution.
+**Most of the rest is GTK's own first-realize cost, not a Postio widget.**
+#636 bisected window construction by timing each pane's constructor in
+isolation (`Shell`, `Sidebar`, `MessageListView`, `Finder`, `CheatSheet`,
+`SettingsPanel`, the composer's `Editor` and its WebView) — none cost more
+than a few milliseconds, and they sum to well under 30 ms. What costs the
+rest is GSK compiling its shaders on the first window the process ever
+realizes, and only that one: presenting a bare `Sidebar` first cost 110 ms,
+presenting it second cost 12 ms. Forcing `GSK_RENDERER` confirmed it —
+`cairo` (software) measured ~181 ms end to end where the platform default
+measured ~295 ms, and `ngl` measured ~1.9 s.
+
+**#790 decided to keep the GPU renderer** rather than trade runtime
+compositing for that startup time, and in measuring the alternative found an
+attribution error in each of the two claims above. Both were this document's,
+and both matter to anyone deciding what to optimise next.
+
+*The compile is not in the `window` phase.* `app::build_with` marks
+`Phase::Window` and calls `window.present()` on the next line, so the realize
+that triggers the compile lands in `first frame`, the phase after.
+`postio-gtk`'s `first_realize` example measures it from the other side: the
+toll falls between `present()` and the first frame, and it is ~74 ms whether
+the window holds Postio's whole widget tree or a single label. A splash
+screen therefore cannot hide this cost — it pays it.
+
+**And that is why Postio has no splash screen. #1109 settled it; do not
+re-propose it.** The idea arrives every time someone measures startup, so the
+reasoning belongs here rather than only on a closed issue:
+
+- It pays the toll it was meant to hide. The pixels arrive at `init + toll`
+  either way; the only question a splash answers is which window gets them.
+- What is left to hide is a flash. On the release figures above a splash would
+  be on screen from roughly 170 ms to roughly 400 ms, and once #1108 overlaps
+  the store open with the shader compile, that window closes to something like
+  120–150 ms. `PRODUCT.md` §18 allows a transition of ≤ 100 ms **or none**; a
+  whole window that appears and is replaced inside 150 ms is on the wrong side
+  of that, and on a faster machine it is pure flicker. Suppressing it below a
+  threshold only promises branding to the users having the worst day.
+- The desktop already draws it. `dev.postio.Postio.desktop` sets
+  `StartupNotify=true`, so the shell shows launch feedback from `Exec` to first
+  map — earlier than any splash of ours could appear, because it starts before
+  `adw::init` does.
+- It would be the app's first animation. `gtk_accessibility.rs` records that
+  `prefers-reduced-motion` needs no test because the stylesheets carry no
+  transition at all, and `gtk_shell.rs` reads them back to keep it that way. A
+  splash has to hand over: fade and that gate is the first thing it breaks; cut
+  and it is two map/unmap events the compositor animates for us.
+
+What the idea is reaching for is real, and the answer is the same window
+sooner rather than a different one: #1108 realizes the window before the store
+is open, and #1114 is what it shows while it waits.
+
+*The first store reads are not in the `window` phase either.* The keyring
+round trip and the SQLCipher open happen before the main loop starts, and
+used to be folded into the same phase; they are now `store`, and the split
+shows the two moving independently:
+
+| | empty store | 20,000 messages |
+|---|---:|---:|
+| `store` | 26 ms | 98 – 148 ms |
+| `window` | 101 ms | 98 – 102 ms |
+| `first frame` | 99 ms | 74 – 81 ms |
+
+`window` is flat — widget construction does not read the store — while
+`store` grows by a factor of four with the data. So the 78 ms of encryption
+measured above sits in `store`, not in "window construction, which is where
+the first store reads happen". Those figures are a debug build under the
+headless compositor and are not comparable to the release numbers in the
+table; what they establish is which phase moves, which is a shape, not a
+timing.
+
+That split is the actionable half. The `store` phase is blocking I/O before
+the main loop exists and could run on a thread; the shader compile is on the
+main loop and cannot. A phase that summed them said nothing about which to
+attack.
+
+This document previously recorded 147 ms for the whole figure; nothing in
+that measurement survives to compare against — different commit, different
+schema, and no record of what else the machine was doing — so the honest
+statement is 427 ms today, of which 78 ms is encryption. The worst of five
+runs exceeded the 500 ms budget. The per-phase rows in the table above
+predate the `store` split and still fold it into `window`; they want
+re-running on the recipe below. See
+[#636](https://github.com/dlapiduz/postio/issues/636) for the full
+investigation and [#790](https://github.com/dlapiduz/postio/issues/790) for
+the renderer decision.
 
 ## Interaction: the page read and the row draw
 
@@ -82,7 +164,7 @@ and a screenful of rows drawn.
 |---|---|---|
 | Message page, top of the folder | 249 µs | 302 µs |
 | Message page, scrolled to the middle | — | 343 µs |
-| Message page, *jumped* to the middle | — | 233 ms |
+| Message page, *jumped* to the middle | — | 3.58 ms |
 | Thread page, top of the folder | 1.14 ms | 1.40 ms |
 | Thread page, ten pages down | — | 1.42 ms |
 | Unified page, two accounts | — | 18.7 ms |
@@ -95,10 +177,24 @@ Two exceptions, both real:
 
 - **A *jump* to a page nobody has scrolled through** — the store has no
   boundary to seek from and falls back to walking. It happens once per jump,
-  and every page after it is the 343 µs row. It is far more expensive than it
-  was when this document last recorded it (28 ms), and under page encryption
-  a walk pays a decrypt per page, so this is the case where the cipher costs
-  most. [#638](https://github.com/dlapiduz/postio/issues/638).
+  and every page after it is the 343 µs row. It used to cost 233 ms, and this
+  document blamed the cipher: a walk pays a decrypt per page, and measured
+  against a plaintext store the same jump took 59 ms, so encryption really
+  was 71% of it.
+
+  It was 71% of work that should not have happened. The four list indexes
+  supplied the scope column and the sort order but neither of the two columns
+  every list query *filters* on — `deleted_locally` and `snoozed_until`. Only
+  rows that pass the `WHERE` count toward an `OFFSET`, so SQLite fetched every
+  row it was about to discard in order to test them: fifty thousand table
+  reads to return fifty rows, each one a page decrypt. Migration 0005 put
+  those columns in the indexes and the jump became **3.58 ms**, a 98%
+  reduction, now inside the 16 ms interaction budget and asserted by
+  `store_reads` rather than merely reported.
+
+  `cache_size` was not the lever, despite `db.rs` naming it the first one to
+  reach for: 16 MiB to 256 MiB moved the encrypted case from 207 ms to 213 ms.
+  [#638](https://github.com/dlapiduz/postio/issues/638).
 - **The unified page is over budget** at 18.7 ms against 16 ms, and encryption
   is not why: the same bench against a plaintext store measures 18.1 ms, and
   raising `cache_size` from 16 MiB to 64 MiB changes nothing measurable

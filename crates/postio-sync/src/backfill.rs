@@ -45,8 +45,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
-use postio_imap::backend::{BackendError, BodyPart, MailBackend, VecSink};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
+use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
 use postio_storage::repository::{
@@ -114,6 +114,20 @@ pub struct BackfillPolicy {
     /// It bounds the *background* lane only. The interactive lane is subject
     /// to none of the policy, this included.
     pub max_backlog: usize,
+    /// The largest *inline* part the text axis will carry with the body.
+    ///
+    /// ADR 0017's "inline parts ride with the text": `disposition = 'inline'`
+    /// is 2.64 GB of the reference account, almost all of it the CID images
+    /// an HTML message references from its own body. A message whose inline
+    /// images are missing renders as broken boxes, and the reader blocks
+    /// *remote* images by default — so CID parts are the images that are
+    /// supposed to appear. Under this cap a part is text; over it, a payload,
+    /// so HTML mail reads correctly offline without pulling the forty-megabyte
+    /// video somebody embedded.
+    ///
+    /// `None` turns the rule off and leaves every inline part on the payload
+    /// axis, which is what the reader looked like before #751.
+    pub max_inline_bytes: Option<u64>,
     /// What to do about attachment payloads — the *other* axis, governed
     /// separately from everything above it.
     pub attachments: AttachmentPolicy,
@@ -171,6 +185,10 @@ impl Default for BackfillPolicy {
             // its owned paths stay a rounding error beside one message's
             // bytes.
             max_backlog: 4_000,
+            // 256 KiB, ADR 0017's number: comfortably above a signature logo
+            // or a screenshot and far below anything a person would call a
+            // download.
+            max_inline_bytes: Some(256 * 1024),
             attachments: AttachmentPolicy::default(),
         }
     }
@@ -236,6 +254,19 @@ pub enum Want {
     /// `Attachment::part_headers`, so a fetched section could not be decoded.
     /// Slower and fatter, and the only answer that is not a guess.
     Whole,
+    /// The header block alone, for a row that has one nowhere else.
+    ///
+    /// The repair lane #884 needs, and the only one of these that fetches
+    /// nothing a person is waiting for. A store in use since before blocks
+    /// were stored holds messages whose body is local and whose raw source was
+    /// never kept — the text axis never keeps one — so their block cannot be
+    /// rebuilt from disk however long anybody waits. `BODY[HEADER]` is the
+    /// smallest thing that answers it.
+    ///
+    /// Not to be confused with fetching headers at *sync* time, which ADR 0025
+    /// Q4 refuses: that charges every user's every sync forever. This is a
+    /// one-off over mail that is already here, and it stops finding work.
+    HeaderBlock,
 }
 
 impl Want {
@@ -896,6 +927,41 @@ pub fn request_payloads(
     Ok(true)
 }
 
+/// Queue a header-block fetch for every row in `mailbox_id` that can get one
+/// no other way. Answers how many joined the queue.
+///
+/// The third row of #884's repair table. `postio_session::repair_header_blocks`
+/// handles the rows whose raw source is still on disk, locally and with no
+/// network at all; these are the remainder — the `partial` state, which never
+/// keeps a raw blob, and rows whose raw source eviction has taken (PRODUCT.md
+/// §6 takes it first).
+///
+/// Background priority, under the policy already in force, in the lane that
+/// already exists: nobody is waiting for one of these, and a repair that
+/// competed with the mail somebody is reading would be the wrong trade. It
+/// stops finding work once the blocks are stored, which is what keeps it from
+/// being a permanent tax on every sync.
+pub fn seed_header_blocks(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    mailbox_id: MailboxId,
+    limit: u32,
+) -> Result<usize> {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+        return Ok(0);
+    }
+    let messages = MessageRepository::new(connection);
+    let mut queued = 0;
+    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit)? {
+        let mut request = BodyRequest::from(candidate);
+        request.want = Want::HeaderBlock;
+        if backfill.enqueue(request) {
+            queued += 1;
+        }
+    }
+    Ok(queued)
+}
+
 /// Queues the payloads of up to `limit` text-backfilled messages in
 /// `mailbox_id`, and answers how many requests joined the queue.
 ///
@@ -980,7 +1046,7 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 ///
 /// `body_state` is what everything else reads to decide whether a body is
 /// local, so it is written *last*, by
-/// [`set_body_blobs`](MessageRepository::set_body_blobs). A crash anywhere
+/// [`set_body`](MessageRepository::set_body). A crash anywhere
 /// before that leaves orphaned blobs — which the blob store's garbage
 /// collection sweeps — and a message that still says it has no body, so the
 /// next pass simply fetches it again. The opposite order would leave a message
@@ -993,7 +1059,8 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// the reference account that is 12.43 GB fetched to index the 1.43 GB of it
 /// that is words, because ~90% of a mailbox by weight is payloads FTS5 cannot
 /// index. So when the header sync recorded where the text lives
-/// ([`Message::text_part_id`]), this fetches exactly those sections and leaves
+/// ([`Message::text_part_id`](postio_model::Message::text_part_id)), this
+/// fetches exactly those sections and leaves
 /// the payloads on the server until somebody opens one.
 ///
 /// A row whose sections are unknown — synced before migration 0008, or from a
@@ -1006,6 +1073,7 @@ pub async fn fetch_body(
     blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
+    inline_cap: Option<u64>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -1030,7 +1098,28 @@ pub async fn fetch_body(
         // must still take this path, or the fallback would fetch the payload this
         // exists to avoid.
         Want::Text if message.content_type.is_some() => {
-            return fetch_text_parts(connection, backend, request, message, cancel).await;
+            return fetch_text_parts(
+                connection, blobs, backend, request, message, inline_cap, cancel,
+            )
+            .await;
+        }
+        // The block and nothing else, for a row that can get one no other
+        // way. Deliberately does not touch the body: the words are already on
+        // this machine and re-storing them would risk them for no reason.
+        Want::HeaderBlock => {
+            let block = fetch_header_block(backend, request, cancel).await;
+            let Some(block) = block else {
+                // The server would not give it up. Set aside like any other
+                // failed fetch rather than written as an empty block, which
+                // would be a claim that the message has no such header.
+                return Ok(Outcome::Failed {
+                    reason: "the header block could not be fetched".to_owned(),
+                });
+            };
+            let bytes = block.text.len() as u64;
+            messages.set_headers(request.message, Some(&block))?;
+            index_the_header_block(connection, request.message, Some(&block));
+            return Ok(Outcome::Stored { bytes });
         }
         // Every byte: asked for, or the only answer left for a row whose
         // structure was never recorded.
@@ -1076,13 +1165,23 @@ pub async fn fetch_body(
         mime::parse(&raw)
     });
 
+    // The block, from the bytes already in hand. This used to pass `None`,
+    // with the reason at the call site: "the header block has no reader of its
+    // own yet ... a copy nobody reads is a copy that can go stale." `header:`
+    // is the reader that retires it (ADR 0025, #884).
+    //
+    // Not read back off `raw_blob_id` at query time, though it is recoverable
+    // from there: PRODUCT.md §6 evicts raw source *first* when the store hits
+    // its ceiling, so a `header:` answered from the blob would silently stop
+    // working on the oldest mail -- which is the mail somebody is most likely
+    // to be searching for.
+    let block = postio_model::headers::block_of(&raw);
     let stored = StoredBody {
         text: stored_text(parsed.body.text.as_deref()),
         html: stored_text(parsed.body.html.as_deref()),
-        // The header block has no reader of its own yet: everything that wants
-        // headers has the row, and everything that wants all of them has the
-        // raw blob. A copy nobody reads is a copy that can go stale.
-        headers: None,
+        headers: block.as_ref().map(|block| block.text.clone()),
+        headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+        encoding_problems: parsed.encoding_problems,
     };
 
     message.raw_blob_id = Some(blob);
@@ -1140,7 +1239,45 @@ pub async fn fetch_body(
             "a fetched body did not reach the search index"
         );
     }
+    index_the_header_block(connection, request.message, block.as_ref());
     Ok(Outcome::Stored { bytes })
+}
+
+/// A stored header block into `message_headers`, after the commit point.
+///
+/// The counterpart of `index_body_of` two lines above every one of its call
+/// sites, and here for exactly the reason that one is: this is where blocks
+/// arrive, and a scheduler that indexed them would see only some of them.
+/// `postio_session::index_local_headers` catches up whatever an unavailable
+/// index misses, but it runs once per start — so without this, `header:`
+/// would answer for mail that was already here and not for mail that arrived
+/// while the application was open, which reads as the feature being broken
+/// rather than as an index catching up.
+///
+/// After the commit point, and never fatal, for the two reasons `index_body_of`
+/// gives at length: rows for a block that is not stored yet would let search
+/// answer for a corpus the store does not have, and a store whose search
+/// schema was never created is a real state that must not cost a fetched
+/// message.
+fn index_the_header_block(
+    connection: &Connection,
+    message: MessageId,
+    block: Option<&postio_model::headers::Block>,
+) {
+    let Some(block) = block else {
+        // No block on the wire, so nothing to index -- and deliberately not
+        // an empty row set, which would be a claim that this message has no
+        // such header rather than that nobody has looked.
+        return;
+    };
+    let headers = postio_model::headers::parse_block(&block.text);
+    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers) {
+        tracing::debug!(
+            message = message.get(),
+            %error,
+            "a fetched header block did not reach the search index"
+        );
+    }
 }
 
 /// Fetches only the sections holding a message's own text, and decodes them.
@@ -1152,7 +1289,8 @@ pub async fn fetch_body(
 /// `BODY[1.1]` returns a part's *encoded* bytes and none of its headers, so
 /// nothing in the response says whether they are base64 or what charset they
 /// are in. Both were reported by `BODYSTRUCTURE` and kept on the row
-/// ([`Message::text_part_headers`]), so prepending them turns the fetched
+/// ([`Message::text_part_headers`](postio_model::Message::text_part_headers)),
+/// so prepending them turns the fetched
 /// section back into a self-contained entity the parser can decode — without
 /// spending a second round trip on `BODY[1.1.MIME]`.
 ///
@@ -1166,9 +1304,11 @@ pub async fn fetch_body(
 /// store nowhere: it is text in, row out.
 async fn fetch_text_parts(
     connection: &Connection,
+    blobs: &BlobStore,
     backend: &dyn MailBackend,
     request: &BodyRequest,
     mut message: postio_model::Message,
+    inline_cap: Option<u64>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -1185,6 +1325,10 @@ async fn fetch_text_parts(
 
     let mut body = postio_model::MessageBody::default();
     let mut preview = None;
+    // Accumulated across sections rather than read off the last one: each
+    // part is parsed on its own here, and a message is a guess if *any* of
+    // its parts was one (#901).
+    let mut encoding_problems = false;
     let mut bytes = 0u64;
 
     for (section, headers) in wanted {
@@ -1228,12 +1372,61 @@ async fn fetch_text_parts(
             body.html = parsed.body.html;
         }
         preview = preview.or(parsed.preview);
+        encoding_problems |= parsed.encoding_problems;
     }
 
+    // ADR 0017's "inline parts ride with the text". A `cid:` image is not an
+    // attachment the reader offers to download, it is part of the sentence the
+    // message is making: without it the pane draws a broken box, and since the
+    // reader blocks remote images by default these are the images that are
+    // *supposed* to appear (#751).
+    //
+    // Before the commit point on purpose. `needing_backfill` stops at
+    // `partial`, so a message whose text landed is never offered again — and a
+    // half-finished inline pass committed as `partial` would leave those boxes
+    // broken for good. Failing here instead leaves the message `headers_only`,
+    // and the next seed fetches the whole text axis again, images included.
+    for part_id in inline_with_the_text(&message, inline_cap) {
+        let Some(attachment) = message
+            .attachments
+            .iter()
+            .find(|part| part.part_id.as_deref() == Some(part_id.as_str()))
+        else {
+            continue;
+        };
+        let Some((blob, moved)) =
+            fetch_section(blobs, backend, request, attachment, &part_id, cancel).await?
+        else {
+            continue;
+        };
+        bytes += moved;
+        messages.set_attachment_blob(request.message, &part_id, &blob)?;
+        // Kept in step with the row, so `state_for` below reads the truth
+        // rather than the structure as the header sync left it.
+        if let Some(attachment) = message
+            .attachments
+            .iter_mut()
+            .find(|part| part.part_id.as_deref() == Some(part_id.as_str()))
+        {
+            attachment.blob_id = Some(blob);
+        }
+    }
+
+    // One more section on a fetch that is already happening. This path never
+    // stores a raw blob -- it asked for sections and got sections -- so it is
+    // the one state where nothing else would ever bring the block, and
+    // `header:` would answer "no such mail" for mail that is right there.
+    //
+    // ADR 0025 Q4 refuses a header fetch at *header-sync* time, which charges
+    // every user's sync forever. This is body-fetch time, where the round trip
+    // is already being paid for.
+    let block = fetch_header_block(backend, request, cancel).await;
     let stored = StoredBody {
         text: stored_text(body.text.as_deref()),
         html: stored_text(body.html.as_deref()),
-        headers: None,
+        headers: block.as_ref().map(|block| block.text.clone()),
+        headers_truncated: block.as_ref().is_some_and(|block| block.truncated),
+        encoding_problems,
     };
 
     if message.preview.is_none() {
@@ -1258,7 +1451,131 @@ async fn fetch_text_parts(
             "a fetched body did not reach the search index"
         );
     }
+    index_the_header_block(connection, request.message, block.as_ref());
     Ok(Outcome::Stored { bytes })
+}
+
+/// Fetches one named MIME section and stores its decoded bytes.
+///
+/// The step both axes share since #751: the payload axis has always done this,
+/// and the text axis now does it too for the inline parts an HTML body
+/// references. Returns the blob and how many bytes crossed the wire, or `None`
+/// when there was nothing to store.
+///
+/// # Rebuilding an entity from a section
+///
+/// `BODY[2]` returns a part's *encoded* bytes and none of its headers, so
+/// nothing in the response says whether they are base64. `BODYSTRUCTURE` said
+/// so at header-sync time and `Attachment::part_headers` kept the answer, so
+/// prepending it makes a self-contained entity — no `[2.MIME]` round trip.
+///
+/// # Why the id is taken on the decoded bytes
+///
+/// Content addressing gives dedup for free, but only over a form two copies of
+/// the same file actually share. Base64 does not qualify: the same PDF wrapped
+/// at a different line length is different bytes. Decoded, it is the same file,
+/// and on the reference account 22,878 named parts collapse to 13,099 distinct
+/// — 10.96 GB to 7.69 GB.
+///
+/// It is also what makes an eager fetch and an on-open fetch land *identically*
+/// rather than giving one attachment two blob ids.
+/// The message's header block, straight from the server.
+///
+/// `BODY[HEADER]` — [`BodyPart::Headers`], which every backend already
+/// implements. Best-effort on purpose: a payload that arrived is worth
+/// storing whether or not the block came with it, and the repair pass will
+/// come back for a block that did not. Failing the whole fetch over it would
+/// trade an attachment the user asked for against an index entry nobody is
+/// waiting on.
+async fn fetch_header_block(
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    cancel: &CancelToken,
+) -> Option<postio_model::headers::Block> {
+    let mut sink = VecSink::new();
+    let fetched = backend
+        .fetch_part(
+            &request.path,
+            &request.remote_id,
+            &BodyPart::Headers,
+            &mut sink,
+            cancel,
+        )
+        .await;
+    if let Err(error) = fetched {
+        // Ids and outcomes only: the bytes are somebody's mail.
+        tracing::debug!(
+            message = request.message.get(),
+            %error,
+            "the header block did not come with the payloads"
+        );
+        return None;
+    }
+    if !sink.is_finished() {
+        return None;
+    }
+    postio_model::headers::block_of(&sink.into_inner())
+}
+
+async fn fetch_section(
+    blobs: &BlobStore,
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    attachment: &postio_model::Attachment,
+    part_id: &str,
+    cancel: &CancelToken,
+) -> Result<Option<(postio_model::BlobId, u64)>> {
+    if attachment.blob_id.is_some() {
+        // It landed while this was queued — a second chip clicked on the same
+        // part, an eager pass that got there first, or the text axis having
+        // already carried an inline part down with the body. Not worth a round
+        // trip for bytes already on the disk.
+        return Ok(None);
+    }
+    let Some(headers) = attachment.part_headers.clone() else {
+        // Refused rather than guessed. See `request_payloads`: this should
+        // have been escalated to a whole-message fetch before it got here.
+        tracing::debug!(
+            message = request.message.get(),
+            "a part with no recorded encoding was not fetched"
+        );
+        return Ok(None);
+    };
+
+    let mut sink = VecSink::new();
+    backend
+        .fetch_part(
+            &request.path,
+            &request.remote_id,
+            &BodyPart::Section(part_id.to_owned()),
+            &mut sink,
+            cancel,
+        )
+        .await?;
+    if !sink.is_finished() {
+        // The sink contract, same as every other path here: without `finish`
+        // the bytes are a fragment, and half a file written to disk under a
+        // name that says it is whole is worse than no file.
+        return Err(SyncError::Backend(BackendError::Cancelled));
+    }
+    let raw = sink.into_inner();
+    let bytes = raw.len() as u64;
+
+    let mut entity = headers.into_bytes();
+    entity.extend_from_slice(b"\r\n");
+    entity.extend_from_slice(&raw);
+    let Some(decoded) = mime::decode_entity(&entity) else {
+        // The ingest boundary of #277 again: ids and sizes only, because the
+        // bytes that defeated the decoder are somebody's mail.
+        tracing::warn!(
+            message = request.message.get(),
+            bytes = entity.len(),
+            "a fetched part could not be decoded; leaving it on the server"
+        );
+        return Ok(None);
+    };
+
+    Ok(Some((blobs.put(&decoded)?, bytes)))
 }
 
 /// Fetches named payload sections and records where each one landed.
@@ -1315,56 +1632,12 @@ async fn fetch_payloads(
             // Settled rather than failed, as `Outcome::Gone` is for a message.
             continue;
         };
-        if attachment.blob_id.is_some() {
-            // It landed while this was queued — a second chip clicked on the
-            // same part, or an eager pass that got there first. Not worth a
-            // round trip for bytes already on the disk.
-            continue;
-        }
-        let Some(headers) = attachment.part_headers.clone() else {
-            // Refused rather than guessed. See `request_payloads`: this should
-            // have been escalated to a whole-message fetch before it got here.
-            tracing::debug!(
-                message = request.message.get(),
-                "a payload with no recorded encoding was not fetched"
-            );
+        let Some((blob, moved)) =
+            fetch_section(blobs, backend, request, attachment, part_id, cancel).await?
+        else {
             continue;
         };
-
-        let mut sink = VecSink::new();
-        backend
-            .fetch_part(
-                &request.path,
-                &request.remote_id,
-                &BodyPart::Section(part_id.clone()),
-                &mut sink,
-                cancel,
-            )
-            .await?;
-        if !sink.is_finished() {
-            // The sink contract, same as every other path here: without
-            // `finish` the bytes are a fragment, and half a file written to
-            // disk under a name that says it is whole is worse than no file.
-            return Err(SyncError::Backend(BackendError::Cancelled));
-        }
-        let raw = sink.into_inner();
-        bytes += raw.len() as u64;
-
-        let mut entity = headers.into_bytes();
-        entity.extend_from_slice(b"\r\n");
-        entity.extend_from_slice(&raw);
-        let Some(decoded) = mime::decode_entity(&entity) else {
-            // The ingest boundary of #277 again: ids and sizes only, because
-            // the bytes that defeated the decoder are somebody's mail.
-            tracing::warn!(
-                message = request.message.get(),
-                bytes = entity.len(),
-                "a fetched payload could not be decoded; leaving it on the server"
-            );
-            continue;
-        };
-
-        let blob = blobs.put(&decoded)?;
+        bytes += moved;
         messages.set_attachment_blob(request.message, part_id, &blob)?;
     }
 
@@ -1379,6 +1652,32 @@ async fn fetch_payloads(
     }
 
     Ok(Outcome::Stored { bytes })
+}
+
+/// The sections of `message` that ride down the text axis with its body.
+///
+/// ADR 0017's rule, and the whole of #751's first cause: an inline part under
+/// `cap` is text, a larger one is a payload. `None` disables the rule, leaving
+/// every part on the payload axis.
+///
+/// Inline *and* nothing else. A named attachment is a payload however little
+/// it weighs, or `attachment_fetch = "on_open"` would stop meaning anything;
+/// what qualifies here is a part the sender marked for display inside the
+/// body, which in practice is a `cid:` image the HTML points at.
+///
+/// The size is the server's declared one, taken from `BODYSTRUCTURE` at header
+/// sync — the only figure available before the bytes move, which is the whole
+/// point of having a cap.
+fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Vec<String> {
+    let Some(cap) = cap else {
+        return Vec::new();
+    };
+    message
+        .attachments
+        .iter()
+        .filter(|part| part.is_inline() && !part.is_downloaded() && part.size <= cap)
+        .filter_map(|part| part.part_id.clone())
+        .collect()
 }
 
 /// How much of a message is local, given what its parts have.

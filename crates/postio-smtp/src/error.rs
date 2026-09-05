@@ -1,6 +1,6 @@
 //! What can go wrong sending mail, expressed without naming a provider.
 //!
-//! Mirrors `postio_imap::backend::BackendError`'s shape: callers branch on
+//! Mirrors `postio_account::backend::BackendError`'s shape: callers branch on
 //! [`SmtpError::is_transient`] and [`is_authentication_failure`
 //! ](SmtpError::is_authentication_failure), never on the variant, so a new
 //! variant cannot silently change how existing code retries. No variant
@@ -133,6 +133,27 @@ pub enum SmtpError {
     /// so it must not be mistaken for a successful send.
     #[error("cancelled")]
     Cancelled,
+
+    /// A failure raised once the message payload had begun being written.
+    ///
+    /// Not something to match on and not something to construct: it is how
+    /// the `DATA` path carries the one fact SMTP itself cannot report — that
+    /// the bytes had started leaving — out to
+    /// [`submission_is_indeterminate`](Self::submission_is_indeterminate).
+    /// Every other predicate here delegates straight through it, so wrapping
+    /// an error changes what a caller can *ask*, never what it already
+    /// decided. That is the property this module's header promises and the
+    /// only reason a new variant is safe to add.
+    ///
+    /// It carries the failure it wraps and nothing else — in particular no
+    /// part of the message, which is what keeps these errors safe to log
+    /// verbatim.
+    #[error("{source}")]
+    Indeterminate {
+        /// What actually went wrong.
+        #[source]
+        source: Box<SmtpError>,
+    },
 }
 
 impl SmtpError {
@@ -144,7 +165,7 @@ impl SmtpError {
     /// fact that retrying will not change.
     pub fn is_transient(&self) -> bool {
         matches!(
-            self,
+            self.beneath(),
             Self::Disconnected { .. }
                 | Self::TimedOut { .. }
                 | Self::Io { .. }
@@ -159,38 +180,80 @@ impl SmtpError {
     /// retrying a send that was in fact accepted delivers a second copy to
     /// somebody else's inbox, and nothing can recall it.
     ///
-    /// **False means the server answered and did not accept.** A rejected
-    /// credential, sender, recipient or message, a configuration problem, a
-    /// TLS failure, an unreadable reply, and a `4xx` — which is a *reply*,
-    /// so the server was still talking — all mean the transaction ended in a
-    /// refusal the client witnessed. Those are safely retryable, and a caller
-    /// may undo whatever it did in anticipation of the send.
+    /// **The two predicates are orthogonal, and this one is asked first.** A
+    /// connection lost while the payload was going out is still exactly the
+    /// kind of failure a backoff loop retries — which is the trap: `4xx`,
+    /// a reset socket and a timeout are all "try again later" right up until
+    /// the moment trying again means sending the message twice.
     ///
-    /// **True means the client stopped hearing from the server**, and there
-    /// is no way from here to tell a connection lost before `MAIL FROM` from
-    /// one lost between the terminating `.` and the reply to it. This is
-    /// deliberately the conservative approximation:
-    /// [#673](https://github.com/dlapiduz/postio/issues/673) teaches `data`
-    /// where the payload boundary is and narrows it to failures raised once
-    /// the payload had begun being written. Until then every transport
-    /// failure is treated as though it might have been that one, because the
-    /// costs are not symmetric.
+    /// **False means nothing of the message can have been submitted.** Either
+    /// the server answered — a rejected credential, sender, recipient or
+    /// message, an unreadable reply, a `4xx`, all of which mean the
+    /// transaction ended in a refusal the client witnessed — or the transport
+    /// failed *before* the payload began being written, in which case there
+    /// is nothing on the wire to have been accepted. Both are safely
+    /// retryable, and a caller may undo whatever it did in anticipation.
+    ///
+    /// **True means the client stopped hearing from the server after the
+    /// payload had begun.** `DATA` is not that moment: it asks permission,
+    /// and the message goes out only after the server's `354`. The window
+    /// opens with the first byte of the body and closes when the reply to the
+    /// terminating `.` is read; inside it, "it never arrived" and "it arrived
+    /// and the acknowledgement did not" are indistinguishable, and no amount
+    /// of protocol can separate them. [`SmtpSession::send_message`
+    /// ](crate::session::SmtpSession::send_message) is what knows where that
+    /// window is, and it tags the failures raised inside it.
+    ///
+    /// Until #673 this was approximated by variant: every transport failure
+    /// anywhere in the session was treated as though it might have been that
+    /// one, because the costs are not symmetric. That was safe and far too
+    /// broad — a connection dropped during `EHLO` stranded a queued message
+    /// that nothing had ever tried to send.
     pub fn submission_is_indeterminate(&self) -> bool {
-        matches!(
-            self,
-            Self::Disconnected { .. } | Self::TimedOut { .. } | Self::Io { .. } | Self::Cancelled
-        )
+        matches!(self, Self::Indeterminate { .. })
+    }
+
+    /// Tags a failure as having been raised once the payload was on the wire.
+    ///
+    /// Only a failure the *client* raised is tagged. A reply the server sent
+    /// — a rejection, a `4xx` — is the server saying what it did with the
+    /// message, so being past the payload boundary does not make it unknown;
+    /// wrapping those would turn every refused message into one Postio
+    /// refuses to retry.
+    pub(crate) fn once_the_payload_was_on_the_wire(self) -> Self {
+        match self {
+            Self::Disconnected { .. }
+            | Self::TimedOut { .. }
+            | Self::Io { .. }
+            | Self::Cancelled => Self::Indeterminate {
+                source: Box::new(self),
+            },
+            answered => answered,
+        }
+    }
+
+    /// The failure itself, looking through an [`Indeterminate`
+    /// ](Self::Indeterminate) wrapper.
+    ///
+    /// Every predicate but [`submission_is_indeterminate`
+    /// ](Self::submission_is_indeterminate) answers from here, so tagging an
+    /// error cannot change an answer a caller already relied on.
+    fn beneath(&self) -> &Self {
+        match self {
+            Self::Indeterminate { source } => source,
+            other => other,
+        }
     }
 
     /// Whether the user has to supply a new password before anything will
     /// work.
     pub fn is_authentication_failure(&self) -> bool {
-        matches!(self, Self::Auth { .. })
+        matches!(self.beneath(), Self::Auth { .. })
     }
 
     /// The recipient address a permanent rejection named, when this is one.
     pub fn rejected_recipient(&self) -> Option<&str> {
-        match self {
+        match self.beneath() {
             Self::RecipientRejected { recipient, .. } => Some(recipient),
             _ => None,
         }

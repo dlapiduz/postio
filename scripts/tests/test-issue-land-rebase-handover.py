@@ -119,12 +119,27 @@ def pinned_channel() -> str:
 
 
 def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
+    """Run git in the sandbox, and say what went wrong when it will not.
+
+    `check=True` with `capture_output=True` raises a CalledProcessError that
+    prints the command and the exit status and *not* git's own message, so a
+    setup failure here reads as "returned non-zero exit status 1" with no
+    reason attached -- which is how this test failed on CI while passing on a
+    developer's machine, and what made the difference take a run to find.
+    """
+    done = subprocess.run(
         ["git", "-c", "user.email=test@example.com", "-c", "user.name=Test", *args],
         cwd=cwd,
-        check=True,
+        check=False,
         capture_output=True,
     )
+    if done.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed in {cwd} (exit {done.returncode})\n"
+            f"--- stdout ---\n{done.stdout.decode(errors='replace')}\n"
+            f"--- stderr ---\n{done.stderr.decode(errors='replace')}"
+        )
+    return done
 
 
 def build_sandbox(root: Path, channel: str) -> None:
@@ -257,7 +272,7 @@ def run_case(
     (stub_dir / "calls").write_text("", encoding="utf-8")
 
     subprocess.run(
-        ["git", "init", "-q", "--bare", str(origin)], check=True, capture_output=True
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True, capture_output=True
     )
     root.mkdir(parents=True)
     build_sandbox(root, channel)

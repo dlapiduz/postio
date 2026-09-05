@@ -12,6 +12,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -23,12 +24,9 @@ use postio_gtk::search::{DEBOUNCE, Outcome};
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 
-/// The interaction budget from CLAUDE.md. A keystroke has to fit inside it.
-const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
-
 pub fn the_readout_answers_the_query_on_screen_and_no_other() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -64,21 +62,32 @@ pub fn the_readout_answers_the_query_on_screen_and_no_other() {
 
     // -- a burst of typing costs one search -------------------------------
 
-    let typed = Instant::now();
     for prefix in ["m", "ma", "mai", "mail", "maild", "maildi", "maildir"] {
         finder.set_query(Query {
             mode: Mode::Search,
             text: prefix.to_owned(),
         });
     }
-    let typing = typed.elapsed();
+    // The budget, asserted as its cause rather than as a stopwatch reading.
+    //
+    // A keystroke fits in 16ms because it schedules a search instead of
+    // running one, and *that* is what this checks. The wall-clock assertion
+    // that used to stand beside it — `typing < INTERACTION_BUDGET` — measured
+    // the process it ran in, not the code: it failed at 16.17ms as one of 180
+    // cases in a shared binary against an allocator the other 179 had already
+    // warmed, and passed alone every time. #841 moved `gtk_composer` out of
+    // this suite for exactly that, and CLAUDE.md's rule is the general form:
+    // "a shared runner cannot defend 16ms, so what gates a PR is the *cause*
+    // of each budget, counted".
+    //
+    // Nothing is lost. Zero searches for seven keystrokes is the strictly
+    // stronger statement — a build that blew the budget by searching inline
+    // fails here first, and fails the same way on every machine.
     assert!(
         asked.borrow().is_empty(),
-        "typing must not run a search inline; it only reschedules one"
-    );
-    assert!(
-        typing < INTERACTION_BUDGET,
-        "seven keystrokes took {typing:?}, over the {INTERACTION_BUDGET:?} budget for one"
+        "typing must not run a search inline; it only reschedules one — which \
+         is why a keystroke fits the 16ms interaction budget: {:?}",
+        asked.borrow()
     );
 
     wait_out_the_debounce();
@@ -95,6 +104,42 @@ pub fn the_readout_answers_the_query_on_screen_and_no_other() {
     assert!(live.deliver(sequence, outcome(14, 11)));
     pump();
     assert_eq!(readout(&window), "14 hits · 11 ms");
+
+    // -- an account dropping out attaches the caveat, no query asked ------
+    //
+    // #1060: `unreachable` used to be fixed at the moment the answer came
+    // back, so an account that dropped out while the result sat on screen
+    // never showed up. `set_unreachable` replaces the caveat on the
+    // outcome already showing instead of asking the store anything.
+
+    let asked_before_status_moved = asked.borrow().len();
+    live.set_unreachable(vec!["Work".to_owned()]);
+    pump();
+    assert_eq!(
+        readout(&window),
+        "14 hits · 11 ms · Work unreachable",
+        "an account going offline attaches the caveat to the answer on screen"
+    );
+    assert_eq!(
+        asked.borrow().len(),
+        asked_before_status_moved,
+        "attaching the caveat must not ask the query again"
+    );
+
+    // -- the account coming back retracts it, still no query asked --------
+
+    live.set_unreachable(Vec::new());
+    pump();
+    assert_eq!(
+        readout(&window),
+        "14 hits · 11 ms",
+        "the account coming back retracts the caveat"
+    );
+    assert_eq!(
+        asked.borrow().len(),
+        asked_before_status_moved,
+        "retracting the caveat must not ask the query again either"
+    );
 
     // -- a redraw that changes nothing does not cancel a search -----------
 
@@ -256,6 +301,8 @@ fn outcome(hits: u64, millis: u64) -> Outcome {
         // A settled account, which is what this file's assertions about the
         // readout's wording are written against (#352).
         corpus_complete: true,
+        // And every account answering (#812), for the same reason.
+        unreachable: Vec::new(),
     }
 }
 
@@ -277,6 +324,9 @@ fn readout(window: &Window) -> String {
 
 /// Runs the main loop past the debounce, so a scheduled search comes due.
 fn wait_out_the_debounce() {
+    // POSTIO-FIXED-DEADLINE: `DEBOUNCE` is the subject. This waits out the
+    // debounce the search field schedules against, so the duration is the
+    // thing under test rather than the patience the test is granted.
     let deadline = Instant::now() + DEBOUNCE + Duration::from_millis(60);
     let context = glib::MainContext::default();
     let heartbeat =
@@ -285,11 +335,6 @@ fn wait_out_the_debounce() {
         context.iteration(true);
     }
     heartbeat.remove();
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

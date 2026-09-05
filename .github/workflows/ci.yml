@@ -15,45 +15,19 @@ name: CI
 # equivalent fallback is a `container: fedora:44` running the exact dnf line
 # from CLAUDE.md, rather than downgrading the feature floor.
 
-# Prose does not need a compiler. A docs-only change used to spend ~4 minutes
-# of runner time proving that Rust it did not touch still builds.
-#
-# Listed explicitly rather than ignoring `docs/**`, and that is deliberate:
-# `docs/keybindings.md` is GENERATED from the command registry and
-# `postio-core/tests/keybindings_doc.rs` fails when the two drift. Ignoring the
-# whole directory would let a hand-edit of it through unverified, which is
-# exactly the drift that test exists to catch.
-#
-# Naming each prose file beats a `docs/**` glob with a `!` exception, because
-# it fails in the safe direction: a doc nobody has listed here runs CI, which
-# costs four minutes. A generated file nobody remembered to exclude would skip
-# it, which costs a silent regression.
-# PAUSED 2026-08-25: this repo is private, and a push-plus-pull_request
-# trigger means every merge bought two full runs -- one on the PR, one again
-# on the push to main that landed it -- against a private repo's small free
-# minutes allotment. That ran the account out. Public repos get free minutes
-# on GitHub-hosted runners, so the real fix is going OSS; until then this
-# workflow is workflow_dispatch-only, and the steward loop runs
-# `cargo test --workspace --no-fail-fast` by hand against main periodically
-# instead (see CLAUDE.md's "CI is paused" note). Restore by uncommenting
-# `push`/`pull_request` below -- the paths-ignore list does not need to
-# change.
+# Every push and every pull request runs this workflow; what the diff
+# obliges it to *build* is decided inside it, by the `changes` job, and the
+# compile jobs are gated on that. It used to be a workflow-level
+# `paths-ignore` for prose, and that cannot stay one: a workflow that does
+# not run reports no check, and a required status check that never reports
+# is a pull request that never merges (#1107). A gated job that is skipped
+# still reports, as skipped, which the ruleset counts as passed -- so
+# docs-only and tooling-only changes (39% of a fortnight's commits, #1127)
+# pay for the classification and the cheap jobs, not for a workspace build.
 on:
-  # push:
-  #   branches: [main]
-  #   paths-ignore: &prose
-  #     - '*.md'
-  #     - '.claude/**'
-  #     - 'Design/**'
-  #     - 'docs/decisions/**'
-  #     - 'docs/images/**'
-  #     - 'docs/PRODUCT.md'
-  #     - 'docs/ARCHITECTURE.md'
-  #     - 'docs/engineering-notes.md'
-  #     - 'docs/session-prompts.md'
-  #     - 'docs/architecture-review-2026-08.md'
-  # pull_request:
-  #   paths-ignore: *prose
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 # Least-privilege default: no job here pushes a commit, opens a PR, or
@@ -83,9 +57,46 @@ env:
   # eight-core workstation. That reasoning does not travel: a runner is one
   # job on its own machine, and inheriting the limit throttled CI to a quarter
   # of the box for no benefit. CARGO_BUILD_JOBS overrides the config file.
+  #
+  # This is the floor, not the setting. The jobs that compile ask the runner
+  # how many cores it has and raise it (see .github/actions/rust-workspace);
+  # the cheap jobs that only read metadata never build enough to care.
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      docs: ${{ steps.classify.outputs.docs }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The diff comes from the API rather than from a deep clone: a pull
+      # request's base..head and a push's before..after are both one
+      # compare call. A range GitHub cannot answer (a first push, a force
+      # push whose `before` is gone) leaves the list empty, and an empty
+      # list builds everything -- scripts/ci-changes.sh fails in that
+      # direction on purpose, and its self-test holds it there.
+      - name: Classify the diff
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" ;;
+            push)         range="${{ github.event.before }}...${{ github.sha }}" ;;
+            *)            range="" ;;
+          esac
+          files=""
+          if [ -n "$range" ]; then
+            files=$(gh api --paginate "repos/${{ github.repository }}/compare/$range" \
+                      --jq '.files[].filename' 2>/dev/null || true)
+          fi
+          printf '%s\n' "$files" | scripts/ci-changes.sh "${{ github.event_name }}" | tee -a "$GITHUB_OUTPUT"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -116,6 +127,12 @@ jobs:
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -182,224 +199,85 @@ jobs:
         # green. See scripts/checks/check-runtime-crossings.py and #66.
         run: python3 scripts/checks/check-runtime-crossings.py
 
-      - name: Prove the boundary check actually fails when violated
-        run: python3 scripts/tests/test-check-crate-boundaries.py
+      # Every self-test under scripts/tests, discovered rather than listed,
+      # and run several at a time.
+      #
+      # Listed, this was 38 steps and took 8.4 minutes of a job that does
+      # nothing else expensive -- 38 sequential python processes, most of
+      # which build a cargo sandbox. They do not depend on each other, so
+      # queueing them behind each other bought nothing.
+      #
+      # Discovered, because the list had already drifted: nine self-tests
+      # existed that CI never ran, two of them added the same day this was
+      # written. A hand-maintained enumeration of "the tests we remember"
+      # fails in exactly the direction nobody notices -- the test is present,
+      # green locally, and simply never runs here. Adding a file to
+      # scripts/tests/ is now enough.
+      #
+      # Each test says what it is for in its own module docstring, which is
+      # where that belonged: a step name in a workflow is not a place anybody
+      # reads, and a comment there was a second copy free to disagree.
+      # The step below is eight of this job's nine minutes, and what it tests
+      # is `scripts/`, not the workspace: each self-test builds its own
+      # sandbox repository and reads only the copy of the tooling it put
+      # there. A pull request that cannot affect `scripts/` should not pay for
+      # it. #996 lists this as the cheapest thing to fix here.
+      #
+      # The rule itself is `scripts/ci-tooling-needed.sh`, and it is a script
+      # rather than fifteen lines of `bash` here because inline workflow steps
+      # cannot be tested -- which was its own small joke, since what it gates
+      # is the suite that keeps the tooling honest.
+      # `scripts/tests/test-ci-tooling-needed.py` is what tests it, including
+      # every direction it has to fail safe in.
+      - name: Decide whether the tooling self-tests need to run
+        id: tooling
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api --paginate \
+            "repos/${{ github.repository }}/compare/${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+            --jq '.files[].filename' 2>/dev/null) || files=""
+          answer=$(printf '%s\n' "$files" \
+            | scripts/ci-tooling-needed.sh "${{ github.event_name }}")
+          echo "run=$answer" >> "$GITHUB_OUTPUT"
+          echo "tooling self-tests: $answer"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
 
-      - name: Prove the toolchain check actually fails when violated
-        run: python3 scripts/tests/test-check-toolchain-pinned.py
-
-      - name: Prove RUSTUP_TOOLCHAIN cannot reach a gate
-        # The pin only guarantees anything if a session's own environment
-        # cannot override it; this exercises issue-land.sh and
-        # test-headless.sh with an uninstalled toolchain named in
-        # RUSTUP_TOOLCHAIN and checks that neither one lets it through. #112.
-        run: python3 scripts/tests/test-rustup-toolchain-cleared.py
-
-      - name: Prove the headless runner sends only test binaries to the compositor
-        # The runner fronts every binary cargo executes. Test binaries (the
-        # 16-hex metadata suffix) go headless; `cargo run -p postio-app` and
-        # examples must reach the real display, or the README's own run
-        # instruction launches the app invisibly. #315.
-        run: python3 scripts/tests/test-headless-runner.py
-
-      - name: Prove the sccache daemon is never pinned to a worktree
-        # sccache is one machine-wide daemon that fixes its temp directory at
-        # spawn and never re-reads it. Pinned to a worktree's target/tmp it
-        # breaks every build on the machine, for every session, the moment
-        # issue-release.sh deletes that worktree. #359.
-        run: python3 scripts/tests/test-rustc-wrapper-tmpdir.py
-
-      - name: Prove a fresh tree's TMPDIR is created before anything wants it
-        # .cargo/config.toml points TMPDIR at target/tmp and nothing creates
-        # it, so the first temp file in a fresh clone or worktree failed with
-        # NotFound, naming a path nobody wrote. Both scripts that front cargo
-        # have to make it, and both have to stay fail-open. #613.
-        run: python3 scripts/tests/test-tmpdir-created.py
-
-      - name: Prove issue-claim.sh never adopts an existing worktree
-        # A claim lock can go missing while its session works; adopting the
-        # worktree it protected puts two sessions in one tree. #328.
-        run: python3 scripts/tests/test-issue-claim-no-adoption.py
-
-      - name: Prove the macOS boundary's Swift bindings still generate
-        # postio-ffi is the seam the Swift app talks to. It carries no
-        # macOS-specific code precisely so this runs on Linux: the expensive
-        # platform's shim is proven on the cheap one. ADR 0019, #571.
-        run: python3 scripts/tests/test-ffi-bindgen.py
-
-      - name: Prove issue-land.sh refuses a crate the host cannot build
-        # A host without gtk4 runs no gate at all over postio-gtk, and the
-        # branch merged anyway. CI is paused, so nothing else would notice. #555.
-        run: python3 scripts/tests/test-issue-land-unbuildable.py
-
-      - name: Prove the workflow scripts run on BSD userland too
-        # GNU-only `sed \+` and `date -d` made the whole issue workflow
-        # unusable on macOS -- you could not claim, so you could do nothing. #559.
-        run: python3 scripts/tests/test-scripts-bsd-portable.py
-
-      - name: Prove issue-claim.sh can claim from a second queue
-        # macOS issues carry `ready-mac` and not `ready`, so an ordinary Linux
-        # claim skips them by construction rather than by convention. #552.
-        run: python3 scripts/tests/test-issue-claim-ready-label.py
-
-      - name: Prove the stale sweep spares any claim whose worktree exists
-        # The orphaned-lock branch used to trust the in-progress label alone,
-        # which is how live claims got swept. #328.
-        run: python3 scripts/tests/test-issue-release-stale.py
-
-      - name: Prove issue-land.sh's commit guard only fires when needed
-        # A clean tree with commits already on the branch -- the state
-        # "commit as you go" leaves a session in -- must land with no -m;
-        # a dirty tree with no -m must still refuse, but say so. #120.
-        run: python3 scripts/tests/test-issue-land-commit-guard.py
-
-      - name: Prove issue-land.sh stages before the personal-data gate runs
-        # check-no-personal-data.py reads `git ls-files` -- tracked files
-        # only -- and used to run before `git add -A`, so a file this
-        # session was adding was invisible to it on the very landing that
-        # added it. That is how #269's PNG got through unscanned. #270.
-        run: python3 scripts/tests/test-issue-land-personal-data.py
-
-      - name: Prove issue-land.sh's merge step survives main's worktree
-        # `gh pr merge --rebase --delete-branch` fails here every time,
-        # because deleting the local branch makes `gh` switch this worktree
-        # off it first, and `main` is permanently checked out elsewhere.
-        # The stubbed `gh` fails loudly, with the real error text, if it is
-        # ever asked for --delete-branch again. #167.
-        run: python3 scripts/tests/test-issue-land-merge.py
-
-      - name: Prove issue-claim.sh's blockedBy check reads the real field
-        # `gh issue list --json blockedBy` never emits `closed` -- it emits
-        # `state: "OPEN"|"CLOSED"`. Reading the wrong key made `not False`
-        # always true, so every issue with any blockedBy entry was reported
-        # blocked forever, even once its blocker closed. #247.
-        run: python3 scripts/tests/test-issue-claim-blocked-by.py
-
-      - name: Prove issue-land.sh's gates do not share a target directory
-        # #178 gave every worktree its own target/ because sharing one
-        # compiles a worktree's crate against a sibling's; issue-land.sh kept
-        # defaulting to the main checkout's, so the one run a merge is staked
-        # on was the one still sharing. This builds a real crate through
-        # --gates-only and looks at where the artifacts landed. #253.
-        run: python3 scripts/tests/test-issue-land-target-dir.py
-
-      - name: Prove issue-land.sh hands over to the machinery it rebases in
-        # It rebases the tree it lives in, so a fix to the landing machinery
-        # was invisible to the first run that pulled it in -- which is how a
-        # three-crate change merged without waiting for CI. #160.
-        run: python3 scripts/tests/test-issue-land-rebase-handover.py
-
-      - name: Prove issue-land.sh does not report a merge that did not happen
-        # `gh pr merge` prints "already merged" and exits 0 when there is
-        # nothing to do, which once let the script announce success, delete
-        # the remote branch, and send the operator to remove the worktree
-        # holding the only copy. #312.
-        run: python3 scripts/tests/test-issue-land-312.py
-
-      - name: Prove issue-land.sh does not report a merge that did land
-        # The other direction, and the more expensive mistake: `gh pr merge`
-        # returns before the new tip is necessarily visible, so a single-shot
-        # check turned seconds of replication lag into "MERGE DID NOT LAND"
-        # and told the session to open a second PR for work already on main.
-        # #406.
-        run: python3 scripts/tests/test-issue-land-lagging-ref.py
-
-      - name: Prove issue-file.sh searches before it files
-        # One bug collected three issue numbers in two days, both duplicates
-        # filed off a fresh reproduction -- the state where searching first
-        # feels redundant. The case that matters is a *closed* prior issue,
-        # which is what both duplicates were filed against. #415.
-        run: python3 scripts/tests/test-issue-file-duplicates.py
-
-      - name: Prove fuzz.sh says what is missing instead of failing late
-        # Without cargo-fuzz it ran `cargo fuzz`, which made rustup download
-        # a whole nightly toolchain and then failed with "no such command:
-        # fuzz" -- naming neither the missing tool nor the fix. #277.
-        run: python3 scripts/tests/test-fuzz-missing-tool.py
-
-      - name: Prove a worktree lands back onto the base it was cut from
-        # Both scripts hardcoded `main` in five places. An initiative branch
-        # (multi-account, #1) needs work to land back onto it, and every one
-        # of those five was correct-looking -- so getting it wrong merged
-        # initiative work straight into main, silently. #290.
-        run: python3 scripts/tests/test-issue-base-branch.py
-
-      - name: Prove the GTK-init check actually fails when violated
-        # The tree is clean, so this check passes whether it works or not.
-        # Its own failure modes -- including the brace scanner that decides
-        # where a test module ends -- are exercised instead.
-        run: python3 scripts/tests/test-check-no-gtk-init-in-unit-tests.py
-
-      - name: Prove the one-GTK-test-per-binary check actually fails when violated
-        # Same reason as above: the tree is clean now that #355's three files
-        # moved into the harness. The case that matters most is the one that
-        # must NOT fail -- two tests where only one needs a display, which is
-        # gtk_shell.rs and is legitimate.
-        run: python3 scripts/tests/test-check-one-gtk-test-per-binary.py
-
-      - name: Prove the lint-floor check actually fails when violated
-        run: python3 scripts/tests/test-check-lint-floor.py
-
-      - name: Prove the personal-data check reads the right files
-        # It read every tracked file as UTF-8 with errors="ignore", binaries
-        # included -- and "ignore" *deletes* undecodable bytes, splicing
-        # what sat either side into an address that exists nowhere in the
-        # file. A screenshot's compressed pixels did exactly that and blocked
-        # every landing in the repository. #144.
-        run: python3 scripts/tests/test-check-no-personal-data.py
-
-      - name: Prove the tracking check actually fails when violated
-        # It guards something that does not exist yet, so on a clean tree it
-        # passes whether it works or not. That is the shape of check that
-        # rots silently, so its own failure modes are exercised too.
-        run: python3 scripts/tests/test-check-no-silent-tracking.py
-
-      - name: Prove the CI-expectation predicate answers both ways
-        # It decides whether issue-land.sh may merge without seeing a check.
-        # Wrong one way it costs a re-run; wrong the other it merges code CI
-        # never looked at, which is what happened on #135. See #139.
-        run: python3 scripts/tests/test-ci-expected-workflows.py
-
-      - name: Prove the check-wait refuses to merge when a check never appears
-        # Drives scripts/wait-for-checks.sh against a stubbed `gh`, including
-        # the registration race in both directions.
-        run: python3 scripts/tests/test-wait-for-checks.py
-
-      - name: Prove the runtime-crossing check catches the bug it exists for
-        # Its first case is the 0.1.0 defect verbatim in shape. A guard that
-        # would not have caught the fault it was written for is worth nothing.
-        run: python3 scripts/tests/test-check-runtime-crossings.py
-
-      - name: Prove install-local.sh forces a stale icon cache to rebuild
-        # gtk-update-icon-cache -qt only skips demanding an index.theme; it
-        # does not rebuild a cache that is already there, which is why the
-        # app grid kept the default icon after a fresh install. #427.
-        run: python3 scripts/tests/test-install-local-icon.py
-
-      - name: Prove install-local.sh names every missing build dependency at once
-        # OpenSSL's Configure stops at the first module it cannot find, minutes
-        # into a release build, so the six perl modules Fedora leaves out were
-        # six failed builds to discover. The check must also stay silent on a
-        # machine that has everything. #646.
-        run: python3 scripts/tests/test-install-local-build-deps.py
-
-      - name: Prove coverage.sh's floor comparison fails in both directions
-        # Stubs cargo-llvm-cov so the floor-comparison arithmetic gets to be
-        # red-then-green without spending the minutes a real instrumented
-        # build costs. #98.
-        run: python3 scripts/tests/test-coverage-gate.py
-
-      - name: Prove mutants.sh's baseline diff fails in both directions
-        # Same reason, for the baseline-vs-survivors comparison a real run
-        # takes hours to exercise. #99.
-        run: python3 scripts/tests/test-mutants-gate.py
+      - name: Prove the tooling still holds itself up
+        if: steps.tooling.outputs.run == 'yes'
+        run: |
+          ls scripts/tests/*.py | sort > /tmp/self-tests
+          echo "running $(wc -l < /tmp/self-tests) self-tests, four at a time"
+          # `-P4` and not more: several of these build a cargo sandbox, and
+          # .cargo/config.toml already pins two jobs per cargo.
+          if ! xargs -P4 -I{} -a /tmp/self-tests \
+              sh -c 'python3 "$1" >"/tmp/$(basename "$1").log" 2>&1 || { echo "FAILED: $1"; exit 1; }' _ {}; then
+            echo
+            echo "::error::a tooling self-test failed; its output follows"
+            for log in /tmp/test-*.log; do
+              name=$(basename "$log" .log)
+              grep -q "" "$log" || continue
+              if ! grep -qE "passed|ok\b" "$log"; then
+                echo "--- $name ---"
+                tail -n 40 "$log"
+              fi
+            done
+            exit 1
+          fi
 
       - name: Assert CI never runs the network-touching tests
         run: |
           # Live-server tests are #[ignore]d and must stay out of CI. The
           # pattern is split so this guard does not match itself.
+          # Both spellings -- cargo test's flag, and the `--run-` prefixed
+          # one nextest uses. Neither is written out here for the same reason
+          # the pattern below is split: this file is what gets grepped, so a
+          # comment naming the flag fails the job it is documenting.
+          #
+          # A guard that knows only the runner we used to use stops working
+          # the day the runner changes, which is what this commit does.
           flag="--ign""ored"
-          if grep -rnF -- "$flag" .github/workflows; then
+          if grep -rnE -- "$flag|--run-ign""ored" .github/workflows; then
             echo "::error::CI must not run the ignored tests; they talk to a live mail server."
             exit 1
           fi
@@ -408,12 +286,20 @@ jobs:
   docs:
     name: Docs site build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Cache the mdbook binary
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -424,8 +310,25 @@ jobs:
       # Keep this version pin in step with pages.yml's -- they must build the
       # same book the same way, or a PR could pass here and still fail on
       # deploy.
+      #
+      # Installed only when the cache did not already bring it: `cargo
+      # install` refuses outright with "binary `mdbook` already exists in
+      # destination" when a cached copy is on disk, so an unguarded install
+      # fails the job every time the cache works. It went unnoticed because
+      # the first run after the cache is seeded is the first run that can hit
+      # it, and CI was dispatch-only from then until #781.
+      #
+      # The binary is asked, not the cache: `cache-hit` is false on a
+      # restore-keys prefix hit even though the files are there, so a
+      # cache-hit guard is wrong wherever restore-keys are in play (they are,
+      # in the coverage, mutants and fuzz caches). One idiom for all four.
       - name: Install mdbook
-        run: cargo install mdbook --locked --version 0.5.4
+        run: |
+          if mdbook --version 2>/dev/null | grep -qw "v0.5.4"; then
+            echo "mdbook 0.5.4 restored from the cache"
+          else
+            cargo install mdbook --locked --version 0.5.4 --force
+          fi
 
       # This is what ADR 0011 Q6 calls "catch a broken link or a missing
       # SUMMARY.md entry in review": mdbook fails the build on either, and
@@ -441,6 +344,8 @@ jobs:
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -452,70 +357,94 @@ jobs:
       # Its own job on ubuntu-latest rather than a step in `build`: it needs
       # cargo metadata and no GTK, so it runs in seconds beside the other cheap
       # checks instead of waiting on the workspace to compile.
+      # The action runs cargo-deny inside a musl container, and rustup there
+      # honours this repository's rust-toolchain.toml like anywhere else --
+      # then fails with "override toolchain '<channel>-x86_64-unknown-linux-musl'
+      # is not installed", because the container ships its own toolchain and
+      # not ours. Telling the action which channel to install resolves the
+      # override instead of fighting it.
+      #
+      # Read out of rust-toolchain.toml rather than written here: the pin has
+      # one source, and a second copy is one that can drift from it silently
+      # (`issue-land.sh` reads it the same way, for the same reason).
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "cargo-deny will run on $channel"
+
       - name: cargo-deny
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           arguments: --all-features
+          rust-version: ${{ steps.pin.outputs.channel }}
 
-  build:
-    name: Clippy and tests
+  # One job became three (#818). They ran in sequence inside a single job --
+  # clippy, then test, then doc -- which is three full workspace compiles
+  # queued behind each other for no reason but that they shared a checkout.
+  # 16.9 minutes on average, 27.6 at worst, and the wall clock was the sum.
+  #
+  # Side by side it is the longest of the three instead, and they still share
+  # one cache: `test` writes it, the other two restore it, so a 2 GB upload
+  # happens once per run. The setup they have in common lives in
+  # .github/actions/rust-workspace rather than in three copies free to drift.
+  clippy:
+    name: Clippy
     runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
-      #   gtk4-devel        -> libgtk-4-dev
-      #   libadwaita-devel  -> libadwaita-1-dev
-      #   webkitgtk6.0-devel-> libwebkitgtk-6.0-dev
-      #   sqlite-devel      -> libsqlite3-dev
-      #   libsecret-devel   -> libsecret-1-dev
-      #   glib2-devel       -> libglib2.0-dev
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential \
-            pkg-config \
-            libgtk-4-dev \
-            libadwaita-1-dev \
-            libwebkitgtk-6.0-dev \
-            libsqlite3-dev \
-            libsecret-1-dev \
-            libglib2.0-dev \
-            libpango1.0-dev \
-            mutter \
-            xvfb
-
-      # The pin decides; see the note in the `fmt` job.
-      - name: Install Rust toolchain
-        run: |
-          rustup show active-toolchain
-          rustc --version && cargo clippy --version
-
-      # The cache key has to name the compiler. It no longer moves on its own
-      # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
-      # a commit, and the cache must not survive it: a key of Cargo.lock alone
-      # still matches afterwards, so the runner spends ~50s restoring 2 GB of
-      # artifacts built by the old compiler that cargo then throws away. A miss
-      # is cheaper than a restore that buys nothing.
-      - name: Identify the compiler
-        id: rust
-        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache cargo registry and target dir
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # Its own cache, not the test job's. Clippy emits *check* units through
+      # `clippy-driver` and `cargo test` emits *build* units; cargo
+      # fingerprints those separately, so this job restored 3.1 GB and then
+      # rebuilt 380 crates from `unicode-ident` up anyway. See `cache-name` in
+      # the action for the measurement.
+      - uses: ./.github/actions/rust-workspace
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-build-${{ steps.rust.outputs.version }}-
+          save-cache: "true"
+          cache-name: "clippy"
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Drop workspace artifacts before caching
+        if: always()
+        run: scripts/ci-drop-workspace-artifacts.sh
+
+  test:
+    name: Tests
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # This job's own cache, keyed `build` -- the artifacts `cargo test`
+      # produces. The clippy job keeps a separate one; they cannot share.
+      - uses: ./.github/actions/rust-workspace
+        with:
+          save-cache: "true"
+          cache-name: "build"
+
+      # #1126: cargo's freshness check compares a source file's mtime
+      # against the fingerprint it was last built against, and a fresh
+      # checkout gives every file the same "now" mtime regardless of which
+      # commit last touched it -- so a cached `target/` looked entirely
+      # stale and this job rebuilt from nothing every run, even when a PR
+      # changed one crate. Restoring each file's mtime to the date of the
+      # commit that actually touched it makes the comparison mean something
+      # again: an unchanged file gets back exactly the mtime the cached
+      # build was fingerprinted against, and a changed one gets a date newer
+      # than that build, so cargo rebuilds precisely what the PR touched
+      # plus its dependants. Must run before the first cargo invocation
+      # below, and after the checkout and cache restore above -- both of
+      # which is what sets the mtimes this is undoing.
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
 
       # Sixty test files in this workspace open with "no display? skip and
       # return", which is right on a contributor's headless shell and wrong
@@ -533,141 +462,114 @@ jobs:
       # configuration developers do — against the compositor the application
       # actually targets — instead of a second, differently-behaved one.
       #
-      # Xvfb is the backstop, not the plan. A runner has no logind seat and no
-      # session bus, so `mutter --headless` may well refuse to start; the
-      # runner then fails open and execs the test binary unchanged, which
-      # inherits the DISPLAY set here. Belt and braces, because the failure
-      # this is guarding against is silent.
+      # There is no Xvfb backstop any more, and that is the point. X11 is not
+      # a supported configuration (maintainer, 2026-09-02: "there is no plan
+      # to support x11"), so a suite that passed on it proved something we do
+      # not ship — and because the runner fell back in silence, a green run
+      # could not be read to say which of the two had happened. Grepping a
+      # full job log for `postio runner:` returned zero lines whether mutter
+      # had worked perfectly or never started at all.
       #
-      # `gtk_display_required.rs` fails the build if both paths ever stop
-      # working, so the skips cannot come back unnoticed.
-      - name: Give the GTK suites a display
+      # So the only display here is the one the application targets. If the
+      # compositor does not come up, `gtk_display_required.rs` fails the run
+      # loudly, which is the outcome #114 wanted: a red tick beats a green one
+      # that means "nothing ran".
+      - name: Give the GTK suites a runtime directory
         run: |
-          Xvfb :99 -screen 0 1280x800x24 &
-          # The socket, not `xdpyinfo`, which lives in x11-utils and would be
-          # a second package to install for one readiness check.
-          for _ in $(seq 1 40); do
-            [ -S /tmp/.X11-unix/X99 ] && break
-            sleep 0.25
-          done
-          [ -S /tmp/.X11-unix/X99 ] \
-            || { echo "::error::Xvfb never came up; the GTK suites would all skip"; exit 1; }
-
           runtime="${RUNNER_TEMP:-/tmp}/xdg"
           mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-          {
-            echo "DISPLAY=:99"
-            echo "XDG_RUNTIME_DIR=$runtime"
-          } >> "$GITHUB_ENV"
+      # The version, the checksum and the reasoning all live in
+      # `scripts/install-nextest.sh`, which a workstation runs too. They used
+      # to live here, and only here, which is why the tool CI requires was
+      # absent from the machine every landing runs on -- `issue-land.sh` falls
+      # open to `cargo test` and says nothing (#1092).
+      #
+      # Keyed on the script rather than on a version repeated here: the key
+      # then changes exactly when the pin does, and cannot go stale against
+      # it. A wrong-version restore is harmless anyway -- the script checks
+      # `cargo nextest --version`, not the cache, and reinstalls.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
-      - name: cargo test
-        run: cargo test --workspace
-
-      # `#![warn(missing_docs)]` has been on most crates from the start and
-      # failed nothing, because no job ever built the docs. Denying warnings
-      # here is what makes that attribute mean something -- and it catches
-      # broken intra-doc links, which are invisible until somebody browses
-      # the docs. There were 41 of them the first time this ran. See #96.
       #
-      # A step in this job rather than a job of its own: rustdoc needs the GTK
-      # system libraries and a warm target dir, and both are already here.
+      # `dbus-run-session` is what makes the nested compositor possible here.
+      # mutter gets all the way up on a runner -- surfaceless renderer,
+      # virtual monitor, Wayland socket bound -- and then dies on
       #
-      # `private_intra_doc_links` is allowed on purpose. These docs are written
-      # for contributors and cross-reference internals deliberately; the build
-      # passes --document-private-items, so those links do resolve. The lint
-      # exists for published crate docs, which this is not.
-      - name: cargo doc
+      #   libmutter:ERROR:.../meta-wayland.c:761:set_gnome_env:
+      #   assertion failed: (session_bus)
+      #
+      # which is not about the GPU, as everyone including me assumed for a
+      # day: it wants a session bus and a runner has none. That log had been
+      # written to $XDG_RUNTIME_DIR/<display>.log all along and never read.
+      #
+      # So the tests run on the same nested compositor a developer's machine
+      # uses: one arrangement to reason about rather than two, and no second
+      # display for a green run to have quietly meant instead.
+      #
+      # This does NOT fix #794's teardown segfault, and an earlier version of
+      # this comment claimed the crash lived on the X11 path. It does not:
+      # `backend_choice` passed its one test and then died with SIGSEGV on
+      # the nested Wayland compositor, with no Xvfb anywhere in the job.
+      # A shared runner is slower and busier than the workstation these
+      # deadlines were chosen on, so it gets more patience -- in one line,
+      # here, rather than by enlarging a constant in a test file and slowing
+      # every developer's run forever. That was the only lever available while
+      # the suite had 171 hand-rolled deadlines (#842).
+      #
+      # It costs nothing when tests pass: a wait that resolves in 3 ms returns
+      # in 3 ms whatever the deadline says. It is only spent on a test that
+      # was going to fail anyway.
+      # `--no-fail-fast`, for the reason the nightly job already gives: plain
+      # cargo abandons the remaining targets at the first failure. On this
+      # run a single flaky case in `postio-runtime` stopped the job with 98
+      # of ~107 binaries reported and the rest -- including two suites the
+      # branch had just restructured -- never executed at all. A red run that
+      # hides what else would have failed costs a whole extra round trip to
+      # find out, and it is the difference between "one test is flaky" and
+      # "something is badly wrong", which is exactly what you want to know
+      # while looking at a red tick.
+      # One process per test, and test binaries run concurrently instead of one
+      # after another. Measured on this workspace: 3,462 tests across 140
+      # binaries in 118s against ~500s for `cargo test --workspace`. The
+      # binaries are what dominates -- `cargo test` serialises all 140 of them.
+      #
+      # Still inside `dbus-run-session`, for the same reason as before: mutter
+      # wants a session bus and a runner has none. `--profile ci` is where
+      # fail-fast is turned off, alongside the retry override for #957.
+      - name: cargo nextest run
         env:
-          RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
-        run: cargo doc --workspace --no-deps --document-private-items
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo nextest run --workspace --profile ci
 
-      # Keep the ~400 third-party crates; drop our own, which every commit
-      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
-      # is housekeeping rather than a speed-up -- the win is that a restored
-      # cache never carries a stale artifact of ours for cargo to reason
-      # about. Deliberately conservative: it names only files this workspace
-      # produces, because deleting a third-party rlib by accident would make
-      # every later build slower, not faster.
-      #
-      # Runs as a normal step, which is what makes it take effect: post steps
-      # run after all normal ones, so actions/cache saves what is left here.
-      - name: Drop workspace artifacts before caching
-        if: always()
-        run: |
-          before=$(du -sm target 2>/dev/null | cut -f1 || echo 0)
-          rm -rf target/*/incremental
-          rm -f  target/*/deps/libpostio_*.rlib \
-                 target/*/deps/libpostio_*.rmeta \
-                 target/*/deps/postio_*.d \
-                 target/*/deps/libpostio_*.d
-          rm -rf target/*/.fingerprint/postio-*
-          echo "cached target: ${before}MB -> $(du -sm target 2>/dev/null | cut -f1 || echo 0)MB"
+      # **nextest does not run doctests**, and does not say so. They are
+      # compiled and run by rustdoc, not by a test binary it can list, so this
+      # step is not a leftover to tidy: delete it and ~20 doctests stop running
+      # with nothing to report that they did. Under `dbus-run-session` like the
+      # step above, so the two see the same environment.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc
 
-  coverage:
-    name: Coverage floors
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
-      # postio-search and postio-config are pure leaves, and postio-storage /
-      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
-      # rather than ubuntu-latest, so the pinned toolchain's cache key and the
-      # rest of this workflow's runner-version assumptions stay one thing.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential \
-            pkg-config \
-            libsqlite3-dev \
-            libsecret-1-dev \
-            libglib2.0-dev
-
-      # The pin decides; see the note in the `fmt` job.
-      - name: Install Rust toolchain
-        run: rustup show active-toolchain
-
-      # cargo-llvm-cov instruments with LLVM's own source-based coverage,
-      # which needs the toolchain's llvm-tools alongside it -- a component,
-      # not a second toolchain, so `check-toolchain-pinned.py`'s rule 2 does
-      # not apply (that rule is about a workflow selecting a *toolchain* of
-      # its own, not adding a component to the one rust-toolchain.toml pins).
-      - name: Install llvm-tools
-        run: rustup component add llvm-tools-preview
-
-      - name: Identify the compiler
-        id: rust
-        run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache cargo registry, cargo-llvm-cov, and target dir
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            ~/.cargo/bin/cargo-llvm-cov
-            target
-          key: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-coverage-${{ steps.rust.outputs.version }}-
-
-      # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
-      # floating latest, so a coverage-tool release cannot change what
-      # "passing" means out from under a commit that touched nothing.
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version 0.9.0
-
-      # This is the PR-gating half of #98's "open question": coverage
-      # instrumentation roughly doubles test wall-clock, which is too much
-      # to add to every crate on every PR, but the five crates named in
-      # scripts/coverage-floors.json are cheap enough, and pure/logic enough,
-      # that a real regression here is worth blocking on rather than only
-      # noticing later. postio-gtk and the rest are deliberately not run
-      # here -- see that file's own comment for why a single global number
-      # would be actively misleading across crates this different.
-      - name: cargo llvm-cov (gated crates)
-        run: scripts/coverage.sh
+      # #1126: this job used to drop its own ~20 crates' artifacts here and
+      # keep only the ~400 third-party ones, because a fresh checkout's
+      # mtimes invalidated ours anyway and caching them bought nothing but
+      # upload/download bytes. "Restore mtimes from commit history" above is
+      # what removed that reason -- an unchanged crate's artifacts are
+      # genuinely reusable now, so the cache keeps them, and the reused
+      # `.fingerprint`/`deps` entries are what turns an 11-12 minute rebuild
+      # into a one-crate one. See `scripts/restore-mtimes.py`'s own doc for
+      # the property this depends on (`actions/cache` preserving mtimes
+      # through extraction) and what silently breaks if that ever stops
+      # being true.

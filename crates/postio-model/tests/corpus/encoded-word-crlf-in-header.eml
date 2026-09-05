@@ -1,0 +1,11 @@
+Message-ID: <20260301T101500.crlfheaders@sender.invalid>
+Date: Sun, 1 Mar 2026 10:15:00 +0000
+From: =?utf-8?Q?Mallory=0D=0AX-Injected-By-Name:_yes?= <mallory@sender.invalid>
+To: ada@example.com
+Subject: =?utf-8?Q?Invoice_attached=0D=0ABcc:_mallory=40sender=2Einvalid?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A perfectly ordinary body. Everything interesting about this message is in
+its headers: the encoded words decode to text containing CR and LF, which no
+unfolding step can remove because the octets were never folding whitespace.

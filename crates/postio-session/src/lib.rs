@@ -46,6 +46,7 @@ pub mod engine;
 pub mod logging;
 pub mod paths;
 pub mod provision;
+pub mod reachability;
 pub mod reading;
 pub mod refresh;
 
@@ -55,7 +56,7 @@ use std::time::{Duration, SystemTime};
 
 use postio_core::bridge::EventSink;
 use postio_runtime::store::{MailStore, SqliteStore};
-use postio_storage::blob::{GarbageCollection, GarbageReport};
+use postio_storage::blob::{EvictionReport, GarbageCollection, GarbageReport};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, Database};
 
@@ -72,6 +73,20 @@ pub fn mailbox_roles_at(path: &std::path::Path) -> postio_model::RoleOverrides {
         .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
         .map(|config| config.role_overrides())
         .unwrap_or_default()
+}
+
+/// `[storage] max_bytes` from the file at `path`, or nothing.
+///
+/// Unreadable, unparseable, absent and unset all answer `None`, which is the
+/// documented default and means unbounded — see `postio_config::storage` for
+/// why a number here is a promise about somebody else's disk that Postio is
+/// not in a position to make. Read once at startup, like `[mailboxes]` and
+/// `[sync]` beside it.
+pub fn storage_ceiling_at(path: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .and_then(|config| config.storage.max_bytes)
 }
 
 /// Read `[sync]` from `path` and turn it into the policy the engine backfills
@@ -99,6 +114,44 @@ pub fn backfill_policy_at(path: &std::path::Path) -> postio_runtime::BackfillPol
     backfill_policy(&sync)
 }
 
+/// Read `[sync]` from `path` and turn it into the policy the engine watches
+/// under.
+///
+/// The join `idle`/`poll_interval_secs` never had (#932): `WatchPolicy`
+/// has documented `idle` as "`[sync] idle` in `config.toml`" since it was
+/// written, and `engine::start` spawned `EngineParts { watch:
+/// Default::default(), .. }` -- so turning push off, or changing how often
+/// the rest of the mailbox is reconciled, did nothing at all.
+///
+/// Read once at startup rather than kept live, for the same reason
+/// [`backfill_policy_at`] gives: the engine is spawned with its parts, so a
+/// change applies at the next start. A file that will not parse leaves the
+/// defaults standing.
+pub fn watch_policy_at(path: &std::path::Path) -> postio_sync::WatchPolicy {
+    let sync = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+        .map(|config| config.sync)
+        .unwrap_or_default();
+    watch_policy(&sync)
+}
+
+/// [`watch_policy_at`], for a `[sync]` section already in hand.
+///
+/// `Manual` sets [`postio_sync::WatchPolicy::manual`] (#1013): the watcher
+/// answers `Watch::Wait` forever, so nothing in it ever idles or polls on a
+/// timer. The `Refresh` command still reaches the server -- it calls
+/// `Engine::sync` directly and never goes through the watcher -- so manual
+/// mode only silences what would otherwise happen automatically.
+pub fn watch_policy(sync: &postio_config::SyncConfig) -> postio_sync::WatchPolicy {
+    postio_sync::WatchPolicy {
+        idle: matches!(sync.check_for_mail, postio_config::CheckForMail::Idle),
+        poll_interval: std::time::Duration::from_secs(sync.poll_interval_secs),
+        manual: matches!(sync.check_for_mail, postio_config::CheckForMail::Manual),
+        ..postio_sync::WatchPolicy::default()
+    }
+}
+
 /// [`backfill_policy_at`], for a `[sync]` section already in hand.
 pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::BackfillPolicy {
     postio_runtime::BackfillPolicy {
@@ -115,6 +168,11 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
             postio_config::AttachmentFetch::Eager => postio_runtime::AttachmentPolicy::Eager,
             postio_config::AttachmentFetch::Never => postio_runtime::AttachmentPolicy::Never,
         },
+        // `0` is how a config file says "no inline rule at all", which the
+        // policy spells `None` — the difference between a cap of zero and no
+        // cap matters nowhere else, and a cap of zero would mean the same
+        // thing anyway.
+        max_inline_bytes: (sync.max_inline_bytes > 0).then_some(sync.max_inline_bytes),
         ..postio_runtime::BackfillPolicy::default()
     }
 }
@@ -153,11 +211,11 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// onboarding, which would ask them to set up an account they already have.
 ///
 /// [`postio_app::startup_route`]: https://github.com/dlapiduz/postio
-/// [`SecretError::Locked`]: postio_imap::secret::SecretError::Locked
+/// [`SecretError::Locked`]: postio_account::secret::SecretError::Locked
 pub async fn store_key(
-    secrets: &dyn postio_imap::secret::SecretStore,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
-    use postio_imap::secret::{AccountKey, SecretError};
+    secrets: &dyn postio_account::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
+    use postio_account::secret::{AccountKey, SecretError};
     use postio_storage::key::StoreKey;
 
     let entry = AccountKey::new(STORE_KEY_ENTRY);
@@ -186,16 +244,16 @@ pub async fn store_key(
 /// The order matters: a key handed back and never stored would encrypt a
 /// store nobody can open again, so the write is what makes the key real.
 async fn mint(
-    secrets: &dyn postio_imap::secret::SecretStore,
-    entry: &postio_imap::secret::AccountKey,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    secrets: &dyn postio_account::secret::SecretStore,
+    entry: &postio_account::secret::AccountKey,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
     let key = postio_storage::key::StoreKey::generate();
     // The one place the key becomes text. `to_hex` hands back a buffer that
     // overwrites itself, and `Password` keeps that discipline from here on.
     secrets
         .store(
             entry,
-            &postio_imap::secret::Password::new(key.to_hex().as_str()),
+            &postio_account::secret::Password::new(key.to_hex().as_str()),
         )
         .await?;
     // No key material, no length, nothing derived from it. That the store is
@@ -217,15 +275,15 @@ async fn mint(
 /// Service that never answers into an error rather than a hang, which is what
 /// keeps a broken keyring costing the window a moment instead of the session.
 pub fn store_key_blocking(
-    secrets: &dyn postio_imap::secret::SecretStore,
-) -> Result<postio_storage::key::StoreKey, postio_imap::secret::SecretError> {
+    secrets: &dyn postio_account::secret::SecretStore,
+) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            return Err(postio_imap::secret::SecretError::Backend {
+            return Err(postio_account::secret::SecretError::Backend {
                 account: STORE_KEY_ENTRY.to_owned(),
                 reason: format!("no runtime to read the keyring with: {error}"),
             });
@@ -266,7 +324,7 @@ pub struct Wiring {
     /// be driven by a test without a Secret Service session. Both credential
     /// paths — the one onboarding writes and the one startup reads — hang
     /// off this.
-    pub secrets: Arc<dyn postio_imap::secret::SecretStore>,
+    pub secrets: Arc<dyn postio_account::secret::SecretStore>,
     /// Folders the user assigned a role to by hand, from `[mailboxes]`.
     ///
     /// A part, like `secrets`, and for the same reason: which folder is this
@@ -281,6 +339,22 @@ pub struct Wiring {
     /// and `engine::start` reading the file itself could not be driven by a
     /// test.
     pub backfill: postio_runtime::BackfillPolicy,
+    /// How the engine watches for new mail, from `[sync]`.
+    ///
+    /// A part, like `backfill`, and for the same reason: whether this
+    /// installation holds an `IDLE` connection open and how often it polls
+    /// is a choice about *this installation*, and `engine::start` reading
+    /// the file itself could not be driven by a test.
+    pub watch: postio_sync::WatchPolicy,
+    /// The ceiling on the blob store, from `[storage] max_bytes`.
+    ///
+    /// A part, like `backfill`, and for the same reason: how much of this
+    /// machine's disk Postio may use is a choice about *this installation*,
+    /// and a sweep that read the file itself could not be driven by a test.
+    /// `None` is the default and means unbounded — see
+    /// [`enforce_storage_ceiling`], which is the one place that decision is
+    /// made.
+    pub storage_ceiling: Option<u64>,
 }
 
 impl Wiring {
@@ -307,9 +381,11 @@ impl Wiring {
             events,
             commands,
             engine: refresh::EngineSlot::default(),
-            secrets: postio_imap::secret::platform_keyring(),
+            secrets: postio_account::secret::platform_keyring(),
             mailbox_roles: postio_model::RoleOverrides::default(),
             backfill: postio_runtime::BackfillPolicy::default(),
+            watch: postio_sync::WatchPolicy::default(),
+            storage_ceiling: None,
         }
     }
 
@@ -333,12 +409,28 @@ impl Wiring {
         self
     }
 
+    /// The same wiring, watching under `[sync]`'s answer rather than the
+    /// built-in default.
+    pub fn with_watch(mut self, watch: postio_sync::WatchPolicy) -> Self {
+        self.watch = watch;
+        self
+    }
+
+    /// The same wiring, holding the blob store to `[storage] max_bytes`.
+    ///
+    /// `None` — the default, and what every existing `config.toml` gets — is
+    /// unbounded, exactly as before this was wired up.
+    pub fn with_storage_ceiling(mut self, max_bytes: Option<u64>) -> Self {
+        self.storage_ceiling = max_bytes;
+        self
+    }
+
     /// The same wiring, reading and writing passwords somewhere else.
     ///
     /// The seam a test needs: `MemorySecretStore` stands in for a keyring
     /// that has no D-Bus session behind it, and `MemorySecretStore::locked`
     /// for one nobody has unlocked.
-    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = secrets;
         self
     }
@@ -387,6 +479,47 @@ pub fn open_store_at(
     // other two.
     let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
+
+    // Before anything opens the store, because a plaintext one will not open
+    // at all: `Database::open` offers SQLCipher a key for a file that has none
+    // and gets "file is not a database". ADR 0014 Q4's migration is what turns
+    // that into a store this build can read, and it answers
+    // `AlreadyEncrypted` and does no work on every open after the first.
+    match postio_storage::encrypt::encrypt_store(&path, store_key) {
+        Ok(postio_storage::encrypt::Outcome::Encrypted(report)) => {
+            tracing::info!(
+                blobs = report.blobs,
+                bytes = report.bytes,
+                "the local store has been encrypted"
+            );
+        }
+        Ok(postio_storage::encrypt::Outcome::Resumed) => {
+            tracing::info!("an interrupted store encryption was finished");
+        }
+        Ok(
+            postio_storage::encrypt::Outcome::AlreadyEncrypted
+            | postio_storage::encrypt::Outcome::NoStore,
+        ) => {}
+        // The queue is the one thing in the store that is not a copy of
+        // something on a server, so the migration refuses to run over it
+        // rather than deciding for somebody. The sentence has to say what to
+        // do next, because "drain first" is an instruction to a person.
+        Err(error @ postio_storage::Error::QueueNotDrained { .. }) => {
+            tracing::error!(path = %path.display(), %error, "the store cannot be encrypted yet");
+            return Err(format!(
+                "Postio could not encrypt its local store. {error} Open the previous \
+                 version, let it finish syncing, and start this one again."
+            ));
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), %error, "the store could not be encrypted");
+            return Err(format!(
+                "Postio could not encrypt its local store: {error}. Nothing was \
+                 changed; the store is exactly as it was."
+            ));
+        }
+    }
+
     let database = match Database::open(&path, &database_key) {
         Ok(database) => database,
         // A wrong key is its own sentence. `Error::WrongStoreKey` says the
@@ -409,7 +542,10 @@ pub fn open_store_at(
     };
     // Beside the database, not inside it: bodies and attachments are
     // content-addressed files, and SQLite holds the key and the metadata.
-    let blobs = match BlobStore::open(path.with_file_name("blobs")) {
+    let blobs = match BlobStore::open(
+        path.with_file_name("blobs"),
+        &postio_storage::key::BlobKeys::derive(store_key),
+    ) {
         Ok(blobs) => blobs,
         Err(error) => {
             tracing::error!(%error, "cannot open the blob store");
@@ -652,6 +788,179 @@ pub fn reclaim_orphaned_blobs(
     Ok(report)
 }
 
+/// Bring the blob store back under `[storage] max_bytes` by dropping what can
+/// be fetched again. Answers what one pass took, or `None` when no ceiling is
+/// set.
+///
+/// # Why this exists at all
+///
+/// The third of the sweeps #416 was filed about, and the last to get a caller.
+/// `BlobStore::evict_to_fit` was written, documented and tested five times
+/// over, and no production code named it — so `max_bytes` in somebody's
+/// `config.toml` was a setting that parsed, validated, round-tripped, and did
+/// nothing whatever to their disk. #416 deliberately scoped it out because it
+/// is the one sweep carrying a policy; #862 is that policy arriving.
+///
+/// # Unset means unbounded, and must not be read as zero
+///
+/// `[storage]`'s module docs settle the default: a number here is a promise
+/// about somebody else's disk and Postio does not know how big theirs is. So
+/// `None` returns before anything is counted rather than falling through to a
+/// budget of nothing — the reading that would empty a store on first start.
+/// That is why this takes `Option<u64>` rather than a `u64` a caller has
+/// already unwrapped: the decision belongs in one place, with a test on it.
+///
+/// # Why it can afford to lose something
+///
+/// Unlike [`reclaim_orphaned_blobs`], this removes blobs a row still points
+/// at. ADR 0014 is what makes that safe: everything except drafts and the
+/// operation queue can be re-synced, so the store is a cache and a cache may
+/// evict. What goes is only ever raw message source and attachment payloads,
+/// oldest mail first, and never the text search is made of — since ADR 0020
+/// bodies are columns on the row, so there is no blob here for a pass over the
+/// blob store to take. Eviction costs a round trip later; it never costs mail,
+/// and the row it clears is left exactly as the payload axis reads "not here
+/// yet".
+///
+/// # Not on the startup path
+///
+/// It stats every blob in the store to measure it, which on a backfilled
+/// archive is a great many files — the same reason [`reclaim_orphaned_blobs`]
+/// is spawned rather than awaited, and the same 500 ms budget it would
+/// otherwise spend.
+pub fn enforce_storage_ceiling(
+    database: &Database,
+    blobs: &BlobStore,
+    max_bytes: Option<u64>,
+) -> Result<Option<EvictionReport>, Box<dyn std::error::Error>> {
+    let Some(budget) = max_bytes else {
+        return Ok(None);
+    };
+    let connection = database.connection()?;
+    let report = blobs.evict_to_fit(&connection, budget)?;
+    if report.removed > 0 {
+        // Counts and bytes only: what was in those blobs is somebody's mail.
+        tracing::info!(
+            removed = report.removed,
+            bytes = report.bytes_reclaimed,
+            remaining = report.bytes_remaining,
+            budget,
+            "evicted refetchable blobs to fit the storage ceiling"
+        );
+    }
+    if report.bytes_remaining > budget {
+        // Eviction ran out of things it was allowed to take, which means the
+        // store is mostly text. Worth saying once: the ceiling is not being
+        // honoured, and no further pass will change that.
+        tracing::warn!(
+            remaining = report.bytes_remaining,
+            budget,
+            "the store is over its ceiling with nothing refetchable left to drop"
+        );
+    }
+    Ok(Some(report))
+}
+
+/// How many blocks one repair batch rebuilds.
+///
+/// Each one is a blob read and a parse, so the batch is a bound on how long
+/// the pass holds a connection between yields rather than a tuning knob. The
+/// same size and the same reason as [`INDEX_BODY_BATCH`].
+const REPAIR_HEADERS_BATCH: u32 = 256;
+
+/// Rebuild the header blocks of mail downloaded before there was anywhere to
+/// put them. Answers how many.
+///
+/// # Why there is anything to repair
+///
+/// `messages.body_headers` has existed since migration 0001 and has been NULL
+/// on every row in every store, because both backfill paths passed
+/// `headers: None` on purpose — "a copy nobody reads is a copy that can go
+/// stale", which was true until ADR 0025 gave it a reader. Mail arriving from
+/// now on carries its block; this is the mail that is already here, and
+/// without it `header:` answers "no such mail" across a mailbox somebody has
+/// been using for a year, which is indistinguishable from the feature being
+/// broken.
+///
+/// # It reaches no network
+///
+/// Only messages that still have their raw source, which is already on disk —
+/// that is what makes this a repair rather than a re-download. Messages with
+/// no blob need a fetch and are
+/// [`MessageRepository::messages_needing_a_header_fetch`]'s, deliberately kept
+/// out of this pass's batches: it is windowed newest-first, so one batch of
+/// unfetchable rows would make no progress, trip the guard below, and stop the
+/// pass before it reached older messages it could have fixed.
+///
+/// # Not on the startup path
+///
+/// A blob read and a header parse per message, over every message in the
+/// store. That is minutes of I/O on a backfilled archive and nothing on screen
+/// waits for it, so callers spawn it exactly as they spawn [`index_local_bodies`].
+///
+/// # A blob that will not read is not an empty block
+///
+/// Eviction takes raw source first (`PRODUCT.md` §6), so the oldest mail in a
+/// bounded store routinely has a row pointing at a blob that is gone. Those
+/// are skipped rather than written as an empty block: an empty block is a
+/// claim that the message *has* no such header, which the index would then
+/// answer with for ever and nothing would be left to say otherwise.
+pub fn repair_header_blocks(
+    database: &Database,
+    blobs: &BlobStore,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut repaired = 0usize;
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let candidates = messages.messages_missing_headers(REPAIR_HEADERS_BATCH)?;
+        if candidates.is_empty() {
+            break;
+        }
+        let batch: Vec<i64> = candidates
+            .iter()
+            .map(|candidate| candidate.message_id.get())
+            .collect();
+        // The candidate query's contract is that repairing a message removes
+        // it from the answer. An identical batch means that contract is broken
+        // and another lap can only spin — the failure #500 recorded, where one
+        // batch of messages nothing could do anything with ran a core flat out
+        // for as long as the application was open.
+        if batch == last_batch {
+            tracing::warn!(
+                batch = batch.len(),
+                "a header-repair batch made no progress; stopping the pass"
+            );
+            break;
+        }
+        last_batch = batch;
+
+        for candidate in candidates {
+            let Some(blob) = candidate.raw_blob_id else {
+                continue;
+            };
+            let Ok(raw) = blobs.get(&blob) else {
+                // Evicted, or a store somebody tidied by hand. Not an empty
+                // block: see the note above about what that would claim.
+                continue;
+            };
+            let Some(block) = postio_model::headers::block_of(&raw) else {
+                continue;
+            };
+            messages.set_headers(candidate.message_id, Some(&block))?;
+            repaired += 1;
+        }
+    }
+
+    if repaired > 0 {
+        // A count, and nothing about what was in them: header values carry
+        // `Received` chains with addresses and internal hostnames.
+        tracing::info!(repaired, "rebuilt header blocks from raw source on disk");
+    }
+    Ok(repaired)
+}
+
 /// Train a body-compression dictionary from the mail already on this machine,
 /// if the corpus has grown enough to be worth one. Answers whether it did.
 ///
@@ -867,6 +1176,370 @@ pub fn index_local_bodies(database: &Database) -> Result<usize, Box<dyn std::err
         tracing::info!(indexed, "indexed bodies that were already local");
     }
     Ok(indexed)
+}
+
+/// How many header blocks one pass of [`index_local_headers`] parses before
+/// letting go of its connection.
+///
+/// The pass holds a pooled connection and decompresses and parses a block per
+/// message, and the rest of the application shares that pool. The same bound
+/// and the same reason as [`INDEX_BODY_BATCH`], and the same size: a block is
+/// smaller than a body but a parse is not free, and there is no reason for
+/// the two catch-ups to hold a checkout for different lengths of time.
+const INDEX_HEADERS_BATCH: u32 = 200;
+
+/// How long [`index_local_headers`] pauses between batches. See
+/// [`INDEX_BODY_BREATHER`].
+const INDEX_HEADERS_BREATHER: Duration = Duration::from_millis(25);
+
+/// Index the headers of every message whose block is already on this machine
+/// and whose header rows are missing. Answers how many it indexed.
+///
+/// # Why this exists at all
+///
+/// `header:` matches `message_headers`, which is derived from
+/// `messages.body_headers` (ADR 0025 Q2). Two populations need it: every
+/// message that arrived before #884 gave the column a writer, and — for ever
+/// after — every message in the store whenever the headers schema half is
+/// bumped, which is the mechanism that keeps ADR 0025 Q3's two caps
+/// revisable. Without the pass, `header:` answers "no such mail" across a
+/// mailbox somebody has been using for a year, and nothing distinguishes
+/// that from the feature being broken.
+///
+/// # It reaches no network, and it is not the repair pass
+///
+/// ADR 0025 Q5 has three populations and this is the first of them: the block
+/// is already stored, so filling the rows is a read of a column the row
+/// already carries. A message whose `body_headers` is NULL belongs to
+/// [`repair_header_blocks`], which rebuilds the block from the raw source on
+/// disk, or — with no raw source either — to the backfill lane's
+/// `Want::HeaderBlock`, which is the only one of the three that dials out.
+/// Keeping them apart is not tidiness: this pass is windowed newest-first, so
+/// one batch of rows it could do nothing with would make no progress, trip
+/// the guard below, and stop it before it reached the mail it could have
+/// indexed.
+///
+/// # Why it is safe to run on every start
+///
+/// [`messages_missing_header_rows`](postio_index::index::messages_missing_header_rows)
+/// asks for blocks that are stored *and* unindexed, so a caught-up store
+/// costs one query that finds nothing. Re-indexing a message replaces its
+/// rows rather than adding to them, so there is nothing to duplicate.
+///
+/// # Not on the startup path
+///
+/// A decompression and a header parse per message, over every message in the
+/// store — minutes on a backfilled archive, and nothing on screen waits for
+/// it. Callers spawn it exactly as they spawn [`index_local_bodies`].
+///
+/// Errors on one message are logged and skipped rather than abandoning the
+/// pass: one unreadable block should cost that message its `header:` matches,
+/// not every message after it.
+pub fn index_local_headers(database: &Database) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut indexed = 0usize;
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates =
+            postio_index::index::messages_missing_header_rows(&connection, INDEX_HEADERS_BATCH)?;
+        if candidates.is_empty() {
+            break;
+        }
+        // The candidate query's contract is that indexing a message removes
+        // it from the answer. An identical batch means the contract is broken
+        // and another lap can only spin -- the failure #500 recorded, where
+        // one batch of messages nothing could do anything with ran a core
+        // flat out for as long as the application was open.
+        if candidates == last_batch {
+            tracing::warn!(
+                batch = candidates.len(),
+                "a header-index batch made no progress; stopping the pass"
+            );
+            break;
+        }
+
+        // Read first, write after, in phases, for the reason
+        // `index_local_bodies` gives: these reads decompress and parse a
+        // block per message and must not happen inside the write transaction,
+        // where they would hold SQLite's one write lock through work that
+        // needs nothing of it.
+        //
+        // One repository for the whole batch, so the compression dictionary
+        // is loaded once rather than two hundred times.
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut blocks: Vec<(i64, postio_model::Headers)> = Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            match messages.headers(message) {
+                Ok(Some(headers)) => blocks.push((*id, headers)),
+                // Expunged between the candidate query and here. Nothing to
+                // index, and `index_headers` would no-op on it anyway.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a header block to index")
+                }
+            }
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, headers) in &blocks {
+                match postio_index::index::index_headers(&connection, *id, headers) {
+                    Ok(()) => indexed += 1,
+                    Err(error) => {
+                        tracing::debug!(message = id, %error, "cannot index a header block")
+                    }
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < INDEX_HEADERS_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(INDEX_HEADERS_BREATHER);
+    }
+    if indexed > 0 {
+        // A count and nothing else. Header values carry `Received` chains
+        // with addresses and internal hostnames, and a log never carries
+        // message content.
+        tracing::info!(indexed, "indexed header blocks that were already local");
+    }
+    Ok(indexed)
+}
+
+/// How many bodies or header blocks one batch of [`reindex_account`] handles.
+///
+/// Same size and the same reason as [`INDEX_BODY_BATCH`]/
+/// [`INDEX_HEADERS_BATCH`]: this holds a pooled connection and decompresses
+/// a body or parses a block per message, and the rest of the application
+/// shares that pool.
+const REINDEX_ACCOUNT_BATCH: u32 = 200;
+
+/// How long [`reindex_account`] pauses between batches. Same reasoning as
+/// [`INDEX_BODY_BREATHER`]: search still answers while this runs, off an
+/// index that is being refilled, and the disk it reads from has to keep
+/// answering that too.
+const REINDEX_ACCOUNT_BREATHER: Duration = Duration::from_millis(25);
+
+/// Drops `account`'s rows from the local search index and rebuilds them from
+/// mail already on this machine — bodies, then header blocks. Answers how
+/// many rows it rewrote.
+///
+/// #981's "Rebuild search index": the account-detail action for a message
+/// that is in the mailbox and missing from search, which the maintainer's
+/// own decision on that issue names as the thing that actually drifts —
+/// three separate catch-up passes have already shipped to repair it
+/// (#327, #884, and the body-index catch-up this pass shares its shape
+/// with). This is the same repair, reachable on demand and scoped to one
+/// account: clearing first is what makes this account's whole local corpus
+/// the candidate set again, not only the messages that already happened to
+/// be missing.
+///
+/// # No network, ever
+///
+/// Everything here reads what is already local — `messages_missing_body_text_for_account`
+/// only offers a message whose `body_state` says the bytes are already on
+/// this machine, and the header half is windowed to blocks already stored.
+/// A message this account has not downloaded yet is untouched by this pass;
+/// bringing it down is sync's job, not this one's (the maintainer's own "a
+/// re-download is a verb that already exists").
+///
+/// # Progress
+///
+/// `on_progress(done, total)` is called once with `total` fixed at the
+/// start — the candidate count right after clearing — and again after every
+/// batch of either half, `done` accumulating across both. The composition
+/// root turns this into the same [`postio_core::Event::BackfillProgress`] a
+/// real backfill reports (#981's own design: one progress channel, not two),
+/// so a rebuild in progress shows on the account row the way any other
+/// catch-up already does.
+///
+/// # Errors
+///
+/// Errors on one message are logged and skipped rather than abandoning the
+/// pass, for the same reason [`index_local_bodies`]/[`index_local_headers`]
+/// do: one unreadable body or block should cost that message its own search
+/// terms, not every message after it.
+pub fn reindex_account(
+    database: &Database,
+    account: postio_model::ids::AccountId,
+    mut on_progress: impl FnMut(u32, u32),
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let account_id = account.get();
+    let connection = database.connection()?;
+    postio_index::index::clear_account_body_index(&connection, account_id)?;
+    postio_index::index::clear_account_header_index(&connection, account_id)?;
+    let total = postio_index::index::messages_missing_body_text_for_account(
+        &connection,
+        account_id,
+        u32::MAX,
+    )?
+    .len()
+        + postio_index::index::messages_missing_header_rows_for_account(
+            &connection,
+            account_id,
+            u32::MAX,
+        )?
+        .len();
+    drop(connection);
+
+    let mut done = 0usize;
+    on_progress(0, total as u32);
+
+    // -- bodies -------------------------------------------------------------
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates = postio_index::index::messages_missing_body_text_for_account(
+            &connection,
+            account_id,
+            REINDEX_ACCOUNT_BATCH,
+        )?;
+        if candidates.is_empty() {
+            break;
+        }
+        // The no-progress guard #500 recorded the need for, the same as
+        // index_local_bodies' own.
+        if candidates == last_batch {
+            tracing::warn!(
+                account = account_id,
+                batch = candidates.len(),
+                "a reindex body batch made no progress; stopping that half"
+            );
+            break;
+        }
+
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut bodies: Vec<(i64, postio_model::MessageBody)> =
+            Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            let body = match messages.body(message) {
+                Ok(Some(stored)) => postio_model::MessageBody {
+                    text: stored.text,
+                    html: stored.html,
+                },
+                Ok(None) => postio_model::MessageBody::default(),
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a body to reindex");
+                    continue;
+                }
+            };
+            bodies.push((*id, body));
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, body) in &bodies {
+                match postio_index::index::index_body_of(&connection, *id, body) {
+                    Ok(()) => done += 1,
+                    Err(error) => tracing::debug!(message = id, %error, "cannot reindex a body"),
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+        on_progress(done as u32, total as u32);
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < REINDEX_ACCOUNT_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(REINDEX_ACCOUNT_BREATHER);
+    }
+
+    // -- header blocks --------------------------------------------------------
+    let mut last_batch: Vec<i64> = Vec::new();
+    loop {
+        let connection = database.connection()?;
+        let candidates = postio_index::index::messages_missing_header_rows_for_account(
+            &connection,
+            account_id,
+            REINDEX_ACCOUNT_BATCH,
+        )?;
+        if candidates.is_empty() {
+            break;
+        }
+        if candidates == last_batch {
+            tracing::warn!(
+                account = account_id,
+                batch = candidates.len(),
+                "a reindex header batch made no progress; stopping that half"
+            );
+            break;
+        }
+
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut blocks: Vec<(i64, postio_model::Headers)> = Vec::with_capacity(candidates.len());
+        for id in &candidates {
+            let message = postio_model::MessageId::new(*id);
+            match messages.headers(message) {
+                Ok(Some(headers)) => blocks.push((*id, headers)),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(message = id, %error, "cannot read a header block to reindex")
+                }
+            }
+        }
+
+        {
+            let _permit = connection
+                .write_gate()
+                .acquire(postio_storage::WritePriority::Background);
+            connection.execute_batch("BEGIN IMMEDIATE")?;
+            for (id, headers) in &blocks {
+                match postio_index::index::index_headers(&connection, *id, headers) {
+                    Ok(()) => done += 1,
+                    Err(error) => {
+                        tracing::debug!(message = id, %error, "cannot reindex a header block")
+                    }
+                }
+            }
+            connection.execute_batch("COMMIT")?;
+        }
+        on_progress(done as u32, total as u32);
+
+        let taken = candidates.len();
+        last_batch = candidates;
+        drop(connection);
+        if taken < REINDEX_ACCOUNT_BATCH as usize {
+            break;
+        }
+        std::thread::sleep(REINDEX_ACCOUNT_BREATHER);
+    }
+
+    // `total` is an estimate taken before either pass ran, so a message that
+    // stopped being a candidate between then and now (expunged, or already
+    // swept by a concurrent catch-up) can leave `done` short of it -- and a
+    // caller driving a progress bar off this needs the final call to say
+    // "done" rather than "94 of 100 and nothing more is coming". Skipped
+    // when there was never anything to do at all: the one report already
+    // sent before either loop ran already said so, and a second identical
+    // "(0, 0)" is a call with nothing new to tell a caller.
+    if total > 0 || done > 0 {
+        on_progress(done as u32, done.max(total) as u32);
+    }
+    if done > 0 {
+        // A count and nothing else, the same restraint the two catch-ups
+        // this wraps keep.
+        tracing::info!(
+            account = account_id,
+            reindexed = done,
+            "rebuilt an account's local search index"
+        );
+    }
+    Ok(done)
 }
 
 /// The account to open, if the store holds one.

@@ -15,6 +15,7 @@
 //! Skips without a display. One test function, for the reason `gtk_style.rs`
 //! gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -27,7 +28,7 @@ use postio_search::ResultOrder;
 
 pub fn the_sort_control_tells_the_truth_over_results() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -147,11 +148,6 @@ fn press(window: &Window, key: &str) {
     let key = gtk::gdk::Key::from_name(key).expect("a named key");
     window.handle_key(key, gdk::ModifierType::empty());
     pump();
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

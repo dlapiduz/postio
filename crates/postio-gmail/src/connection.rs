@@ -11,10 +11,10 @@ use std::sync::Arc;
 use io_gmail::v1::client::{GmailClientStd, GmailClientStdConnectOptions};
 use pimalaya_stream::stream::{Stream, TcpConnectOptions, TlsConnectOptions};
 use pimalaya_stream::tls::Tls;
-use postio_imap::auth::TokenSource;
-use postio_imap::backend::{BackendError, BackendResult};
-use postio_imap::cancel::CancelToken;
-use postio_imap::secret::AccountKey;
+use postio_account::auth::TokenSource;
+use postio_account::backend::{BackendError, BackendResult};
+use postio_account::cancel::CancelToken;
+use postio_account::secret::AccountKey;
 
 /// Where the bearer comes from.
 #[derive(Clone)]

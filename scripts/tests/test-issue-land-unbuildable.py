@@ -8,9 +8,10 @@ at all, and the work lands anyway.
 This is live: a macOS session cannot build `postio-gtk` or `postio-app` (no
 gtk4/libadwaita pkg-config, and webkitgtk has no arm64 bottle and no supported
 upstream macOS backend). Without this guard such a session passes its gates and
-pushes something that does not compile on Linux. CI is paused, so the periodic
-reconcile pass is the only backstop -- days of latency, on a repository where
-several agents work concurrently on different machines.
+pushes something that does not compile on Linux. CI would catch it on the pull
+request, but a gate that silently proved nothing is worth refusing where it
+runs, on a repository where several agents work concurrently on different
+machines.
 
 Two behaviours, because the two failure modes are different:
 
@@ -170,7 +171,7 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
     git("add", "-A", cwd=root)
     git("commit", "-q", "-m", "init", cwd=root)
     origin = base / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     git("remote", "add", "origin", str(origin), cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
 
@@ -265,7 +266,12 @@ def main() -> int:
         )
         case(
             "on a host with GTK the gates still ran over the crate",
-            "clippy -p postio-gtk" in calls and "test -p postio-gtk" in calls,
+            # Clippy is still per-crate; the tests are the sanity tier since
+            # #847, so "the gates ran" is no longer spelled `test -p <crate>`.
+            # What this case is really about is unchanged: a host that *can*
+            # build the crate must not silently skip its gates.
+            "clippy -p postio-gtk" in calls
+            and "test --workspace --lib" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )
 

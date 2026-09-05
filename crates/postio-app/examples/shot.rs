@@ -12,7 +12,9 @@
 //! cargo run -p postio-app --example shot -- /tmp/plate.png dark hc
 //! cargo run -p postio-app --example shot -- /tmp/narrow.png 900x700
 //! cargo run -p postio-app --example shot -- /tmp/plate.png demo
-//! cargo run -p postio-app --example shot -- /tmp/settings.png settings
+//! cargo run -p postio-app --example shot -- /tmp/settings.png demo settings
+//! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
+//! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
@@ -20,6 +22,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/box.png demo command
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
+//! cargo run -p postio-app --example shot -- /tmp/first-run.png demo orientation
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/thread.png demo thread 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
@@ -61,11 +64,11 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk::{gdk, glib, graphene};
+use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::ConnectionState;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
-use postio_gtk::{app, fonts, style, window::Window};
+use postio_gtk::{app, capture, fonts, style, window::Window};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_session::Wiring;
 use postio_storage::repository::MailboxRepository;
@@ -91,13 +94,38 @@ use postio_storage::seed::SeedReport;
 ///
 /// `feed_the_window` reads the local store. `start_syncing` is the half that
 /// opens a socket, and this never calls it.
-fn populate(window: &Window, two_accounts: bool, backfill: bool) {
+///
+/// Returns the `Wired` `feed_the_window` built, leaked `'static` like
+/// everything else here — so a caller that also wants `search` can hand
+/// `wired.search` to [`show_search_panels`] instead of it calling
+/// `search::View::attach` a second time on the same shell (#831).
+fn populate(
+    window: &Window,
+    two_accounts: bool,
+    backfill: bool,
+    first_run: bool,
+) -> Option<&'static postio_app::Wired> {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
-    let blobs = postio_storage::BlobStore::open(directory.keep()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.keep(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let report = postio_storage::seed::seed_small_with_bodies(&database, 11);
     let account = report.account.id;
     stamp_as_just_synced(&database, &report);
+    // Every shot is a first run otherwise -- the store is made here and
+    // thrown away -- so the first-run orientation would sit across the top
+    // of the compose shot, the settings shot and every other one. `demo
+    // orientation` is how you ask to see it; the rest of the tool goes on
+    // rendering the application as somebody uses it on any other day.
+    if !first_run {
+        let connection = database.connection().expect("a connection");
+        postio_storage::repository::SettingsRepository::new(&connection)
+            .set("orientation_seen", "shot")
+            .expect("the orientation is not what this shot is about");
+    }
     // A real second account, in the store, rather than a pair of names handed
     // to the sidebar: the per-account sections are drawn from the folders the
     // feed reads, so a faked strip would draw headers over an empty tree and
@@ -143,12 +171,12 @@ fn populate(window: &Window, two_accounts: bool, backfill: bool) {
         });
     }
 
-    Box::leak(Box::new(wired));
+    let wired: &'static postio_app::Wired = Box::leak(Box::new(wired));
     Box::leak(Box::new(bridge));
     Box::leak(Box::new(replies));
     Box::leak(Box::new(events));
 
-    wait_for_first_page(window);
+    wait_for_first_page(window).then_some(wired)
 }
 
 /// Stamp every seeded folder as synced twelve seconds ago.
@@ -173,7 +201,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// Block until the list actually holds its first page of mail.
 ///
 /// Every mode after `populate` reads the list back: `selected` picks rows out
-/// of it, `thread` drills into the first one, `open` clicks it. The
+/// of it, `conversation` opens the first one, `open` clicks it. The
 /// hand-rolled source this replaced answered out of a `Vec` and was ready the
 /// instant it was installed; a real `Wiring` crosses to the runtime and
 /// answers on a later turn of the main loop, so without this a mode found an
@@ -188,7 +216,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// the main context here starves the frame clock every later `settle` counts
 /// on — which surfaces as a blank render, or as "no frame after 5000ms",
 /// rather than as a wait. The same shape the wiring tests use.
-fn wait_for_first_page(window: &Window) {
+fn wait_for_first_page(window: &Window) -> bool {
     let list = window.list();
     let ready = || list.model().n_items() > 0 && list.model().peek(0).is_some();
     let context = glib::MainContext::default();
@@ -196,14 +224,15 @@ fn wait_for_first_page(window: &Window) {
     while Instant::now() < deadline {
         while context.iteration(false) {}
         if ready() {
-            return;
+            return true;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     eprintln!(
         "shot: the seeded store's first page never arrived, so the panes are \
-         empty. Nothing rendered below this is a picture of anything."
+         empty. Nothing rendered below this would be a picture of anything."
     );
+    false
 }
 
 /// Correspondents for the `@` mode, in the canvas' own cast.
@@ -227,13 +256,23 @@ fn sample_contacts() -> Vec<postio_model::Contact> {
 
 /// Canvas 2b's left column, over the artboard's own numbers.
 ///
-/// Mounted through `search::View::attach`, which is the one call a running
-/// Postio makes — so what this renders is what the application renders once
-/// something answers with facets.
-fn show_search_panels(window: &Window) {
+/// `existing` is the view `feed_the_window` already installed, when there is
+/// one — `demo search` has one, since `postio_app::search::install` is the
+/// one call a running Postio makes and `populate` already ran it. Attaching
+/// a second one on the same shell for the same demo is exactly #831: two
+/// previews stacked in `shell.reader()`, and since #831 `register_reader_occupant`
+/// panics on it rather than drawing it. Falling back to `View::attach` only
+/// when there is no wiring behind the window keeps `shot out.png search`
+/// (no `demo`) working — the one case that has nothing to reuse.
+fn show_search_panels(window: &Window, existing: Option<&'static postio_gtk::search::View>) {
     use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 
-    let view = postio_gtk::search::View::attach(&window.shell(), &window.finder());
+    let view = existing.unwrap_or_else(|| {
+        Box::leak(Box::new(postio_gtk::search::View::attach(
+            &window.shell(),
+            &window.finder(),
+        )))
+    });
     let count = |scope, hits| ScopeCount { scope, hits };
     let refinement = |token: &str, hits| Refinement {
         token: token.to_owned(),
@@ -298,10 +337,6 @@ fn show_search_panels(window: &Window) {
         },
         Some("lena@example.com"),
     );
-
-    // Leaked for the same reason `populate` leaks its feeds: the shot renders
-    // one window and exits, and a view dropped here would unwire itself.
-    Box::leak(Box::new(view));
 }
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
@@ -316,7 +351,6 @@ fn show_settings(window: &Window) {
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
-         thread_drill = true\n\n\
          [keys]\n\
          archive = \"a\"\n\
          archive_thread = \"A\"\n\
@@ -325,6 +359,106 @@ fn show_settings(window: &Window) {
     .expect("a scratch config.toml for the shot");
     window.settings().load(&path);
     window.open_settings();
+}
+
+/// Three account rows, to look at what #411 put under the names.
+///
+/// **A layout check, not a wiring check.** `demo settings` draws one row and
+/// `demo accounts settings` two, both through `feed_the_window` -- those are
+/// the shots that can fail when nothing feeds them (#596). This one
+/// hand-feeds three, because "does the second line still read at three rows,
+/// one of them long enough to ellipsize" is a question about spacing that
+/// only three rows can answer, and because the seed cannot produce the three
+/// states side by side.
+///
+/// The three are the states that look different: payloads not being fetched,
+/// payloads being fetched, and totals still being counted.
+/// The account detail view (#880), on an account that has signatures.
+///
+/// Its own flag because the view is reached by activating a row, so no
+/// existing mode renders it — and #979's signature picker is *hidden* for an
+/// account with none, which is correct and also means the ordinary demo
+/// store cannot show it. Two signatures here, so the row is on screen and
+/// can be looked at.
+/// `tested` also shows what a connection test found (#980) -- set by hand
+/// rather than by pressing the button, and that is the point: pressing it
+/// would dial a real server, and a shot must not. What there is to look at is
+/// the row's *shape*, which has to read as the server having said no rather
+/// than as Postio being broken, in dark and high contrast too.
+fn show_account_detail(window: &Window, tested: bool, signature: bool) {
+    let mut account = postio_model::Account::new(
+        "Ada Lovelace",
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    account.id = AccountId::new(1);
+    account.enabled = true;
+    account.incoming.host = "imap.example.com".to_owned();
+    account.incoming.port = 993;
+    account.outgoing.host = "smtp.example.com".to_owned();
+    account.outgoing.port = 587;
+    let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+    work.id = postio_model::ids::SignatureId::new(1);
+    let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+    brief.id = postio_model::ids::SignatureId::new(2);
+    account.default_signature_id = Some(work.id);
+    account.signatures = vec![work, brief];
+
+    let panel = window.settings();
+    panel.set_accounts(vec![account]);
+    window.toggle_settings();
+    panel.open_account_detail(AccountId::new(1));
+    if signature {
+        // The editor, on the signature the account already has (#1086).
+        panel.open_signature_editor(Some(postio_model::ids::SignatureId::new(1)));
+    }
+    if tested {
+        panel.set_connection_status(postio_gtk::settings::ConnectionStatus::Answered {
+            incoming: Ok(()),
+            outgoing: Err("could not reach smtp.example.com:587: connection refused".to_owned()),
+        });
+    }
+}
+
+fn show_account_weights(window: &Window) {
+    let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
+        postio_core::event::MailFootprint {
+            total_bytes: total,
+            attachment_bytes: attachments,
+            local_bytes: local,
+            complete,
+        }
+    };
+    let account = |id: i64, name: &str, address: &str| {
+        let mut account =
+            postio_model::Account::new(name, postio_model::EmailAddress::new(Some(name), address));
+        account.id = AccountId::new(id);
+        account.enabled = true;
+        account
+    };
+
+    let panel = window.settings();
+    panel.set_accounts(vec![
+        account(1, "Ada Lovelace", "ada@example.com"),
+        account(2, "Grace Hopper", "grace@example.com"),
+        account(3, "A rather long display name", "someone@example.invalid"),
+    ]);
+    panel.set_mail_weights(
+        &[
+            (
+                AccountId::new(1),
+                footprint(12_884_901_888, 11_811_160_064, 933_232_640, true),
+            ),
+            (
+                AccountId::new(2),
+                footprint(1_503_238_553, 1_400_000_000, 933_232_640, true),
+            ),
+            (
+                AccountId::new(3),
+                footprint(12_884_901_888, 11_811_160_064, 933_232_640, false),
+            ),
+        ],
+        false,
+    );
 }
 
 /// Canvas 2a's own reply, so the composer can be held up against the drawing.
@@ -440,11 +574,17 @@ const KNOWN_FLAGS: &[&str] = &[
     "search",
     "syncing",
     "settings",
+    "weights",
+    "account",
+    "tested",
+    "signature",
     "compose",
     "detached",
     "selected",
     "thread",
+    "orientation",
     "open",
+    "shipping",
 ];
 
 /// Every argument (after the output path) that matches none of
@@ -553,6 +693,55 @@ mod unrecognized_argument_tests {
     }
 }
 
+/// What to say when the size a `WxH` argument asked for and the size the
+/// compositor actually gave the window disagree (#933).
+///
+/// `set_default_size` is a hint: a toplevel larger than the monitor is
+/// clamped, and the height is clamped further by whatever the session
+/// reserves. `capture::png` reports the size it actually got, so this is the
+/// one place that can compare it against what was asked for and say so --
+/// silently handing over a smaller picture under a size that looks honoured
+/// is the same shape as #599, an argument that looks applied and was not.
+///
+/// `None` when nothing was requested, or when the compositor gave back
+/// exactly what was asked for -- the ordinary case, which must stay silent.
+fn size_mismatch(requested: Option<(i32, i32)>, got: (i32, i32)) -> Option<String> {
+    let requested = requested?;
+    if requested == got {
+        return None;
+    }
+    let (want_w, want_h) = requested;
+    let (got_w, got_h) = got;
+    Some(format!(
+        "asked for {want_w}x{want_h} but the compositor gave {got_w}x{got_h} -- \
+         the picture below is at the size it actually got, not the size named \
+         on the command line"
+    ))
+}
+
+#[cfg(test)]
+mod size_mismatch_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_requested_is_silent() {
+        assert_eq!(size_mismatch(None, (1280, 800)), None);
+    }
+
+    #[test]
+    fn the_size_asked_for_is_silent() {
+        assert_eq!(size_mismatch(Some((1280, 800)), (1280, 800)), None);
+    }
+
+    #[test]
+    fn a_clamped_size_is_reported() {
+        let message = size_mismatch(Some((1600, 900)), (1280, 800))
+            .expect("a clamped size should be reported");
+        assert!(message.contains("1600x900"), "{message}");
+        assert!(message.contains("1280x800"), "{message}");
+    }
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -602,9 +791,28 @@ fn main() -> glib::ExitCode {
     if let Some((width, height)) = size {
         window.set_default_size(width, height);
     }
-    if flag("demo") {
-        populate(&window, flag("accounts"), flag("backfill"));
-    }
+    // `demo`'s own search view, if `demo` ran — `search` below reuses it
+    // rather than attaching a second one on the same shell (#831).
+    let wired: Option<&'static postio_app::Wired> = if flag("demo") {
+        // A `demo` whose panes were never filled is not a slightly worse
+        // picture, it is a picture of the empty state over a store with mail
+        // in it -- which used to be rendered, saved, and reported as a
+        // success under a warning nobody was required to read (#809).
+        match populate(
+            &window,
+            flag("accounts"),
+            flag("backfill"),
+            flag("orientation"),
+        ) {
+            Some(wired) => Some(wired),
+            None => {
+                eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
+                return glib::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     // The screen a store that will not open puts up instead of the mail
     // (#404). Rendered from the same words `SecretError::Locked` writes, so
     // what this shows is what a person with a locked keyring sees.
@@ -662,13 +870,27 @@ fn main() -> glib::ExitCode {
                     // settled account, which is where every account ends up
                     // under ADR 0016 and so is the honest default for a shot.
                     corpus_complete: !flag("syncing"),
+                    // `unreachable` shows ADR 0005 Q10's caveat (#812), so a
+                    // shot can be taken of the state a reviewer would
+                    // otherwise have to unplug a server to see. Empty is the
+                    // ordinary case: every account answering.
+                    unreachable: match flag("unreachable") {
+                        true => vec!["Work".to_owned()],
+                        false => Vec::new(),
+                    },
                 },
             );
         }
-        show_search_panels(&window);
+        show_search_panels(&window, wired.and_then(|w| w.search));
     }
     if flag("settings") {
         show_settings(&window);
+    }
+    if flag("weights") {
+        show_account_weights(&window);
+    }
+    if flag("account") {
+        show_account_detail(&window, flag("tested"), flag("signature"));
     }
     if flag("compose") {
         show_composer(&window);
@@ -703,6 +925,19 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
+    // The first-run keyboard orientation (ADR 0012 Q4). Only ever on screen
+    // for one moment of one run, so without a flag it is a surface nobody
+    // can look at -- and a strip along the top of the mail column is exactly
+    // the kind of thing that has to be looked at in dark and at the narrow
+    // breakpoint before it is called done.
+    if flag("orientation") {
+        // Nothing forces it on: `populate` left the store saying it has
+        // never been seen, and the application's own wiring shows it once
+        // the seeded sync lands. A shot that reached in and set the widget
+        // visible would render even if nothing in the app ever did (#596).
+        settle(&window);
+    }
+
     // A selection is a *second* state on top of the focused row, and the two
     // have to be told apart at a glance (`postio-qhz.1`). This is the only way
     // to look at them together before there is a mailbox to select in.
@@ -719,16 +954,16 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
-    // The conversation pane (ADR 0015 Q4): a thread opened into the reading
-    // pane, with the drill-in column indexing it. Driven through
-    // `Window::show_thread`, the same call `t` makes, so the shot is the
-    // arrangement the application actually puts up rather than one staged
-    // for the picture.
-    if flag("thread") {
+    // The conversation pane (ADR 0015 Q4, canvas turn 8a): a thread stacked
+    // in the reading pane, beside a list that is only ever the list. Driven
+    // through `Window::show_conversation`, the same call landing on a thread
+    // row makes, so the shot is the arrangement the application actually
+    // puts up rather than one staged for the picture.
+    if flag("conversation") {
         let list = window.list();
         list.first_row();
-        // The demo's rows are conversations now, so the first one has a
-        // thread to drill into; its own rows stand in for the members.
+        // The demo's rows are conversations, and the first one's own rows
+        // stand in for its members.
         let rows = list.model();
         let mut members = Vec::new();
         for index in 0..rows.n_items().min(6) {
@@ -748,6 +983,10 @@ fn main() -> glib::ExitCode {
             move |_message| {
                 let reader = window.new_reader();
                 reader.header().widget().set_visible(false);
+                // Same reason `reading::install`'s real factory hides it
+                // (#822): the entry already draws its own Reply/Reply
+                // all/Forward row.
+                reader.set_actions_visible(false);
                 reader.render(
                     &postio_model::MessageBody {
                         text: None,
@@ -759,16 +998,12 @@ fn main() -> glib::ExitCode {
                     },
                     None,
                 );
-                let widget = reader.widget();
-                widget.set_hexpand(true);
-                widget.set_size_request(-1, 120);
-                widget
+                reader.widget().set_size_request(-1, 120);
+                Some(reader)
             }
         });
-        if let Some(first) = members.first().cloned() {
-            let thread = first.thread.unwrap_or(postio_model::ids::ThreadId::new(1));
-            let total = members.len() as u32;
-            window.show_thread(thread, first.subject.as_deref(), members, total);
+        if !members.is_empty() {
+            window.show_conversation(members);
         }
         // The stack's readers load on WebKit's own clock, which the
         // frame-counting `settle` does not wait on.
@@ -842,37 +1077,69 @@ fn main() -> glib::ExitCode {
     }
     settle(&window);
 
-    let (width, height) = (target.width(), target.height());
-    let paintable = gtk::WidgetPaintable::new(Some(&target));
-    let snapshot = gtk::Snapshot::new();
-    paintable.snapshot(&snapshot, width as f64, height as f64);
-    let Some(node) = snapshot.to_node() else {
-        // Almost always the compositor rather than the widgets: it stops
-        // delivering frame callbacks to a window nobody can see, and the
-        // commonest reason on a developer's machine is that the screen
-        // blanked part-way through. Worth saying, because "the window drew
-        // nothing" reads like a bug in the thing being rendered.
-        eprintln!(
-            "shot: no frame after {SETTLE_MS}ms — is the screen blanked or the \
-             window occluded? Nothing is painted to a surface the compositor \
-             is not showing."
-        );
-        return glib::ExitCode::FAILURE;
-    };
-    let renderer = target
-        .native()
-        .and_then(|native| native.renderer())
-        .expect("a realized window has a renderer");
-    let bounds = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
-    let texture = renderer.render_texture(&node, Some(&bounds));
+    // #1030: the facts block a transactional message gets above its body
+    // copy. The corpus fixture is handed straight to the reader rather than
+    // clicked out of the list, because the demo seed re-dates the corpus and
+    // there is no way to name a row from here.
+    //
+    // That makes this a *design* shot and nothing more -- it is for looking
+    // at spacing, weight and the two columns. It deliberately does not prove
+    // the block reaches the pane from a real message, which is what #596 says
+    // a shot handed its own body cannot do; `gtk_reader.rs` proves that,
+    // through `render`, on the same fixture.
+    if flag("shipping") {
+        let fixture = postio_model::test_corpus::load("transactional-shipping-notice");
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        // The reader that is *on screen*, which in a conversation is the
+        // focused message's and not the single-message one behind it --
+        // rendering into `window.reader()` paints a hidden widget, and the
+        // picture comes back showing whatever the demo had already drawn.
+        let reader = window
+            .conversation()
+            .focused()
+            .and_then(|message| window.conversation().reader_for(message))
+            .unwrap_or_else(|| window.reader());
+        reader.render(&parsed.body, Some("orders@shop.example.test"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let context = glib::MainContext::default();
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
-    match texture.save_to_png(&path) {
-        Ok(()) => {
+    // The picture, and the wait for it, both belong to `postio_gtk::capture`
+    // -- which turns the main loop until the window is actually drawable
+    // rather than until a fixed number of frames has gone past, and writes no
+    // file when it cannot. See its module docs for why that split matters
+    // (#809).
+    match capture::png(&target, std::path::Path::new(&path)) {
+        Ok(written) => {
+            let (width, height) = (written.width, written.height);
             println!("shot: {width}x{height} -> {path}");
+            if let Some(message) = size_mismatch(size, (width, height)) {
+                eprintln!("shot: {message}");
+            }
+            if written.stalled {
+                // Said out loud because the picture is misleading in one
+                // specific way, and silently handing it over is how a
+                // compositor problem gets read as an application one (#809).
+                eprintln!(
+                    "shot: the compositor was not presenting this window -- a blanked \
+                     or locked screen -- so the layout was done here. The widgets \
+                     are drawn correctly, but anything composited by another \
+                     process, the reader's web view above all, will be blank."
+                );
+            }
             glib::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("shot: cannot write {path}: {error}");
+            // Said in full, and on the way out with a non-zero status,
+            // because what this replaced printed one line and exited
+            // successfully: a session that did not go looking for the file
+            // would report "rendered and checked" in good faith (#809).
+            eprintln!("shot: {error}");
+            eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");
             glib::ExitCode::FAILURE
         }
     }

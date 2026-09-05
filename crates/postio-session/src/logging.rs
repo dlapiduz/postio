@@ -26,10 +26,10 @@
 //! # The `log` bridge is not optional
 //!
 //! `io-imap` emits through the `log` crate, and one of its records is load
-//! bearing — `postio-imap`'s skip counter watches for a dropped untagged
+//! bearing — `postio-account`'s skip counter watches for a dropped untagged
 //! response and turns it into `ResyncIntegrityLost`. `log::set_logger`
 //! succeeds once per process, so the bridge and that counter cannot both
-//! install themselves; [`postio_imap::imap::install_skip_counter_forwarding_to`]
+//! install themselves; [`postio_account::imap::install_skip_counter_forwarding_to`]
 //! composes them. If that composition ever fails, this module says so at
 //! `warn` rather than letting an integrity check go quiet.
 //!
@@ -173,12 +173,13 @@ pub fn config_at(path: &Path) -> LoggingConfig {
 const OURS: &[&str] = &[
     "postio",
     "postio_app",
+    "postio_bench",
     "postio_body",
     "postio_config",
     "postio_core",
     "postio_ffi",
     "postio_gtk",
-    "postio_imap",
+    "postio_account",
     "postio_jmap",
     "postio_gmail",
     "postio_index",
@@ -189,6 +190,7 @@ const OURS: &[&str] = &[
     "postio_smtp",
     "postio_storage",
     "postio_sync",
+    "postio_test_support",
     "postio_ui",
     "io_imap",
 ];
@@ -212,13 +214,13 @@ const OTHERS: &str = "warn";
 /// the user cannot act on, and that means nothing is wrong is a level
 /// everyone learns to skip, which is the level real problems arrive at.
 ///
-/// This is a *directive*, not a change in `postio-imap`, so
+/// This is a *directive*, not a change in `postio-account`, so
 /// `POSTIO_LOG=imap_codec=trace` still reaches it: a directive naming targets
 /// is passed through untouched by [`scope`], and asking for a target by name
 /// is the one unambiguous way to say you want it.
 ///
 /// `io_imap` is deliberately **not** here even though it is the noisier
-/// crate. It is in [`OURS`], and `postio-imap`'s skip counter reads its
+/// crate. It is in [`OURS`], and `postio-account`'s skip counter reads its
 /// records — see the module docs. Quieting it here would not actually break
 /// the counter (that runs in the `log` layer, before tracing sees anything,
 /// and counts `io_imap` at `debug`), but it would take away the output
@@ -280,8 +282,8 @@ fn parse(directive: &str, config: &LoggingConfig) -> EnvFilter {
 /// Returns whether both halves are live.
 fn bridge_log_records() -> bool {
     let installed =
-        postio_imap::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())));
-    installed && postio_imap::imap::skip_counter_is_counting()
+        postio_account::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())));
+    installed && postio_account::imap::skip_counter_is_counting()
 }
 
 #[cfg(test)]
@@ -392,7 +394,7 @@ mod tests {
 
     #[test]
     fn asking_for_the_codec_by_name_still_reaches_it() {
-        // The fix is a directive rather than a change in postio-imap
+        // The fix is a directive rather than a change in postio-account
         // precisely so this keeps working for whoever is debugging the codec.
         assert_eq!(scope("imap_codec=trace"), "imap_codec=trace");
         assert_eq!(
@@ -403,7 +405,7 @@ mod tests {
 
     #[test]
     fn nothing_quiets_the_target_the_skip_counter_reads() {
-        // `postio-imap`'s skip counter turns a dropped untagged response
+        // `postio-account`'s skip counter turns a dropped untagged response
         // into `ResyncIntegrityLost` — an integrity check, not a log line.
         //
         // A tracing directive could not actually silence it: the counter is a

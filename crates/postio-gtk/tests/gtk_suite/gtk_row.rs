@@ -5,6 +5,7 @@
 //! One test function, for the reason `gtk_style.rs` gives. Skips without a
 //! display. Nothing here touches the network.
 
+use crate::pump;
 use chrono::{TimeZone, Utc};
 
 use gtk::gdk;
@@ -38,7 +39,7 @@ fn canvas_row() -> Row {
 
 pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -142,12 +143,9 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     );
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("a".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
-        "canvas 1b's own three hints, before any keymap is applied"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "canvas 1b's hints, before any keymap is applied -- two since \
+         #1003 took `t` away with the column it opened"
     );
 
     // A rebind reaches the hint text, not just the resolver.
@@ -158,18 +156,14 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_keymap(&postio_core::Keymap::resolve(&overrides));
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("x".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
+        vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
         "postio-cpk: the hint follows the live binding"
     );
     row.set_keymap(&postio_core::Keymap::resolve(&Default::default()));
 
-    // A message with nothing to thread does not hint at opening one —
-    // `t` would either no-op or drill into a column of one, and a hint
-    // naming a key that does that is teaching the wrong keyboard.
+    // Both hints apply to every row now. The one that did not was `t`, which
+    // a row with a single message had nothing to point at; the conversation
+    // opens on landing, so there is no key to withhold (#1003).
     row.set_row(Some(Row {
         thread_count: 1,
         participants: Vec::new(),
@@ -178,19 +172,15 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     pump();
     assert_eq!(
         row.hints(),
-        vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
-        "one message in the thread is not a thread to open"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "a one-message row hints at the same two verbs"
     );
     row.set_row(Some(canvas_row()));
     pump();
     assert_eq!(
         row.hints(),
-        vec![
-            ("e".to_string(), "reply"),
-            ("a".to_string(), "archive"),
-            ("t".to_string(), "thread"),
-        ],
-        "back on a threaded row, the hint returns"
+        vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
+        "and so does a conversation row"
     );
 
     // ── `[ui].show_key_hints = false` mutes every row, focused or not ────
@@ -231,6 +221,108 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
         _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
     }
     row.set_selected(false);
+    pump();
+
+    // ── the cursor and the selection are two different-looking things ────
+    // #753. `gtk_selection.rs` asserts the state *flags* are separate and
+    // says so in its module doc; nothing asserted the pixels, and the two
+    // grounds were the same token in dark (`--postio-selected-bg` and
+    // `--postio-selected-strong-bg` were both `accent-900`). With the check
+    // glyph absent — an icon theme without `object-select-symbolic` draws
+    // nothing at all — the row the keyboard was on and a row an action would
+    // hit were pixel-identical.
+    //
+    // Every scheme, because dark was the broken one and a light-only
+    // assertion would have passed throughout.
+    let manager = adw::StyleManager::default();
+    for (scheme, contrast, name) in [
+        (adw::ColorScheme::ForceLight, false, "light"),
+        (adw::ColorScheme::ForceDark, false, "dark"),
+        (adw::ColorScheme::ForceLight, true, "light high-contrast"),
+        (adw::ColorScheme::ForceDark, true, "dark high-contrast"),
+    ] {
+        manager.set_color_scheme(scheme);
+        // The manager's high-contrast flag follows the desktop, so the class
+        // the stylesheet keys on is set here directly — which is what
+        // `style::track` does from `is_high_contrast`.
+        if contrast {
+            window.add_css_class(style::HIGH_CONTRAST_CLASS);
+        } else {
+            window.remove_css_class(style::HIGH_CONTRAST_CLASS);
+        }
+        pump();
+
+        row.set_cursor(true);
+        row.set_selected(false);
+        pump();
+        let cursor_only = render(&window);
+
+        row.set_cursor(false);
+        row.set_selected(true);
+        pump();
+        let selected_only = render(&window);
+
+        row.set_cursor(true);
+        pump();
+        let both = render(&window);
+
+        match (cursor_only, selected_only, both) {
+            (Some(cursor), Some(selected), Some(both)) => {
+                assert_ne!(
+                    cursor, selected,
+                    "in {name}, the row the keyboard is on and a row in the \
+                     selection draw the same pixels — inside a bulk selection \
+                     there is then no way to see where the cursor is"
+                );
+                assert_ne!(
+                    selected, both,
+                    "in {name}, a row that is both the cursor and selected \
+                     draws exactly like one that is only selected: the cursor \
+                     is invisible for as long as it is inside the selection"
+                );
+                assert_ne!(
+                    cursor, both,
+                    "in {name}, a selected row under the cursor draws exactly \
+                     like an unselected one under it, so the selection is \
+                     invisible wherever the keyboard happens to be"
+                );
+            }
+            _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
+        }
+    }
+    window.remove_css_class(style::HIGH_CONTRAST_CLASS);
+    manager.set_color_scheme(adw::ColorScheme::Default);
+    row.set_cursor(false);
+    row.set_selected(false);
+    pump();
+
+    // ── the cursor's edge is not a key-hints feature ─────────────────────
+    // #753 again: the 3px accent edge was drawn only when `shows_hints()`,
+    // which is the hints flag *and* keyboard focus. Turning hints off, or
+    // clicking into the reading pane, silently deleted the only marker of
+    // where the keyboard was. The canvas draws that edge on the current row
+    // unconditionally (`Design/Mail Client.dc.html:76`); only the key caps
+    // are the flag's business.
+    row.set_cursor(true);
+    row.set_show_key_hints(false);
+    pump();
+    let without_hints = render(&window);
+    row.set_cursor(false);
+    pump();
+    let no_cursor = render(&window);
+    row.set_show_key_hints(true);
+    pump();
+
+    match (without_hints, no_cursor) {
+        (Some(without_hints), Some(no_cursor)) => assert_ne!(
+            without_hints, no_cursor,
+            "with key hints off, the row under the cursor draws exactly like \
+             a row that is not — the setting deleted the focus indicator \
+             along with the hints it was supposed to govern"
+        ),
+        _ => eprintln!("skipping the pixel checks: the compositor is not painting this window"),
+    }
+    row.set_cursor(false);
     pump();
 
     // ── an unbound row is a skeleton, not a crash and not a lie ──────────
@@ -429,7 +521,19 @@ impl postio_gtk::list::PageSource for Sample {
             .map(|index| sample_row(index as i64 + 1))
             .collect();
         let list = self.list.clone();
-        gtk::glib::idle_add_local_once(move || list.deliver(page, rows));
+        // Stamped with the generation the request was made under, the way
+        // `crate::feed`'s real source does. `deliver` is documented as
+        // *always* applying -- it exists for a source that answers
+        // synchronously and has no generation to compare -- so a deferred
+        // double using it would land a page requested under one source after
+        // `set_source` had replaced it with another.
+        //
+        // This is a contract fix, not a fix for #1015: nothing here was
+        // measured crossing that boundary (after six frames the main context
+        // had nothing pending, idle or under load), and #1015's crash is
+        // dispatched from *inside* the pumping rather than after it.
+        let generation = self.list.generation();
+        gtk::glib::idle_add_local_once(move || list.deliver_for(generation, page, rows));
     }
 }
 
@@ -455,7 +559,8 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     let heartbeat = gtk::glib::timeout_add_local(std::time::Duration::from_millis(10), || {
         gtk::glib::ControlFlow::Continue
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
     while left.get() > 0 && std::time::Instant::now() < deadline {
         context.iteration(true);
     }
@@ -490,10 +595,4 @@ fn render(window: &gtk::Window) -> Option<Vec<u8>> {
             .save_to_png_bytes()
             .to_vec(),
     )
-}
-
-fn pump() {
-    for _ in 0..200 {
-        gtk::glib::MainContext::default().iteration(false);
-    }
 }

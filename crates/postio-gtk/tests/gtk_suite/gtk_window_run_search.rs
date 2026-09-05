@@ -10,6 +10,7 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,14 +20,9 @@ use postio_gtk::finder::Mode;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    while context.iteration(false) {}
-}
-
 pub fn run_search_opens_the_box_and_answers_immediately() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -83,6 +79,7 @@ pub fn run_search_opens_the_box_and_answers_immediately() {
             capped: false,
             elapsed: std::time::Duration::from_millis(2),
             corpus_complete: true,
+            unreachable: Vec::new(),
         }
     ));
 

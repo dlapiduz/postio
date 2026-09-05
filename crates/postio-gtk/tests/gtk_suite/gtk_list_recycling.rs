@@ -66,7 +66,7 @@ struct Case {
 
 pub fn a_list_view_builds_a_bounded_window_however_big_the_model_is() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
 
@@ -192,6 +192,9 @@ fn settle() {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(5), || glib::ControlFlow::Continue);
+    // POSTIO-FIXED-DEADLINE: spent in full, and nothing is waited *for* -- the
+    // count this case asserts is reached synchronously inside `splice`, as the
+    // comment above says. A dial would only lengthen a pump nobody reads.
     let deadline = Instant::now() + Duration::from_millis(150);
     while Instant::now() < deadline {
         context.iteration(true);

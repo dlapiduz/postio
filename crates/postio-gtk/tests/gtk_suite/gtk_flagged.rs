@@ -17,6 +17,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -84,7 +85,10 @@ impl MessageSource for Store {
             ListScope::Mailbox(_) => 0,
             // This store is about which scope the sidebar asked for; a
             // drill-in is `gtk_thread_scope.rs`.
-            ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => 0,
+            ListScope::Account(_)
+            | ListScope::Unified
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
             let end = (request.offset + request.limit).min(total);
@@ -114,7 +118,7 @@ impl MessageSource for Store {
 
 pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -188,6 +192,158 @@ pub fn the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail() {
         feeds.messages.mailbox(),
         Some(MailboxId::new(INBOX)),
         "and a folder that is a folder still says so"
+    );
+
+    window.destroy();
+}
+
+/// A store whose Flagged/Snoozed membership can shrink mid-test, the way
+/// unflagging or waking a snooze does on a live one — #773.
+#[derive(Default)]
+struct LiveStore {
+    flagged: RefCell<u32>,
+    snoozed: RefCell<u32>,
+}
+
+impl MailboxSource for LiveStore {
+    fn mailboxes(&self, account: AccountId) -> MailboxFuture {
+        let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
+        inbox.id = MailboxId::new(INBOX);
+        inbox.role = MailboxRole::Inbox;
+        inbox.counts = MailboxCounts {
+            total: 10,
+            unread: 0,
+            flagged: *self.flagged.borrow(),
+            snoozed: *self.snoozed.borrow(),
+        };
+        Box::pin(async move { Ok(vec![inbox]) })
+    }
+}
+
+impl MessageSource for LiveStore {
+    fn fetch(&self, request: PageRequest) -> PageFuture {
+        let total = match request.scope {
+            ListScope::Flagged(_) => *self.flagged.borrow(),
+            ListScope::Snoozed(_) => *self.snoozed.borrow(),
+            ListScope::Mailbox(id) if id.get() == INBOX => 10,
+            ListScope::Mailbox(_)
+            | ListScope::Account(_)
+            | ListScope::Unified
+            | ListScope::Thread(_) => 0,
+        };
+        Box::pin(async move {
+            let end = (request.offset + request.limit).min(total);
+            let rows = (request.offset..end)
+                .map(|position| Row {
+                    id: MessageId::new(position as i64 + 1),
+                    thread: None,
+                    from: None,
+                    subject: Some(format!("message {position}")),
+                    preview: None,
+                    received_at: Utc
+                        .timestamp_opt(1_700_000_000 - position as i64, 0)
+                        .unwrap(),
+                    seen: false,
+                    flagged: true,
+                    answered: false,
+                    draft: false,
+                    has_attachments: false,
+                    thread_count: 1,
+                    participants: Vec::new(),
+                })
+                .collect();
+            Ok(Page { total, rows })
+        })
+    }
+}
+
+pub fn flagged_and_snoozed_update_live_on_a_membership_change() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let account = AccountId::new(ACCOUNT);
+    let other_account = AccountId::new(ACCOUNT + 1);
+    let window = Window::default();
+    window.present();
+    let store = Rc::new(LiveStore {
+        flagged: RefCell::new(3),
+        snoozed: RefCell::new(2),
+    });
+    let feeds = window.install_feeds(account, "lena@example.com", store.clone(), store.clone());
+    pump_until(|| labels(&window).len() == 5);
+
+    // ── Flagged: unflagging a message live removes its row ────────────────
+    click_folder(&window, "Flagged");
+    pump_until(|| window.list().model().n_items() == 3);
+
+    *store.flagged.borrow_mut() = 2;
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account,
+        messages: vec![MessageId::new(3)],
+    });
+    pump_until(|| window.list().model().n_items() == 2);
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "unflagging removed a row live, with the count correct afterwards"
+    );
+
+    // ── new mail changes nothing while Flagged is in view ──────────────────
+    feeds.messages.apply(&postio_core::Event::NewMail {
+        account,
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(99)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "a delivery is neither flagged nor snoozed; it must not appear here"
+    );
+
+    // ── a different account's membership change reloads nothing ───────────
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account: other_account,
+        messages: vec![MessageId::new(1)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        2,
+        "another account's flag change cannot affect this one's Flagged list"
+    );
+
+    // ── Snoozed: the same three properties, on the other smart folder ─────
+    click_folder(&window, "Snoozed");
+    pump_until(|| window.list().model().n_items() == 2);
+
+    *store.snoozed.borrow_mut() = 1;
+    feeds.messages.apply(&postio_core::Event::MessagesChanged {
+        account,
+        messages: vec![MessageId::new(2)],
+    });
+    pump_until(|| window.list().model().n_items() == 1);
+    assert_eq!(
+        window.list().model().n_items(),
+        1,
+        "waking a snooze removed a row live, with the count correct afterwards"
+    );
+
+    feeds.messages.apply(&postio_core::Event::NewMail {
+        account,
+        mailbox: MailboxId::new(INBOX),
+        messages: vec![MessageId::new(100)],
+    });
+    pump();
+    assert_eq!(
+        window.list().model().n_items(),
+        1,
+        "a delivery is not snoozed either"
     );
 
     window.destroy();
@@ -284,7 +440,8 @@ fn pump_until(done: impl Fn() -> bool) {
     let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(5), || {
         glib::ControlFlow::Continue
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    let deadline = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(3000));
     while !done() && std::time::Instant::now() < deadline {
         context.iteration(true);
     }

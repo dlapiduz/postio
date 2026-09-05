@@ -199,6 +199,26 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
+    /// Every message in each of these accounts, less the rows taken back out
+    /// of the selection.
+    ///
+    /// The unified view's half of the predicate story (#811). The accounts
+    /// are named rather than implied by "all of them" because the aggregate
+    /// list can be showing fewer than it has: an account Postio cannot
+    /// currently reach is drawn — its synced mail is real mail — and is
+    /// deliberately *not* part of a whole-view selection made while it was
+    /// away (ADR 0005 Q10).
+    ///
+    /// The list is the one the view was scoped to **when the gesture was
+    /// made**, carried here rather than looked up on the way past. Resolving
+    /// it late would let an account that reconnected between the `Ctrl+A` and
+    /// the `a` join a selection the user was never shown.
+    InAccounts {
+        /// The accounts the predicate is about, in the sidebar's order.
+        accounts: Vec<AccountId>,
+        /// Rows the user deselected. Built by clicking, so it is short.
+        except: Vec<MessageId>,
+    },
     /// Every message a run of queue rows named.
     ///
     /// This is how undo takes back a bulk action without naming its rows: the
@@ -250,8 +270,11 @@ impl MessageSet {
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
             MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
-            // A smart folder is not a folder, here as everywhere else.
-            MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
+            // A smart folder is not a folder, here as everywhere else --
+            // and an aggregate over accounts is further from one still.
+            MessageSet::Flagged { .. } | MessageSet::Queued(_) | MessageSet::InAccounts { .. } => {
+                None
+            }
             MessageSet::InSourceMailbox { mailbox, .. } => Some(*mailbox),
             MessageSet::WithFlag { set, .. } => set.mailbox(),
         }
@@ -298,30 +321,20 @@ impl MessageSet {
             MessageSet::InMailbox { mailbox, except } => {
                 let mut sql =
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
-                if !except.is_empty() {
-                    // Excepted by *conversation*, not by row (ADR 0015 Q3,
-                    // #468). A folder shows one row per thread, so the id in
-                    // `except` is a row the user took back out of a select-all
-                    // -- and that row is a conversation. Excepting only the id
-                    // would leave the rest of it in the set, so `Ctrl+A` then
-                    // deselecting one thread would archive all of it but its
-                    // newest message: the worst of both readings.
-                    //
-                    // The `IS NULL` arm keeps the comparison total. A message
-                    // with no thread is only ever excepted by its own id, and
-                    // `NOT IN` against a set containing NULL is NULL -- which
-                    // would quietly drop every unthreaded message from the
-                    // set rather than keep it.
-                    let ids = placeholders(except.len(), first + 1);
-                    sql.push_str(&format!(
-                        " AND messages.id NOT IN ({ids}) \
-                          AND (messages.thread_id IS NULL \
-                               OR messages.thread_id NOT IN \
-                                  (SELECT thread_id FROM messages \
-                                    WHERE id IN ({ids}) AND thread_id IS NOT NULL))"
-                    ));
-                }
+                sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                (sql, arguments)
+            }
+            // The unified view's rows are conversations too, so the
+            // exceptions are excepted the same way -- by conversation, not by
+            // the one message a row is drawn from.
+            MessageSet::InAccounts { accounts, except } => {
+                let ids = placeholders(accounts.len(), first);
+                let mut sql =
+                    format!("messages.account_id IN ({ids}) AND messages.deleted_locally = 0");
+                sql.push_str(&without_conversations(except, first + accounts.len()));
+                let mut arguments: Vec<i64> = accounts.iter().map(|id| id.get()).collect();
                 arguments.extend(except.iter().map(|id| id.get()));
                 (sql, arguments)
             }
@@ -457,6 +470,12 @@ pub struct UpsertReport {
     /// is: a number that moves is how "the resync undid my read" gets
     /// diagnosed next time without a debugger.
     pub flags_preserved: usize,
+    /// Messages whose local labels the sync carried forward rather than
+    /// clearing, because nothing on the wire carries a label yet (#780).
+    ///
+    /// Reported for the same reason `flags_preserved` is: it is the number
+    /// that says "the resync did not eat my labels" without a debugger.
+    pub labels_preserved: usize,
     /// Messages this store already holds as a draft of its own, and therefore
     /// did not store a second time. See [`MessageRepository::upsert_batch`].
     pub own_drafts: usize,
@@ -488,6 +507,34 @@ pub struct StoredBody {
     pub html: Option<String>,
     /// The full header block.
     pub headers: Option<String>,
+    /// Whether [`postio_model::headers::BLOCK_LIMIT`] cut that block short.
+    ///
+    /// Part of the body rather than a column a caller sets separately: the
+    /// block and the fact that it is partial are one piece of information, and
+    /// a writer that could set them apart would eventually set one.
+    pub headers_truncated: bool,
+    /// Whether this body is a guess rather than what was sent.
+    ///
+    /// [`postio_model::mime::ParsedMessage::encoding_problems`], carried
+    /// through so a reader can say so. Here for the same reason
+    /// `headers_truncated` is: a body and the fact that it may not be the
+    /// sender's words are one piece of information, and a `StoredBody` that
+    /// can be built without answering this is one somebody eventually builds
+    /// without answering it (#901).
+    pub encoding_problems: bool,
+}
+
+/// One message whose header block was never stored, and what can be done
+/// about it (#884).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderRepair {
+    /// The row.
+    pub message_id: MessageId,
+    /// Its raw source, when there is one. `Some` means the block can be
+    /// recovered from disk with no network call at all; `None` means the only
+    /// way to it is a fetch — the `partial` state, which never stores a raw
+    /// blob, or a store whose raw source has been evicted (PRODUCT.md §6).
+    pub raw_blob_id: Option<BlobId>,
 }
 
 /// One message still missing all or part of its body.
@@ -583,7 +630,7 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers, snoozed_until, text_is_flowed";
+html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -623,7 +670,7 @@ impl<'a> MessageRepository<'a> {
     ///
     /// The body and the header block are *not* written: they belong to the blob
     /// store, and their keys are set with
-    /// [`MessageRepository::set_body_blobs`].
+    /// [`MessageRepository::set_body`].
     pub fn create(&self, message: &mut Message) -> Result<MessageId> {
         let transaction = super::Scope::open(self.connection)?;
         let id = insert(&transaction, message)?;
@@ -730,6 +777,7 @@ impl<'a> MessageRepository<'a> {
 
         // Read once for the batch, like the two snapshots above.
         let unacknowledged = unacknowledged_flag_changes(&transaction)?;
+        let awaiting_identity = local_copies_awaiting_identity(&transaction)?;
 
         for message in batch.iter_mut() {
             // The identity is what names a message (#543); the wire pair is
@@ -751,6 +799,16 @@ impl<'a> MessageRepository<'a> {
                 )?,
                 _ => None,
             };
+            // Last, and only for a row with no server coordinates to match
+            // on: the copy this client wrote before the server had named it
+            // (#942). Tried after both server-identity routes so a message
+            // the server *can* place is never resolved by a `Message-ID`.
+            let existing = existing.or_else(|| {
+                let rfc = message.rfc_message_id.as_ref()?;
+                awaiting_identity
+                    .get(&(message.mailbox_id, rfc.as_str().to_ascii_lowercase()))
+                    .copied()
+            });
 
             match existing {
                 Some(id) => {
@@ -764,6 +822,24 @@ impl<'a> MessageRepository<'a> {
                     if let Some(changes) = unacknowledged.get(&id) {
                         message.flags = with_unacknowledged(&message.flags, changes);
                         report.flags_preserved += 1;
+                    }
+                    // Labels are local-only today: nothing on the wire
+                    // carries them, so a `Message` built from a fetch has
+                    // none, and `write_update` replaces the whole set. That
+                    // deleted every label a person had put on a message the
+                    // next time its mailbox synced (#780) -- a feature undone
+                    // by a layer that never knew about it, which is the shape
+                    // `postio-bl2` names.
+                    //
+                    // An empty set therefore means "this sync has nothing to
+                    // say about labels", not "the server says none". When a
+                    // sync does learn to carry them it will supply a set, and
+                    // that set wins here without this needing to change.
+                    if message.labels.is_empty() {
+                        message.labels = read_labels(&transaction, id)?;
+                        if !message.labels.is_empty() {
+                            report.labels_preserved += 1;
+                        }
                     }
                     write_update(&transaction, message)?;
                     report.updated += 1;
@@ -783,7 +859,7 @@ impl<'a> MessageRepository<'a> {
     /// One message, with its recipients, attachments and labels.
     ///
     /// The body and headers are empty: those bytes are in the blob store. See
-    /// [`MessageRepository::body_blobs`].
+    /// [`MessageRepository::body`].
     pub fn get(&self, id: MessageId) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
@@ -1252,7 +1328,8 @@ impl<'a> MessageRepository<'a> {
     /// rather than as an absent body: those are opposite facts to a reader.
     pub fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
         let mut statement = self.connection.prepare(
-            "SELECT body_text, body_html, body_headers, body_dictionary_id
+            "SELECT body_text, body_html, body_headers, body_dictionary_id,
+                    body_headers_truncated, body_encoding_problems
                FROM messages WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.get()])?;
@@ -1263,6 +1340,8 @@ impl<'a> MessageRepository<'a> {
         let html: Option<Vec<u8>> = row.get(1)?;
         let headers: Option<Vec<u8>> = row.get(2)?;
         let dictionary_id: Option<i64> = row.get(3)?;
+        let headers_truncated: bool = row.get(4)?;
+        let encoding_problems: bool = row.get(5)?;
         drop(rows);
         drop(statement);
 
@@ -1287,7 +1366,189 @@ impl<'a> MessageRepository<'a> {
             text: decode(text)?,
             html: decode(html)?,
             headers: decode(headers)?,
+            headers_truncated,
+            encoding_problems,
         }))
+    }
+
+    /// A message's header block, parsed.
+    ///
+    /// The other half of the round trip `Message.headers` never had:
+    /// `ParsedMessage::into_message` has always filled that field and this
+    /// repository has never read or written it, so a `Message` loaded from the
+    /// store came back with an empty block however much mail was in it. That
+    /// asymmetry is what #479's differential test exists to catch — the
+    /// in-memory matcher and the index have to be looking at the same headers,
+    /// and they cannot be if one of them is always looking at nothing.
+    ///
+    /// # Why it is here and not on [`get`](Self::get)
+    ///
+    /// `get` deliberately does not carry the body, and the block is part of
+    /// the body: it is one of the three compressed columns [`body`](Self::body)
+    /// reads, written by [`set_body`](Self::set_body) in the same statement.
+    /// Every list row and every reading-pane open would pay a decompression
+    /// for a field only the indexer and `header:` want. The parse is not free
+    /// either — this is a whole header block, not a column.
+    ///
+    /// So the round trip is `set_body` out and here back, and callers that
+    /// want headers ask for them.
+    ///
+    /// `None` when there is no such message. A message whose block has never
+    /// been stored — every message in every store until the repair pass
+    /// reaches it — answers `Some` with an empty block, because "nothing
+    /// downloaded yet" is not a fault.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnreadableBody`] if the stored block will not decode, for the
+    /// reason [`body`](Self::body) gives: an absent block and an unreadable
+    /// one are opposite facts to a caller deciding whether a header is missing.
+    pub fn headers(&self, id: MessageId) -> Result<Option<postio_model::Headers>> {
+        let Some(body) = self.body(id)? else {
+            return Ok(None);
+        };
+        Ok(Some(match body.headers {
+            None => postio_model::Headers::new(),
+            // `headers::parse_block`, not a parse of this repository's own:
+            // it appends the terminator the stored block does not carry, and
+            // a caller that forgot would silently lose the block's last
+            // field. One place decides what a stored block means (ADR 0025).
+            Some(block) => postio_model::headers::parse_block(&block),
+        }))
+    }
+
+    /// Messages whose body is local and whose header block is not.
+    ///
+    /// Every message in every store that exists today, because nothing has
+    /// ever written `body_headers` (#884). Scoped to bodies that have already
+    /// been fetched: a message still waiting for its body will get its block
+    /// with it, and offering one here would put work on the queue that this
+    /// pass can do nothing about.
+    ///
+    /// **Repairing a message must remove it from this answer**, which
+    /// [`set_headers`](Self::set_headers) does by writing a non-NULL block.
+    /// A pass over a candidate query that does not shrink spins at 100% of a
+    /// core for as long as the application is open — not hypothetical, that is
+    /// #500 — so the caller compares batches and stops.
+    ///
+    /// # Only what this pass can actually fix
+    ///
+    /// Scoped to rows that still have their raw source, because those are the
+    /// ones a local pass can repair. A message with no blob — the `partial`
+    /// state, or a store whose raw source has been evicted — needs a fetch,
+    /// and mixing the two here would be worse than untidy: this is ordered
+    /// newest-first and windowed, so one batch of unfetchable rows would make
+    /// no progress, trip the caller's guard, and stop the pass before it
+    /// reached the older messages it *could* have fixed. Those rows are
+    /// [`messages_needing_a_header_fetch`](Self::messages_needing_a_header_fetch)'s.
+    pub fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, raw_blob_id FROM messages
+              WHERE body_headers IS NULL
+                AND raw_blob_id IS NOT NULL
+                AND body_state IN ('partial', 'full')
+              ORDER BY received_at DESC
+              LIMIT ?1",
+        )?;
+        let rows = statement.query_map([limit], |row| {
+            Ok(HeaderRepair {
+                message_id: MessageId::new(row.get(0)?),
+                raw_blob_id: row.get::<_, Option<String>>(1)?.map(BlobId::new),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Messages whose block can only be had from the server.
+    ///
+    /// The third row of #884's table: `body_headers` NULL and no raw source to
+    /// take it from. Two ways to arrive here — the `partial` state, which
+    /// fetches sections and never stores a raw blob at all (~15% of ADR 0017's
+    /// reference mailbox), and a store whose raw source has been evicted,
+    /// which PRODUCT.md §6 does *first* when the disk ceiling binds.
+    ///
+    /// Separate from [`messages_missing_headers`](Self::messages_missing_headers)
+    /// because the answer is a network fetch rather than a local read, and the
+    /// two must not share a batch — see that method for why.
+    pub fn messages_needing_a_header_fetch(
+        &self,
+        mailbox_id: MailboxId,
+        limit: u32,
+    ) -> Result<Vec<BackfillCandidate>> {
+        let mut statement = self.connection.prepare(
+            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+                    mailboxes.path, messages.remote_id
+               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+              WHERE messages.mailbox_id = ?1
+                AND messages.body_headers IS NULL
+                AND messages.raw_blob_id IS NULL
+                AND messages.body_state IN ('partial', 'full')
+                AND messages.uid IS NOT NULL
+                AND messages.remote_id IS NOT NULL
+                AND messages.deleted_locally = 0
+              ORDER BY messages.received_at DESC
+              LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![mailbox_id.get(), limit], |row| {
+            read_backfill_candidate(row, mailbox_id)
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Writes just the header block, leaving the body beside it alone.
+    ///
+    /// # Why this is not `set_body` with the other fields refilled
+    ///
+    /// The row carries **one** `body_dictionary_id` for `body_text`,
+    /// `body_html` and `body_headers` together, and an ADR 0020 frame can only
+    /// be read with the dictionary it was written against. So a repair that
+    /// compressed the block against the newest dictionary and updated that id
+    /// would leave the text and html beside it unreadable — losing a message's
+    /// words to a pass whose whole job was to add its headers.
+    ///
+    /// This compresses against **the dictionary the row already names**,
+    /// whatever that is, and never touches the id. A row that has none stores
+    /// the block uncompressed against none, exactly as its body is.
+    pub fn set_headers(
+        &self,
+        id: MessageId,
+        block: Option<&postio_model::headers::Block>,
+    ) -> Result<()> {
+        let dictionary_id: Option<i64> = self.connection.query_row(
+            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )?;
+        let dictionary = match dictionary_id {
+            None => None,
+            Some(dictionary_id) => Some(
+                self.dictionaries
+                    .borrow_mut()
+                    .get(self.connection, dictionary_id)?,
+            ),
+        };
+        let encoded = block
+            .map(|block| {
+                crate::body::compress(&block.text, dictionary.as_ref().map(|d| d.as_slice()))
+            })
+            .transpose()?;
+        let changed = self.connection.execute(
+            "UPDATE messages
+                SET body_headers = ?2, body_headers_truncated = ?3
+              WHERE id = ?1",
+            params![
+                id.get(),
+                encoded,
+                block.is_some_and(|block| block.truncated),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "message",
+                id: id.get(),
+            });
+        }
+        Ok(())
     }
 
     /// Stores a message's decoded content on its row, compressed.
@@ -1323,7 +1584,8 @@ impl<'a> MessageRepository<'a> {
         let changed = self.connection.execute(
             "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
-                    body_dictionary_id = ?5, body_state = ?6
+                    body_dictionary_id = ?5, body_state = ?6,
+                    body_headers_truncated = ?7, body_encoding_problems = ?8
               WHERE id = ?1",
             params![
                 id.get(),
@@ -1332,6 +1594,8 @@ impl<'a> MessageRepository<'a> {
                 encode(&body.headers)?,
                 dictionary_id,
                 body_state.as_str(),
+                body.headers_truncated,
+                body.encoding_problems,
             ],
         )?;
         if changed == 0 {
@@ -1345,7 +1609,7 @@ impl<'a> MessageRepository<'a> {
 
     /// Sets `body_state` on its own, without touching the stored body.
     ///
-    /// The one write [`set_body_blobs`](Self::set_body_blobs) cannot do: a
+    /// The one write [`set_body`](Self::set_body) cannot do: a
     /// payload landing changes how much of the message is local without
     /// changing where its text is. Kept separate rather than folded in
     /// because reading the blob keys back only to write them again is how a
@@ -1366,7 +1630,8 @@ impl<'a> MessageRepository<'a> {
 
     /// Records where one payload part's bytes landed in the blob store.
     ///
-    /// Keyed by the part's MIME path rather than its [`AttachmentId`],
+    /// Keyed by the part's MIME path rather than its
+    /// [`AttachmentId`](postio_model::AttachmentId),
     /// deliberately. A refetch **replaces** a message's attachment rows —
     /// the parser re-reads the structure and [`update`](Self::update) writes
     /// the new set — so the row id the reading pane was holding does not
@@ -1555,6 +1820,21 @@ impl<'a> MessageRepository<'a> {
         })
     }
 
+    /// How many of `account_id`'s messages asked for a read receipt (#970).
+    ///
+    /// A count, not a list: Postio never sends one automatically (CLAUDE.md's
+    /// privacy section), so there is no per-message action for the privacy
+    /// pane to offer — only the fact of how often it was asked.
+    pub fn read_receipt_requested_count(&self, account_id: AccountId) -> Result<u64> {
+        Ok(self.connection.query_row(
+            "SELECT count(*) FROM messages
+              WHERE account_id = ?1 AND read_receipt_requested = 1
+                AND deleted_locally = 0",
+            [account_id.get()],
+            |row| row.get::<_, i64>(0),
+        )? as u64)
+    }
+
     /// One message's backfill candidate, if it still needs (part of) its body.
     ///
     /// For the interactive lane: the reading pane knows only which message was
@@ -1627,6 +1907,11 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     let (scope, snooze) = match query.scope {
         ListScope::Mailbox(_) => ("messages.mailbox_id = ?1", NOT_YET_DUE),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
+        // Every account, so there is no account to name and no argument to
+        // bind. `idx_messages_recency` is the index this leans on -- added
+        // for exactly this shape in ADR 0005 Q5a, because a composite index
+        // led by `account_id` cannot supply the order once nothing pins it.
+        ListScope::Unified => ("1 = 1", NOT_YET_DUE),
         ListScope::Flagged(_) => (
             "messages.account_id = ?1 AND messages.flagged = 1",
             NOT_YET_DUE,
@@ -1634,23 +1919,31 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         ListScope::Snoozed(_) => ("messages.account_id = ?1", STILL_SNOOZED),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
     };
+    // Numbered from however many arguments the scope itself bound, so a
+    // scope that names nothing does not leave a hole at ?1.
+    let first = scope_arguments(&query.scope).len() + 1;
     let cursor = if with_cursor {
         // A row value, so SQLite can turn it into one range constraint on
         // (received_at, id) and seek straight to the cursor. Spelled as an OR
         // it would be a filter, and a deep page would walk every row above it.
-        " AND (messages.received_at, messages.id) < (?2, ?3)"
+        format!(
+            " AND (messages.received_at, messages.id) < (?{first}, ?{})",
+            first + 1
+        )
     } else {
-        ""
+        String::new()
     };
     format!("{scope} AND messages.deleted_locally = 0 AND {snooze}{cursor}")
 }
 
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
-    vec![match scope {
-        ListScope::Mailbox(id) => id.get(),
-        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => id.get(),
-        ListScope::Thread(id) => id.get(),
-    }]
+    match scope {
+        // Nothing to bind: the scope is every account.
+        ListScope::Unified => Vec::new(),
+        ListScope::Mailbox(id) => vec![id.get()],
+        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => vec![id.get()],
+        ListScope::Thread(id) => vec![id.get()],
+    }
 }
 
 fn page_arguments(query: &ListQuery) -> Vec<i64> {
@@ -1660,6 +1953,35 @@ fn page_arguments(query: &ListQuery) -> Vec<i64> {
         arguments.push(cursor.id.get());
     }
     arguments
+}
+
+/// ` AND ...` excluding every conversation `except` names, or nothing at all.
+///
+/// Excepted by *conversation*, not by row (ADR 0015 Q3, #468). A list of mail
+/// shows one row per thread, so an id in `except` is a row the user took back
+/// out of a select-all -- and that row is a conversation. Excepting only the
+/// id would leave the rest of it in the set, so `Ctrl+A` then deselecting one
+/// thread would archive all of it but its newest message: the worst of both
+/// readings.
+///
+/// The `IS NULL` arm keeps the comparison total. A message with no thread is
+/// only ever excepted by its own id, and `NOT IN` against a set containing
+/// NULL is NULL -- which would quietly drop every unthreaded message from the
+/// set rather than keep it.
+///
+/// The caller binds one argument per exception, from `first` upwards.
+fn without_conversations(except: &[MessageId], first: usize) -> String {
+    if except.is_empty() {
+        return String::new();
+    }
+    let ids = placeholders(except.len(), first);
+    format!(
+        " AND messages.id NOT IN ({ids}) \
+          AND (messages.thread_id IS NULL \
+               OR messages.thread_id NOT IN \
+                  (SELECT thread_id FROM messages \
+                    WHERE id IN ({ids}) AND thread_id IS NOT NULL))"
+    )
 }
 
 /// `?n, ?n+1, ...` for `count` parameters starting at `first`.
@@ -1693,7 +2015,8 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
                 flags_dirty = ?26, has_pending_operations = ?27, deleted_locally = ?28,
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
                 text_part_id = ?33, text_part_headers = ?34,
-                html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37
+                html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
+                read_receipt_requested = ?38
           WHERE id = ?1",
         params_from_iter(row_values(id, message)),
     )?;
@@ -1712,20 +2035,24 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
 }
 
 fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
-    connection.execute(
-        "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
+    // Cached: the widest statement in the write path and the one a first sync
+    // runs most -- once per new message (#728).
+    connection
+        .prepare_cached(
+            "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
                                in_reply_to, reference_ids, subject, normalized_subject, date,
                                received_at, preview, size, flags, seen, flagged, answered,
                                draft, deleted, has_attachments, uid, uid_validity, mod_seq,
                                remote_id, body_state, flags_dirty, has_pending_operations,
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
-                               html_part_id, html_part_headers, text_is_flowed)
+                               html_part_id, html_part_headers, text_is_flowed,
+                               read_receipt_requested)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36, ?37)",
-        params_from_iter(row_values(0, message)),
-    )?;
+                 ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
+        )?
+        .execute(params_from_iter(row_values(0, message)))?;
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
@@ -1808,6 +2135,7 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
         maybe_text(message.html_part_id.clone()),
         maybe_text(message.html_part_headers.clone()),
         boolean(message.text_is_flowed),
+        boolean(message.read_receipt_requested),
     ]
 }
 
@@ -1897,8 +2225,9 @@ fn find_by_remote_id(
     mailbox_id: MailboxId,
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
-    let mut statement =
-        connection.prepare("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
+    // Cached: once per message on every batch a sync pass writes (#728).
+    let mut statement = connection
+        .prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
     let mut rows = statement.query(params![mailbox_id.get(), remote_id.as_str()])?;
     Ok(match rows.next()? {
         Some(row) => Some(MessageId::new(row.get(0)?)),
@@ -1914,7 +2243,9 @@ fn find_by_generation_uid(
     generation: Generation,
     uid: Uid,
 ) -> Result<Option<MessageId>> {
-    let mut statement = connection.prepare(
+    // Cached, for the same reason as `find_by_remote_id`: the fallback
+    // lookup runs per message for any row synced before `remote_id` existed.
+    let mut statement = connection.prepare_cached(
         "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
     )?;
@@ -2013,6 +2344,7 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         html_part_headers: row.get(29)?,
         snoozed_until: row.get::<_, Option<i64>>(30)?.map(from_millis),
         text_is_flowed: row.get(31)?,
+        read_receipt_requested: row.get(32)?,
     })
 }
 
@@ -2185,6 +2517,47 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, Stri
     })?;
     rows.collect::<rusqlite::Result<BTreeSet<_>>>()
         .map_err(Into::into)
+}
+
+/// Rows this client wrote that the server has not named yet, by `Message-ID`.
+///
+/// `(mailbox, message-id) -> id`, and only for rows with **no server identity
+/// at all** — no `remote_id`, no uid. Postio writes a sent message into Sent
+/// the moment it is on its way (#942), which is well before the `APPEND` that
+/// gives it one, and the same thing happens whenever that append fails and
+/// the folder is flagged for resync instead.
+///
+/// Without this, neither of the two things [`MessageRepository::upsert_batch`]
+/// matches on can find such a row, so a resync that fetched the server's own
+/// copy inserted a second one and Sent showed the message twice.
+///
+/// **Narrow on purpose.** A row that already carries an identity is a
+/// different message that happens to share a `Message-ID` — a mailing list's
+/// copy of one's own post is the ordinary case — and collapsing those would
+/// lose one of them. `COLLATE NOCASE` matches
+/// [`MessageRepository::ids_by_rfc_message_id`], since a `Message-ID` is
+/// compared case-insensitively.
+fn local_copies_awaiting_identity(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<(MailboxId, String), MessageId>> {
+    let mut statement = connection.prepare(
+        "SELECT mailbox_id, lower(rfc_message_id), id
+           FROM messages
+          WHERE remote_id IS NULL
+            AND uid IS NULL
+            AND rfc_message_id IS NOT NULL
+            AND deleted_locally = 0",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            (
+                MailboxId::new(row.get::<_, i64>(0)?),
+                row.get::<_, String>(1)?,
+            ),
+            MessageId::new(row.get(2)?),
+        ))
+    })?;
+    rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
 }
 
 /// `(mailbox, uid_validity, uid)` for every message with an undrained

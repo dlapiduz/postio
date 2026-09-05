@@ -18,7 +18,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # once. Already in the lock file via `zbus`, so it costs no extra compile.
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 postio-core.workspace = true
-postio-imap.workspace = true
+postio-account.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
@@ -30,9 +30,11 @@ tracing = "0.1"
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
-criterion = "0.7.0"
 postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
+# The shared deadline dial: every wall-clock wait in a test answers to
+# `POSTIO_TEST_PATIENCE` (#842, #957).
+postio-test-support.workspace = true
 # The `sync_writes` bench only: the phase split has to wrap each phase in the
 # same kind of transaction `commit_batch` uses, or the numbers include a
 # commit apiece and stop being comparable to the whole they came from.
@@ -40,18 +42,12 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
 rusqlite = { version = "0.40.2", features = [
     "bundled-sqlcipher-vendored-openssl",
+    # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
+    "trace",
 ] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
-
-[[bench]]
-name = "store_reads"
-harness = false
-
-[[bench]]
-name = "sync_writes"
-harness = false
 
 [lints]
 workspace = true

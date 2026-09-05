@@ -62,7 +62,11 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
     // ── a store with one account, one folder and one real message ───────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let message_id = {
         let connection = database.connection().expect("a connection");

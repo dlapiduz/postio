@@ -147,7 +147,7 @@ fn assemble(
     }
 
     if !draft.subject.is_empty() {
-        builder = builder.subject(draft.subject.clone());
+        builder = builder.subject(header_text(&draft.subject));
     }
     if let Some(to) = recipient_list(&draft.to) {
         builder = builder.to(to);
@@ -191,6 +191,78 @@ fn assemble(
     BuiltMessage { raw, message_id }
 }
 
+/// `value` with every line break folded into a single space.
+///
+/// **A header value may not contain CR or LF** (RFC 5322 §2.2) except as
+/// folding whitespace, and the generator writes what it is handed. Left
+/// alone, everything after a break becomes a *header*: #864 reached a `Bcc`
+/// this way, which is a copy of a reply going somewhere the sender never saw
+/// and which the composer's own recipient chips would not show, because it
+/// was never in the draft.
+///
+/// **Fold rather than refuse.** Refusing is the more honest-looking answer
+/// and is the wrong one here: the value arrives from *received mail* — an
+/// RFC 2047 encoded word can carry any octet, so a hostile `Subject` decodes
+/// with real breaks in it and `reply` copies it into a draft. Refusing would
+/// mean a message you cannot reply to, handing the sender of that message a
+/// veto over your mail client. Folding keeps the reply working.
+///
+/// A single space is not an arbitrary choice either: it is exactly what
+/// unfolding a *legitimately* folded header produces (§2.2.3), so a value
+/// that only ever contained folding whitespace comes out unchanged in
+/// meaning. Any run of breaks plus the horizontal whitespace around them
+/// collapses to one space, because `"a\r\n\tb"` unfolds to `"a b"` and
+/// `"a\r\n\r\nb"` should not become `"a  b"`.
+///
+/// Applied to every unstructured value handed to the builder, in one place,
+/// on purpose: sanitising at the composer would leave the other sources open
+/// — a draft restored from its row, a `mailto:` URL, a rules action, the FFI
+/// and MCP surfaces — and those are the ones nobody thinks of.
+fn header_text(value: &str) -> String {
+    if !value.contains(['\r', '\n']) {
+        return value.to_owned();
+    }
+    let mut folded = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\r' && character != '\n' {
+            folded.push(character);
+            continue;
+        }
+        // The break, and whatever whitespace it ran into, is one space.
+        while characters
+            .peek()
+            .is_some_and(|next| matches!(next, '\r' | '\n' | ' ' | '\t'))
+        {
+            characters.next();
+        }
+        // Not at either end: a value that began or ended with a break did not
+        // mean to start or finish with a space.
+        if !folded.is_empty() && characters.peek().is_some() {
+            folded.push(' ');
+        }
+    }
+    folded
+}
+
+/// `id` unless it carries a line break, in which case it is not a `msg-id`.
+///
+/// Structured rather than unstructured, so folding is wrong: a space inside
+/// `<...>` does not make a valid identifier, it makes a different invalid
+/// one. Dropping loses nothing real — a threading header that names a
+/// malformed id threads nothing — and it closes the same injection, which
+/// reaches `In-Reply-To` *and* `References` from one hostile value.
+///
+/// Not reachable through `mime::parse` today: a `Message-ID` header with a
+/// literal break in it ends at the break, so the parser never yields one.
+/// It is defended anyway because the parser is not the only way a `Message`
+/// is built, and because this is the kind of assumption that stops being
+/// true quietly.
+fn usable_message_id(id: &RfcMessageId) -> Option<String> {
+    let text = id.without_brackets();
+    (!text.contains(['\r', '\n'])).then(|| text.to_owned())
+}
+
 /// Sets `In-Reply-To` and `References` from `parent`.
 ///
 /// `References` is exactly what a message threading *into* `parent` would
@@ -202,13 +274,13 @@ fn assemble(
 fn add_threading_headers<'x>(builder: MessageBuilder<'x>, parent: &Message) -> MessageBuilder<'x> {
     let mut references: Vec<String> = parent
         .reference_chain()
-        .map(|id| id.without_brackets().to_owned())
+        .filter_map(usable_message_id)
         .collect();
 
     let mut builder = builder;
-    if let Some(parent_id) = &parent.rfc_message_id {
-        builder = builder.in_reply_to(parent_id.without_brackets().to_owned());
-        references.push(parent_id.without_brackets().to_owned());
+    if let Some(parent_id) = parent.rfc_message_id.as_ref().and_then(usable_message_id) {
+        builder = builder.in_reply_to(parent_id.clone());
+        references.push(parent_id);
     }
     if !references.is_empty() {
         builder = builder.references(MbMessageId::new_list(references.into_iter()));
@@ -421,6 +493,51 @@ mod tests {
 
         let parsed = mime::parse(&build(&draft(), &ada, &[], None).raw);
         assert_eq!(parsed.reply_to[0].address, "replies@example.org");
+    }
+
+    #[test]
+    fn a_header_value_folds_its_line_breaks_into_single_spaces() {
+        // Unchanged when there is nothing to fold, including the whitespace
+        // somebody meant to be there.
+        assert_eq!(header_text("Tuesday notes"), "Tuesday notes");
+        assert_eq!(header_text("two  spaces"), "two  spaces");
+
+        // A break is a space, which is what unfolding a legitimately folded
+        // header produces.
+        assert_eq!(header_text("a\r\nb"), "a b");
+        assert_eq!(header_text("a\nb"), "a b");
+        assert_eq!(header_text("a\rb"), "a b");
+
+        // A break and the whitespace it ran into are *one* space: `a\r\n\tb`
+        // is the folded spelling of `a b`, and `a\r\n\r\nb` should not come
+        // out wider than a single fold.
+        assert_eq!(header_text("a\r\n\tb"), "a b");
+        assert_eq!(header_text("a\r\n \r\n b"), "a b");
+
+        // At either end there is nothing to join, so no space is invented.
+        assert_eq!(header_text("\r\nX-Injected: yes"), "X-Injected: yes");
+        assert_eq!(header_text("subject\r\n"), "subject");
+
+        // And the injection itself: whatever follows the break is text now.
+        assert_eq!(
+            header_text("ok\r\nBcc: eve@example.org"),
+            "ok Bcc: eve@example.org"
+        );
+    }
+
+    #[test]
+    fn a_message_id_carrying_a_line_break_is_dropped_rather_than_folded() {
+        // Structured, so folding is wrong: a space inside `<...>` makes a
+        // different invalid id rather than a valid one. Dropping loses
+        // nothing — an id that malformed threads nothing.
+        assert_eq!(
+            usable_message_id(&RfcMessageId::new("<a@example.com>")).as_deref(),
+            Some("a@example.com")
+        );
+        assert_eq!(
+            usable_message_id(&RfcMessageId::new("a@example.com>\r\nBcc: eve@example.org")),
+            None
+        );
     }
 
     #[test]

@@ -6,10 +6,10 @@ name: Mutants
 # on it would be an hours-long check for a signal that changes rarely. See
 # #99 and scripts/mutants.sh's own comment.
 #
-# PAUSED 2026-08-25 (same reason as ci.yml and bench.yml): a daily run still
-# spends this private repo's limited free minutes every day, whether a
-# mutant regressed or not. workflow_dispatch-only until the repo is public.
-# Restore by uncommenting the schedule below.
+# Was paused 2026-08-25 -- 2026-09-03 (same reason as ci.yml and bench.yml
+# were): a daily run spent this repository's limited free minutes while it
+# was still private, whether a mutant regressed or not. Restored now that
+# the repository is public, matching bench.yml's own schedule.
 #
 # The very first dispatch of this job is expected to fail: there is no
 # docs/mutants-baseline.txt yet (scripts/mutants.sh says so plainly rather
@@ -20,8 +20,8 @@ name: Mutants
 # distinction this workflow exists to draw. #99's own acceptance criteria
 # are what that first triage has to satisfy.
 on:
-  # schedule:
-  #   - cron: "0 7 * * *"
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:
@@ -45,6 +45,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # cargo-mutants gives each parallel job its own scratch copy of the
+      # source tree and builds a fresh target/ inside it -- with no --jobs
+      # cap it defaults to one per core, and the standard runner's ~14GB of
+      # free disk does not hold that many. The first real dispatch (#510)
+      # died with "Disk quota exceeded" testing the very first mutant, right
+      # after an unmutated baseline build alone had already used most of it.
+      # Preinstalled SDKs this job never touches are the easy 20-30GB back.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          df -h /
+
       # None of the four crates need GTK; see the `coverage` job in ci.yml
       # for the same reasoning about this dependency list.
       - name: Install system dependencies
@@ -60,6 +73,12 @@ jobs:
       # The pin decides; see the note in ci.yml's `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc`; this puts
+      # them on PATH (#1101). Before the first cargo invocation, after rustup
+      # has made `$CARGO_HOME/bin` exist.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Identify the compiler
         id: rust
@@ -79,7 +98,14 @@ jobs:
       # Pinned the same way cargo-fuzz is in fuzz.yml: a version, not a
       # floating latest.
       - name: Install cargo-mutants
-        run: cargo install cargo-mutants --locked --version 27.1.0
+        run: |
+          if cargo mutants --version 2>/dev/null | grep -qw "27.1.0"; then
+            echo "cargo-mutants 27.1.0 restored from the cache"
+          else
+            cargo install cargo-mutants --locked --version 27.1.0 --force
+          fi
 
       - name: Mutation-test the pure crates
-        run: scripts/mutants.sh
+        run: |
+          df -h /
+          scripts/mutants.sh

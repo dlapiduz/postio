@@ -52,8 +52,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use postio_imap::backend::{Capabilities, Capability, MailboxEvent, MailboxStatus};
-use postio_imap::cancel::CancelToken;
+use postio_account::backend::{Capabilities, Capability, MailboxEvent, MailboxStatus};
+use postio_account::cancel::CancelToken;
 use postio_model::{MailboxId, ModSeq, Uid};
 
 // ---------------------------------------------------------------------------
@@ -82,6 +82,13 @@ pub struct WatchPolicy {
     /// Applies to every mailbox, the watched one included: see the module docs
     /// on why push is never the only evidence.
     pub poll_interval: Duration,
+    /// `[sync] check_for_mail = "manual"` (#1013): never idle and never poll
+    /// on a timer, whatever `idle`/`poll_interval` say — only an explicit
+    /// check-for-mail reaches the server. That command runs
+    /// `Engine::sync` directly (`postio-session`'s `Refresh` handler) rather
+    /// than through this watcher, so setting this true costs that path
+    /// nothing; it only silences the automatic one.
+    pub manual: bool,
 }
 
 impl Default for WatchPolicy {
@@ -99,6 +106,7 @@ impl Default for WatchPolicy {
             idle: true,
             idle_refresh: Duration::from_secs(9 * 60),
             poll_interval: Duration::from_secs(300),
+            manual: false,
         }
     }
 }
@@ -360,7 +368,7 @@ impl Watcher {
     /// [`next_push`](Self::next_push), and checking it from here would be the
     /// duplicate work `IDLE` exists to avoid.
     pub fn next_poll(&mut self, now: DateTime<Utc>) -> Watch {
-        if self.suspended {
+        if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
         }
 
@@ -465,6 +473,38 @@ impl Watcher {
         }
     }
 
+    /// Reclaims every step whose caller vanished without reporting.
+    ///
+    /// The engine races the command a step handed out against its job
+    /// channel, and the loser of that race is *dropped*, not failed —
+    /// nothing ever calls [`woke`](Self::woke) or [`failed`](Self::failed)
+    /// for it. Left alone, the target stays outstanding for ever: never
+    /// idled, never polled — the inbox silently unwatched for the rest of
+    /// the session, which is how #755 found this. Cancelling the token
+    /// unwinds whatever half-run command the drop left on the wire; making
+    /// the target due now is what re-establishes the watch on the next
+    /// round.
+    ///
+    /// Call it only when the caller of any outstanding step is known to be
+    /// gone — right after the race is decided against it. A step that
+    /// completed properly has already cleared itself, so this is a no-op
+    /// then.
+    pub fn interrupted(&mut self, now: DateTime<Utc>) {
+        for target in self.targets.values_mut() {
+            if let Some(cancel) = target.in_flight.take() {
+                cancel.cancel();
+                target.due_at = now;
+                // Whatever the vanished command might have reported, it
+                // never did — a delivery during the gap is exactly what the
+                // `IDLE` would have caught and nothing now has. Forgetting
+                // the verification makes the next step a `STATUS`, so the
+                // gap is reconciled rather than idled over; `resume` does
+                // the same, for the same reason.
+                target.verified_at = None;
+            }
+        }
+    }
+
     /// Parks the watcher and ends every outstanding command.
     ///
     /// What suspending a laptop means. Cancelling is the whole point: an
@@ -501,7 +541,7 @@ impl Watcher {
 
     /// Hands out the step `mailbox` is due, marking it outstanding.
     fn step(&mut self, mailbox: MailboxId, now: DateTime<Utc>) -> Watch {
-        if self.suspended {
+        if self.suspended || self.policy.manual {
             return Watch::Wait { until: None };
         }
         let can_idle = self.can_idle;
@@ -657,6 +697,64 @@ mod tests {
 
         assert!(outstanding.is_cancelled());
         assert_eq!(watcher.pushed, None);
+    }
+
+    #[test]
+    fn a_step_whose_caller_vanished_is_reclaimed_by_interrupted() {
+        let mut watcher = Watcher::new(WatchPolicy::default(), &idling());
+        let inbox = MailboxId::new(1);
+        watcher.watch(inbox, "INBOX", Attention::Push);
+        let now = DateTime::<Utc>::MIN_UTC;
+
+        assert!(
+            !matches!(watcher.next_push(now), Watch::Wait { .. }),
+            "the pushed mailbox should be handed a step to run"
+        );
+        let outstanding = watcher.targets[&inbox]
+            .in_flight
+            .clone()
+            .expect("a step is outstanding");
+        // The engine races this command against its job channel, and the
+        // loser of that race is dropped, not failed — nothing will ever
+        // report it.
+        assert!(
+            matches!(watcher.next_push(now), Watch::Wait { until: None }),
+            "an outstanding step blocks the lane; that is the wedge's first half"
+        );
+
+        watcher.interrupted(now);
+
+        assert!(
+            outstanding.is_cancelled(),
+            "whatever half-run command the drop left behind has to be told to stop"
+        );
+        assert!(
+            matches!(watcher.next_push(now), Watch::Poll { .. }),
+            "a reclaimed mailbox is *reconciled*, not merely watched again: a \
+             delivery during the gap is exactly what the dropped IDLE would \
+             have caught, and only a STATUS can find it now"
+        );
+    }
+
+    #[test]
+    fn a_manual_policy_never_idles_or_polls_automatically() {
+        let policy = WatchPolicy {
+            manual: true,
+            ..WatchPolicy::default()
+        };
+        let mut watcher = Watcher::new(policy, &idling());
+        let inbox = MailboxId::new(1);
+        watcher.watch(inbox, "INBOX", Attention::Push);
+        let now = DateTime::<Utc>::MIN_UTC;
+
+        assert!(
+            matches!(watcher.next_push(now), Watch::Wait { until: None }),
+            "manual mode must never idle automatically"
+        );
+        assert!(
+            matches!(watcher.next_poll(now), Watch::Wait { until: None }),
+            "manual mode must never poll automatically either"
+        );
     }
 
     #[test]

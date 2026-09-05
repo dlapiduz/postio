@@ -88,6 +88,14 @@ pub enum Field {
     /// in this language — it composes with the rest rather than replacing
     /// them, resolved by `postio-index` to the member address set.
     Group,
+    /// `header:x-mailer=mutt` — an arbitrary RFC 5322 field, by name and
+    /// optionally by what its value contains.
+    ///
+    /// The general, late-answering operator for everything the envelope does
+    /// not carry (ADR 0025). A header that must be matchable *before* the
+    /// body arrives is promoted to an operator of its own instead — `list:`
+    /// is one that was.
+    Header,
 }
 
 impl Field {
@@ -107,6 +115,10 @@ impl Field {
         Field::List,
         Field::Account,
         Field::Group,
+        // Last, because the popup is ordered by how often an operator is
+        // reached for and this is the one you type when none of the others
+        // will do.
+        Field::Header,
     ];
 
     /// The canonical keyword, without the trailing colon.
@@ -126,6 +138,7 @@ impl Field {
             Field::List => "list",
             Field::Account => "account",
             Field::Group => "group",
+            Field::Header => "header",
         }
     }
 
@@ -147,6 +160,7 @@ impl Field {
             "list" => Some(Field::List),
             "account" => Some(Field::Account),
             "group" => Some(Field::Group),
+            "header" => Some(Field::Header),
             _ => None,
         }
     }
@@ -165,6 +179,7 @@ impl Field {
                 | Field::List
                 | Field::Account
                 | Field::Group
+                | Field::Header
         )
     }
 }
@@ -214,6 +229,25 @@ pub enum Filter {
     /// member addresses needs the store, which this crate does not have.
     /// `postio-index` does the resolving.
     Group(String),
+    /// `header:x-mailer` — presence — or `header:x-mailer=mutt`.
+    ///
+    /// `name` is already lowercased and `value` already normalized, both by
+    /// `postio_model::headers`, because the column this is matched against
+    /// holds exactly that form. Doing it here rather than at the executor is
+    /// what lets the in-memory matcher (#479) and the index agree without
+    /// each writing its own: a `Filter::Header` means the same comparison
+    /// wherever it is evaluated.
+    ///
+    /// `value: None` is `header:x-mailer` — "the message has such a field" —
+    /// and is deliberately not `Some("")`: presence and "contains the empty
+    /// string" happen to select the same rows today, and would stop doing so
+    /// the moment either side grew a notion of an empty value.
+    Header {
+        /// The field name, lowercased. Matched exactly, never as a substring.
+        name: String,
+        /// What the value must contain, or `None` to ask only for presence.
+        value: Option<String>,
+    },
     /// `has:attach`
     HasAttachment,
     /// `is:unread`, `is:read`, `is:flagged`
@@ -240,6 +274,7 @@ impl Filter {
             Filter::List(_) => Field::List,
             Filter::Account(_) => Field::Account,
             Filter::Group(_) => Field::Group,
+            Filter::Header { .. } => Field::Header,
             Filter::HasAttachment => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,
@@ -489,5 +524,95 @@ mod tests {
         assert!(Field::From.takes_free_text());
         assert!(!Field::Is.takes_free_text());
         assert!(!Field::After.takes_free_text());
+    }
+
+    /// Every `Filter` variant names the `Field` it actually came from --
+    /// checked one at a time rather than trusting the `match`'s exhaustiveness
+    /// to mean the mapping is right. The compiler only proves every arm is
+    /// present, not that `Filter::List` does not answer `Field::From` by a
+    /// copy-paste from the arm above it.
+    #[test]
+    fn every_filter_names_its_own_field() {
+        let cases = [
+            (Filter::From("a".into()), Field::From),
+            (Filter::To("a".into()), Field::To),
+            (Filter::Subject("a".into()), Field::Subject),
+            (Filter::In("a".into()), Field::In),
+            (Filter::Filename("a".into()), Field::Filename),
+            (Filter::List("a".into()), Field::List),
+            (Filter::Account("a".into()), Field::Account),
+            (Filter::Group("a".into()), Field::Group),
+            (Filter::HasAttachment, Field::Has),
+            (Filter::Is(State::Unread), Field::Is),
+            (
+                Filter::After(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+                Field::After,
+            ),
+            (
+                Filter::Before(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+                Field::Before,
+            ),
+            (Filter::Larger(1024), Field::Larger),
+            (Filter::Smaller(1024), Field::Smaller),
+        ];
+        for (filter, field) in cases {
+            assert_eq!(filter.field(), field, "{filter:?} should name {field:?}");
+        }
+    }
+
+    fn token(kind: TokenKind) -> Token {
+        Token {
+            span: Span::new(0, 0),
+            raw: String::new(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn negated_reads_the_matching_variant_not_a_fixed_one() {
+        // Each arm reads a different struct's own `negated` field; a token
+        // built from the *other* two kinds proves this is not one field
+        // three names all happen to resolve to.
+        let filter_token = token(TokenKind::Filter(Clause {
+            negated: true,
+            filter: Filter::HasAttachment,
+        }));
+        let partial_token = token(TokenKind::Partial(Partial {
+            negated: false,
+            field: Field::Is,
+            value: String::new(),
+        }));
+        let text_token = token(TokenKind::Text(TextTerm {
+            negated: true,
+            value: "docker".into(),
+        }));
+
+        assert!(filter_token.negated());
+        assert!(!partial_token.negated());
+        assert!(text_token.negated());
+    }
+
+    #[test]
+    fn only_free_text_is_not_an_operator() {
+        let filter_token = token(TokenKind::Filter(Clause {
+            negated: false,
+            filter: Filter::HasAttachment,
+        }));
+        let text_token = token(TokenKind::Text(TextTerm {
+            negated: false,
+            value: "docker".into(),
+        }));
+
+        assert!(filter_token.is_operator());
+        assert!(!text_token.is_operator());
+    }
+
+    #[test]
+    fn a_parsed_query_hands_back_the_string_it_was_parsed_from() {
+        let parsed = ParsedQuery {
+            input: "from:ada docker".to_owned(),
+            tokens: Vec::new(),
+        };
+        assert_eq!(parsed.input(), "from:ada docker");
     }
 }

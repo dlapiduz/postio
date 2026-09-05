@@ -14,8 +14,10 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -24,22 +26,6 @@ use postio_session::Wiring;
 use postio_storage::repository::MailboxRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// Depth-first search of a widget tree for the first one carrying `class`.
 fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
@@ -62,7 +48,7 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -75,7 +61,11 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
     let inbox = report.mailbox(MailboxRole::Inbox).expect("a seeded inbox");
     let inbox_id = inbox.id;
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

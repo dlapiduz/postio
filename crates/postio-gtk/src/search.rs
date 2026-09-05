@@ -47,6 +47,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
+use postio_core::{CommandId, Keymap};
 use postio_model::MessageBody;
 use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
@@ -186,6 +187,15 @@ pub const DEBOUNCE: Duration = Duration::from_millis(200);
 /// while somebody is typing.
 const READOUT_CHARS: i32 = 20;
 
+/// The slot while an account could not be reached (#812).
+///
+/// Its own constant for the reason [`READOUT_CHARS_SYNCING`] is: the caveat
+/// is the exception and the field must not reserve room for it on every
+/// search. Wide enough for the longest form — a capped count, a filling
+/// corpus and an unreachable account at once, which are three independent
+/// facts and may all be true.
+const READOUT_CHARS_UNREACHABLE: i32 = 56;
+
 /// The slot while the corpus caveat is showing (#352).
 ///
 /// Sized separately rather than making [`READOUT_CHARS`] wide enough for both.
@@ -208,7 +218,7 @@ const READOUT_CHARS_SYNCING: i32 = 36;
 /// the same three [`postio_search::SearchResults`] carries — this is that,
 /// minus the hits themselves, because the readout does not need them and
 /// copying a page of results to draw a number would be silly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Outcome {
     /// How many messages matched.
     pub hits: u64,
@@ -220,8 +230,32 @@ pub struct Outcome {
     /// Whether every message in the searched scope had a body to search.
     ///
     /// `false` adds the caveat: the hits come from a corpus that is still
-    /// filling, so the count is a floor for a second reason (#352).
+    /// filling, so the count is a floor for a second reason (#352). Also
+    /// `false` while an account in scope is rebuilding its local search
+    /// index (#981, `postio_session::reindex_account`) — a message can drop
+    /// out of results mid-rebuild the same way one that has not backfilled
+    /// yet does, and it is the same honest caveat either way.
     pub corpus_complete: bool,
+    /// Accounts a unified search could not reach, by the name the sidebar
+    /// shows, in the sidebar's order.
+    ///
+    /// ADR 0005 Q10: *a view that cannot include an account says so, names
+    /// the account, and stays usable.* Empty for a single-account search,
+    /// which leaves nothing out, and empty for a unified search whose
+    /// accounts all answered — the ordinary case, and the one this must not
+    /// become furniture in.
+    ///
+    /// Names rather than ids because the only thing that ever reads it is a
+    /// sentence a person reads, and a `Vec` rather than a `bool` because Q10
+    /// asks for the account to be named: "some accounts are missing" is the
+    /// disclosure people learn to ignore, since it never says which one to go
+    /// and fix.
+    ///
+    /// **Not from [`postio_search::SearchResults`].** Which accounts answered
+    /// is a fact about connections, and the executor only ever sees the
+    /// store — a search of a store whose account is offline reads exactly
+    /// like one whose account is fine. The composition root joins the two.
+    pub unreachable: Vec<String>,
 }
 
 impl Outcome {
@@ -232,7 +266,26 @@ impl Outcome {
             capped: results.total_hits_capped,
             elapsed: results.elapsed,
             corpus_complete: results.corpus_complete,
+            // Filled by the caller: see the field.
+            unreachable: Vec::new(),
         }
+    }
+
+    /// The same outcome, carrying the accounts a search could not reach.
+    pub fn with_unreachable(mut self, unreachable: Vec<String>) -> Self {
+        self.unreachable = unreachable;
+        self
+    }
+
+    /// The same outcome, with the corpus caveat also raised when an account
+    /// in scope is mid-rebuild (#981).
+    ///
+    /// Only ever turns `corpus_complete` off, never back on: the executor's
+    /// own answer already accounts for backfill, and a rebuild finishing is
+    /// not proof a backfill did too.
+    pub fn with_reindexing(mut self, reindexing: bool) -> Self {
+        self.corpus_complete &= !reindexing;
+        self
     }
 }
 
@@ -253,11 +306,24 @@ impl Outcome {
 /// It says so once, here, rather than per result: a caveat repeated down a
 /// list of hits stops being read by the third one.
 pub fn readout(outcome: &Outcome) -> String {
-    let base = format!("{} · {}", hits(outcome), elapsed(outcome.elapsed));
-    match outcome.corpus_complete {
-        true => base,
-        false => format!("{base} · still syncing"),
+    let mut line = format!("{} · {}", hits(outcome), elapsed(outcome.elapsed));
+    if !outcome.corpus_complete {
+        line.push_str(" · still syncing");
     }
+    // Both, when both are true. They are different facts with different
+    // fixes -- one ends on its own under ADR 0016, the other needs the
+    // account to come back -- so neither may hide the other.
+    match outcome.unreachable.as_slice() {
+        [] => {}
+        // One name fits and is worth more than a count: it says which
+        // account to go and look at.
+        [only] => line.push_str(&format!(" · {only} unreachable")),
+        // Past one it does not fit, and a fixed slot is what keeps the field
+        // from breathing per keystroke. The count still says there is more
+        // than one to fix; `spoken_readout` carries the names.
+        many => line.push_str(&format!(" · {} unreachable", many.len())),
+    }
+    line
 }
 
 /// The readout as a screen reader should hear it — the same facts, in words,
@@ -274,12 +340,31 @@ pub fn spoken_readout(outcome: &Outcome) -> String {
     // Three words are enough to *flag* a state beside a number; they are not
     // enough to explain one to somebody who cannot see the rest of the
     // window.
-    match outcome.corpus_complete {
-        true => counted,
-        false => format!(
-            "{counted}. This account is still syncing, so messages whose text \
-             has not arrived yet could not be searched."
-        ),
+    let mut spoken = counted;
+    if !outcome.corpus_complete {
+        spoken.push_str(
+            ". This account is still syncing, so messages whose text has not \
+             arrived yet could not be searched.",
+        );
+    }
+    // Every name, which is the whole reason the spoken form exists: the
+    // visible caveat has room to flag the state and, past one account, not to
+    // say which ones.
+    if !outcome.unreachable.is_empty() {
+        spoken.push_str(&format!(
+            ". {} could not be searched, so this answer may be short.",
+            and_list(&outcome.unreachable)
+        ));
+    }
+    spoken
+}
+
+/// `a`, `a and b`, `a, b and c` — a list as somebody reads it aloud.
+fn and_list(items: &[String]) -> String {
+    match items.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, head)) => format!("{} and {last}", head.join(", ")),
     }
 }
 
@@ -381,7 +466,9 @@ struct LiveInner {
     /// The last query [`Live::typed`] was told about, so a redraw that did
     /// not change the query does not read as a keystroke.
     asked: RefCell<Option<ParsedQuery>>,
-    outcome: Cell<Option<Outcome>>,
+    // `RefCell`, not `Cell`: an `Outcome` names the accounts it could not
+    // reach (#812), so it is no longer `Copy`.
+    outcome: RefCell<Option<Outcome>>,
     run: RefCell<Vec<RunHandler>>,
     /// The sequence number of the run whose answer has not come back yet.
     ///
@@ -420,7 +507,7 @@ impl Live {
                 pending: RefCell::new(None),
                 queued: RefCell::new(None),
                 asked: RefCell::new(None),
-                outcome: Cell::new(None),
+                outcome: RefCell::new(None),
                 run: RefCell::new(Vec::new()),
                 in_flight: Cell::new(None),
             }),
@@ -461,7 +548,7 @@ impl Live {
             // Nothing is being asked, so there is no number to show. Not
             // "0 hits": an empty box has not searched and must not claim to
             // have found nothing.
-            inner.outcome.set(None);
+            *inner.outcome.borrow_mut() = None;
             *inner.queued.borrow_mut() = None;
             self.render();
             return;
@@ -528,7 +615,7 @@ impl Live {
             self.inner.in_flight.set(None);
         }
         let taken = if self.inner.pacer.borrow().accepts(sequence) {
-            self.inner.outcome.set(Some(outcome));
+            *self.inner.outcome.borrow_mut() = Some(outcome);
             self.render();
             true
         } else {
@@ -568,7 +655,7 @@ impl Live {
         self.inner.pacer.borrow_mut().abandon();
         *self.inner.queued.borrow_mut() = None;
         *self.inner.asked.borrow_mut() = None;
-        self.inner.outcome.set(None);
+        *self.inner.outcome.borrow_mut() = None;
         self.render();
     }
 
@@ -583,7 +670,29 @@ impl Live {
 
     /// What the readout is currently saying, if anything.
     pub fn outcome(&self) -> Option<Outcome> {
-        self.inner.outcome.get()
+        self.inner.outcome.borrow().clone()
+    }
+
+    /// Replace the caveat on the outcome already showing, without asking
+    /// anything again (#1060).
+    ///
+    /// `unreachable` was computed once, at the moment a search's answer
+    /// came back, so an account that dropped out or came back while the
+    /// result sat on screen left the readout saying something that had
+    /// stopped being true. This is the retraction/attachment path: a
+    /// no-op when nothing is on screen (`outcome` is `None`) or the list
+    /// is unchanged, and a redraw otherwise.
+    pub fn set_unreachable(&self, unreachable: Vec<String>) {
+        let mut outcome = self.inner.outcome.borrow_mut();
+        let Some(current) = outcome.as_mut() else {
+            return;
+        };
+        if current.unreachable == unreachable {
+            return;
+        }
+        current.unreachable = unreachable;
+        drop(outcome);
+        self.render();
     }
 
     /// Whether a run is scheduled or in flight.
@@ -599,14 +708,19 @@ impl Live {
 
     fn render(&self) {
         let inner = &self.inner;
-        match inner.outcome.get() {
+        match inner.outcome.borrow().clone() {
             Some(outcome) => {
                 // Only as wide as this outcome needs. See
                 // `READOUT_CHARS_SYNCING`.
-                inner.label.set_width_chars(match outcome.corpus_complete {
-                    true => READOUT_CHARS,
-                    false => READOUT_CHARS_SYNCING,
-                });
+                // Widest caveat wins, and they compose: an account still
+                // syncing and another not answering are independent facts.
+                inner.label.set_width_chars(
+                    match (outcome.corpus_complete, outcome.unreachable.is_empty()) {
+                        (true, true) => READOUT_CHARS,
+                        (false, true) => READOUT_CHARS_SYNCING,
+                        _ => READOUT_CHARS_UNREACHABLE,
+                    },
+                );
                 inner.label.set_text(&readout(&outcome));
                 inner
                     .label
@@ -635,11 +749,31 @@ impl Live {
 const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
 const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
 
-/// The keys the column offers, drawn at its foot.
+/// The keys the column offers, drawn at its foot, from the live keymap.
 ///
 /// Canvas 2b's third line, `C-s save as folder`: `CommandId::SaveSearch`
-/// wires it (issue #10), so the hint can finally say something true.
-const PANEL_KEYS: &str = "Ret open · Tab refine · C-s save as folder";
+/// wires it (issue #10), so the hint can finally say something true — and
+/// since #828 it says something true after a rebind too, rather than the
+/// literal it used to be. A command whose binding the user cleared drops out
+/// rather than printing a blank key, the same rule
+/// [`crate::reader::actions`] follows.
+fn panel_keys(keymap: &Keymap) -> String {
+    let mut parts = Vec::new();
+    if let Some(key) = keymap.binding(CommandId::OpenMessage) {
+        parts.push(format!("{key} open"));
+    }
+    parts.push("Tab refine".to_owned());
+    if let Some(key) = keymap.binding(CommandId::SaveSearch) {
+        parts.push(format!("{key} save as folder"));
+    }
+    parts.join(" · ")
+}
+
+/// The registry's defaults, for a panel built before any `config.toml` has
+/// been read — the same fallback `crate::parts::default_hints` provides.
+fn default_panel_keys() -> String {
+    panel_keys(&Keymap::resolve(&Default::default()))
+}
 
 type ScopeHandler = Box<dyn Fn(Scope)>;
 type RefineHandler = Box<dyn Fn(&str)>;
@@ -651,6 +785,8 @@ mod panel_imp {
         pub(super) scopes: gtk::ListBox,
         pub(super) chips: gtk::FlowBox,
         pub(super) nothing: gtk::Label,
+        /// The footer's key line, kept so a rebind can rewrite it (#828).
+        pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
         pub(super) offered: RefCell<Vec<String>>,
         pub(super) scope: Cell<Scope>,
@@ -667,6 +803,7 @@ mod panel_imp {
                 scopes: gtk::ListBox::new(),
                 chips: gtk::FlowBox::new(),
                 nothing: gtk::Label::new(None),
+                keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
                 echoing: Cell::new(false),
@@ -716,6 +853,15 @@ impl Panel {
     /// A column scoped to all mail, with nothing measured yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Regenerate the footer's key hints from the live keymap.
+    ///
+    /// A rebind changes what the footer says without a restart, the same
+    /// promise [`crate::parts::PartsPanel::set_keymap`] already keeps for the
+    /// parts panel's own footer.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        self.imp().keys.set_text(&panel_keys(keymap));
     }
 
     /// Which scope is active.
@@ -879,7 +1025,8 @@ impl Panel {
 
         // The keys this column offers, where the canvas puts them. Mono, and
         // the same shape the focused message row uses for its own hints.
-        let keys = gtk::Label::new(Some(PANEL_KEYS));
+        let keys = self.imp().keys.clone();
+        keys.set_text(&default_panel_keys());
         keys.add_css_class("postio-panel-keys");
         keys.set_xalign(0.0);
         keys.set_wrap(true);
@@ -2012,6 +2159,7 @@ mod tests {
             // ADR 0016 backfills to completion, so a settled account carries
             // no caveat.
             corpus_complete: true,
+            unreachable: Vec::new(),
         }
     }
 
@@ -2047,6 +2195,133 @@ mod tests {
         // the state the readout spends most of its life in.
         assert_eq!(readout(&outcome(14, false, 11)), "14 hits · 11 ms");
         assert!(!readout(&outcome(0, false, 3)).contains("syncing"));
+    }
+
+    // -- the unreachable-account caveat (#812, ADR 0005 Q10) --------------
+
+    fn unreachable(names: &[&str], hits: u64) -> Outcome {
+        Outcome {
+            unreachable: names.iter().map(|name| (*name).to_owned()).collect(),
+            ..outcome(hits, false, 11)
+        }
+    }
+
+    #[test]
+    fn a_unified_search_that_could_not_reach_an_account_names_it() {
+        // ADR 0005 Q10: a view that cannot include an account says so, and
+        // **names** it. "Some accounts are missing" is the version of this
+        // disclosure people learn to ignore, because it never tells them
+        // which one to go and fix.
+        assert_eq!(
+            readout(&unreachable(&["Work"], 14)),
+            "14 hits · 11 ms · Work unreachable"
+        );
+    }
+
+    #[test]
+    fn a_search_that_found_nothing_still_says_the_answer_may_be_short() {
+        // The case Q10 singles out, and the one that matters most: "no hits"
+        // from a complete search and "no hits" from a search that could not
+        // reach half the mail are the same three characters, and only one of
+        // them means the mail is not there.
+        assert_eq!(
+            readout(&unreachable(&["Work"], 0)),
+            "no hits · 11 ms · Work unreachable"
+        );
+    }
+
+    #[test]
+    fn more_than_one_unreachable_account_is_counted_rather_than_listed() {
+        // Names do not fit past the first: an account can be called anything,
+        // and the slot is fixed so the field does not breathe per keystroke.
+        // The spoken form carries the list; this carries the fact and the
+        // count, which is what tells somebody there is more than one to fix.
+        assert_eq!(
+            readout(&unreachable(&["Work", "Home"], 14)),
+            "14 hits · 11 ms · 2 unreachable"
+        );
+        assert_eq!(
+            readout(&unreachable(&["Work", "Home", "List"], 14)),
+            "14 hits · 11 ms · 3 unreachable"
+        );
+    }
+
+    #[test]
+    fn a_reachable_unified_search_carries_no_caveat_at_all() {
+        // The end state, and the one that stops this becoming furniture:
+        // every account answering is the ordinary case.
+        assert_eq!(readout(&unreachable(&[], 14)), "14 hits · 11 ms");
+        assert!(!readout(&unreachable(&[], 0)).contains("unreachable"));
+    }
+
+    #[test]
+    fn the_spoken_form_names_every_account_the_visible_one_could_not() {
+        // #352's rule: the visible caveat flags a state beside a number, and
+        // the spoken one explains it to somebody who cannot see the rest of
+        // the window. A count read aloud would be the least useful form of
+        // both.
+        let spoken = spoken_readout(&unreachable(&["Work", "Home"], 14));
+        assert!(spoken.contains("Work"), "{spoken}");
+        assert!(spoken.contains("Home"), "{spoken}");
+        assert!(
+            spoken.contains("could not be searched"),
+            "it has to say what the consequence is, not only which accounts:              {spoken}"
+        );
+    }
+
+    #[test]
+    fn both_caveats_can_be_true_at_once() {
+        // One account still syncing and another not answering are different
+        // facts with different fixes, so neither may hide the other.
+        let both = Outcome {
+            corpus_complete: false,
+            ..unreachable(&["Work"], 14)
+        };
+        let line = readout(&both);
+        assert!(line.contains("still syncing"), "{line}");
+        assert!(line.contains("Work unreachable"), "{line}");
+        assert!(
+            line.chars().count() <= READOUT_CHARS_UNREACHABLE as usize,
+            "the longest thing the readout can say must fit the slot it \
+             reserves, or the field twitches when a caveat goes away: {line:?}"
+        );
+
+        let spoken = spoken_readout(&both);
+        assert!(spoken.contains("still syncing"), "{spoken}");
+        assert!(spoken.contains("Work"), "{spoken}");
+    }
+
+    // -- the reindex caveat (#981) ------------------------------------------
+
+    #[test]
+    fn a_reindex_in_progress_reads_the_same_as_a_corpus_still_filling() {
+        // #981: a message can drop out of results mid-rebuild the same way
+        // one that has not backfilled yet does, and it is the honest caveat
+        // either way -- so it reuses the exact wording rather than growing
+        // a third.
+        let reindexing = outcome(14, false, 11).with_reindexing(true);
+        assert_eq!(readout(&reindexing), "14 hits · 11 ms · still syncing");
+    }
+
+    #[test]
+    fn with_reindexing_never_turns_the_caveat_back_on() {
+        // A corpus the executor already knows is incomplete stays that way
+        // whether or not a rebuild happens to also be running.
+        let outcome = Outcome {
+            corpus_complete: false,
+            ..outcome(14, false, 11)
+        }
+        .with_reindexing(false);
+        assert!(!outcome.corpus_complete, "false stays false either way");
+    }
+
+    #[test]
+    fn no_reindex_leaves_a_complete_corpus_alone() {
+        let outcome = outcome(14, false, 11).with_reindexing(false);
+        assert!(
+            outcome.corpus_complete,
+            "nothing here should have raised it"
+        );
     }
 
     #[test]
@@ -2117,6 +2392,7 @@ mod tests {
             capped: false,
             elapsed: Duration::from_millis(12_400),
             corpus_complete: true,
+            unreachable: Vec::new(),
         };
         assert_eq!(readout(&slow), "2 hits · 12.4 s");
     }
@@ -2218,5 +2494,30 @@ mod tests {
 
         let drawn = chips(&parse("subject:"));
         assert_eq!(spoken(&drawn[0]), "subject, no value yet");
+    }
+    // -- the panel's footer keys (#828) ------------------------------------
+
+    #[test]
+    fn the_panel_footer_takes_its_keys_from_the_registry() {
+        // It used to be the literal "Ret open · Tab refine · C-s save as
+        // folder" -- a notation nothing else writes, and one that went on
+        // saying `C-s` after the user rebound `save_search`.
+        assert_eq!(
+            panel_keys(&Keymap::resolve(&Default::default())),
+            "Return open · Tab refine · ctrl+s save as folder"
+        );
+    }
+
+    #[test]
+    fn a_rebind_reaches_the_panel_footer() {
+        let mut overrides = postio_config::KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert("save_search".to_string(), "mod+shift+s".to_string());
+
+        assert_eq!(
+            panel_keys(&Keymap::resolve(&overrides)),
+            "Return open · Tab refine · ctrl+shift+s save as folder"
+        );
     }
 }

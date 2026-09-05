@@ -24,7 +24,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
-use gtk::{gdk, glib};
+use crate::settle;
+use crate::settle_until;
+use gtk::gdk;
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -33,22 +35,6 @@ use postio_model::{Account, EmailAddress, Identity, Message};
 use postio_session::Wiring;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::{Database, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 fn press(window: &Window, key: &str) {
     window.handle_key(
@@ -83,7 +69,7 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -118,8 +104,11 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     };
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

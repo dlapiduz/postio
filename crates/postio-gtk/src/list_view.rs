@@ -39,7 +39,7 @@ use postio_model::MessageId;
 
 use crate::list::{MessageList, MessageRow};
 use crate::row::MessageRowView;
-use crate::selection::{self, SelectionState};
+use crate::selection::{self, Reach, SelectionState};
 
 /// What to call when a row is activated — `Enter`, or a double click.
 type ActivateHandler = Box<dyn Fn(crate::list::Row)>;
@@ -111,6 +111,13 @@ mod imp {
         pub(super) cursor: gtk::SingleSelection,
         /// The **selection**: what an action would hit.
         pub(super) selected: SelectionState,
+        /// What this list could show *right now*, account-wise.
+        ///
+        /// Live, kept in step by `Window::refresh_list_state` from the same
+        /// statuses the ADR 0005 Q10 banner is derived from. A whole-view
+        /// gesture freezes it into the selection; nothing else reads it, and
+        /// nothing reads it again afterwards (#811).
+        pub(super) reach: RefCell<Reach>,
         /// Where a Shift-click counts from, as a position rather than an id,
         /// because a range is a span of the list and not of the mailbox.
         pub(super) anchor: Cell<Option<u32>>,
@@ -203,6 +210,7 @@ mod imp {
                 model,
                 cursor,
                 selected: SelectionState::new(),
+                reach: RefCell::new(Reach::default()),
                 anchor: Cell::new(None),
                 hovered: RefCell::new(None),
                 density: Rc::new(Cell::new(Density::default())),
@@ -549,7 +557,7 @@ impl MessageListView {
     /// How long a dwell takes, for a test that cannot afford to wait a real
     /// second per assertion.
     ///
-    /// Public for the reason [`crate::parts::PartsPanel::press`] is: the
+    /// Public for the reason [`crate::finder::Finder::press_backspace`] is: the
     /// behaviour worth proving is "it fires once the cursor rests, and not
     /// when it moves on", and a test that re-implemented the timer to check
     /// that would be testing its own copy. Not a setting — see
@@ -612,7 +620,18 @@ impl MessageListView {
         // arriving for the row the cursor is already on, never reaches this
         // line, so a mailbox syncing under the cursor cannot keep resetting
         // the clock.
-        if imp.landed.get() {
+        //
+        // Never for a thread row, whatever the timing. A thread row's id is
+        // its *representative* -- the newest message in this folder -- and
+        // ADR 0015 Q4 puts reading inside a conversation on the pane's own
+        // per-message dwell, driven by focus: "never 'opened the thread, all
+        // six read'". Arming here and cancelling when the pane opens
+        // (#797's first attempt) is a race, because the pane opens behind an
+        // async fetch while this arms synchronously -- and a race that
+        // usually wins is what made `app_suite/thread_dwell.rs` pass on a
+        // developer's machine and fail on a runner. A row that stands for a
+        // conversation simply has no clock to start.
+        if imp.landed.get() && !row.is_thread() {
             self.arm_dwell(row.id);
         }
     }
@@ -681,6 +700,17 @@ impl MessageListView {
         self.move_cursor_to(0);
     }
 
+    /// Whether a person has ever chosen a row here, as opposed to the
+    /// autoselect landing on one.
+    ///
+    /// The flag #71's dwell gates on, readable so the conversation pane can
+    /// gate its own opening dwell on the same rule (#755): showing mail for
+    /// the autoselect is right, and starting a read-clock for it is the
+    /// unread signal destroying itself.
+    pub fn landed(&self) -> bool {
+        self.imp().landed.get()
+    }
+
     /// Move the keyboard to the last row — `G`.
     pub fn last_row(&self) {
         match self.imp().model.n_items() {
@@ -733,8 +763,34 @@ impl MessageListView {
     ///
     /// A predicate, not a hundred thousand ids: see [`crate::selection`].
     pub fn select_all(&self) {
-        self.imp().anchor.set(None);
-        self.imp().selected.select_all();
+        let imp = self.imp();
+        imp.anchor.set(None);
+        // The gesture is the moment the scope is fixed. Reading reachability
+        // when the verb runs instead would let an account that reconnected in
+        // between join a selection the user was never shown -- a selection
+        // that silently grows, which is the one kind the summary cannot
+        // disclose (#811, ADR 0005 Q10).
+        imp.selected.select_all(imp.reach.borrow().clone());
+    }
+
+    /// Which accounts this list can currently vouch for, and which it cannot.
+    ///
+    /// The live value, which a whole-view gesture freezes into the selection.
+    /// [`SelectionState::reach`] is the frozen one and answers only while the
+    /// selection is a predicate — before the gesture it is, correctly, empty,
+    /// so this is what says whether the list was ever told.
+    pub fn reach(&self) -> Reach {
+        self.imp().reach.borrow().clone()
+    }
+
+    /// Say which accounts this list can currently vouch for, and which it
+    /// cannot.
+    ///
+    /// [`Reach::default()`] for every view that is not an aggregate: a
+    /// single-account list leaves nothing out, so there is nothing to scope
+    /// or to disclose.
+    pub fn set_reach(&self, reach: Reach) {
+        *self.imp().reach.borrow_mut() = reach;
     }
 
     /// Drop the selection — `Esc`, when there is one.
@@ -822,16 +878,18 @@ impl MessageListView {
     ///
     /// `Return` reaches `connect_activated` through `GtkListView`'s own
     /// `list.activate-item` action, which needs the view to hold the keyboard.
-    /// A test driving keys through [`Window::handle_key`] never goes near the
-    /// widget, so it cannot press it; this invokes the same action the
-    /// keybinding does, rather than calling the handlers directly, so a wiring
-    /// that had come loose between the action and the signal would still show.
+    /// This invokes that same action rather than calling the handlers
+    /// directly, so a wiring that had come loose between the action and the
+    /// signal still shows.
     ///
-    /// Not meant for anything but tests.
+    /// Two callers need that. A test driving keys through
+    /// [`Window::handle_key`] never goes near the widget, so it cannot press
+    /// `Return`. And `CommandId::OpenMessage` with no message named means
+    /// "the row the cursor is on" — `o` from anywhere, including while the
+    /// keyboard is somewhere the list's own binding cannot fire (#767).
     ///
     /// [`Window::handle_key`]: crate::window::Window::handle_key
-    #[doc(hidden)]
-    pub fn test_activate_cursor(&self) {
+    pub fn activate_cursor(&self) {
         let imp = self.imp();
         let position = imp.cursor.selected();
         if position == gtk::INVALID_LIST_POSITION {
@@ -842,6 +900,13 @@ impl MessageListView {
             "list.activate-item",
             Some(&position.to_variant()),
         );
+    }
+
+    /// [`activate_cursor`](Self::activate_cursor), under the name the tests
+    /// that predate it already call.
+    #[doc(hidden)]
+    pub fn test_activate_cursor(&self) {
+        self.activate_cursor();
     }
 
     /// Extend the selection one row in `step`'s direction, taking the cursor
@@ -895,6 +960,19 @@ impl MessageListView {
         }
     }
 
+    /// What the header is actually saying about the selection right now.
+    ///
+    /// The label's own text, read back off the widget, rather than a second
+    /// call to [`selection::summary`]: a test that re-derived the sentence
+    /// could not fail when the header stopped being told about the selection
+    /// at all, which is the half of this that has ever broken.
+    ///
+    /// `None` when the header is not showing a selection.
+    pub fn selection_summary(&self) -> Option<String> {
+        let imp = self.imp();
+        imp.count.is_visible().then(|| imp.count.text().to_string())
+    }
+
     /// Put the header back in step with the selection.
     fn refresh_header(&self) {
         let imp = self.imp();
@@ -902,7 +980,11 @@ impl MessageListView {
             0 => None,
             total => Some(total),
         };
-        match selection::summary(&imp.selected.selection(), total) {
+        match selection::summary(
+            &imp.selected.selection(),
+            total,
+            &imp.selected.reach().omitted,
+        ) {
             Some(text) => {
                 imp.count.set_text(&text);
                 imp.count.set_visible(true);
@@ -1129,7 +1211,67 @@ impl MessageListView {
         imp.model.connect_items_changed(glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            move |_, _, _, _| pane.report_cursor()
+            move |_, position, removed, added| {
+                // New mail landing at the very top (#750): `inserted_at_top`
+                // fires exactly `items_changed(0, 0, count)`, and the row
+                // the cursor is on keeps its message id -- `report_cursor`'s
+                // own dedup below already declines to repaint the reading
+                // pane over it. What is missing is the *view*'s scroll
+                // position, and it turns out to be missing unconditionally:
+                // `GtkListView`'s anchor-preservation does not reliably
+                // survive `inserted_at_top`'s cache invalidation (every
+                // resident page is dropped and refetched, not only the rows
+                // that actually moved), measured landing anywhere from
+                // "sitting at the very top, new mail shows up 220px below
+                // the viewport" to "scrolled well away, the whole view snaps
+                // back to zero" depending on where the viewport already was.
+                //
+                // So this does not special-case the top: it captures
+                // whatever the offset already was, the instant the model
+                // changed, and reasserts exactly that value until GTK stops
+                // fighting it. At the top that value is 0 -- which is
+                // exactly "reveal the new mail" -- and away from the top it
+                // is whatever the reader had scrolled to, which is exactly
+                // #72's "nothing moves" contract. One correction serves
+                // both.
+                //
+                // One tick callback is not enough: `add_tick_callback` runs
+                // in the frame clock's update phase, which comes *before*
+                // GTK's own layout phase re-applies the shift this is
+                // undoing, so a single correction is clobbered the moment it
+                // lands. Reasserting it keeps up with however many layout
+                // passes the insertion actually takes -- but only for as
+                // long as GTK is still fighting back: this stops two frames
+                // after the offset has held at the captured value *on its
+                // own*, so it never overrides a scroll a person makes
+                // moments after the insertion, and it does not linger once
+                // there is nothing left to correct.
+                if position == 0 && removed == 0 && added > 0 {
+                    let anchored = pane.scroll_offset();
+                    let held = Cell::new(0u32);
+                    // A hard stop past what any real layout should need, so
+                    // a GTK version that never actually stabilises here
+                    // cannot turn this into a tick callback that runs
+                    // forever.
+                    let budget = Cell::new(60u32);
+                    pane.add_tick_callback(move |pane, _| {
+                        if pane.scroll_offset() == anchored {
+                            held.set(held.get() + 1);
+                        } else {
+                            pane.set_scroll_offset(anchored);
+                            held.set(0);
+                        }
+                        let remaining = budget.get().saturating_sub(1);
+                        budget.set(remaining);
+                        if held.get() >= 2 || remaining == 0 {
+                            glib::ControlFlow::Break
+                        } else {
+                            glib::ControlFlow::Continue
+                        }
+                    });
+                }
+                pane.report_cursor()
+            }
         ));
 
         let scroller = gtk::ScrolledWindow::new();
@@ -1447,7 +1589,11 @@ impl MessageListView {
             0 => None,
             total => Some(total),
         };
-        let text = match selection::summary(&imp.selected.selection(), total)? {
+        let text = match selection::summary(
+            &imp.selected.selection(),
+            total,
+            &imp.selected.reach().omitted,
+        )? {
             // "1 selected" is a count; "1 message" is what is being carried.
             count if count.starts_with("1 ") => "1 message".to_owned(),
             count => count.replace(" selected", " messages"),

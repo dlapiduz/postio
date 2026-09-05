@@ -17,6 +17,7 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -48,27 +49,17 @@ fn list_has_keyboard(window: &Window) -> bool {
     list.is_focus() || list.focus_child().is_some()
 }
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
-
 pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
-    let state_dir =
-        std::env::temp_dir().join(format!("postio-search-return-tab-{}", std::process::id()));
-    std::fs::create_dir_all(&state_dir).unwrap();
+    // A guarded temporary, as every other case here uses. This built its own
+    // path under `temp_dir()` and never removed it, so each run left a
+    // `postio-search-return-tab-<pid>` directory behind for ever — two of
+    // them were already on this machine when #1034 was picked up.
+    let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -84,7 +75,15 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     );
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.keep()).expect("a blob store");
+    // `directory.path()`, not `directory.keep()`: `keep` consumes the guard
+    // and leaks the directory, which is one way to stop the store's files
+    // vanishing underneath it and the only one here that never cleans up.
+    // Holding the guard to the end of the test does the same job.
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
@@ -156,4 +155,8 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     );
 
     bridge.shutdown();
+    // Held to here on purpose: dropping either earlier removes a directory
+    // the store and the state file are still using.
+    drop(directory);
+    drop(state_dir);
 }

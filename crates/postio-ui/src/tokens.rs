@@ -762,8 +762,17 @@ fn light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
         ("--postio-surface", surface.clone()),
         ("--postio-ink", ink.clone()),
         ("--postio-ink-secondary", t.tint("color-text", 80.0)?),
-        ("--postio-dim", t.tint("color-text", 55.0)?),
-        ("--postio-faint", t.tint("color-text", 45.0)?),
+        // #829: two floors, not "three shades of grey chosen by eye". `dim`
+        // carries content (the list preview line, the timestamp) and must
+        // clear WCAG 2.2's 4.5:1 text floor (SC 1.4.3); `faint` carries an
+        // affordance (the focused row's key hint, also taught by the cheat
+        // sheet and the palette) and only needs the lower 3:1 UI-component
+        // floor (SC 1.4.11). 55%/45% cleared neither (3.76:1 / 2.81:1
+        // against the row's white background); 64%/51% clear both with a
+        // margin — `tests/contrast.rs` is the floor this is not allowed to
+        // drift back under.
+        ("--postio-dim", t.tint("color-text", 64.0)?),
+        ("--postio-faint", t.tint("color-text", 51.0)?),
         ("", "Hairlines — the only edge this design draws".into()),
         ("--postio-hairline", hairline.clone()),
         ("--postio-hairline-strong", t.var("color-neutral-400")?),

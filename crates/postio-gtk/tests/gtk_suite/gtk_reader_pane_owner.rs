@@ -14,9 +14,11 @@
 //! and go in — and what shows after a surface leaves is computed from what
 //! is still active, never replayed from a snapshot.
 //!
-//! Skips without a display. One test function, for the reason `gtk_style.rs`
-//! gives.
+//! Skips without a display. The main scenario is one long function, for the
+//! reason `gtk_style.rs` gives; the second function below is #831's own
+//! narrower case.
 
+use crate::settle as pump;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_gtk::finder::{Mode, Query};
@@ -29,7 +31,7 @@ use postio_search::SearchHit;
 
 pub fn the_reading_pane_has_one_visible_occupant_at_a_time() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -177,6 +179,67 @@ fn body() -> MessageBody {
     }
 }
 
+/// A second `search::View::attach` on one shell is what `shot`'s
+/// `demo search` did before #831: nothing removes the first preview, so
+/// both stay parented in `shell.reader()`, and the tracking that drives
+/// visibility follows only the most recent registration — the first is
+/// left visible and orphaned, the exact shape of the double-drawn
+/// screenshot #831 reported.
+///
+/// This does not make the mistake impossible — an earlier version of this
+/// fix made `Shell::register_reader_occupant` panic on it, and CI found
+/// that broke `gtk_composer_document.rs`'s pattern of installing a fresh
+/// composer per scenario without tearing the previous one down first, a
+/// pre-existing and legitimate use of the same mechanism. What this
+/// asserts instead is that the mistake is *visible*: the reading pane's
+/// child count is the signal `shot.rs`'s fix (reuse the view
+/// `feed_the_window` already installed, attach only when there is none)
+/// exists to keep off one, and what a future regression in any caller of
+/// `View::attach` would trip.
+pub fn a_second_attach_leaves_two_children_in_the_pane() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let _first = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    let reader = window.shell().reader();
+    assert_eq!(
+        children_of(&reader),
+        1,
+        "one search::View::attach should leave one child in the pane"
+    );
+
+    let _second = View::attach(&window.shell(), &window.finder());
+    pump();
+    assert_eq!(
+        children_of(&reader),
+        2,
+        "a second search::View::attach on the same shell should leave a \
+         second child behind — reuse the first view instead of attaching \
+         again (#831)"
+    );
+
+    window.destroy();
+}
+
+fn children_of(widget: &gtk::Box) -> usize {
+    let mut count = 0;
+    let mut child = widget.first_child();
+    while let Some(w) = child {
+        count += 1;
+        child = w.next_sibling();
+    }
+    count
+}
+
 fn hit(id: i64) -> SearchHit {
     SearchHit {
         message_id: MessageId::new(id),
@@ -188,9 +251,4 @@ fn hit(id: i64) -> SearchHit {
         snippet: "the radon report".to_string(),
         score: -1.0,
     }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    while context.iteration(false) {}
 }

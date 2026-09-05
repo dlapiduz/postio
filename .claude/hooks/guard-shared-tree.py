@@ -51,7 +51,9 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 SHARED = "Other Claude sessions are editing this tree right now."
@@ -181,6 +183,35 @@ REMOTE_RULES: list[tuple[str, str]] = [
 # Start of string, or just after a shell command separator.
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
 
+# The loop's own shape (#1131). Not shared-tree hazards, so these hold in a
+# private worktree too, and they are checked before the worktree exemption
+# for that reason. Each message carries the fix, because the docs that say
+# the same thing are not read at the moment it matters: the transcripts
+# show 427 workspace test runs and 852 whole-crate runs used as the inner
+# loop against 6 runs of test-fast.sh, and 79 landings killed at a
+# foreground tool call's cap.
+LOOP_RULES: list[tuple[str, str]] = [
+    (
+        r"(?:POSTIO_WORKSPACE_TESTS=1\s+)?cargo\s+(?:nextest\s+run|test)\s+(?:[^|;&\n]*\s)?"
+        r"(?:--workspace|--all)\b(?![^|;&\n]*(?:--lib\b|--no-run\b|--doc\b))",
+        "Refusing a whole-workspace test run: it links every integration "
+        "binary and is what the transcripts show sessions waiting on most. "
+        "Between edits, scripts/test-fast.sh (changed crates, --lib); before "
+        "landing, scripts/test-sanity.sh (workspace, --lib); one suite, "
+        "`cargo nextest run -p <crate> --test <suite>`. issue-land.sh and CI "
+        "run the rest. The reconcile pass is /steward's, and it prefixes "
+        "POSTIO_WORKSPACE_TESTS=1 to say so.",
+    ),
+    (
+        r"(?:(?:nohup|setsid|bash|sh|time)\s+)*(?:\S*/)?issue-land\.sh\b(?![^|;&\n]*--(?:detach|status)\b)",
+        "Refusing a foreground landing: the gate chain can outlive a tool "
+        "call's cap, and a run killed mid-way commits nothing and re-pays the "
+        "push and the CI wait. Run `scripts/issue-land.sh --detach` (same "
+        "arguments after it), then `scripts/issue-land.sh --status` to read "
+        "the log -- or background the call.",
+    ),
+]
+
 # A `rustfmt` that will WRITE: at command position, or fed by xargs, and not
 # in one of the read-only forms. `--check` and `-l` only report.
 RUSTFMT_WRITES = re.compile(
@@ -250,6 +281,245 @@ def unscoped_rustfmt(command: str, haystack: str) -> str | None:
     )
 
 
+# ── One worktree, one session ───────────────────────────────────────────────
+#
+# #412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
+# worktree, and that held right up until a session reached a worktree without
+# running it -- told to work an issue directly, a path pasted from an earlier
+# transcript, a resumed session whose worktree was released and recreated. Two
+# sessions then edited one crate for four minutes with no signal to either, and
+# the second one's tests went red because of the first one's edit.
+#
+# The gap is not in the lock, it is in *where* the lock is checked: only inside
+# the claiming script. So the check moves here, to the one place that sees
+# every command every session runs, however it got where it is. That also means
+# there is no arriving without being stamped: the guard is both what records
+# the owner and what enforces it.
+#
+# It is a **lease**, not a lock. The owner refreshes it as it works; a worktree
+# whose owner has been silent for `CLAIM_LEASE` is free to take. A lock would
+# be correct and unusable -- a session that dies holding one leaves a worktree
+# nobody can have, and the first person that happened to would export
+# POSTIO_GUARD=off and never unset it.
+
+# How long a worktree stays claimed after its owner's last command.
+#
+# Generous on purpose. A session that backgrounds `issue-land.sh --full` and
+# waits for the notification makes no tool calls for twenty minutes or more,
+# and stealing its worktree while it is merely being patient is the failure
+# this whole rule is supposed to prevent. The cost of being too generous is a
+# refusal that says exactly how to override it; the cost of being too eager is
+# #412 again, silently.
+CLAIM_LEASE = 45 * 60
+
+# How stale the owner's own stamp has to be before it is rewritten.
+#
+# Without this the guard writes a file on every command a session runs. A
+# minute is far below the lease and far above the rate anything here matters at.
+CLAIM_REFRESH = 60
+
+CLAIM_FILE = "postio-claim"
+
+
+def worktree_git_dir(worktree: str) -> str | None:
+    """The real git directory of a linked worktree, or None.
+
+    In a `git worktree`, `.git` is a *file* holding `gitdir: <path>` and the
+    directory it names lives under the shared checkout's own `.git/worktrees/`.
+    That is where the stamp goes: outside the working tree, so it can never
+    appear in `git status`, be staged by an `add -A`, or need a `.gitignore`
+    entry -- and it disappears with the worktree when `issue-release.sh`
+    removes it, which is exactly the lifetime a claim should have.
+
+    None for anything that is not a checkout, which is what makes this fail
+    open: a directory under the worktrees root that no `git worktree add` ever
+    made is not something to arbitrate over.
+    """
+    dot = os.path.join(worktree, ".git")
+    try:
+        if os.path.isdir(dot):
+            return dot
+        with open(dot, encoding="utf-8") as handle:
+            text = handle.read(4096)
+    except OSError:
+        return None
+    match = re.match(r"gitdir:\s*(\S.*)", text.strip())
+    if not match:
+        return None
+    target = match.group(1).strip()
+    if not os.path.isabs(target):
+        target = os.path.join(worktree, target)
+    return target if os.path.isdir(target) else None
+
+
+def read_claim(stamp: str) -> tuple[str, float]:
+    """Who holds this worktree and when they last said so.
+
+    `("", 0.0)` for anything unreadable, which frees the worktree. A stamp
+    nobody can parse is worse than no stamp: it would lock a tree on the
+    strength of a file whose contents nothing understands.
+    """
+    try:
+        with open(stamp, encoding="utf-8") as handle:
+            record = json.load(handle)
+        return str(record.get("session") or ""), float(record.get("at") or 0.0)
+    except (OSError, ValueError, TypeError):
+        return "", 0.0
+
+
+def write_claim(stamp: str, session: str, now: float) -> None:
+    """Record the holder. Never raises: a stamp that cannot be written costs
+    a missed denial, in keeping with the rest of this hook failing open."""
+    try:
+        with open(stamp, "w", encoding="utf-8") as handle:
+            json.dump({"session": session, "at": now}, handle)
+    except OSError:
+        pass
+
+
+def claim_of(worktree: str) -> tuple[str, float] | None:
+    """The claim on `worktree`, or None if it is not a checkout."""
+    gitdir = worktree_git_dir(worktree)
+    if gitdir is None:
+        return None
+    return read_claim(os.path.join(gitdir, CLAIM_FILE))
+
+
+def claim_refusal(worktree: str, holder: str) -> str:
+    return (
+        f"{os.path.basename(worktree)} is being worked by another session "
+        f"({holder[:8]}), and two sessions in one worktree is #412: both edit "
+        "the same crate, one session's tests go red because of the other's "
+        "change, and neither gets any signal that the other is there. Claim "
+        "your own with scripts/issue-claim.sh, which cuts a fresh worktree. "
+        "If that session is genuinely gone, the claim frees itself after 45 "
+        "minutes of silence, or you can take it now by deleting "
+        f"<worktree>/.git's postio-claim file."
+    )
+
+
+def take_or_refuse(worktree: str, session: str) -> str | None:
+    """Claim `worktree` for `session`, or say why it cannot be had.
+
+    Adoption is deliberate and only ever happens for the directory a command
+    will actually *run in*. A worktree merely named in a command is checked and
+    never taken -- otherwise mentioning a path would claim it, and a session
+    that ran `ls ../issue-27` would own a tree it had not touched.
+    """
+    gitdir = worktree_git_dir(worktree)
+    if gitdir is None:
+        return None
+    stamp = os.path.join(gitdir, CLAIM_FILE)
+    holder, at = read_claim(stamp)
+    now = time.time()
+    if holder and holder != session and now - at < CLAIM_LEASE:
+        return claim_refusal(worktree, holder)
+    if holder != session or now - at > CLAIM_REFRESH:
+        write_claim(stamp, session, now)
+    return None
+
+
+# The worktree paths a command names, whichever way the shell would spell the
+# root. `git -C ../issue-27 checkout .` and `echo x > ~/src/postio-worktrees/
+# issue-27/f` never change directory, so `cd_destination` cannot see them.
+def worktrees_named(command: str, worktrees: str) -> list[str]:
+    """Every worktree path that appears in `command`.
+
+    Heredocs and quoted spans are both stripped, for the same reason: a path
+    somebody wrote *about* is not a path somebody wrote *to*. #889 is what
+    made quotes non-negotiable — this rule fires when the command names a
+    worktree and carries a writing verb, and `git commit -m "…"` about a
+    worktree is both.
+
+    The cost is a real miss: `rm -rf "<worktree>"` with the path quoted gets
+    through. That is the same trade `unscoped_rustfmt` makes in the other
+    direction and it is the right way round here, because this half is
+    defence in depth behind the cwd rule — which is the one that catches the
+    failure #412 actually recorded, and which quoting cannot hide from.
+    """
+    prefixes = {worktrees}
+    home = os.path.expanduser("~")
+    if worktrees.startswith(home):
+        tail = worktrees[len(home):]
+        prefixes |= {"~" + tail, "$HOME" + tail, "${HOME}" + tail}
+    text = strip_quoted(strip_heredocs(command))
+    found: list[str] = []
+    for prefix in prefixes:
+        for name in re.findall(
+            re.escape(prefix) + r"/([A-Za-z0-9._][A-Za-z0-9._-]*)", text
+        ):
+            path = os.path.join(worktrees, name)
+            if path not in found:
+                found.append(path)
+    return found
+
+
+# A command that will WRITE, for the reach-in case only.
+#
+# Reaching into somebody else's worktree from outside is not symmetric with
+# working inside it. A session that has moved in is going to edit -- that is
+# what #412 is -- so being there at all is enough. A session that names the
+# path from its own tree is usually *reading* it: `/lanes` is built on exactly
+# that, and a guard that refused `git -C <peer> log` would be refusing the tool
+# people are told to use to find out who else is here.
+#
+# So the reach-in half asks for a writing verb as well. Command position for
+# the verbs, plus a redirect, which is the other way a file gets written
+# without naming a program that writes.
+#
+# Known false negative, accepted the same way `unscoped_rustfmt`'s is: a
+# script, a `make`, or anything writing through an indirection this list does
+# not name gets through. This is defence in depth behind the cwd rule, which is
+# the one that catches the failure the issue actually recorded.
+REACHES_IN_WRITING = re.compile(
+    ANCHOR
+    + r"(?:rm|mv|cp|ln|mkdir|rmdir|touch|tee|truncate|dd|patch|install|rsync"
+    r"|chmod|chown|shred|sed\s+-i|rustfmt|cargo\s+fmt"
+    r"|git\s+(?:-C\s+\S+\s+)?(?:add|commit|checkout|restore|reset|clean"
+    r"|stash|rebase|merge|apply|rm|mv|switch|worktree|push|fetch|pull))\b"
+    r"|>>?\s*[\"']?\S*/"
+)
+
+
+def foreign_worktree(
+    command: str, where: str, worktrees: str, session: str
+) -> str | None:
+    """Refuse a command that would run in, or write into, someone else's
+    worktree -- and claim the one it runs in, if it is free.
+
+    Two directions, and they are not symmetric. The directory the command will
+    actually run in is claimed on the way past, because a session that has
+    moved into a worktree is working there; being there at all is enough to
+    refuse. A worktree merely *named* in the command -- `git -C ../issue-27
+    checkout .`, a redirect into an absolute path -- is somebody else's tree
+    reached into from outside, which `cd_destination` cannot see at all; it is
+    checked only for commands that WRITE (see `REACHES_IN_WRITING`, which is
+    what keeps `/lanes` working), and never claimed. Claiming a path merely
+    mentioned would mean `ls ../issue-27` took ownership of a tree the session
+    had not touched.
+
+    Fails open with no session id, which is what makes the hook safe to run
+    outside a real session: nothing to arbitrate between.
+    """
+    if not session:
+        return None
+
+    text = strip_heredocs(command)
+    if REACHES_IN_WRITING.search(text):
+        for named in worktrees_named(command, worktrees):
+            if is_worktree(worktrees, named) and not contains(named, where):
+                claim = claim_of(named)
+                if claim is None:
+                    continue
+                holder, at = claim
+                if holder and holder != session and time.time() - at < CLAIM_LEASE:
+                    return claim_refusal(named, holder)
+
+    if is_worktree(worktrees, where):
+        return take_or_refuse(where, session)
+    return None
+
+
 def contains(parent: str, child: str) -> bool:
     """Is `child` inside directory `parent`?
 
@@ -290,6 +560,29 @@ def is_worktree(worktrees: str, path: str) -> bool:
         return False
 
 
+def quoted_spans(command: str) -> list[tuple[int, int]]:
+    """`(start, end)` of every quoted span, quote characters included.
+
+    Shares its scanner with [`strip_quoted`], which blanks the same spans.
+    This form is for the one caller that needs to know *where* the quotes are
+    rather than to remove what is inside them: see [`cd_destination`].
+    """
+    spans: list[tuple[int, int]] = []
+    quote: str | None = None
+    start = 0
+    for index, char in enumerate(command):
+        if quote:
+            if char == quote:
+                spans.append((start, index + 1))
+                quote = None
+        elif char in "'\"":
+            quote, start = char, index
+    if quote:
+        # An unterminated quote runs to the end of the command.
+        spans.append((start, len(command)))
+    return spans
+
+
 def cd_destination(command: str, cwd: str) -> str:
     """Where a leading `cd` sends the command, or `""` if none does.
 
@@ -303,12 +596,36 @@ def cd_destination(command: str, cwd: str) -> str:
     with tests rather than a condition inline.
 
     Heredoc bodies are stripped first: documenting a `cd` must not be
-    performing one.
+    performing one. A `cd` inside a **quoted span** is dropped for the same
+    reason — that one is #889, and it bit within an hour of #412 making this
+    function's answer load-bearing in the refusing direction: a `gh issue
+    comment` whose body quoted the command that had just been refused was
+    itself refused, because the body contained the words `&& cd <worktree> &&`.
+
+    What is tested is whether the `cd` **keyword** is quoted, never whether
+    its argument is. `cd '<worktree>' && cargo fmt --all` is a correct
+    invocation and has to keep working, so blanking quoted spans wholesale —
+    which is what [`strip_quoted`] does for the pattern rules — would break it
+    by leaving `cd` with an empty target.
+
+    Before #412 the permissive direction made this look harmless: a misread
+    `cd` could only ever *grant* the worktree exemption. It was never harmless,
+    only quiet — in the shared checkout a commit message mentioning one would
+    have exempted the command that carried it.
 
     The last `cd` wins, because that is the directory the rest of the line
     runs in.
     """
-    targets = CD.findall(strip_heredocs(command))
+    text = strip_heredocs(command)
+    quoted = quoted_spans(text)
+    targets = [
+        match.group(1)
+        for match in CD.finditer(text)
+        # `match.start()`, not the argument's: the argument of a real `cd` is
+        # very often quoted and that is fine. It is the keyword that must not
+        # be.
+        if not any(start <= match.start() < end for start, end in quoted)
+    ]
     if not targets:
         return ""
     target = targets[-1].strip("\"'")
@@ -385,6 +702,37 @@ def log(event: str, **fields: object) -> None:
         pass
 
 
+CARGO_WORD = re.compile(r"(?<![\w/.-])cargo(?![\w.-])")
+
+
+def ensure_jobserver(command: str) -> None:
+    """Before a command that runs cargo, make sure the machine-wide jobserver
+    is there for it to join (#1104).
+
+    `.claude/settings.json` exports MAKEFLAGS naming a fifo for every
+    session, and cargo reads that at startup -- too early for anything the
+    repo's own wrappers could do. So the fifo has to exist *before* cargo
+    runs, and this hook is the one thing that runs before every command a
+    session issues. `scripts/jobserver.sh ensure` is idempotent and takes
+    milliseconds when the pool is already up; it also refills tokens a
+    killed cargo took with it, which is why it runs every time rather than
+    once. Fail-open throughout: without the pool cargo warns and uses
+    `jobs = 2`, which is where it was before.
+    """
+    if not CARGO_WORD.search(command):
+        return
+    # Beside this hook, not under CLAUDE_PROJECT_DIR: a session re-reads
+    # this file from the tree it was started in, and the script that goes
+    # with it is two directories up from here in that same tree.
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "jobserver.sh")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run(["bash", script, "ensure"], capture_output=True, timeout=15)
+    except Exception:  # noqa: BLE001 - a missing pool costs speed, not safety
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -396,6 +744,8 @@ def main() -> int:
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return 0
+
+    ensure_jobserver(command)
 
     # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
     # which already-running sessions would not re-read.
@@ -417,6 +767,7 @@ def main() -> int:
     )
 
     cwd = payload.get("cwd") or ""
+    session = payload.get("session_id") or ""
 
     # A `cd` into a private worktree is the one thing that can lift these
     # rules, and it can only ever *grant* the exemption -- never remove
@@ -431,13 +782,38 @@ def main() -> int:
 
     matched: tuple[str, str] | None = None
 
+    # The loop's shape, before anything about where the command runs: a
+    # workspace test run is the wrong inner loop in a private worktree too.
+    # A backgrounded land is the other spelling of --detach and is fine.
+    background = bool((payload.get("tool_input") or {}).get("run_in_background"))
+    for pattern, reason in LOOP_RULES:
+        if "issue-land" in pattern and background:
+            continue
+        # POSTIO_WORKSPACE_TESTS=1 is the steward saying it means it.
+        if "POSTIO_WORKSPACE_TESTS" in pattern and re.search(
+            r"POSTIO_WORKSPACE_TESTS=1\s", command
+        ):
+            continue
+        if re.search(ANCHOR + pattern, haystack):
+            matched = (pattern, reason)
+            break
+
     # Checked before the worktree exemption, never after it: these are about
     # the remote, which a private worktree shares with everybody else. See
     # REMOTE_RULES.
     for pattern, reason in REMOTE_RULES:
-        if re.search(ANCHOR + pattern, haystack):
+        if matched is None and re.search(ANCHOR + pattern, haystack):
             matched = (pattern, reason)
             break
+
+    # And before it for the same reason, from the other direction: the
+    # worktree exemption exists because a worktree has one session in it, so
+    # the rule that *makes* that true cannot be a thing the exemption skips.
+    # See "One worktree, one session" above.
+    if matched is None:
+        why = foreign_worktree(command, where, worktrees, session)
+        if why:
+            matched = ("foreign-worktree", why)
 
     if matched is None:
         if is_worktree(worktrees, where):
@@ -461,12 +837,7 @@ def main() -> int:
         return 0
 
     pattern, reason = matched
-    log(
-        "deny",
-        rule=pattern,
-        command=command[:200],
-        session=payload.get("session_id", ""),
-    )
+    log("deny", rule=pattern, command=command[:200], session=session)
     json.dump(
         {
             "hookSpecificOutput": {

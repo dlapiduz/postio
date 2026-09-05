@@ -29,6 +29,11 @@
 //! straight into the blob store, exactly as a settled backfill would leave
 //! them.
 //!
+//! Runs in the Flagged view since #755: a folder row is a conversation now,
+//! its `e` answers the conversation pane's focus, and what this file pins is
+//! the single-message rule — reply to the row under the cursor — which
+//! lives in a query view.
+//!
 //! One test function, for the reason `wiring.rs` gives.
 
 #![allow(unsafe_code)]
@@ -36,8 +41,10 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -48,22 +55,6 @@ use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, Database, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// A key press into the main window, through the keymap the application runs.
 fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
@@ -83,6 +74,8 @@ fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Optio
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
         headers: None,
+        headers_truncated: false,
+        encoding_problems: false,
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
@@ -107,7 +100,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -118,8 +111,35 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     let database = test_support::memory();
     let report = seed_small(&database, 23);
     assert!(report.message_count > 4, "not enough mail to walk through");
+    // Every message but the newest flagged: since #755 a folder row is a
+    // conversation and opens the conversation pane, and `e`-on-the-cursor-row
+    // — this file's whole subject — is the single-message rule, which lives
+    // in a query view now. The newest stays out because the folder view the
+    // window opens on has already reported it, and the cursor's dedup would
+    // otherwise swallow the Flagged view's own first report.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
@@ -138,11 +158,26 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
     settle();
 
     // ── the same call `run` makes ────────────────────────────────────────
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
-        settle_until(|| list.model().n_items() > 4),
-        "the list is empty, so there is no cursor to move"
+        settle_until(|| list.model().n_items() > 0),
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is no cursor to move"
     );
     let composer = window.composer();
 

@@ -96,7 +96,7 @@ express them.
 The trap is building a second retrieval system, and it would break the two
 things Postio is careful about: `ARCHITECTURE.md` §6 says there is exactly one
 way to express *which messages*, and search has a **100 ms budget** that CI
-enforces (`crates/postio-index/benches/search_budget.rs`).
+enforces (`crates/postio-bench/benches/search_budget.rs`).
 
 **Decision: hybrid retrieval.**
 

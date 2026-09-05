@@ -24,8 +24,14 @@ use serde::{Deserialize, Serialize};
 pub enum Context {
     /// The message list: rows, selection, bulk actions.
     List,
-    /// A thread drilled into from the list.
-    Thread,
+    /// The conversation pane: the whole thread stacked beside the list.
+    ///
+    /// Was `Thread`, when a thread meant a column that replaced the list
+    /// (#1003). The conversation moved into the reading pane and the column
+    /// went; the context stayed, because the surface it names still exists
+    /// and still owns the keyboard while you are reading a conversation. Its
+    /// keys walk messages inside the stack rather than rows in a column.
+    Conversation,
     /// The reading pane showing one message.
     Reader,
     /// Compose: the reading pane by default, or a window of its own on ask.
@@ -52,32 +58,55 @@ pub enum Context {
     /// reached the window's own resolver first and moved the message
     /// selection instead of walking the tree — see `postio-14b`.
     Parts,
+    /// The account list in settings, once the keyboard is in it.
+    ///
+    /// Scoped to the `accounts_list` widget and named for it, the way
+    /// `Sidebar` and `Parts` are — deliberately *not* a `Context::Settings`
+    /// spanning the whole panel. That panel also holds a `GtkTextView` of the
+    /// literal `config.toml`, and a context named for the panel would put
+    /// bare-letter bindings live while somebody types TOML: `d` removing an
+    /// account instead of inserting a `d`. Scoping to the list closes that by
+    /// construction rather than by remembering (ADR 0005 Q6c, #471).
+    Accounts,
+    /// The keybinding list in settings, once the keyboard is in it.
+    ///
+    /// Scoped to the rebind list widget rather than the whole panel, for
+    /// the exact reason [`Context::Accounts`] already gives: `[keys]`'s own
+    /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
+    /// binding must not fire while someone is typing there (#881).
+    Keys,
 }
 
 impl Context {
     /// Every context, in a stable order. The cheat sheet renders in this order.
     pub const ALL: &'static [Context] = &[
         Context::List,
-        Context::Thread,
+        Context::Conversation,
         Context::Reader,
         Context::Composer,
         Context::Search,
         Context::Palette,
         Context::Sidebar,
         Context::Parts,
+        // At the end, so the `?` sheet grows a section rather than reordering
+        // the ones people have learned (ADR 0005 Q6c).
+        Context::Accounts,
+        Context::Keys,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
     pub const fn as_str(self) -> &'static str {
         match self {
             Context::List => "list",
-            Context::Thread => "thread",
+            Context::Conversation => "conversation",
             Context::Reader => "reader",
             Context::Composer => "composer",
             Context::Search => "search",
             Context::Palette => "palette",
             Context::Sidebar => "sidebar",
             Context::Parts => "parts",
+            Context::Accounts => "accounts",
+            Context::Keys => "keys",
         }
     }
 
@@ -86,8 +115,14 @@ impl Context {
         ContextSet::of(self)
     }
 
-    const fn bit(self) -> u8 {
-        1 << (self as u8)
+    const fn bit(self) -> u16 {
+        // `u16`, not `u8`: the eight original contexts filled a byte exactly,
+        // and `Accounts` made the ninth. That was not a silent overflow --
+        // `ContextSet::ANY` is const-evaluated, so it was a compile error and
+        // could never have reached a running build (#471). The room here is
+        // for the next one; `every_context_fits_the_set` is what says when
+        // this needs widening again.
+        1 << (self as u16)
     }
 }
 
@@ -134,7 +169,7 @@ impl FromStr for Context {
 /// answer "is this command available here?" but not "what is available here?",
 /// and the palette and cheat sheet need the second question answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ContextSet(u8);
+pub struct ContextSet(u16);
 
 impl ContextSet {
     /// The empty set. No command may keep this — see the registry tests.
@@ -148,7 +183,7 @@ impl ContextSet {
     /// been unreachable in the new one, which is the kind of bug that shows up
     /// as a key that does nothing in one pane.
     pub const ANY: ContextSet = {
-        let mut bits = 0u8;
+        let mut bits = 0u16;
         let mut index = 0;
         while index < Context::ALL.len() {
             bits |= Context::ALL[index].bit();
@@ -162,9 +197,19 @@ impl ContextSet {
         ContextSet(context.bit())
     }
 
+    /// This set plus one more context, usable in a `const` table.
+    ///
+    /// For the entries that are "one of the named groups, and also somewhere
+    /// else" -- `Undo` over the message surfaces plus the account list. The
+    /// alternative is a second slice constant named for a single use, which
+    /// reads worse at the call site than the sentence it is standing in for.
+    pub const fn with(self, context: Context) -> ContextSet {
+        ContextSet(self.0 | context.bit())
+    }
+
     /// A set built from a slice, usable in a `const` table.
     pub const fn from_slice(contexts: &[Context]) -> ContextSet {
-        let mut bits = 0u8;
+        let mut bits = 0u16;
         let mut index = 0;
         while index < contexts.len() {
             bits |= contexts[index].bit();
@@ -225,8 +270,20 @@ mod tests {
     }
 
     #[test]
+    fn every_context_fits_the_set() {
+        assert!(
+            Context::ALL.len() <= ContextSet(0).0.count_zeros() as usize,
+            "{} contexts will not fit a {}-bit ContextSet. Widen the integer \
+             behind it -- the eight original contexts filled a u8 exactly and \
+             Accounts made the ninth, which is the last time this happened.",
+            Context::ALL.len(),
+            ContextSet(0).0.count_zeros()
+        );
+    }
+
+    #[test]
     fn every_context_has_a_distinct_bit() {
-        let mut bits = 0u8;
+        let mut bits = 0u16;
         for context in Context::ALL {
             assert_eq!(bits & context.bit(), 0, "{context} reuses a bit");
             bits |= context.bit();

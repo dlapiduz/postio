@@ -332,6 +332,8 @@ corpus! {
         "Reuses the Message-ID of plain-text-simple with a different body: deduplication must not key on Message-ID alone.",
     "encoded-word-broken": [EncodedWord, MalformedHeaders] =>
         "Encoded words that are unterminated, invalid base64, an unknown charset, an unknown encoding letter, or over-long.",
+    "encoded-word-crlf-in-header": [EncodedWord, MalformedHeaders] =>
+        "An encoded word whose decoded text contains CR and LF: a header value that arrives with line breaks inside it, which unfolding cannot remove because the octets were never folding whitespace.",
     "encoded-word-subject-and-names": [EncodedWord, PlainText] =>
         "Correct RFC 2047: adjacent encoded words joined without a space, two charsets in one field, a folded Subject.",
     "header-folding-received-chain": [PlainText] =>
@@ -342,6 +344,8 @@ corpus! {
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
     "html-tracking-pixel-remote-images": [Html, RemoteContent, QuotedPrintable] =>
         "A 1x1 open-rate beacon, remote <img> tags, CSS background-image URLs and a click-tracking redirect.",
+    "inline-disposed-body": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
+        "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
         "Two inline PNGs referenced by cid:, plus a third cid: reference with no matching part.",
     "list-thread-01-root": [Threading, MailingList, PlainText] =>
@@ -368,6 +372,8 @@ corpus! {
         "No Message-ID, no Date, no To: storage has to synthesize an identity and the list has to sort it anyway.",
     "multipart-alternative": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
         "The canonical text/plain + text/html pair, with a preamble and an epilogue that must both be discarded.",
+    "multipart-boundary-never-appears": [MalformedStructure, MultipartAlternative] =>
+        "A multipart whose boundary parameter names a delimiter that appears nowhere in the body, which is what a gateway that rewrote one and not the other leaves behind.",
     "nested-multipart": [NestedMultipart, MultipartMixed, MultipartAlternative, MultipartRelated, InlineImage, Attachment] =>
         "mixed > alternative > related, three levels deep, with an inline image and a trailing attachment.",
     "pgp-encrypted": [Pgp, MultipartMixed] =>
@@ -378,6 +384,8 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList] =>
+        "A shipping notice whose plain part carries a repeated label: value block \u{2014} the facts reader view lifts above the body copy.",
     "transfer-encoding-base64": [Base64, PlainText] =>
         "A plain-text body encoded base64, as export tools emit even when there is nothing to escape.",
     "transfer-encoding-quoted-printable": [QuotedPrintable, PlainText, EncodedWord] =>

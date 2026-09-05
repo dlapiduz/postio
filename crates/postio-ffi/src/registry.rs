@@ -32,8 +32,8 @@ impl From<postio_core::registry::Recovery> for UiRecovery {
 pub enum UiContext {
     /// The message list: rows, selection, bulk actions.
     List,
-    /// A thread drilled into from the list.
-    Thread,
+    /// The conversation pane: the whole thread stacked beside the list.
+    Conversation,
     /// The reading pane showing one message.
     Reader,
     /// Compose, in the pane or a window of its own.
@@ -46,6 +46,10 @@ pub enum UiContext {
     Sidebar,
     /// The parts panel: a message's MIME tree.
     Parts,
+    /// The account list in settings.
+    Accounts,
+    /// The keybinding list in settings.
+    Keys,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -53,13 +57,15 @@ impl From<postio_core::Context> for UiContext {
         use postio_core::Context;
         match context {
             Context::List => UiContext::List,
-            Context::Thread => UiContext::Thread,
+            Context::Conversation => UiContext::Conversation,
             Context::Reader => UiContext::Reader,
             Context::Composer => UiContext::Composer,
             Context::Search => UiContext::Search,
             Context::Palette => UiContext::Palette,
             Context::Sidebar => UiContext::Sidebar,
             Context::Parts => UiContext::Parts,
+            Context::Accounts => UiContext::Accounts,
+            Context::Keys => UiContext::Keys,
         }
     }
 }

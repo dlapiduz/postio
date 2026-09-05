@@ -17,12 +17,12 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::Event;
 use postio_gtk::feed::{
@@ -106,7 +106,7 @@ impl MessageSource for Filling {
 
 pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -189,19 +189,6 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
     assert_eq!(list.selection().selection(), selection);
 }
 
-/// Run the main loop until it has nothing left to do.
-///
-/// The feeds answer on the thread-default main context, so nothing a page
-/// request set in motion has happened until this returns.
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..200 {
-        while context.pending() {
-            context.iteration(false);
-        }
-    }
-}
-
 /// Pump until `done`, or give up after a deadline.
 ///
 /// `pump` spins two hundred times over whatever is *currently* pending, which
@@ -215,7 +202,8 @@ fn pump() {
 /// that genuinely never arrives still fails, after the deadline — while a
 /// loaded machine only makes it wait longer.
 fn pump_until(done: impl Fn() -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         pump();
         if done() {

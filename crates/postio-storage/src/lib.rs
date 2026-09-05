@@ -38,9 +38,11 @@
 //! `test_support` (behind the `test-support` feature) for throwaway databases in
 //! tests.
 
+pub mod actions;
 pub mod blob;
 pub mod body;
 pub mod db;
+pub mod encrypt;
 pub mod error;
 pub mod key;
 pub mod migrations;

@@ -43,8 +43,8 @@
 //! same reasoning; this is the same rule in the crate that can be reached
 //! without a toolkit.
 
-use postio_imap::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
-use postio_imap::secret::{AccountKey, Password, SecretError, SecretStore};
+use postio_account::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
+use postio_account::secret::{AccountKey, Password, SecretError, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
 use postio_model::{Account, EmailAddress, Identity};
@@ -261,7 +261,7 @@ where
     let Some(domain) = address.rsplit('@').next().map(str::to_ascii_lowercase) else {
         return Err(format!("postio: {address} does not look like an address"));
     };
-    let mut settings = match postio_imap::discovery::preset_for_domain(&domain) {
+    let mut settings = match postio_account::discovery::preset_for_domain(&domain) {
         Some(preset) => preset.settings_for(address),
         // Hosts left empty on purpose, and refused below if the environment
         // does not fill them in. Deriving `imap.<domain>` from the address is
@@ -335,7 +335,7 @@ mod tests {
         // and nothing else. Taken from the table rather than written out, so
         // this cannot go stale against it -- and so no real provider's
         // address appears in this repository (check-no-personal-data.py).
-        let preset = postio_imap::discovery::presets()
+        let preset = postio_account::discovery::presets()
             .first()
             .expect("the preset table is not empty");
         let address = format!("ada@{}", preset.domains()[0]);
@@ -389,7 +389,7 @@ mod tests {
         // An account on a provider the table knows but reached through a
         // different host -- a corporate gateway, a proxy, a migration in
         // progress. Overriding one field must not discard the rest.
-        let preset = postio_imap::discovery::presets()
+        let preset = postio_account::discovery::presets()
             .first()
             .expect("the preset table is not empty");
         let address = format!("ada@{}", preset.domains()[0]);
@@ -419,7 +419,7 @@ mod tests {
         // `POSTIO_IMAP_PORT=993 ` with a stray character, or a shell that
         // exported the wrong thing. Falling back to the published port is
         // right; falling back to 0 would fail to connect with no clue why.
-        let preset = postio_imap::discovery::presets()
+        let preset = postio_account::discovery::presets()
             .first()
             .expect("the preset table is not empty");
         let address = format!("ada@{}", preset.domains()[0]);

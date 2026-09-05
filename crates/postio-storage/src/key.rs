@@ -3,7 +3,7 @@
 //! ADR 0014 Q3. One 32-byte key per store, generated from the OS RNG on first
 //! open and kept in the Secret Service keyring beside the account credentials
 //! — the same seam, the same locked-keyring behaviour, and the same
-//! **no-plaintext-fallback** rule `postio_imap::secret` already enforces for
+//! **no-plaintext-fallback** rule `postio_account::secret` already enforces for
 //! passwords. A locked keyring means the mail does not open; there is no
 //! "open it read-only anyway".
 //!
@@ -111,7 +111,7 @@ pub enum KeyError {
 /// Zeroized on drop, and never rendered: [`Debug`] says only that it exists.
 /// Reach for [`expose`](Self::expose) or [`to_hex`](Self::to_hex) at the
 /// moment the bytes are actually needed, so every use is short and obvious in
-/// review — the discipline `postio_imap::secret::Password` already keeps.
+/// review — the discipline `postio_account::secret::Password` already keeps.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StoreKey(Zeroizing<[u8; KEY_BYTES]>);
 
@@ -243,5 +243,54 @@ impl Zeroize for StoreKey {
 impl Zeroize for Subkey {
     fn zeroize(&mut self) {
         self.0.zeroize();
+    }
+}
+
+/// The two subkeys the blob store works under.
+///
+/// [`Purpose::BlobContent`] and [`Purpose::BlobId`] are always wanted together
+/// — a store that could encrypt but not name, or name but not encrypt, is not
+/// a state worth being able to express — so they travel as one value. It also
+/// keeps the *master* key out of `blob.rs`: the only thing that ever holds all
+/// of it is the composition root that read it from the keyring.
+///
+/// Cloneable, because [`crate::BlobStore`] is: a blob store is a path and its
+/// keys and nothing else, and half the tree clones one.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BlobKeys {
+    content: Subkey,
+    id: Subkey,
+}
+
+impl BlobKeys {
+    /// Derives both subkeys from the store's master key.
+    pub fn derive(master: &StoreKey) -> Self {
+        Self {
+            content: master.derive(Purpose::BlobContent),
+            id: master.derive(Purpose::BlobId),
+        }
+    }
+
+    /// The key a blob's contents are encrypted under.
+    pub fn content(&self) -> &Subkey {
+        &self.content
+    }
+
+    /// The key a blob's id is BLAKE3-keyed with.
+    pub fn id(&self) -> &Subkey {
+        &self.id
+    }
+}
+
+impl std::fmt::Debug for BlobKeys {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BlobKeys(<redacted>)")
+    }
+}
+
+impl Zeroize for BlobKeys {
+    fn zeroize(&mut self) {
+        self.content.zeroize();
+        self.id.zeroize();
     }
 }

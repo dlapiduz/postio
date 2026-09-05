@@ -228,10 +228,21 @@ impl RoleOverrides {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        self.settle(MailboxRole::resolve(attributes, path), path)
+    }
+
+    /// The same precedence, over a role the backend has already settled.
+    ///
+    /// A listing arrives with its contested roles resolved -- the server's
+    /// claim first, then the shallowest name, then the alphabet -- and that
+    /// verdict is what the user's mapping goes on top of. Re-deriving the
+    /// role from the name here would hand a look-alike its role straight
+    /// back, which is how one account ended up with two `sent` folders
+    /// (#943).
+    pub fn settle(&self, natural: MailboxRole, path: &str) -> MailboxRole {
         if let Some(role) = self.role_for(path) {
             return role;
         }
-        let natural = MailboxRole::resolve(attributes, path);
         // A role the user has pinned to some *other* folder is spoken for, so
         // this one cannot also claim it. Without this, pointing `archive` at a
         // new folder on a server that already has one called `Archive` leaves
@@ -286,7 +297,7 @@ pub struct Mailbox {
     /// Whether the account is subscribed to it.
     pub subscribed: bool,
     /// A signature that overrides the account's own default when composing
-    /// from this folder (#394) — see [`signature_default::resolve`]. Local
+    /// from this folder (#394) — see [`crate::signature_default::resolve`]. Local
     /// preference, never server state: unlike every field below these two,
     /// nothing in a sync pass ever sets or reads it.
     #[serde(default)]

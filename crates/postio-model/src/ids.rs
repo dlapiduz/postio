@@ -139,6 +139,10 @@ local_id!(
     /// order the user performed the actions.
     OperationId
 );
+local_id!(
+    /// Identifies a row in the one-click-unsubscribe activation log (#971).
+    UnsubscribeActivationId
+);
 
 macro_rules! scalar_id {
     ($(#[$doc:meta])* $name:ident, $inner:ty) => {
@@ -346,5 +350,54 @@ impl<'de> Deserialize<'de> for RfcMessageId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Goes through `new` so a deserialized value obeys the same invariants.
         Ok(Self::new(String::deserialize(deserializer)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `RfcMessageId`'s `PartialEq` is case-insensitive by design (see the
+    // type's own doc comment: it is what lets JWZ threading match a header
+    // rewritten in transit), which means `Ord` and `Hash` are *hand-written*
+    // rather than derived -- `derive`d versions would compare the original,
+    // case-preserved bytes and silently disagree with `Eq` about which
+    // values are the same one. That disagreement is exactly the kind of bug
+    // that breaks a `HashSet` without ever panicking: a lookup that should
+    // hit misses, and two "equal" values both end up stored.
+    #[test]
+    fn case_variants_of_the_same_id_order_as_equal() {
+        let lower = RfcMessageId::new("<abc123@example.com>");
+        let upper = RfcMessageId::new("<ABC123@EXAMPLE.COM>");
+
+        assert_eq!(lower.cmp(&upper), std::cmp::Ordering::Equal);
+        assert_eq!(lower.partial_cmp(&upper), Some(std::cmp::Ordering::Equal));
+    }
+
+    #[test]
+    fn case_variants_of_the_same_id_hash_to_the_same_bucket() {
+        use std::collections::HashSet;
+
+        let mut seen = HashSet::new();
+        seen.insert(RfcMessageId::new("<abc123@example.com>"));
+
+        assert!(
+            !seen.insert(RfcMessageId::new("<ABC123@EXAMPLE.COM>")),
+            "a case-differing id must land on the same hash bucket and be \
+             recognised as already present, or Eq and Hash disagree"
+        );
+        assert_eq!(seen.len(), 1);
+    }
+
+    #[test]
+    fn ordering_still_distinguishes_genuinely_different_ids() {
+        // The point above is that case does not matter, not that nothing
+        // does -- a hand-written `Ord` that always returned `Equal` would
+        // pass both tests above and be useless for anything sorted.
+        let a = RfcMessageId::new("<a@example.com>");
+        let b = RfcMessageId::new("<b@example.com>");
+
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
+        assert_eq!(b.cmp(&a), std::cmp::Ordering::Greater);
     }
 }

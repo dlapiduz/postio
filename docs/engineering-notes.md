@@ -680,6 +680,58 @@ struct that happens to hold one, which turns any `dbg!`, any `?err` and any
 panic message into a full compromise of the store.
 
 
+**A blob's container version and its nonce layout are on-disk format.** #301,
+ADR 0014 Q2. Version 1 is compressed-and-plaintext and is still *read* — the
+migration has to open the old store, and so does a development store nobody
+has migrated; version 2 is always encrypted, and there is no cipher value
+meaning "none" at that version, which is what keeps the no-plaintext-fallback
+rule from being expressible. The nonce is `prefix(19) ‖ index(4, big-endian)
+‖ last(1)`, pinned by value in `blob::seal`. Change either and every blob a
+user owns stops opening, which under ADR 0016 is their whole mailbox.
+
+The ordering that everything else rests on is **id, then compress, then
+encrypt**. The id is a *keyed* BLAKE3 over the plaintext, so dedup survives
+both — the same content under the same key is still one file — while two
+installations name the same attachment differently. A change that moved the
+id onto the stored bytes would make the same message two blobs the moment the
+codec changed, and would put content equality back on the disk.
+
+**The blob store is sealed in chunks, not as one AEAD, and that is not a
+performance choice.** A single seal cannot be verified until its last byte has
+been read, so honouring the tag would mean holding the 30 MiB attachment whole
+— which is the one thing this store promises never to do. The chunked form is
+what makes the promise and the tag compatible, and the index and last-block
+flag in each chunk's nonce are what make reordering and truncation detectable
+rather than silent. It is hand-laid because RustCrypto dropped
+`aead::stream` in 0.6; the cipher is still the library's.
+
+**The store encryption migration is idempotent by construction, and that is
+the whole design.** `postio_storage::encrypt` builds the encrypted store
+beside the old one, verifies it by reading every referenced blob back through
+its own AEAD, and only then moves the originals aside and the replacements in
+— deleting the plaintext copy last. A swap is several renames and no
+filesystem call does several at once, so what makes it safe is that re-running
+the same guarded sequence from any interruption point converges. Two rules
+hold it up, and both are easy to break by accident:
+
+- **Every original moves aside before any replacement moves in.** The window
+  where the store path holds *neither* half is the only one a resume can read
+  unambiguously. An entry that is present is then either untouched plaintext
+  (its aside copy is missing) or the finished encrypted one (its aside copy is
+  there). Interleaving the moves reintroduces a state where a plaintext blob
+  directory sits beside an encrypted database and nothing can tell.
+- **The aside directory is created only after the staged store verifies**, so
+  its existence is what says "a swap began" and finishing forward is always
+  right. There is no case that puts the plaintext store back.
+
+The first version of this passed every test but one: `database_parts` was
+handed the database *file* as its root, so the plaintext database never moved
+aside and the staged one was renamed straight over it. Every test that only
+checked the mail afterwards passed, because the mail was fine — the one that
+caught it stops mid-swap and asserts the plaintext copy is still on disk. A
+migration test that only looks at the end cannot see the window it is about.
+
+
 **One `TokenSource` per account, and never a second.** ADR 0006 Q5, made real
 in #194. The composition root (`postio_session::engine::start`) builds one and
 hands *that instance* to the account's IMAP pool and to `EngineParts::tokens`,
@@ -701,7 +753,7 @@ seam — the composition root decides what kind of credential an account has,
 and nothing downstream asks again.
 
 **What a refused credential means is decided in exactly one place**,
-`postio_imap::auth::with_credential`: invalidate, ask once more, and *do not
+`postio_account::auth::with_credential`: invalidate, ask once more, and *do not
 retry at all* if the source hands back the same bytes. That last clause is the
 one that goes missing when the paragraph is written twice — and without it a
 wrong password is an endless pair of round trips. The pool and the SMTP send
@@ -740,6 +792,21 @@ stateable in one place — but it is called from `postio-sync`'s reconciliation
 rather than from `MailboxRole::resolve`'s own call site at the IMAP edge,
 because that layer parses what the *server* said and has no business reading a
 config file.
+
+**One folder per role comes out of discovery, and it is the backend's verdict.**
+A listing can hold two folders that both look like the sent folder — iCloud's
+own `Sent Messages` beside a `Sent` some other client created — and
+`resolve_roles` (in `postio-account`'s backend module, run by the IMAP edge
+*and* the mock) settles which one holds the role: the server's claim, then the
+shallowest name, then the alphabet. Discovery applies the user's mapping **on
+top of that settled role** (`RoleOverrides::settle`) and never re-derives it
+from the name, because re-deriving is exactly how one account ended up with
+two `sent` rows and its sent mail filed into the wrong one (#943). Two more
+rules from the same issue: retiring a folder the server stopped listing clears
+its role as well as `selectable`, and `by_role` never answers with a retired
+row — a role only a vanished folder still wears is a role the account does not
+have, and saying so is better than an APPEND the server refuses and nobody
+hears about.
 
 `[mailboxes]` is read once at startup, so a mapping edited while Postio is
 running takes effect at the next start. The engine is spawned with its parts
@@ -784,11 +851,32 @@ Two details worth keeping:
   gaps in, so a pass routinely finishes well short of it — which is why that
   line reads `fetched 1204` and deliberately not `of`. `BackfillProgress`
   keeps every queued message in exactly one of its counts, so
-  `settled + pending + in_flight` really is everything, and `bodies 412 of
+  `settled + pending + in_flight` really is everything, and `mail 412 of
   2000` is true.
 - **Both phases must clear their number when the queue drains**, or the line
   sticks — `syncing 89%` on a finished folder was the original version of this
   bug, and `downloading 2000 of 2000` would have been the new one.
+
+**The sidebar status line holds counts, never bytes (#411).** The column is
+`SIDEBAR_WIDTH = 212` from canvas 1b and deliberately fixed — about 25
+monospace characters, and `mail 12400 of 81744` is already 19. A byte clause
+was written for that line, measured against the column at render time, and
+shed at every width there is; the measuring code was deleted with it.
+
+Do not put it back, in any spelling. The two numbers answer different
+questions: a count that climbs is a **liveness** signal, which is what #74
+filed this line for, and a byte figure that sits still through a large fetch
+reads as *stalled*. Bytes are a **cost** signal — asked once, deliberately,
+when deciding what to switch on. Already rejected: a shorter spelling
+(`890M/1.4G` buys four characters where fourteen are needed), alternating the
+two clauses (a line whose meaning changes every few seconds is worse than
+either), and moving bytes to line 1 by dropping `· IMAP` (line 1 would mean
+different things at different times, which is a mode in miniature).
+
+The bytes still reach that surface through `SyncStatus::detail_in_full`,
+which builds the tooltip and the accessible description from one string.
+Cost itself lives on the settings panel's account rows, where the figure is
+per account like the footprint is.
 
 **Mailbox counts are maintained by triggers, not by call sites.**
 `mailboxes.total_count`/`unread_count`/`flagged_count` are maintained by
@@ -954,7 +1042,7 @@ arbitrary:
 - *More lanes than IMAP connections is slower, not faster.* The IMAP pool
   defaults to four with one lane held by `IDLE`, and a pass that does not get
   a connection of its own shares one — paying a `SELECT` per batch, because
-  `postio_imap::imap::selection` caches the selection *per connection*.
+  `postio_account::imap::selection` caches the selection *per connection*.
 - *Passes are concurrent, never parallel.* The engine's runtime is
   current-thread and the futures are polled by one `FuturesUnordered` on one
   task, so two passes cannot both be inside `initial::enumerate`'s batch
@@ -1586,6 +1674,43 @@ verified on a quiet box proves nothing about the only condition that fails.
 (engine + SQLite threads, in-process sockets): auto-advance misfires with
 real blocking work in the loop.
 
+**A dial nobody can reach is the same as no dial.** #842 gave the suite
+`POSTIO_TEST_PATIENCE`, so a loaded machine is one environment variable away
+from deadlines that fit it. #957 is what it cost that the dial stopped at the
+edge of `postio_test_support`: forty-six deadlines across the suites were
+written by hand, and all three of the `gtk_suite` cases that flake on this
+workstation were among them. `gtk_composer_toolbar` waited a constant twenty
+seconds. So the one lever a session had — turn the dial up before a local
+full-suite run — reached every wait except the ones that needed it, and
+"leave it, CI is the arbiter" kept looking like the only option on the table.
+`check-test-deadlines-scale.py` now refuses a hand-rolled `Instant::now() +
+…` in a test unless it goes through `scaled`/`patience`, or carries
+`POSTIO-FIXED-DEADLINE:` **with a reason** — the exception is real (a debounce
+window, a negative assertion whose strength is the time it waited, a pump
+spent in full to prove absence) and a bare marker is a silencer, because the
+next person cannot otherwise tell a load-bearing number from one nobody
+revisited.
+
+Two things that came out of chasing #957 and are worth not re-deriving:
+
+*A single latency sample taken after a timeout diagnoses nothing.*
+`gtk_composer_toolbar` pings the WebKit bridge once the wait has failed and
+concluded, from ~12ms, that "the report was never going to arrive" — which
+three sessions then reasoned from. A starved web process is idle and
+responsive the moment it is finally asked; the ping measures the bridge after
+the contention, not during it. The message says so now.
+
+*The config watcher is not the rename-loses-the-inode bug.*
+`gtk_settings::the_settings_panel_edits_the_file_in_place` fails on "the
+external save never reached the running app" roughly one full-suite run in
+three (reproduced: 1 of 3 runs of the whole `gtk_suite` binary on a
+workstation with three other worktrees compiling). `ConfigWatcher` watches the
+**directory**, not the file, so a `rename` over `config.toml` keeps the watch;
+and `touches` scans every path on the event, so notify's paired
+`RenameMode::Both` — whose `paths[0]` is the temp name — still matches. Both
+of the obvious explanations are therefore ruled out, and the cause is still
+open.
+
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
 and panics the first time the line is reached.** `spawn_future_local` runs on
 the glib main loop, which has no reactor, so
@@ -1755,7 +1880,7 @@ the machine.
 tested.** A proposal to add one was closed as not-needed after being written
 on a wrong premise. `Engine::spawn` takes
 `EngineParts { backend: Arc<dyn MailBackend>, .. }` — it never constructs a
-transport, it is handed one. `postio_imap::backend::MockBackend` is a
+transport, it is handed one. `postio_account::backend::MockBackend` is a
 complete in-memory `MailBackend` including bodies. So a real `Engine` over a
 mock does full syncs, backfills and body fetches with no network and no
 display, in the default suite. Proof already in the tree:
@@ -1822,7 +1947,7 @@ assert wall-clock budgets in `postio-gtk` tests. This box runs several
 concurrent build/test sessions; measured at load average 18 on 8 cores, the
 same thread drill-in measured 14ms, 23ms, 63ms, 89ms and 180ms across runs of
 identical code. Best-of-N filters most of it but is still a ceiling, not a
-number. Perf budgets belong in benches (`postio-core/benches/perf_budgets.rs`),
+number. Perf budgets belong in benches (`postio-bench/benches/perf_budgets.rs`),
 which already notes this about shared runners. Check `uptime` before
 believing any timing measured interactively.
 
@@ -1909,13 +2034,13 @@ still be torn by a concurrent `git pull`.** Observed 2026-08-25 verifying
 `main` after the postio-session refactor: `cargo test --workspace
 --no-fail-fast` was run against `~/src/postio` with its *own*
 `CARGO_TARGET_DIR`, specifically to dodge the hazard above. Twenty minutes
-into a cold build it failed anyway — `postio-imap` used
+into a cold build it failed anyway — `postio-account` used
 `Message::content_type`, but the `postio-model` rlib it linked against had
 no such field. Both true at once only makes sense if the two crates were
 compiled from different moments of the same tree, and `git reflog` said
 so: `pull: Fast-forward` had landed five commits, including the one adding
 `content_type`, while the build was still running. Cargo had already
-compiled and cached `postio-model` from before the pull; `postio-imap`'s
+compiled and cached `postio-model` from before the pull; `postio-account`'s
 source was read from disk after it, use-site and definition torn across
 the same invocation.
 
@@ -1994,7 +2119,7 @@ waiting (#57, found by the `postio-iigq` audit).
 The way out, where the blocking work is somebody else's crate: take the
 stream. `io-pim-discovery`'s `DiscoveryStream` is `Read + Write` and nothing
 more, and both of its std clients expose `with_factory(scheme, ..)` — so
-`postio-imap`'s `discovery::transport` hands them a wrapper that checks the
+`postio-account`'s `discovery::transport` hands them a wrapper that checks the
 token before every read and write and fails with
 `io::ErrorKind::ConnectionAborted`. The detached task then unwinds through
 the client's own error path and drops the socket. The protocol stays
@@ -2294,7 +2419,7 @@ sharing nothing with a session's own workstation.
 ## Logging & privacy
 
 **`Zeroizing<String>` protects the password; the buffers around it are where
-it escapes.** `postio_imap::secret::Password` was always the right shape, and
+it escapes.** `postio_account::secret::Password` was always the right shape, and
 #144's security review still found live copies that were freed without being
 overwritten — all of them on the way *into* a `Password`, and the worst of
 them on error paths where the secret never became one at all. Two rules came
@@ -2314,7 +2439,7 @@ out of it:
   does zeroize on drop, but it is built through `String::into_boxed_str`,
   which calls `shrink_to_fit` — so a `String` with spare capacity is copied to
   a fresh allocation and the old one is freed with the password still in it.
-  The copies handed to io-sasl (`postio-imap/src/imap/mod.rs`'s
+  The copies handed to io-sasl (`postio-account/src/imap/mod.rs`'s
   `credential_copy`) and to io-smtp (`postio-sync/src/send.rs`) are single
   `str::to_owned` calls for exactly this reason: `to_owned` allocates `len`,
   so the buffer moves. A `String::with_capacity`, a `push_str` or a `format!`
@@ -2329,7 +2454,7 @@ zeroized.
 
 
 **Logger installation order.** `log::set_logger` succeeds *once* per
-process. `postio-imap`'s `skip_counter` watches io-imap's
+process. `postio-account`'s `skip_counter` watches io-imap's
 `debug!("skipping undecodable untagged response")` and turns it into
 `BackendError::ResyncIntegrityLost` — an integrity check, not a log line.
 `tracing-subscriber`'s `SubscriberInitExt::init()`/`try_init()` calls
@@ -2338,7 +2463,7 @@ that one slot and leaves the counter inert: a `CHANGEDSINCE` fetch that
 silently dropped deltas is then reported as a complete incremental pull.
 **Never use `.init()` on the subscriber in `postio-app`.** Use
 `tracing::subscriber::set_global_default()`, and install the bridge *first*
-via `postio_imap::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())))`,
+via `postio_account::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())))`,
 which composes the counter and the bridge into the one logger the process is
 allowed. `skip_counter_is_counting()` reports whether it worked, and
 `logging.rs` warns at startup when it didn't. The warning caught this exact
@@ -2374,7 +2499,7 @@ generous, because in `config.toml` a false positive costs a renamed key and
 a false negative writes a password to disk. That generosity assumes nothing
 legitimate in the document ever needs those words as substrings, which held
 for `config.toml` and stopped holding the moment `providers.toml`
-(`postio-imap/src/discovery/providers_toml.rs`) needed fields named
+(`postio-account/src/discovery/providers_toml.rs`) needed fields named
 `requires_app_password`, `password_help_url`, and — worse — the OAuth token
 *endpoint*'s own field, `token`, all of which are perfectly ordinary,
 non-secret data that the marker list matches anyway. Stripping the whole
@@ -2601,7 +2726,7 @@ than clever:
 bound reached) against a real bare remote with only `gh` stubbed. Its case A
 is the #50 incident verbatim in shape.
 
-## Landing work
+## Landing work: `cargo doc` is a CI-only gate
 
 **`issue-land.sh`'s gates do not include `cargo doc`, and CI's do.** Moving
 code between crates is the case where that bites: a doc comment carries its
@@ -2627,7 +2752,7 @@ RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
     cargo doc --workspace --no-deps --document-private-items
 ```
 
-## The shared cargo target directory
+## The cargo target directory (shared until #178; private and copied on claim since #1102)
 
 **sccache's server outlives the worktree that started it, and
 `issue-release.sh` could leave it pointing at a directory that no longer
@@ -2720,7 +2845,7 @@ linked *that* `postio-core`.
 
 Two things make this the dangerous shape. It was **repeatable**, so the usual
 "run it again" tell was absent. And it presented as exactly the case
-CLAUDE.md's **CI is paused** section says to respond to by pulling `ready`
+CLAUDE.md's CI section says to respond to by pulling `ready`
 off every open issue — a disruptive, repository-wide stop, triggered by a
 regression that did not exist. Rebuilding in a private `CARGO_TARGET_DIR`
 passed first time.
@@ -2777,6 +2902,28 @@ absence made every `tempfile::tempdir()` in a fresh worktree fail with
 NotFound — three sessions hit that in one day. The interim tell above stays
 true for anyone still on the shared directory.
 
+**Since #1102 a fresh worktree's `target/debug` is a reflink *copy* of the
+newest sibling's.** That is not the sharing above: each tree owns its copy
+and cargo's fingerprints are self-consistent inside it. "sccache carries the
+third-party cost once per machine" in the paragraph above was also only
+half true until #1101 — see "Where the waiting went" under `docs/notes/`.
+
+**The daemon can also wedge outright: every build on the box stalls at once,
+and the tell is idle CPU under minutes-old `rustc` processes** (2026-09-01,
+observed once). Three sessions' compiles — trivial, metadata-only crates
+among them — sat at 0% CPU for ten minutes while `sccache --show-stats`
+still answered; the proof it was wedged rather than slow was the stats
+themselves: `Compile requests executed` did not advance over a full minute
+on an idle machine. The cache was at its 10 GiB cap at the time, which may
+or may not be the cause. The remedy is the same as the stale-`TMPDIR` case
+above — `sccache --stop-server`, and the next `cargo` starts a fresh one —
+with the same caveat that other sessions' in-flight compiles die with it;
+when they are the stalled ones, that is a mercy, and cargo restarts them
+against the new daemon on its own. Diagnose before reaching for it:
+`cat /proc/loadavg` low, `ps -eo pid,stat,etime,%cpu,args | grep rustc`
+old and idle, and the executed count frozen between two
+`sccache --show-stats` reads a minute apart.
+
 ## Working in a shared git tree
 
 These matter regardless of where work is tracked
@@ -2798,6 +2945,91 @@ saying nothing. Before committing, check `git status --short` for `??`
 lines under your paths; if there are any, `git add` those exact paths first,
 then `git commit --only <paths>` as usual. Never `git add -A` — the tree is
 shared.
+
+**What Postio actually implements against the RFCs lives in
+`docs/rfc-compliance.md`**, and a verdict there changes in the same commit as
+`crates/postio-model/tests/rfc5322.rs` — the point of having both is that
+neither can drift alone. #462 wrote the RFC 5322 section; #680, #681 and #682
+have sections to add to rather than a format to invent.
+
+Two things from that pass are worth knowing before touching the parser or the
+generator, because both look like bugs and are not:
+
+- **`postio_model::address::parse_list` is not an RFC 5322 parser and must not
+  become one.** It parses what a person types into a composer field, on every
+  keystroke, where the text is mid-edit far more often than it is finished —
+  so it accepts an unterminated `<`, treats `;` as a separator, and keeps a
+  half-typed address rather than dropping it. Received mail never goes through
+  it; that is `mime::addresses`, which is `mail-parser`. Making the composer
+  strict would make it reject text somebody is still typing.
+- **A decoded header value can contain CR and LF, and that is the parser
+  behaving correctly.** RFC 2047 encodes octets, `=0D=0A` is two of them, and
+  unfolding cannot remove them because they were never folding whitespace.
+  Anything that writes such a value back into a header has to say what it does
+  about that. #864 is what happened when nothing did: replying to
+  `encoded-word-crlf-in-header.eml` generated a `Bcc` header the draft never
+  set. `outgoing::header_text` now folds such a break into a single space —
+  what unfolding a legitimately folded header produces — rather than refusing,
+  because the value arrives from somebody else's message and refusing would
+  hand its sender a veto over replying at all.
+
+**A worktree holds one session, and the guard is what makes that true.**
+#412. `issue-claim.sh` takes an atomic lock and refuses to adopt an existing
+worktree — but both checks live *inside the script*, so a session that reached
+a worktree any other way was subject to neither: told to work an issue
+directly, a path pasted from an earlier transcript, a resumed session whose
+worktree had been released and recreated. Two sessions edited
+`crates/postio-index/src/index.rs` for four minutes; one removed a field the
+other's tests depended on, and the tests went red in a worktree whose owner had
+not caused it. Nothing said so — it was noticed only because an untracked test
+file appeared in `git status` describing a design decision nobody there had
+made.
+
+So the check moved to `.claude/hooks/guard-shared-tree.py`, the one place that
+sees every command every session runs, however it got there. The claim is
+stamped in the worktree's own git directory (`.git/worktrees/issue-N/`), which
+is outside the working tree — so it cannot appear in `git status`, be staged by
+an `add -A`, or need a `.gitignore` line, and it disappears with the worktree
+when `issue-release.sh` removes it.
+
+Three things about it are worth knowing before changing it:
+
+- **It is a lease, not a lock.** The owner refreshes it as it works and it
+  frees itself after 45 minutes of silence. A lock would be correct and
+  unusable: a session that dies holding one leaves a worktree nobody can take,
+  and the first person that happened to would export `POSTIO_GUARD=off` and
+  never unset it. The lease is long because a session that has backgrounded
+  `issue-land.sh --full` and is waiting for the notification runs no commands
+  for twenty minutes, and taking its worktree then is the bug wearing a fix.
+- **Being *in* the worktree is enough; reaching *into* it needs a write.**
+  They are not the same act. A session whose commands run there is working
+  there. A session naming the path from its own tree is usually reading it —
+  `/lanes` is built on exactly that — so the reach-in half asks for a writing
+  verb as well. Refusing `git -C <peer> log` would refuse the tool sessions are
+  told to use to find out who else is here.
+- **It fails open with no session id**, which is what lets the hook be run by
+  hand and by its own tests without arbitrating between sessions that do not
+  exist.
+
+**Making a guard's answer load-bearing in a new direction re-prices every
+weakness in how it computes that answer.** #889, an hour after #412. Before
+#412, `cd_destination` misreading a `cd` inside a quoted string could only
+*grant* the worktree exemption, so a commit message that mentioned one made
+the guard more permissive on a command that was going to run in the shared
+tree anyway — invisible in practice, and its docstring said it stripped
+heredocs and said nothing about quotes. #412 made the same function decide a
+*refusal*, and it immediately refused a `gh issue comment` whose body quoted
+the command that had just been refused. Twice.
+
+The fix is worth knowing precisely, because the obvious one is wrong:
+`strip_quoted` on the whole command blanks quoted *arguments*, and
+`cd '<worktree>' && cargo fmt --all` is a correct invocation the suite already
+covers — it would be left with an empty target. What matters is whether the
+`cd` **keyword** sits inside a quoted span, never whether its argument does.
+The same pass taught the reach-in path scan to skip quoted spans, which costs
+a real miss (`rm -rf "<worktree>"` with the path quoted) and is the right way
+round: that half is defence in depth behind the cwd rule, which quoting cannot
+hide from.
 
 **Git history was rewritten in place once, before any remote existed**, with
 `git filter-repo --replace-text` to scrub personal addresses from every
@@ -3043,8 +3275,10 @@ The consequence was not subtle: `MessageRepository::delete` removes a
 message's row and deliberately does *not* touch its blobs, because the
 schema delegates reclamation to the sweep, so **deleting mail freed nothing,
 ever**. The worst case needs no user at all — a `UIDVALIDITY` reset wipes and
-re-syncs a whole mailbox, orphaning every blob in it at once. They are wired
-now from `postio_app::reclaim_disk`, beside the body-index catch-up.
+re-syncs a whole mailbox, orphaning every blob in it at once. All three are
+wired now from `postio_app::reclaim_disk`, beside the body-index catch-up —
+the first two by #416, `evict_to_fit` by #862, which had to invent the caller
+*and* the ceiling it reads.
 
 This is the **third recorded instance** of the same shape, after
 `MailBackend::list_mailboxes` (no production caller for the life of the
@@ -3057,6 +3291,50 @@ way, so the suite gives no signal at all. The tests that catch this class live
 at the far end, in `crates/postio-app/tests/app_suite/`, and assert *"a store
 this application opened has had X done to it"* rather than *"X works"*.
 
+**And `scripts/checks/check-uncalled-pub-fn.py` now catches it before a
+person has to (#421).** Run against the commit before #327 it names
+`index_body`; against the commit before #416 it names all three sweeps. It
+counts *names*, not resolved types — a call through `dyn MailBackend` still
+writes `backend.list_mailboxes(...)`, so the name is what a caller leaves
+behind, and the cost of two functions sharing one name is a false negative
+rather than the false positive that would get the check switched off.
+
+Two things it must keep getting right, because getting either wrong
+reproduces the bug exactly:
+
+- **Doc comments are not calls.** All three failures were thoroughly
+  documented, and `collect_garbage` was named in three doc comments as *the*
+  mechanism that prevents leaks. Comments and string literals are blanked
+  before anything is counted.
+- **Tests are not calls.** `tests/`, `benches/`, `examples/` and every
+  `#[cfg(test)]` item come out of the caller side. All three had passing
+  tests the whole time; that is the entire point.
+
+It carries a **baseline**, not an allow-list. The check arrived long after
+the code, and about a hundred `pub fn` on `main` have no in-workspace caller
+— mostly ordinary public API, some not. A hundred invented reasons is how an
+allow-list gets silenced wholesale, so the existing set is recorded as debt in
+`uncalled-pub-fn-baseline.txt` and the check guards the derivative: becoming
+uncalled *today* fails, on the day it is cheap. The list is verified in both
+directions — an entry that has gained a caller, or lost its definition, also
+fails — so it can only shrink and cannot rot into a list of things that used
+to be true.
+
+`evict_to_fit` was the one baseline entry whose reason was known: #416 scoped
+it out on purpose, because it needed a `[storage] max_bytes` to read before
+anything could call it. #862 wired it — `postio_session::enforce_storage_ceiling`,
+spawned from `postio_app::reclaim_disk` behind the two free sweeps — and its
+line is gone from the baseline, which is the only way a line there may leave.
+
+**A setting that parses and does nothing is its own failure mode.** The other
+two sweeps leaked; this one did not, which is exactly why it sat uncalled for
+longer. `[storage] max_bytes` deserialized, validated, round-tripped through
+an unknown-key test and was compared against by `StorageConfig::is_over` —
+every layer green — while nothing anywhere read it. A user who set a ceiling
+had stopped worrying about their disk on the strength of a value that reached
+no code. When judging whether an uncalled `pub fn` is urgent, "it only fails
+silently" is not the mitigating half of the sentence.
+
 **The grace period is load-bearing, and a test that shortens it tests nothing.**
 `GarbageCollection::min_age` (one hour, `postio_session::BLOB_GRACE_PERIOD`)
 exists because a blob is written *before* the row that references it is
@@ -3068,283 +3346,46 @@ test passed `Duration::ZERO`-adjacent timing, failed, and the failure *was* the
 grace period working. Injecting a shorter period would have made it pass while
 exercising a configuration that never ships.
 
-## A slow query whose SQL is fast is measuring the machine (#500)
+## Dated entries, one file each
 
-A search the readout timed at **3.8 s** replayed at **15 ms** — the same
-three statements, the same term, on a copy of the same store. Nothing was
-wrong with the plan; everything was wrong around it. The chain, longest
-lever first:
+Everything below this line used to be appended here, and two sessions
+appending in one day conflicted on every rebase (#1130). Each entry is now
+its own file under `docs/notes/`, named by date and title; a new entry is a
+new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
+note that is not listed, and a listing that names no file.
 
-1. **The body catch-up was an infinite loop.** `index_body` deliberately
-   wrote no row for a textless body, so an attachment-only message (a DMARC
-   report, an image) never left `messages_missing_body_text`'s candidate
-   set. The store had 654 of them — more than one 200-message batch — so
-   `index_local_bodies` re-selected the same batch for ever: a core at 100%
-   for as long as the app ran, a stream of ungated autocommit writes, and a
-   full-table candidate probe per pass evicting the page cache the search
-   needed. Found not by any test but by `top -H` on the live process and
-   `gdb -p <tid>` on the hot thread, which is the first thing to reach for
-   when a *read* is slow while the SQL is provably fast.
-2. **The replay lied because `cp` warms the cache.** Copying the store to
-   probe it pages the whole file into the OS cache, so the replay measured
-   warm reads while the app was reading cold, on a machine at full swap
-   from parallel builds. A later replay under real load reproduced seconds.
-3. **Benches on tmpfs cannot see any of this.** `test_support::memory()`
-   lives on `/dev/shm` and plain `tempdir()` lands on `/tmp`, tmpfs on the
-   reference platform — WAL exists but disk I/O does not, so no write
-   pressure there can ever slow a read. `search_under_load.rs` builds its
-   corpus under `CARGO_TARGET_TMPDIR` (inside `target/`, a real filesystem)
-   for exactly this reason; anything measuring I/O contention must do the
-   same.
-
-The structural fixes, so the shape cannot come back: a textless body writes
-an **empty index row** — "tried, nothing there" and "never tried" are now
-different states; the catch-up **refuses a batch identical to the last one**,
-so no future regression can spin it; batches commit **once, behind a
-Background write-gate permit**, with the blob reads phased before the
-transaction and a breather after it. On the read side the box runs **one
-search in flight at a time** (`Live::settled` is the release valve a failed
-run must call) and the debounce is sized to typing cadence, so a slow store
-is never asked five questions for one word.
-
-## Encrypting the store, and the things it made visible (2026-08-28, #610/#300)
-
-Bodies moved out of the blob store into compressed `messages` columns
-(ADR 0020) and the database became SQLCipher (ADR 0014) in one pass. The
-encryption itself was uneventful. What it *exposed* was not, and most of it
-had been latent for months.
-
-### `exit()` does not stop threads, and now that matters
-
-`Engine::spawn` started a thread and dropped its `JoinHandle`, so nothing
-could wait for it even in principle. The application then leaked each engine
-on the reasoning — written in the code — that "dropping it at exit would stop
-the engine a moment before the process ends anyway".
-
-That was true until the store was encrypted. `exit()` runs the process's exit
-handlers and then kills it; every page the sync thread writes now goes through
-libcrypto, and libcrypto is torn down by those handlers:
-
-```
-thread A: exit() -> __run_exit_handlers -> (libcrypto goes away)
-thread B: sqlcipher_page_cipher -> walWriteOneFrame
-          -> sqlite3PagerCommitPhaseOne -> SyncStateRepository::observe
-```
-
-A coredump, not a theory: `postio-app --test e2e` every run, the engine tests
-about one in six, and the application whenever somebody quit mid-sync. No mail
-is lost — a torn WAL frame is what recovery is for — but the process dies on
-the way out.
-
-**A detached thread that writes to the store is a bug now, whatever it looks
-like locally.** `Engine` keeps its handle and is joined: `Drop` for the
-ordinary case, `Engine::stop` for the handles the application holds for the
-whole session, `stop_retained` called by `run` once the GTK loop returns. The
-wait is bounded at five seconds and gives up saying so, because the last handle
-usually goes on the main loop and a shutdown that blocks it on a stalled
-network read is a worse bug than the one being fixed.
-
-`postio-storage` also asks libcrypto not to register its `atexit` handler.
-That is belt to those braces and **does not stand alone** — with a system
-libcrypto the DSO is finalized regardless, which is how the remaining crashes
-were traced back to the thread rather than the flag.
-
-### `cipher_memory_security` is a correctness setting, not a tuning knob
-
-ADR 0014 lists it as the second performance lever after `cache_size`. It is
-not: with it on, Postio segfaults inside a WAL write. The feature `mprotect`s
-SQLCipher's internal buffers `PROT_NONE` between uses, and this application
-always has two connections writing at once — the sync engine committing a pass
-while the UI writes a flag is the ordinary state, and the whole reason
-`WriteGate` exists. One connection shields a page another is mid-cipher on.
-
-Off, permanently, and issued before `PRAGMA key` because SQLCipher wants it
-there.
-
-### `PRAGMA key` cannot fail, so something must read a page
-
-SQLCipher accepts any key and only discovers a wrong one when a page will not
-decrypt — surfacing later, elsewhere, as `SQLITE_NOTADB`: *"file is not a
-database"*. That sentence reaches a screen (#404), and it tells somebody their
-mail is corrupt when it is intact and merely locked. `configure` reads page 1
-immediately and turns the failure into `Error::WrongStoreKey`.
-
-### mmap is gone, and the memory story improved
-
-`PRAGMA mmap_size` is meaningless over encrypted pages — SQLCipher decrypts
-each one into the page cache, so there is no version of "the file is the
-buffer". Removing it moved memory out of the file-backed half: that row used
-to grow 83 → 167 MiB with mailbox size and is now flat at ~121 MiB of shared
-libraries, and resident total at 100k messages went from 215 MiB to 177 MiB.
-
-### Measuring an encrypted store: three traps, all of which caught us
-
-1. **A stale binary measures an error screen.** After isolating a cost by
-   patching out `PRAGMA key`, `target/release/postio` was still the plaintext
-   build; it could not open the freshly-encrypted stores, so the first memory
-   run measured a store that never opened — and "flat memory" looked entirely
-   plausible. **Verify the store opened before believing any number from it.**
-2. **The startup passes are a transient.** Anonymous memory peaks well above
-   the settled figure — 86 MiB against 55 MiB on a 400k store — while the
-   body-index catch-up and the dictionary trainer run. Sampling at ten seconds
-   measures that and calls it the baseline. Wait 45 s.
-3. **Two data points cannot show a bound.** 1k → 100k rises; it takes a third
-   point at 400k, where it does not move at all, to show the shape is the page
-   cache filling rather than the mailbox loading.
-
-**Attribute cost to the cipher by measuring, not by reasoning.** Patching out
-`PRAGMA key` in `db::configure` and re-running the same bench against an
-equivalent plaintext store takes two minutes and settles it. Done that way:
-encryption costs ~5% on the unified page, ~22% on startup — and is *not* why
-the unified page is over budget (#619) or why startup drifted (#636). Without
-the isolation the cipher would have worn both.
-
-### The gates that nothing runs
-
-Four bench regressions (#619, #622, #636, #638) and a licence drift (#639)
-were all found by hand in one session, and they share a cause: `cargo bench`
-is not in the steward loop and `cargo deny` was in no gate at all. `deny.toml`
-had been a policy in the sense that a sign is a policy, while three crates
-declared `GPL-3.0-or-later` in an MIT workspace and stayed green.
-
-`check.sh` now runs `deny.toml` (`check-dependency-policy.py`). Benches
-deliberately did **not** get a `--no-run` gate: `cargo clippy --all-targets`,
-which `issue-land.sh` already runs, compiles them — verified by breaking one
-and watching `--all-targets` catch it and a plain `cargo check` miss it. None
-of the four failures were compile errors anyway. Only *running* them catches
-those, which CLAUDE.md already asks of the reconcile pass.
-
-### The vendored OpenSSL costs more than the ADR priced
-
-ADR 0014 prices `bundled-sqlcipher-vendored-openssl` as "the heaviest new
-compile in the graph", absorbed by sccache. That covers compiling OpenSSL and
-not *configuring* it: `Configure` is a perl program, Fedora splits the perl
-standard library into packages, and getting it to run took six of them plus
-twenty-two transitive, discovered one build failure at a time as
-`Can't locate X.pm in @INC` inside a cargo build script. There is no
-`perl-core` metapackage in the Fedora 44 repos; the definitive list comes from
-grepping `use` statements out of the extracted OpenSSL source. They are in the
-README's system deps now.
-
-The `bundled-sqlcipher` + system-libcrypto variant the ADR records as its
-alternative needs none of that and built first time. The one thing vendoring
-genuinely buys is that a statically linked libcrypto has no DSO to finalize at
-exit — belt to the engine join above, not load-bearing now that the join
-exists.
-
-## Cross-platform dependencies and what a Linux box can prove (2026-08-28, #642)
-
-`main` spent a day unbuildable on Linux because a macOS dependency section
-swallowed fifteen entries of `postio-imap`'s `[dependencies]` (#642). The
-diff looked tidy — `security-framework` sorts between
-`rustls-platform-verifier` and `secrecy`, so it read as an alphabetical
-insert — and a TOML table runs until the next header, so everything below it
-became macOS-only. On Linux the crate lost `postio-model`, `tokio`, `serde`
-and twelve more, and produced 219 errors.
-
-Nothing caught it because nothing built it: CI is `workflow_dispatch`-only and
-the reconcile pass had not run since it landed.
-
-Postio is one workspace targeting Linux and macOS (ADR 0019), so this class
-recurs by construction. **A Linux box cannot build or test the macOS half**,
-which is true and is also where the reasoning usually stops. It can do rather
-more than nothing. Three layers, cheapest first:
-
-### 1. Placement, enforced (every machine, instant)
-
-`check-target-sections-last.py`: a `[target.'cfg(...)'...]` table must come
-after every plain `[dependencies]`, `[build-dependencies]` and
-`[dev-dependencies]` table. Platform sections live at the foot of the
-manifest.
-
-This is a placement rule, not a correctness proof, and the distinction is
-worth keeping straight: TOML has no notion of a table somebody *meant* to keep
-going, so the swallowing is not detectable. The position that makes it
-possible is. **A platform section at the foot of the file cannot swallow
-anything, because there is nothing below it to swallow.**
-
-### 2. Cross type-checking, as far as the C dependencies allow
-
-`scripts/cross-check.sh [triple]` runs `cargo check --target` over every
-workspace member. Measured on this workstation against
-`aarch64-apple-darwin`:
-
-| | |
-|---|---|
-| **6 checked** | postio-model, postio-config, postio-core, postio-body, postio-search, postio-ui |
-| **12 skipped** | everything else |
-
-Every skip is a **C build script** wanting a cross-toolchain this machine has
-not got — `ring` (via rustls), `zstd-sys` and `openssl-sys` (postio-storage),
-the GTK sys crates. Never Rust. The script reports `skipped` separately from
-`FAILED` for exactly that reason: a crate whose C dependency would not build
-taught us nothing about its Rust, and saying "ok" there would be a lie.
-
-The six are not a consolation prize. `postio-config` is where Apple's
-directory layout lives, and `postio-ui` is ADR 0019's shared frontend logic —
-the two crates most likely to carry macOS-only code that a Linux build never
-compiles. Verified by planting `#[cfg(target_os = "macos")]` code that calls a
-function that does not exist: `cargo check -p postio-config` reports **0
-errors**, and `cross-check.sh` reports `FAILED postio-config` with the missing
-function named.
-
-Setup, once — it is a large download and deliberately not in `mise.toml`:
-
-```sh
-rustup target add --toolchain "$(rustup show active-toolchain | cut -d' ' -f1)" \
-  aarch64-apple-darwin
-```
-
-Not wired into `check.sh`: it compiles a second copy of the dependency graph,
-which is minutes on a cold target directory, and `check.sh` runs on every land
-across every session. It belongs in CI and in the reconcile pass.
-
-**The skipped twelve could shrink.** `cargo-zigbuild` supplies a cross
-compiler that can build C for Apple targets, which would bring `ring`,
-`zstd-sys` and `openssl-sys` into reach for `cargo check`. Not tried; worth it
-if the macOS port grows and this layer starts feeling thin.
-
-### 3. A macOS runner, for everything else
-
-Linking, the Apple frameworks, `security-framework` actually resolving, the
-Swift half, and **running any test at all**. There is no substitute and no
-approximation. Whatever CI eventually looks like, a macOS job is what the
-other twelve crates get.
-
-### The rule of thumb
-
-Each layer catches a strictly cheaper class than the one below it, and the top
-two run on any developer's machine. When adding a platform-conditional
-anything, the question is not "can I test this here" — usually no — but "which
-of these three is the cheapest thing that would have caught me getting it
-wrong". For #642 it was the first, and it costs milliseconds.
-
-## Six types are called *Scope*, and they answer four questions (2026-08-28, #670)
-
-Before adding a seventh, or before reading a `scope` field and assuming you
-know what it holds: the word is heavily overloaded in this workspace, and the
-overloads are all legitimate — they are genuinely different questions that
-happen to want the same English word.
-
-| Type | Home | Question |
-|---|---|---|
-| `AccountScope` (re-exported as `postio_core::state::Scope`) | `postio-model` | **Which accounts?** `Unified` or one account. #186 moved it down here from `postio_core::state` so search and the list could not disagree; its doc comment is the best short argument in the tree for moving a type down a crate. |
-| `postio_search::facets::Scope` | `postio-search` | **Which slice does a search look at?** `AllMail` / `Inbox` / `Lists` — the canvas's standing, no-typing rescope. Not a mailbox id, deliberately. |
-| `ListScope` | `postio-model` (was `postio-runtime::store`) | **Which messages is this view showing?** `Mailbox` / `Account` / `Flagged` / `Snoozed` / `Thread`. What the message list is paged over. |
-| `ViewScope` | `postio-core::state` | **What is a whole-view selection relative to?** `Mailbox` / `Flagged` only, because `Ctrl+A` is not a gesture inside a thread and nothing needs a `Snoozed` predicate yet. |
-| `FeedScope` | *deleted by #670* | Was `postio-gtk`'s own spelling of `ListScope`. |
-| `ScopeFfi` | `postio-ffi` | Not a question — the uniffi ABI mirror of `ListScope`, with `i64` fields. A wire format, the way `ExtCommand` is the owned counterpart of `CommandSpec`. |
-
-**The pair worth understanding is `ListScope` and `ViewScope`**, because they
-look like one type spelled twice and are not. `ViewScope` is the *result of a
-rule* applied to a `ListScope` — `postio_core::aim::view_scope` — and its
-smaller variant set is the point: a `ViewScope` that cannot be constructed
-from a thread drill-in is what makes "no whole-view gesture inside a
-conversation" a compiler check rather than a conformance table two frontends
-have to keep passing. Collapsing them into one type with a predicate would be
-one type fewer and a strictly weaker guarantee.
-
-**The rule of thumb.** A new `*Scope` is warranted when it answers a question
-none of the above asks, and it belongs in the lowest crate that all its
-readers share — which #186 and #670 both discovered the same way, by finding
-a second crate that needed the same value and could not reach it.
+- 2026-08-25 — [A slow query whose SQL is fast is measuring the machine (#500)](notes/2026-08-25-a-slow-query-whose-sql-is-fast-is-measuring-the-machine.md)
+- 2026-08-28 — [Encrypting the store, and the things it made visible (2026-08-28, #610/#300)](notes/2026-08-28-encrypting-the-store-and-the-things-it-made-visible.md)
+- 2026-08-28 — [Cross-platform dependencies and what a Linux box can prove (2026-08-28, #642)](notes/2026-08-28-cross-platform-dependencies-and-what-a-linux-box-can-prove.md)
+- 2026-08-28 — [Six types are called *Scope*, and they answer four questions (2026-08-28, #670)](notes/2026-08-28-six-types-are-called-scope-and-they-answer-four-questions.md)
+- 2026-09-02 — [A grouped list cannot insert at the top (2026-09-02, #185)](notes/2026-09-02-a-grouped-list-cannot-insert-at-the-top.md)
+- 2026-08-28 — [Two compile caches, because neither can do the other's job (2026-08-28, #736)](notes/2026-08-28-two-compile-caches-because-neither-can-do-the-other-s-job.md)
+- 2026-09-01 — [mold looked like a memory win over lld and was not, once measured correctly (2026-09-01)](notes/2026-09-01-mold-looked-like-a-memory-win-over-lld-and-was-not-once-meas.md)
+- 2026-08-28 — [An event with no consumer is a feature that does not exist (2026-08-28, #396)](notes/2026-08-28-an-event-with-no-consumer-is-a-feature-that-does-not-exist.md)
+- 2026-08-25 — [A nested subquery comparand costs the index key — and `count(*)` hides it (#746)](notes/2026-08-25-a-nested-subquery-comparand-costs-the-index-key-and-count-hi.md)
+- 2026-09-01 — [An intermittent SQLCipher `PRAGMA key` failure that would not reproduce on demand (2026-09-01, #710/#699)](notes/2026-09-01-an-intermittent-sqlcipher-pragma-key-failure-that-would-not.md)
+- 2026-09-02 — [Green meant "the things I named" (2026-09-02, #419)](notes/2026-09-02-green-meant-the-things-i-named.md)
+- 2026-09-02 — [Wayland is the target, so X11 must not be the thing CI proves (2026-09-02, #830)](notes/2026-09-02-wayland-is-the-target-so-x11-must-not-be-the-thing-ci-proves.md)
+- 2026-09-02 — [Adding a crate is the edit the per-crate gate cannot describe (2026-09-02, #585)](notes/2026-09-02-adding-a-crate-is-the-edit-the-per-crate-gate-cannot-describ.md)
+- 2026-09-02 — [An assertion about who did the work is not an assertion about the work (2026-09-02, #851)](notes/2026-09-02-an-assertion-about-who-did-the-work-is-not-an-assertion-abou.md)
+- 2026-09-02 — [A signal handler on a process-global object is an immortal reference (2026-09-02, #794)](notes/2026-09-02-a-signal-handler-on-a-process-global-object-is-an-immortal-r.md)
+- 2026-09-02 — [Three cycles, and why fixing them one at a time looked like no fix (2026-09-02, #794)](notes/2026-09-02-three-cycles-and-why-fixing-them-one-at-a-time-looked-like-n.md)
+- 2026-09-03 — [Teardown that is too eager is its own crash (2026-09-03, #794)](notes/2026-09-03-teardown-that-is-too-eager-is-its-own-crash.md)
+- 2026-09-03 — [A budget you can only time is a budget nobody enforces (2026-09-03, #100)](notes/2026-09-03-a-budget-you-can-only-time-is-a-budget-nobody-enforces.md)
+- 2026-09-03 — [A window with a pending resize has no picture, forever (2026-09-03, #809)](notes/2026-09-03-a-window-with-a-pending-resize-has-no-picture-forever.md)
+- 2026-09-03 — [Two read-clocks, and the judgement that was duplicated (2026-09-03, #945/#797)](notes/2026-09-03-two-read-clocks-and-the-judgement-that-was-duplicated.md)
+- 2026-08-25 — [`SettingsPanel::build()` and a one-run `gtk_suite` pass proves nothing (#873, #880, #881)](notes/2026-08-25-settingspanel-build-and-a-one-run-gtk-suite-pass-proves-noth.md)
+- 2026-09-03 — [`debug = "line-tables-only"` was still most of the binary (2026-09-03)](notes/2026-09-03-debug-line-tables-only-was-still-most-of-the-binary.md)
+- 2026-09-03 — [cargo-hakari cannot be adopted here, and the reason is the boundary check (2026-09-03)](notes/2026-09-03-cargo-hakari-cannot-be-adopted-here-and-the-reason-is-the-bo.md)
+- 2026-09-03 — [mold is wired in, for memory -- and `-fuse-ld` order is why it took three tries (2026-09-03)](notes/2026-09-03-mold-is-wired-in-for-memory-and-fuse-ld-order-is-why-it-took.md)
+- 2026-09-03 — [The vendored OpenSSL is perl, not C, and no compiler cache can help (2026-09-03)](notes/2026-09-03-the-vendored-openssl-is-perl-not-c-and-no-compiler-cache-can.md)
+- 2026-09-03 — [Four build-time tips that did not survive being measured (2026-09-03)](notes/2026-09-03-four-build-time-tips-that-did-not-survive-being-measured.md)
+- 2026-09-03 — [The compile cache was full, and had been for a long time (2026-09-03)](notes/2026-09-03-the-compile-cache-was-full-and-had-been-for-a-long-time.md)
+- 2026-09-03 — [The CI cache was the wrong shape, not cold (2026-09-03)](notes/2026-09-03-the-ci-cache-was-the-wrong-shape-not-cold.md)
+- 2026-09-04 — [`connect_action` cannot see `j` (2026-09-04, #288)](notes/2026-09-04-connect-action-cannot-see-j.md)
+- 2026-09-04 — [The page size has to be chosen before #300, and 8192 is the answer (2026-09-04, #381)](notes/2026-09-04-the-page-size-has-to-be-chosen-before-300-and-8192-is-the-an.md)
+- 2026-09-04 — [A pragma that writes must not be in the per-connection batch (2026-09-04, #381)](notes/2026-09-04-a-pragma-that-writes-must-not-be-in-the-per-connection-batch.md)
+- 2026-09-04 — [Append-only registries conflict every time, and never resolve by hunk (2026-09-04, #1000/#1048)](notes/2026-09-04-append-only-registries-conflict-every-time-and-never-resolve.md)
+- 2026-09-04 — [A `TempDir` returned last drops first (2026-09-04, #724)](notes/2026-09-04-a-tempdir-returned-last-drops-first.md)
+- 2026-09-04 — [`Window::reader()` is not the reader on screen (2026-09-04, #1030)](notes/2026-09-04-window-reader-is-not-the-reader-on-screen.md)
+- 2026-09-04 — [Where the waiting went, and three things that were not what they seemed (2026-09-04, #1101/#1102/#1104)](notes/2026-09-04-where-the-waiting-went-and-three-things-that-were-not-what-t.md)

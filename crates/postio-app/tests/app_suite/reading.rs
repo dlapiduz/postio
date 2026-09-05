@@ -16,6 +16,12 @@
 //! opens a socket, and this never calls it. A body that has not been fetched
 //! simply does not draw.
 //!
+//! Runs in the Flagged view since #755, for `cursor_preview.rs`'s reason: a
+//! folder row is a conversation now and opens the conversation pane, and
+//! what this file constrains — the single reader, its chips, the parts tree
+//! behind them — lives on single-message rows. The fixture flags every
+//! message so the view holds them all.
+//!
 //! One test function, for the reason `wiring.rs` gives.
 
 #![allow(unsafe_code)]
@@ -23,6 +29,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -33,17 +40,13 @@ use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    settle_for(std::time::Duration::from_secs(10), done)
-}
-
 /// As [`settle_until`], with a deadline of your own.
 ///
 /// The generous default is right when the next thing to happen is the thing
 /// being waited for. It is wrong when the wait is a *probe* — asking whether
 /// this row has attachments — because every miss then costs the full budget.
 fn settle_for(budget: std::time::Duration, done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + budget;
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(budget);
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
@@ -60,7 +63,7 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -72,11 +75,45 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    // Every message but the newest flagged, before anything is wired: the
+    // Flagged view is where rows are genuinely single messages (see the
+    // module comment). The newest is left out because the folder view the
+    // window opens on has already reported it — its row *is* that message —
+    // and the cursor's dedup would then swallow the Flagged view's own
+    // first report, leaving the pane unfilled.
+    let flagged_total: u32 = {
+        let connection = database.connection().expect("a connection");
+        connection
+            .execute(
+                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                [],
+            )
+            .expect("the fixture writes");
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("a count")
+    };
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+    let wiring = Wiring::new(
+        database.clone(),
+        blobs,
+        bridge.handle(),
+        sink,
+        bridge.commands(),
+    );
 
     let window = Window::default();
     window.present();
@@ -84,12 +121,25 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
 
     // ── the same call `run` makes ───────────────────────────────────────
     let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let _ = &wired;
 
+    // Into the Flagged view, the way the sidebar's row would take it — but
+    // only after the sidebar's own default pick has landed: the folder list
+    // loads asynchronously and picking the default folder is what it does
+    // on arrival, which would stomp a scope opened before it. Then wait for
+    // the swap itself, because the model keeps the folder's rows until the
+    // Flagged page answers.
     let list = window.list();
     assert!(
         settle_until(|| list.model().n_items() > 0),
-        "the list is empty, so there is nothing to open"
+        "the opening folder never filled, so no scope can be left"
+    );
+    wired
+        .feeds
+        .messages
+        .open(postio_model::ListScope::Flagged(report.account.id));
+    assert!(
+        settle_until(|| list.model().n_items() == flagged_total),
+        "the Flagged view never filled, so there is nothing to open"
     );
 
     // ── the pane starts on the autoselected row (#601) ──────────────────
@@ -97,7 +147,7 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
     // about the row the window happened to open on.
     assert!(
         settle_until(|| window.reading()),
-        "the window opened with a row under the cursor and an empty pane"
+        "the view opened with a row under the cursor and an empty pane"
     );
     window.clear_reader();
     assert!(!window.reading(), "the pane was just cleared");

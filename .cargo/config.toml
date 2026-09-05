@@ -1,16 +1,23 @@
 # Several Claude sessions build this workspace at the same time, on one
-# machine, sharing one target directory.
+# machine.
 #
 # Cargo defaults to one job per core. Four concurrent sessions on eight cores
-# therefore ask for ~32 parallel compile jobs, and linking postio-app pulls in
-# the whole GTK and WebKit stack — seven `rust-lld` processes at ~210 MB each
-# were once resident together, with 150 MB of 15 GB free. Nothing was slow;
-# everything was starved, and the machine spent its time in btrfs and dm-crypt
-# kworkers servicing the swap that followed.
+# therefore asked for ~32 parallel compile jobs, and linking postio-app pulls
+# in the whole GTK and WebKit stack -- seven `rust-lld` processes at ~210 MB
+# each were once resident together, with 150 MB of 15 GB free. Nothing was
+# slow; everything was starved, and the machine spent its time in btrfs and
+# dm-crypt kworkers servicing the swap that followed. `jobs = 2` was the
+# answer, and it cost the common case: measured over every session's
+# transcript, ONE session was building 60% of the time and two 26%, so six
+# cores sat idle most of the day (#1104).
 #
-# Two jobs per session leaves the box responsive with four sessions running.
-# Raise it when you are the only one building — `cargo build -j8`, or set
-# CARGO_BUILD_JOBS, both of which override this.
+# The real limit is now a machine-wide jobserver -- `scripts/jobserver.sh`,
+# a fifo of N tokens every cargo on the box draws from, named by MAKEFLAGS
+# (which .claude/settings.json exports for every session and the repo
+# scripts export for themselves). Cargo ignores `jobs` while it has one, so
+# a lone session gets the whole box and four sessions share one ceiling.
+# This value is the fallback for a cargo with no fifo to join -- it warns
+# and uses this -- and it is the same conservative number as before.
 [build]
 jobs = 2
 # One compile cache for the whole machine, in every worktree, without every
@@ -23,6 +30,19 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # WebKit and SQLite is where the resident set spikes, so keep the linker's own
 # parallelism modest too.
 #
+# `--threads=4`, raised from 2, because the thing that made 2 necessary is
+# gone. The peak this defends against is proportional to what the linker has
+# to hold, and `[profile.dev]` in the root Cargo.toml now strips debug info
+# rather than merging it: measured on `app_suite`, that is 162 MB of DWARF
+# per binary that the linker no longer reads, out of 232 MB. The isolated
+# link step was already only ~1.1 GB RSS when it was last measured against
+# mold (docs/engineering-notes.md, 2026-09-01), which is not pressure on this
+# box; with the DWARF gone there is headroom to spend on threads.
+#
+# Still capped rather than left to lld's default of one thread per core:
+# `jobs = 2` means two links can be in flight per session, several sessions
+# share the machine, and an uncapped linker would multiply out again.
+#
 # Scoped to one triple deliberately, and it is *not* an oversight the way the
 # runner below was (#551). `-Wl,--threads=2` is a linker flag whose support
 # depends on the binutils on the box, not on the target: GNU ld only learned
@@ -30,8 +50,29 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # would trade a memory-pressure tuning for a link that fails outright. It is a
 # comfort setting for the machine this is developed on; the runner is a
 # correctness one.
+#
+# A bare program name, not `scripts/linker.sh`, and the difference is the
+# whole compile cache (#1101). Cargo resolves a config-relative path per
+# worktree, so this used to reach rustc as
+# `-C linker=/home/.../postio-worktrees/issue-N/scripts/linker.sh` -- a
+# different string in every tree. sccache hashes that argument and cargo
+# folds it into its fingerprints, so the "machine-wide" cache hit 1.1% of
+# the time and a `target/` copied from a sibling rebuilt everything. A name
+# is identical everywhere; `scripts/install-shims.sh` puts a copy of
+# `scripts/linker.sh` on PATH under it, and the claim, land and test scripts
+# run that before every build. A box that never ran any of them gets
+# `error: linker \`postio-linker\` not found`, which names the fix.
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,--threads=2"]
+linker = "postio-linker"
+rustflags = [
+    # `gcc` and not the default `gnu-lld-cc`, because the default is what
+    # makes `linker` above unable to choose: rustc appends its own `-B` and
+    # `-fuse-ld=lld` after anything the script passes, so mold is silently
+    # ignored and LLD links the binary anyway. `scripts/linker.sh` puts lld
+    # back itself when mold is absent, so nothing is lost on a box without it.
+    "-C", "linker-flavor=gcc",
+    "-C", "link-arg=-Wl,--threads=4",
+]
 
 # Every test binary on **every Linux target** runs on a compositor of its own,
 # so `cargo test` is headless by default and nobody has to remember a wrapper.
@@ -81,3 +122,21 @@ runner = "scripts/headless-runner.sh"
 # a box with no sccache, where cargo runs rustc directly.
 [env]
 TMPDIR = { value = "target/tmp", relative = true }
+# The C half of the compile cache. `rustc-wrapper` above covers only rustc;
+# the C compiler inside the openssl-src, libsqlite3-sys and zstd-sys build
+# scripts is invoked by make/cc directly and never saw a cache — 77% of a
+# fresh worktree's postio-storage build was uncached C (#736), which ADR 0014
+# had priced as "absorbed by sccache". The wrapper fronts **ccache**, not
+# sccache: openssl-src builds inside each target dir and sccache cannot
+# normalize the paths out of the hash, so it never hits across worktrees —
+# measured, see the wrapper. Same fail-open shape as the rustc wrapper: no
+# ccache on the box and the script is exactly `cc`. Cargo's [env] never
+# overrides an environment variable that is already set, so an exported CC
+# still wins, the way an exported RUSTC_WRAPPER does above.
+#
+# A bare name for the same reason as `linker` above: the `cc` crate emits
+# `rerun-if-env-changed=CC`, so a per-worktree path here reran every C build
+# script (OpenSSL, SQLCipher, zstd) in every new tree, seeded or not.
+# `scripts/install-shims.sh` installs `scripts/cc-wrapper.sh` under this
+# name. #1101.
+CC = "postio-cc"

@@ -5,7 +5,7 @@
 //! nothing checks is a rule that lasts until the next person adds a `?message`
 //! to a `tracing` call because it would have been convenient that once.
 //!
-//! So this drives the sync path — the engine, `postio-sync`, `postio-imap` and
+//! So this drives the sync path — the engine, `postio-sync`, `postio-account` and
 //! `postio-storage`, which are the crates message content actually flows
 //! through — with a subscriber capturing **everything at `TRACE`**, and then
 //! looks for the store's own subjects, previews and sender addresses in what
@@ -29,7 +29,7 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use postio_imap::backend::{MockBackend, MockMailbox, MockMessage};
+use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
 use postio_model::MailboxRole;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{ListQuery, MessageRepository};
@@ -152,7 +152,11 @@ fn no_message_content_reaches_the_log_at_any_level() {
     let secrets = content_of(&database, report.account.id);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (sink, _events) = postio_core::bridge::event_channel();
 
     let engine = Engine::spawn(EngineParts {
@@ -161,8 +165,8 @@ fn no_message_content_reaches_the_log_at_any_level() {
         blobs,
         backend: Arc::new(server()),
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-        tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-            postio_imap::secret::MemorySecretStore::default(),
+        tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+            postio_account::secret::MemorySecretStore::default(),
         ))),
         events: sink,
         retry: Default::default(),

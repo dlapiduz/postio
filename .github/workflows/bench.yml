@@ -10,13 +10,9 @@ name: Benches
 # something no one is blocked on. workflow_dispatch is there for when you have
 # just touched a bench and want to know now.
 #
-# PAUSED 2026-08-25: same reason as ci.yml -- a daily run still spends this
-# private repo's limited free minutes every day, whether anyone benched
-# anything or not. workflow_dispatch-only until the repo is public. Restore
-# by uncommenting the schedule below.
 on:
-  # schedule:
-  #   - cron: "0 6 * * *"
+  schedule:
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -41,6 +37,12 @@ jobs:
       # rust-toolchain.toml, which is the bug #38 is about.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc`; this puts
+      # them on PATH (#1101). Before the first cargo invocation, after rustup
+      # has made `$CARGO_HOME/bin` exist.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       # The cache key has to name the compiler. It no longer moves on its own
       # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as

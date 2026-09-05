@@ -75,6 +75,17 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
 ///
+/// **`auto_vacuum` is deliberately not here, though it was.** It belongs to
+/// the database rather than to a connection, and setting it is a *write*: on
+/// an existing store `PRAGMA auto_vacuum = INCREMENTAL` is a no-op that
+/// still takes the write lock to decide so. In this batch, every reader
+/// checked out during an open write transaction blocked on it for the whole
+/// `busy_timeout` — the one property this list exists to provide, inverted,
+/// deterministically, five seconds at a time.
+/// `a_read_proceeds_while_a_write_transaction_is_open` is what caught it.
+/// [`configure`] sets it instead, on a database whose schema is still empty,
+/// which the probe it already runs answers for free. #381.
+///
 /// **`PRAGMA key` is not here.** It has to be the first statement on the
 /// connection, before anything reads a page, so [`configure`] issues it ahead
 /// of this batch — see there.
@@ -225,11 +236,32 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
     // that proves the key: one page, already in cache for everything after it.
     // A brand-new database has no page 1 yet and answers 0 rows, which is a
     // successful read and not a wrong key.
-    connection
+    let objects = connection
         .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
             row.get::<_, i64>(0)
         })
         .map_err(|_| Error::WrongStoreKey)?;
+
+    // `auto_vacuum` on a database that has nothing in it yet, which is the
+    // only moment SQLite will take it: it is a header field, and after the
+    // first table exists the only way to change it is a full `VACUUM`
+    // (`Database::adopt_incremental_vacuum`). The probe above has just told
+    // us which case this is, for free.
+    //
+    // **Only when the answer is zero**, and that is the whole point. Setting
+    // this pragma is a *write*: on a populated store it is a documented
+    // no-op that still takes the write lock to decide so, and issued
+    // unconditionally in `PRAGMAS` it made every reader checked out during
+    // an open write transaction block for the full `busy_timeout` — the one
+    // property that batch exists to provide, inverted, deterministically,
+    // five seconds at a time. A database with no schema in it has no writer
+    // to contend with, so here it is free. #381.
+    //
+    // Before `PRAGMAS`, because `journal_mode = WAL` writes the header and
+    // SQLite will not move `auto_vacuum` afterwards.
+    if objects == 0 {
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
+    }
 
     // `execute_batch` rather than `pragma_update`: several of these return the
     // value they were set to, which `pragma_update` treats as an error.
@@ -260,6 +292,12 @@ pub struct AppliedPragmas {
     pub cache_size: i64,
     /// `busy_timeout`, in milliseconds.
     pub busy_timeout: i64,
+    /// `auto_vacuum`: `0` NONE, `1` FULL, `2` INCREMENTAL.
+    ///
+    /// A property of the database rather than of the connection — every
+    /// connection to one store reads the same value — and here anyway,
+    /// because this is where a caller looks to find out what is in force.
+    pub auto_vacuum: i64,
 }
 
 /// Reads back the pragmas in force on `connection`.
@@ -273,6 +311,7 @@ pub fn read_pragmas(connection: &Connection) -> Result<AppliedPragmas> {
         mmap_size: scalar(connection, "PRAGMA mmap_size")?,
         cache_size: scalar(connection, "PRAGMA cache_size")?,
         busy_timeout: scalar(connection, "PRAGMA busy_timeout")?,
+        auto_vacuum: scalar(connection, "PRAGMA auto_vacuum")?,
     })
 }
 
@@ -328,20 +367,26 @@ impl Location {
     }
 }
 
-/// Which kind of writer is asking for SQLite's write lock.
+/// Which kind of caller is asking — for SQLite's write lock ([`WriteGate`]),
+/// or for a connection out of the [`Pool`] itself (#672).
 ///
-/// See [`WriteGate`] for why the distinction has to exist at all.
+/// One enum for both: they are the same distinction — "is a person waiting
+/// on this, right now" — applied to two different contended resources, and a
+/// caller declares it once rather than choosing a name per resource. See
+/// [`WriteGate`] and [`Pool::get_interactive`] for why each has to exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePriority {
-    /// A write a person is waiting for: a flag, an archive, a draft autosave.
+    /// Work a person is waiting for: a flag, an archive, a draft autosave, a
+    /// reading-pane body.
     ///
     /// Always goes ahead of [`WritePriority::Background`], and waits only for
     /// a background unit already in progress.
     Interactive,
-    /// Bulk work nobody is watching: a sync pass writing a batch of headers.
+    /// Bulk work nobody is watching: a sync pass writing a batch of headers,
+    /// or reading one to sync it.
     ///
-    /// Yields to any interactive writer that is waiting, *before* taking the
-    /// lock rather than after — which is the whole point.
+    /// Yields to any interactive caller that is waiting, *before* taking the
+    /// lock or the connection rather than after — which is the whole point.
     Background,
 }
 
@@ -563,6 +608,12 @@ struct State {
     /// with the pool and never handed out.
     /// Never read: holding it open is the whole job.
     _keeper: Option<Connection>,
+    /// Callers blocked in [`Pool::get_interactive`] right now.
+    ///
+    /// Counted *before* waiting, mirroring [`GateState::interactive_waiting`]
+    /// — what lets a background checkout see them and stand aside rather than
+    /// taking a connection out from under them (#672).
+    interactive_waiting: usize,
 }
 
 impl Pool {
@@ -592,6 +643,7 @@ impl Pool {
                     idle: Vec::new(),
                     live: 0,
                     _keeper: keeper,
+                    interactive_waiting: 0,
                 }),
                 returned: Condvar::new(),
                 write_gate: WriteGate::new(),
@@ -602,31 +654,95 @@ impl Pool {
 
     /// Checks a connection out, waiting if every one is already in use.
     ///
-    /// The connection goes back to the pool when the guard is dropped.
+    /// The connection goes back to the pool when the guard is dropped. What
+    /// #425 found for SQLite's write lock is just as true of the pool itself:
+    /// this is background priority, so it stands aside for a queued
+    /// [`Pool::get_interactive`] caller rather than racing it for a slot —
+    /// see that method, and #672.
     ///
     /// # Errors
     ///
     /// Only if a *new* connection has to be opened and SQLite refuses.
     pub fn get(&self) -> Result<PooledConnection> {
+        self.checkout(WritePriority::Background)
+    }
+
+    /// [`Pool::get`], ahead of background work already queued for a
+    /// connection.
+    ///
+    /// # The problem this exists for (#672)
+    ///
+    /// [`WriteGate`] (#425) arbitrates who holds SQLite's write lock next, but
+    /// every caller still reaches it through the same undifferentiated
+    /// [`Pool::get`] first — including a first sync's lanes, held for as long
+    /// as each mailbox takes to backfill. A person clicking a message for its
+    /// body, or an interactive write taking its connection before its permit,
+    /// waited on the same first-come queue as that backfill with no priority
+    /// at all: exactly the "mechanism 1" #425's own investigation named and
+    /// then never actually ruled out, because the reproduction that settled
+    /// on the write lock happened to run with the pool almost idle.
+    ///
+    /// # What it guarantees
+    ///
+    /// A background checkout never *takes* an idle connection while an
+    /// interactive checkout is waiting for one — it stands aside until none
+    /// is, the same rule [`WriteGate::acquire`] applies to the lock. Opening a
+    /// *new* connection under `max_connections` is never gated: that costs
+    /// the interactive caller nothing, since it could open one the same way.
+    /// Interactive callers are human-paced, so — as with the write gate —
+    /// background work is not starved by them in any real workload.
+    ///
+    /// # Errors
+    ///
+    /// Only if a *new* connection has to be opened and SQLite refuses.
+    pub fn get_interactive(&self) -> Result<PooledConnection> {
+        self.checkout(WritePriority::Interactive)
+    }
+
+    /// Whether a [`Pool::get_interactive`] caller is waiting for a connection
+    /// right now — the pool's analogue of [`WriteGate::interactive_is_waiting`],
+    /// for a test to establish arrival order without a stopwatch.
+    pub fn interactive_is_waiting(&self) -> bool {
+        self.lock().interactive_waiting > 0
+    }
+
+    fn checkout(&self, priority: WritePriority) -> Result<PooledConnection> {
         let mut state = self.lock();
+        if priority == WritePriority::Interactive {
+            state.interactive_waiting += 1;
+        }
         loop {
-            if let Some(connection) = state.idle.pop() {
-                return Ok(self.guard(connection));
-            }
-            if state.live < self.inner.max_connections {
-                // Count it before releasing the lock, so two callers racing here
-                // cannot both decide there is room for one more.
-                state.live += 1;
-                drop(state);
-                return match self.inner.location.open(&self.inner.key) {
-                    Ok(connection) => Ok(self.guard(connection)),
-                    Err(error) => {
-                        self.lock().live -= 1;
-                        // Someone may be waiting on the slot this failure freed.
-                        self.inner.returned.notify_one();
-                        Err(error)
+            // A background caller yields an available connection to a queued
+            // interactive one rather than taking it — see `get_interactive`.
+            let yields_to_interactive =
+                priority == WritePriority::Background && state.interactive_waiting > 0;
+            if !yields_to_interactive {
+                if let Some(connection) = state.idle.pop() {
+                    if priority == WritePriority::Interactive {
+                        state.interactive_waiting -= 1;
                     }
-                };
+                    return Ok(self.guard(connection));
+                }
+                if state.live < self.inner.max_connections {
+                    // Count it before releasing the lock, so two callers
+                    // racing here cannot both decide there is room for one
+                    // more.
+                    state.live += 1;
+                    if priority == WritePriority::Interactive {
+                        state.interactive_waiting -= 1;
+                    }
+                    drop(state);
+                    return match self.inner.location.open(&self.inner.key) {
+                        Ok(connection) => Ok(self.guard(connection)),
+                        Err(error) => {
+                            self.lock().live -= 1;
+                            // Someone may be waiting on the slot this failure
+                            // freed.
+                            self.inner.returned.notify_all();
+                            Err(error)
+                        }
+                    };
+                }
             }
             state = self
                 .inner
@@ -755,7 +871,13 @@ impl Drop for PooledConnection {
         }
 
         drop(state);
-        self.inner.returned.notify_one();
+        // `notify_all`, not `notify_one`: a background waiter can wake, see an
+        // interactive one is queued, and go back to sleep without taking the
+        // connection (`Pool::checkout`) — the same reason `WritePermit::drop`
+        // does not use `notify_one` either. Waking only one arbitrary waiter
+        // can wake exactly that thread and leave the connection idle with the
+        // interactive caller still parked (#672).
+        self.inner.returned.notify_all();
     }
 }
 
@@ -780,7 +902,7 @@ impl Database {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::error::Error::Io) if the parent directory cannot be created, or any error
+    /// [`Error::Io`] if the parent directory cannot be created, or any error
     /// [`migrate`](crate::migrate) can return.
     /// `key` is the database subkey — `StoreKey::derive(Purpose::Database)` —
     /// and it is not optional. ADR 0014 rules out a plaintext fallback, so
@@ -885,6 +1007,13 @@ impl Database {
         self.pool.get()
     }
 
+    /// [`Database::connection`], ahead of background work already queued for
+    /// one — see [`Pool::get_interactive`]. What a read a person is waiting
+    /// on (a reading-pane body, a search) should check out with.
+    pub fn connection_interactive(&self) -> Result<PooledConnection> {
+        self.pool.get_interactive()
+    }
+
     /// The connection pool, for handing to a worker.
     pub fn pool(&self) -> &Pool {
         &self.pool
@@ -899,9 +1028,13 @@ impl Database {
     /// background work. What every user-initiated write should use.
     ///
     /// The connection is taken first and the permit second, which is the
-    /// ordering [`WriteGate`] requires of every caller.
+    /// ordering [`WriteGate`] requires of every caller. Taken via
+    /// [`Database::connection_interactive`] rather than [`Database::connection`]
+    /// so the checkout itself, not only the lock behind it, gets priority
+    /// (#672) — a permit held while still waiting on the ordinary pool queue
+    /// would be an interactive write that still stalls on plain exhaustion.
     pub fn interactive_write(&self) -> Result<(PooledConnection, WritePermit)> {
-        let connection = self.connection()?;
+        let connection = self.connection_interactive()?;
         let permit = self.write_gate().acquire(WritePriority::Interactive);
         Ok((connection, permit))
     }
@@ -926,4 +1059,57 @@ impl Database {
         self.connection()?.execute_batch("PRAGMA optimize")?;
         Ok(())
     }
+
+    /// Hand pages the store no longer needs back to the filesystem. Answers
+    /// how many went.
+    ///
+    /// Cheap and interruptible — `PRAGMA incremental_vacuum` moves free
+    /// pages off the end of the file and stops when the freelist is empty —
+    /// so unlike `VACUUM` it does not rewrite the database and does not need
+    /// room for a second copy of it. On a store with nothing to give back it
+    /// is a single query answering zero.
+    ///
+    /// Answers `0` on a store that has never been converted, because the
+    /// pragma has nothing to work with there. See
+    /// [`adopt_incremental_vacuum`](Self::adopt_incremental_vacuum).
+    pub fn reclaim_free_pages(&self) -> Result<u64> {
+        let connection = self.connection()?;
+        let before = free_pages(&connection)?;
+        connection.execute_batch("PRAGMA incremental_vacuum")?;
+        let after = free_pages(&connection)?;
+        Ok(before.saturating_sub(after))
+    }
+
+    /// Convert a store written before `auto_vacuum` was chosen. Answers
+    /// whether it had to.
+    ///
+    /// `auto_vacuum` lives in the database header and SQLite will only
+    /// change it on a database with no tables in it — or through a `VACUUM`,
+    /// which rewrites every page and is therefore minutes on a mailbox and
+    /// needs room for a second copy. So this is a one-time cost, paid off
+    /// the startup path, and it answers `false` immediately on every store
+    /// that has already had it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Sqlite`] if the `VACUUM` cannot run — most likely because
+    /// another connection is mid-transaction, which is recoverable: nothing
+    /// has changed and the next start tries again.
+    pub fn adopt_incremental_vacuum(&self) -> Result<bool> {
+        let connection = self.connection()?;
+        if scalar(&connection, "PRAGMA auto_vacuum")? == AUTO_VACUUM_INCREMENTAL {
+            return Ok(false);
+        }
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+        Ok(true)
+    }
+}
+
+/// `auto_vacuum = INCREMENTAL`, as SQLite numbers the modes.
+const AUTO_VACUUM_INCREMENTAL: i64 = 2;
+
+/// How many pages are on the freelist right now.
+fn free_pages(connection: &Connection) -> Result<u64> {
+    let count: i64 = connection.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+    Ok(count.max(0) as u64)
 }

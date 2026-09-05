@@ -10,9 +10,11 @@
 //! (`from:`, `has:attach`, `is:unread`, …); parsing it belongs to
 //! `postio-search`, so this layer keeps it as text.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-use crate::{Config, Extras};
+use crate::{Config, ConfigError, Extras, Result};
 
 /// One entry of `[filters]`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -49,10 +51,10 @@ impl Config {
     /// Save `query` as a new pinned filter, named from the query text.
     ///
     /// This is `Ctrl+S`'s write path (issue #10): the caller still has to
-    /// call [`Config::save_to_path`] afterward, the same as any other
-    /// programmatic edit -- this only touches the in-memory table. Returns
-    /// the key the filter was stored under, since the name is derived rather
-    /// than chosen and a caller updating a sidebar needs to know it.
+    /// call [`patch_filters`] afterward, the same as any other programmatic
+    /// edit -- this only touches the in-memory table. Returns the key the
+    /// filter was stored under, since the name is derived rather than chosen
+    /// and a caller updating a sidebar needs to know it.
     pub fn save_filter(&mut self, query: &str) -> String {
         let key = self.unique_filter_key(query);
         self.filters.insert(
@@ -92,6 +94,16 @@ impl Config {
     /// Remove `key`'s saved search entirely. Returns whether it existed.
     pub fn delete_filter(&mut self, key: &str) -> bool {
         self.filters.remove(key).is_some()
+    }
+
+    /// Show or hide `key`'s saved search in the sidebar, without touching
+    /// its query or its place among the others. Returns whether it existed.
+    pub fn set_filter_pinned(&mut self, key: &str, pinned: bool) -> bool {
+        let Some(filter) = self.filters.get_mut(key) else {
+            return false;
+        };
+        filter.pinned = pinned;
+        true
     }
 
     /// Every *pinned* filter's key, in the order the sidebar shows them:
@@ -167,6 +179,54 @@ impl Config {
             .find(|candidate| !self.filters.contains_key(candidate))
             .expect("an unbounded counter always finds a free key")
     }
+}
+
+/// Rewrites `text`'s `[filters.*]` tables to match `filters`, leaving every
+/// other line — other sections, comments, layout — untouched.
+///
+/// [`Config::to_toml_string`] reserializes the *whole* file and cannot make
+/// that promise (see its own doc comment: unknown keys survive, but there is
+/// no promise about layout). This is the settings panel's structured filters
+/// pane's write path (#869): it uses `toml_edit`'s format-preserving document
+/// model and only ever touches the one table that pane is allowed to own,
+/// so a hand-written comment on `[ui]` or `[sync]` survives an edit made
+/// here exactly as the raw-text editor already promised it would.
+///
+/// The one thing this cannot preserve is a comment attached to a *specific*
+/// filter entry that changed — the whole `[filters]` table is regenerated
+/// from `filters` on every call, not diffed key by key. Saved searches are
+/// not the kind of TOML a person hand-annotates the way `[ui]`/`[sync]` are,
+/// so that tradeoff is deliberate rather than an oversight.
+pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Result<String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ConfigError::parse(None, &err))?;
+    doc.as_table_mut().remove("filters");
+
+    // An empty map still serializes as a bare `[filters]` header (`toml`
+    // has no other spelling for "a table with no keys"), which would
+    // reintroduce exactly the dangling header this is meant to avoid — so
+    // the empty case skips serialization entirely rather than trusting the
+    // fragment's text to say so.
+    if !filters.is_empty() {
+        let fragment = toml::to_string(&FiltersOnly { filters })
+            .map_err(|err| ConfigError::Serialize(err.to_string()))?;
+        let fragment_doc = fragment
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|err| ConfigError::parse(None, &err))?;
+        if let Some(item) = fragment_doc.as_table().get("filters") {
+            doc.as_table_mut().insert("filters", item.clone());
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// Serializes as just `[filters.<key>]` tables, with no other section —
+/// [`patch_filters`]'s bridge from `toml`'s serde-derived output (which
+/// `FilterConfig` already has) to a fragment `toml_edit` can splice in.
+#[derive(Serialize)]
+struct FiltersOnly<'a> {
+    filters: &'a BTreeMap<String, FilterConfig>,
 }
 
 /// Which way [`Config::move_filter`] should walk a saved search.
@@ -409,6 +469,82 @@ mod tests {
         }
     }
     // -- Acceptance: `account:` survives the config file (#186) -------------
+
+    // -- Acceptance: pin/unpin from the settings panel (#869) --------------
+
+    #[test]
+    fn set_filter_pinned_toggles_an_existing_filter_and_says_whether_it_existed() {
+        let mut config = Config::default();
+        let key = config.save_filter("is:unread");
+        assert!(config.filters[&key].pinned, "save_filter pins on creation");
+
+        assert!(config.set_filter_pinned(&key, false));
+        assert!(!config.filters[&key].pinned);
+
+        assert!(config.set_filter_pinned(&key, true));
+        assert!(config.filters[&key].pinned);
+
+        assert!(!config.set_filter_pinned("does-not-exist", true));
+    }
+
+    // -- Acceptance: the settings panel patches [filters] only (#869) ------
+
+    #[test]
+    fn patch_filters_rewrites_only_the_filters_table_leaving_everything_else_verbatim() {
+        let original = "\
+# a hand-written comment nobody wants to lose
+[ui]
+theme = \"dark\" # inline comment, also not to be lost
+
+[filters.old]
+query = \"is:unread\"
+pinned = true
+";
+        let mut config = Config::from_toml_str(original).expect("parses");
+        config.rename_filter("old", "Unread");
+
+        let patched = patch_filters(original, &config.filters).expect("patches");
+
+        assert!(
+            patched.contains("# a hand-written comment nobody wants to lose"),
+            "a comment outside [filters] must survive verbatim: {patched}"
+        );
+        assert!(
+            patched.contains("theme = \"dark\" # inline comment, also not to be lost"),
+            "an unrelated section's own formatting must survive verbatim: {patched}"
+        );
+
+        let reparsed = Config::from_toml_str(&patched).expect("still parses");
+        assert_eq!(reparsed.filters["old"].name.as_deref(), Some("Unread"));
+        assert_eq!(reparsed.ui.theme, config.ui.theme);
+    }
+
+    #[test]
+    fn patch_filters_removes_the_table_entirely_once_the_last_filter_is_deleted() {
+        let original = "[filters.old]\nquery = \"is:unread\"\npinned = true\n";
+        let mut config = Config::from_toml_str(original).expect("parses");
+        config.delete_filter("old");
+
+        let patched = patch_filters(original, &config.filters).expect("patches");
+        assert!(
+            !patched.contains("[filters"),
+            "no filters left means no dangling [filters] header: {patched}"
+        );
+    }
+
+    #[test]
+    fn patch_filters_adds_the_table_when_it_did_not_exist_before() {
+        let original = "[ui]\ntheme = \"dark\"\n";
+        let mut config = Config::from_toml_str(original).expect("parses");
+        config.save_filter("is:flagged");
+
+        let patched = patch_filters(original, &config.filters).expect("patches");
+        assert!(patched.contains("[filters."));
+        assert!(patched.contains("theme = \"dark\""));
+
+        let reparsed = Config::from_toml_str(&patched).expect("still parses");
+        assert_eq!(reparsed.filters.len(), 1);
+    }
 
     #[test]
     fn an_account_scoped_query_round_trips_through_the_config_file() {

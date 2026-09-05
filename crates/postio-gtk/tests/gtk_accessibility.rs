@@ -224,7 +224,7 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     unsafe { std::env::set_var("GTK_A11Y", "test") };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -283,7 +283,22 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
     // from the cascade, its height would not move at all and the text would
     // simply overflow it.
     let settings = gtk::Settings::default().expect("a settings object");
-    let normal = settings.gtk_xft_dpi();
+    // Anchored rather than read-and-doubled. A headless compositor has no
+    // font configuration, so GTK reports `gtk-xft-dpi` unset and doubling
+    // that is not a DPI -- it panics with "invalid or out of range". The test
+    // passed for years only where a real desktop had configured one, which is
+    // every developer's machine and no CI runner; it began failing the moment
+    // CI got a compositor of its own (#794) rather than skipping for want of
+    // a display.
+    //
+    // 96 dpi in 1024ths is GTK's own default, so the ratio asserted below
+    // means the same thing wherever this runs.
+    let normal = match settings.gtk_xft_dpi() {
+        configured if configured > 0 => configured,
+        _ => 96 * 1024,
+    };
+    settings.set_gtk_xft_dpi(normal);
+    pump();
     let row_height = |window: &Window| {
         let tallest = std::cell::Cell::new(0.0f32);
         window
@@ -473,22 +488,6 @@ fn surfaces() -> Vec<Surface> {
             },
             shown: |window| window.parts().is_visible(),
             close: |window| window.close_parts(),
-        },
-        Surface {
-            name: "a thread drilled into",
-            open: |window| {
-                // The cursor is what `t` drills into, so put it somewhere
-                // first — reaching past it into the model would test a path
-                // no keystroke takes.
-                window.list().first_row();
-                let row = window
-                    .list()
-                    .cursor_row()
-                    .expect("the list has rows, so it has a cursor row");
-                window.open_thread(&row);
-            },
-            shown: |window| window.thread_open(),
-            close: |window| window.close_thread(),
         },
         Surface {
             name: "the composer",

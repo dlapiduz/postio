@@ -134,7 +134,7 @@ const fn ctx(contexts: &'static [Context]) -> ContextSet {
 
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
-const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::Reader];
+const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Conversation, Context::Reader];
 /// `MESSAGE_SURFACES` plus the composer.
 ///
 /// Reply, reply-all and forward have to *resolve* while a draft is already
@@ -145,14 +145,34 @@ const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::
 /// silent.
 const REPLY_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Composer,
 ];
+/// The three panes bare Tab cycles between, and only those.
+///
+/// Deliberately not `LIST_SURFACES`: `Search` is in that one, and the search
+/// field owns Tab for its refine chips. A cycle that resolved there would
+/// take Tab away from a pane that is using it (#494).
+const PANE_SURFACES: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Conversation,
+    Context::Reader,
+];
+
 /// The surfaces that scroll through a list of messages.
+/// Where extending a *row* selection means something.
+///
+/// [`LIST_SURFACES`] minus the conversation pane. Inside a conversation the
+/// keyboard is walking one thread's messages, not a list of threads, so
+/// there is nothing for `J`/`K` to extend — which is exactly what frees them
+/// for the walk itself (#1007).
+const SELECTION_SURFACES: &[Context] = &[Context::List, Context::Reader, Context::Search];
+
 const LIST_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Search,
 ];
@@ -212,7 +232,7 @@ static SPECS: &[CommandSpec] = &[
         // vim-style open, and both reach the same command.
         default_binding: "Return",
         alternate_bindings: &["l", "Right"],
-        contexts: ctx(&[Context::List, Context::Thread, Context::Search]),
+        contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -236,7 +256,11 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection down",
         default_binding: "J",
         alternate_bindings: &["shift+Down"],
-        contexts: ctx(LIST_SURFACES),
+        // `LIST_SURFACES` minus the conversation: `J` walks the open
+        // conversation's messages there (#1007), and there is no row
+        // selection to extend while the keyboard is inside the pane.
+        // `shift+Down` still reaches this everywhere it ever did.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -246,7 +270,8 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection up",
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
-        contexts: ctx(LIST_SURFACES),
+        // See `ExtendSelectionDown`.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -283,41 +308,6 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
-        id: CommandId::Thread,
-        title: "Show thread",
-        default_binding: "t",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::List, Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadUnread,
-        title: "Unread only",
-        // `u` is Undo and `U` is Mark unread in every message surface
-        // including this one -- both taken before this command exists, so
-        // neither is available to it.
-        default_binding: "n",
-        alternate_bindings: &[],
-        // Only meaningful with a thread column on screen: there is nothing
-        // else in the application this filter could apply to.
-        contexts: ctx(&[Context::Thread]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadOrder,
-        title: "Toggle order",
-        default_binding: "o",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Thread]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
         id: CommandId::ToggleResultOrder,
         // The same title and key as the thread's own toggle, deliberately:
         // "the order of what I am looking at" is one idea, and `o` means it
@@ -331,6 +321,80 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     // -- Message actions -------------------------------------------------
+    CommandSpec {
+        id: CommandId::NextInConversation,
+        title: "Next message in conversation",
+        // Shifted `j`, because it is the same verb one level in: `j` walks
+        // the list of conversations, `J` walks the messages of the one that
+        // is open. The pair `a`/`A` already means "this, and this whole
+        // thread" -- the shift is the level, not a different action.
+        default_binding: "J",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::PrevInConversation,
+        title: "Previous message in conversation",
+        default_binding: "K",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleFold,
+        title: "Fold or unfold this message",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        // How much of a conversation is open is view state, not durable
+        // data -- nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ViewOriginal,
+        title: "View original",
+        // `mod+o`, not a bare letter: it is a rare gesture on a surface
+        // where every bare letter is already a verb people use constantly,
+        // and reader view is the default rather than something to escape.
+        //
+        // `mod`, not a literal `ctrl` -- the canvas writes it `C-o`, which
+        // means the primary accelerator, and that is Command on a Mac (#669).
+        // A literal `ctrl` here would also break the invariant
+        // `platform_bindings.rs` checks: that the two tables differ nowhere
+        // *but* the primary modifier.
+        default_binding: "mod+o",
+        alternate_bindings: &[],
+        // Wherever a message is drawn. A no-op when nothing is reduced, so
+        // it costs nothing to offer everywhere mail is read rather than
+        // making the key's meaning depend on what happens to be on screen.
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ExpandAll,
+        title: "Expand all",
+        // `o` was the drill-in column's order toggle until #1003 retired it,
+        // which is what makes this letter available. Shifted, because it acts
+        // on the whole conversation -- the same relationship `a`/`A` already
+        // has between a message and its thread.
+        default_binding: "O",
+        alternate_bindings: &[],
+        // Only where there is a conversation to expand. Offering it on the
+        // list would be a key that does nothing most of the time.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
     CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
@@ -551,6 +615,35 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::MarkSent,
+        title: "Mark as sent",
+        // #674 called for palette-only, and this table cannot: PRODUCT.md §8
+        // says every command is reachable by keyboard, and
+        // `command_registry.rs` asserts it. So it gets a real binding.
+        //
+        // `mod+shift+m` for "mark", not the `mod+shift+s` this first took:
+        // that one is spoken for in the List context by an extension in
+        // `gtk_extension_commands.rs`, and a built-in quietly winning a key
+        // an extension asked for is a conflict that shows up as the
+        // extension's binding vanishing from the palette rather than as an
+        // error. #495's landing caught it.
+        default_binding: "mod+shift+m",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It settles a question rather than destroying anything: the mail is
+        // either already delivered or it is not, and this changes only what
+        // Postio claims to know.
+        destructive: false,
+        // #674 asked for `Undo`. An inverse would have to be a second
+        // registry command -- with its own binding, under PRODUCT.md §8 --
+        // invented for something no user reaches for. And undo is the wrong
+        // instrument: this settles a claim about the world rather than
+        // changing it, so the correction for a wrong answer is to send the
+        // message again, which is a real act. See `Actions::mark_sent`.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::AttachFile,
         title: "Attach file…",
         default_binding: "mod+shift+a",
@@ -649,7 +742,15 @@ static SPECS: &[CommandSpec] = &[
         title: "Undo",
         default_binding: "u",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // Plus the account list. #464 built account removal as a soft delete
+        // with a toast wired straight to AccountRepository::restore rather
+        // than through the global stack, and said so because Remove was not a
+        // command then. Registering it with Recovery::Undo makes that a
+        // declaration, and a declaration nothing backs from the keyboard is
+        // what ADR 0005 keeps refusing to ship -- so `u` reaches the toast
+        // while it is up. Context-local state, context-local binding; the
+        // global stack is untouched (ADR 0005 Q6c).
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -733,6 +834,34 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g f",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::CyclePane,
+        title: "Next pane",
+        // The top-level meaning of bare Tab, which had none: it was not a
+        // command at all, so what it did was whatever GTK's native focus
+        // chain produced -- "sometimes it changes panes, sometimes it
+        // changes items within a pane" (#494).
+        //
+        // Rebindable like everything else here. The panes that own Tab for
+        // their own purpose keep first claim on it: they are not in
+        // `PANE_SURFACES`, so this never resolves there.
+        default_binding: "tab",
+        alternate_bindings: &[],
+        contexts: ctx(PANE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::CyclePaneBack,
+        title: "Previous pane",
+        default_binding: "shift+tab",
+        alternate_bindings: &[],
+        contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -829,6 +958,66 @@ static SPECS: &[CommandSpec] = &[
         // so like `DiscardDraft` this asks first rather than offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleAccountEnabled,
+        title: "Enable or disable account",
+        default_binding: "Return",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // Pressing it again is the reversal, so there is nothing for the undo
+        // stack to hold (ADR 0005 Q6c).
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::RemoveAccount,
+        title: "Remove account",
+        default_binding: "d",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: true,
+        // Unlike DeleteSavedSearch, which is a config edit with no undo stack
+        // to reach: #464 built removal as a soft delete with a toast wired to
+        // AccountRepository::restore, and reaped at the next start. So there
+        // is something to undo for as long as the toast is up, and declaring
+        // it here is what the registry enforces a keyboard path for.
+        recovery: Recovery::Undo,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::UpdateCredential,
+        title: "Update account credential",
+        // `c` for credential. ADR 0005 Q6c wanted this one palette-only, on
+        // the grounds that "ten commands already have none" -- but none do,
+        // and PRODUCT.md §8 makes a shortcut a structural requirement that
+        // `every_command_has_an_id_a_title_and_a_default_binding` enforces.
+        // The ADR's actual point was discoverability, which the palette entry
+        // gives it either way; the exemption was the part resting on a wrong
+        // count. Nothing is shadowed: Compose's `c` is scoped to the message
+        // surfaces, and this context layers over Global alone.
+        default_binding: "c",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::RebuildAccountIndex,
+        title: "Rebuild search index",
+        // `r` for rebuild. Free within `Context::Accounts` -- the other three
+        // rows here use `Return`, `d` and `c`, and `Refresh`'s own `R` is
+        // scoped to the message surfaces, not this one.
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // Rewriting a derived table -- postio_session::reindex_account's own
+        // doc explains why there is nothing here for undo to reach.
+        recovery: Recovery::None,
         requires: None,
     },
     CommandSpec {
@@ -957,7 +1146,13 @@ static SPECS: &[CommandSpec] = &[
         // `ScrollReaderUp` for why the shifted form is its pair rather than
         // a binding of its own.
         alternate_bindings: &["space"],
-        contexts: ctx(MESSAGE_SURFACES),
+        // Not in the conversation pane, where `space` folds the focused
+        // message instead (canvas turn 8a, #1007). A real trade rather than
+        // a free one: a long message inside a stack loses its page-turn key
+        // and keeps `Page_Down`. The canvas is explicit, and folding is the
+        // gesture a stack is *for* -- scrolling is what the scrollbar and
+        // the wheel already do.
+        contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.
@@ -1028,6 +1223,33 @@ pub fn lookup_binding_on(
                 false => candidate == binding,
             }
         })
+    })
+}
+
+/// Whether rebinding `command` to `proposed` (already syntax-checked) would
+/// collide with another command's *currently effective* binding — default
+/// or override, whichever `bindings` resolves to — in a context the two
+/// share. `None` means the rebind is free to take everywhere `command`
+/// itself is reachable; `Some` names the command it would silently shadow
+/// (#881: the capture widget surfaces this rather than overwriting).
+///
+/// Scoped by context on purpose: two commands may validly share a binding
+/// in disjoint contexts (`a` archives in [`Context::List`], something else
+/// entirely in [`Context::Composer`]), the same reason `postio-ui`'s own
+/// `KeyContext::chain` keeps contexts from falling through into each other.
+pub fn binding_conflict(
+    command: CommandId,
+    proposed: &str,
+    bindings: &postio_config::KeyBindings,
+    platform: Platform,
+) -> Option<&'static CommandSpec> {
+    let mine = get(command);
+    let expanded = postio_config::keys::expand_mod(proposed, platform);
+    all().find(|other| {
+        other.id != command
+            && mine.contexts.intersects(other.contexts)
+            && bindings.binding_on(other.id.as_str(), platform).as_deref()
+                == Some(expanded.as_str())
     })
 }
 
@@ -1317,6 +1539,80 @@ mod tests {
         }
     }
 
+    // -- binding_conflict (#881) --------------------------------------------
+
+    #[test]
+    fn rebinding_over_another_commands_binding_in_a_shared_context_is_a_conflict() {
+        // Both are List/Thread/Reader/Search commands, so "k" (PrevMessage's
+        // own default) is a real collision if NextMessage claims it too.
+        let bindings = postio_config::KeyBindings::default();
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "k",
+            &bindings,
+            Platform::Freedesktop,
+        );
+        assert_eq!(conflict.map(|spec| spec.id), Some(CommandId::PrevMessage));
+    }
+
+    #[test]
+    fn the_same_binding_in_disjoint_contexts_is_not_a_conflict() {
+        // Bold is Composer-only; NextMessage never reaches there, so reusing
+        // Bold's own binding is not shadowing anything.
+        let bindings = postio_config::KeyBindings::default();
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "mod+b",
+            &bindings,
+            Platform::Freedesktop,
+        );
+        assert_eq!(conflict, None);
+    }
+
+    #[test]
+    fn a_binding_nothing_else_uses_is_not_a_conflict() {
+        let bindings = postio_config::KeyBindings::default();
+        let conflict = binding_conflict(
+            CommandId::NextMessage,
+            "ctrl+shift+9",
+            &bindings,
+            Platform::Freedesktop,
+        );
+        assert_eq!(conflict, None);
+    }
+
+    #[test]
+    fn the_check_sees_overrides_not_just_defaults() {
+        // PrevMessage's default is "k", but a rebind captured by an earlier
+        // session moved it to "p" -- the conflict check has to see the file's
+        // own state, not the built-in table.
+        let mut bindings = postio_config::KeyBindings::default();
+        bindings
+            .overrides_mut()
+            .insert(CommandId::PrevMessage.as_str().to_owned(), "p".to_owned());
+        assert_eq!(
+            binding_conflict(
+                CommandId::NextMessage,
+                "k",
+                &bindings,
+                Platform::Freedesktop
+            ),
+            None,
+            "k is free now that PrevMessage moved off it"
+        );
+        assert_eq!(
+            binding_conflict(
+                CommandId::NextMessage,
+                "p",
+                &bindings,
+                Platform::Freedesktop
+            )
+            .map(|spec| spec.id),
+            Some(CommandId::PrevMessage),
+            "p is where PrevMessage actually lives now"
+        );
+    }
+
     #[test]
     fn every_binding_in_the_table_is_one_the_resolver_can_parse() {
         // A default nobody can press is worse than no default: it silently
@@ -1348,6 +1644,44 @@ mod tests {
         );
         assert_eq!(lookup_binding(Context::Composer, "a"), None);
         assert_eq!(lookup_binding(Context::List, "ctrl+alt+q"), None);
+    }
+
+    #[test]
+    fn tab_cycles_the_panes_from_every_pane_it_cycles_through() {
+        // #494, reported directly: "tab, shift+tab, ctrl+tab are
+        // inconsistent, sometimes it changes panes, sometimes it changes
+        // items within a pane. I need an easy way to go from the sidebar to
+        // the message list to the preview pane."
+        //
+        // Bare Tab had no entry in the table at all, so its top-level meaning
+        // was whatever GTK's native focus chain happened to produce. A
+        // binding that resolves from the sidebar but not the reader would
+        // cycle you out and strand you, so every pane in the cycle is
+        // asserted rather than one of them.
+        for context in [
+            Context::Sidebar,
+            Context::List,
+            Context::Conversation,
+            Context::Reader,
+        ] {
+            assert_eq!(
+                lookup_binding(context, "tab").map(|spec| spec.id),
+                Some(CommandId::CyclePane),
+                "Tab does not cycle panes from {context:?}"
+            );
+            assert_eq!(
+                lookup_binding(context, "shift+tab").map(|spec| spec.id),
+                Some(CommandId::CyclePaneBack),
+                "Shift+Tab does not cycle back from {context:?}"
+            );
+        }
+
+        // The panes that own Tab for their own purpose keep it. A refine
+        // chip, a recipient-completion popover and the finder are all
+        // correctly consuming Tab, and #494 says so explicitly: those local
+        // overrides are legitimate and must not regress.
+        assert_eq!(lookup_binding(Context::Composer, "tab"), None);
+        assert_eq!(lookup_binding(Context::Search, "tab"), None);
     }
 
     #[test]

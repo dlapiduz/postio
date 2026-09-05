@@ -15,8 +15,10 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -25,22 +27,6 @@ use postio_model::{EmailAddress, Message, Thread};
 use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_storage::{Database, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 fn walk(widget: gtk::Widget, visit: &mut impl FnMut(&gtk::Widget)) {
     visit(&widget);
@@ -112,7 +98,7 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -160,8 +146,11 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs =
-        postio_storage::BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = postio_storage::BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
@@ -187,8 +176,8 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     list.first_row();
-    let cursor = list.cursor_row().expect("a row to drill into");
-    window.open_thread(&cursor);
+    let cursor = list.cursor_row().expect("a row to land on");
+    window.open_conversation(&cursor);
     assert!(
         settle_until(|| window.conversation().len() == 2),
         "opening the thread never filled the reading pane with the \
@@ -196,12 +185,12 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
     );
 
     let first_in_thread = window
-        .thread()
+        .conversation()
         .rows()
         .first()
-        .expect("the thread has a first row")
+        .expect("the conversation has a first message")
         .id;
-    let second_in_thread = window.thread().rows()[1].id;
+    let second_in_thread = window.conversation().rows()[1].id;
 
     // Both messages are unread, so both expand (well under the cap) and
     // both should be checkable.

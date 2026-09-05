@@ -21,15 +21,11 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "sync", "time
 tracing = "0.1"
 
 [dev-dependencies]
-criterion = "0.7.0"
+postio-test-support = { workspace = true }
 serde_json = "1.0.151"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
-
-[[bench]]
-name = "perf_budgets"
-harness = false
 
 [lints]
 workspace = true

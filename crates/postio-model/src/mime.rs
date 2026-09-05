@@ -37,7 +37,7 @@
 //!
 //! CLAUDE.md keeps this crate free of storage and protocol dependencies, and
 //! [`mail_parser`] is neither: it is a pure format parser with no I/O, no
-//! sockets and no state. Putting the mapping here is what lets `postio-imap`
+//! sockets and no state. Putting the mapping here is what lets `postio-account`
 //! (which must not depend on `postio-storage`) turn a `FETCH` response into a
 //! [`Message`] — see the architecture diagram in CLAUDE.md.
 //!
@@ -113,6 +113,11 @@ pub struct ParsedMessage {
     /// message carries one — the fact that lets the list be detected with
     /// no configuration, rather than by matching an address by hand.
     pub list_id: Option<String>,
+    // POSTIO-CONSENT: detection only, never sent — see `Message::read_receipt_requested`.
+    /// Whether `Disposition-Notification-To` or `Return-Receipt-To` is
+    /// present (#970) — Postio never sends one automatically, so this only
+    /// counts how often it was asked.
+    pub read_receipt_requested: bool,
     /// `From`, with any address group flattened.
     pub from: Vec<EmailAddress>,
     /// `Sender`.
@@ -183,6 +188,7 @@ impl ParsedMessage {
         message.in_reply_to = self.in_reply_to;
         message.references = self.references;
         message.list_id = self.list_id;
+        message.read_receipt_requested = self.read_receipt_requested;
         message.from = self.from;
         message.sender = self.sender;
         message.reply_to = self.reply_to;
@@ -326,7 +332,7 @@ pub fn decode_header_text(raw: &[u8]) -> String {
 /// `None` once nothing is left to keep.
 ///
 /// This is text-processing only — no `mail_parser` call, so no panic
-/// surface — and is shared with `postio-imap`, whose `ENVELOPE` fetch reads
+/// surface — and is shared with `postio-account`, whose `ENVELOPE` fetch reads
 /// `List-Id` as its own isolated header value the same way it reads the
 /// subject.
 pub fn list_id_from_text(raw: &str) -> Option<String> {
@@ -431,6 +437,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     };
 
     message.headers = collect_headers(&source);
+    message.read_receipt_requested = message.headers.contains("Disposition-Notification-To")
+        || message.headers.contains("Return-Receipt-To");
     message.rfc_message_id = source.message_id().and_then(message_id);
     message.in_reply_to = message_ids(source.in_reply_to()).pop();
     message.references = message_ids(source.references());
@@ -470,7 +478,14 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .is_some_and(|format| format.eq_ignore_ascii_case("flowed"))
     });
     message.body = MessageBody {
-        text: text_part.map(|(_, text)| text),
+        // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
+        // no parts to have found a text body among, and is read as this
+        // entity's own content instead. `text_is_flowed` is correctly left
+        // `false` above -- the fallback part carries no `format` attribute
+        // of its own to answer that from.
+        text: text_part
+            .map(|(_, text)| text)
+            .or_else(|| multipart_boundary_fallback(&source)),
         html: source.html_bodies().find_map(|part| match &part.body {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,
@@ -494,12 +509,82 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         .iter()
         .filter_map(|id| {
             let part = source.parts.get(*id as usize)?;
+            // A `multipart/*` part is a container, not a file: RFC 2046
+            // §5.1.1's fallback above is what happens when one has to be
+            // read anyway, and it must not also show up here as a nameless,
+            // typeless attachment (#900).
+            if is_multipart_type(part) {
+                return None;
+            }
             Some(parsed_part(*id, part, &paths))
         })
         .collect();
-    message.encoding_problems = source.parts.iter().any(|part| part.is_encoding_problem);
+    // Three ways a body can arrive as something other than what was sent, and
+    // the flag has to carry all of them — it is the only signal Postio has
+    // that the words on screen are not the words that were sent (#901).
+    message.encoding_problems = source.parts.iter().any(|part| part.is_encoding_problem)
+        || unknown_transfer_encoding(&source)
+        || decoded_lossily(raw, &message.body);
 
     message
+}
+
+/// The transfer encodings RFC 2045 defines, lowercase.
+///
+/// §6.4: anything else "must be treated as `application/octet-stream`" —
+/// which is to say the parser does not know what the octets mean. Postio
+/// shows them verbatim as text, which beats an empty body and is still a
+/// guess, so it is flagged. `x-` tokens included deliberately: a private
+/// encoding is exactly the case §6.4 is written for.
+const KNOWN_TRANSFER_ENCODINGS: [&str; 5] =
+    ["7bit", "8bit", "binary", "quoted-printable", "base64"];
+
+/// Whether any part declares a transfer encoding this parser cannot undo.
+fn unknown_transfer_encoding(source: &MpMessage<'_>) -> bool {
+    source.parts.iter().any(|part| {
+        part.headers.iter().any(|header| {
+            header
+                .name()
+                .eq_ignore_ascii_case("Content-Transfer-Encoding")
+                && header.value().as_text().is_some_and(|value| {
+                    let value = value.trim();
+                    !value.is_empty()
+                        && !KNOWN_TRANSFER_ENCODINGS
+                            .iter()
+                            .any(|known| value.eq_ignore_ascii_case(known))
+                })
+        })
+    })
+}
+
+/// Whether decoding the charset lost octets.
+///
+/// The mojibake a user actually reports, and the direction of it that cannot
+/// be undone: the octets are one charset, the header names another, and what
+/// survives the decode is U+FFFD. Once that is in the stored body it is in
+/// the search index and in every reply that quotes it — no later pass can
+/// recover the bytes, which is why this is worth saying at the time.
+///
+/// `is_encoding_problem` cannot answer it. That flag is about the *transfer*
+/// encoding — base64 outside its alphabet, a truncated part — and it is
+/// false in both directions of a charset mismatch, measured on #901.
+///
+/// The raw bytes are the control. A sender may legitimately send U+FFFD, and
+/// flagging every message containing one would make the caveat meaningless
+/// on the mail that carries it on purpose; if the replacement character is in
+/// the bytes that arrived, it is the sender's. A message carrying both a sent
+/// U+FFFD and a lossy part reads as clean, which is the safe direction to be
+/// wrong in — it never cries wolf.
+fn decoded_lossily(raw: &[u8], body: &crate::MessageBody) -> bool {
+    const REPLACEMENT_UTF8: &[u8] = "\u{fffd}".as_bytes();
+    let decoded_has_it = [body.text.as_deref(), body.html.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|text| text.contains('\u{fffd}'));
+    decoded_has_it
+        && !raw
+            .windows(REPLACEMENT_UTF8.len())
+            .any(|window| window == REPLACEMENT_UTF8)
 }
 
 /// Every top-level header, unfolded, in wire order.
@@ -657,6 +742,42 @@ fn preview(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// Whether `part`'s own `Content-Type` is `multipart/*`.
+fn is_multipart_type(part: &MessagePart<'_>) -> bool {
+    part.content_type()
+        .is_some_and(|content_type| content_type.ctype().eq_ignore_ascii_case("multipart"))
+}
+
+/// RFC 2046 §5.1.1's fallback: a multipart entity whose boundary parameter is
+/// missing, empty, or unrecognisable "must be treated as text/plain".
+///
+/// `mail_parser` cannot split such an entity into children — there is no
+/// boundary left to split on — so it leaves the whole thing as one part typed
+/// `multipart/*`, holding the entity's own content as [`PartType::Text`] or
+/// [`PartType::Binary`] rather than [`PartType::Multipart`]'s list of
+/// children. That shape can only be the message's own root: an ordinary
+/// multipart's root part is always `Multipart`, holding its children's ids —
+/// so `source.parts.first()` is the one part this can ever be true of.
+///
+/// No charset decoding to do here beyond what `mail_parser` already gives:
+/// RFC 2046 defines no `charset` parameter for a multipart type — it belongs
+/// to `text/*` — so a [`PartType::Binary`] root decodes as UTF-8 with
+/// replacement, the same default `mail_parser` itself falls back to for a
+/// `text/plain` part with none declared.
+fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
+    let root = source.parts.first()?;
+    if !is_multipart_type(root) {
+        return None;
+    }
+    match &root.body {
+        PartType::Text(text) => Some(text.to_string()),
+        PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        }
+        PartType::Multipart(_) | PartType::Html(_) | PartType::Message(_) => None,
+    }
+}
+
 /// Maps every leaf part to its MIME part path (`2.1`), the way IMAP numbers
 /// body sections.
 ///
@@ -727,14 +848,11 @@ fn parsed_part(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned);
-    attachment.content_id = part.content_id().map(|id| {
-        // Stored bare, so it compares directly against the `cid:` URL in an
-        // HTML body rather than after stripping brackets at every use.
-        id.trim()
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_owned()
-    });
+    // Stored bare, so it compares directly against the `cid:` URL in an HTML
+    // body rather than after stripping brackets at every use. The IMAP header
+    // sync reaches the same normaliser, which is what #751 needed: two ingest
+    // paths, one answer.
+    attachment.set_content_id(part.content_id());
     attachment.disposition = disposition(part);
     attachment.part_id = paths.get(&id).cloned();
 

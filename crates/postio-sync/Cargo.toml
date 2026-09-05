@@ -13,11 +13,11 @@ async-trait = "0.1.92"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 # `default-features = false` drops `io-imap` and its TLS stack: all this crate
 # needs is the `MailBackend` seam and its mock. See ADR 0001 and the feature
-# comment in `postio-imap/Cargo.toml`.
+# comment in `postio-account/Cargo.toml`.
 # Spelled as a path rather than inherited from the workspace: cargo will not
 # let an inherited dependency turn default features off, and turning them off
 # is the entire point here.
-postio-imap = { version = "0.1.0", path = "../postio-imap", default-features = false }
+postio-account = { version = "0.2.0", path = "../postio-account", default-features = false }
 # The search index's body column. A body is only ever indexable at the moment
 # it lands, and this crate is where it lands -- see `fetch_body` (#327).
 postio-index.workspace = true
@@ -43,7 +43,7 @@ base64 = "0.22.1"
 # `MailBackend` — no io-imap type appears anywhere in this crate — and the
 # ordinary build keeps `default-features = false` above, which is what keeps
 # the protocol crate out of the engine's dependency graph.
-postio-imap = { path = "../postio-imap", features = ["imap", "test-server"] }
+postio-account = { path = "../postio-account", features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 

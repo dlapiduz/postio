@@ -2,7 +2,7 @@
 //!
 //! `io-jmap`'s blocking client wraps one stream; this module opens those
 //! streams on the workspace's own cancellable `pimalaya-stream` — the same
-//! pattern `postio-imap`'s OAuth exchange uses — and runs every blocking
+//! pattern `postio-account`'s OAuth exchange uses — and runs every blocking
 //! request under `spawn_blocking` so the async engine never parks a worker
 //! on a socket.
 //!
@@ -20,10 +20,10 @@ use io_jmap::client::JmapClientStd;
 use io_jmap::rfc8620::session::JmapSession;
 use pimalaya_stream::stream::{Stream, TcpConnectOptions, TlsConnectOptions};
 use pimalaya_stream::tls::Tls;
-use postio_imap::auth::TokenSource;
-use postio_imap::backend::{BackendError, BackendResult};
-use postio_imap::cancel::CancelToken;
-use postio_imap::secret::AccountKey;
+use postio_account::auth::TokenSource;
+use postio_account::backend::{BackendError, BackendResult};
+use postio_account::cancel::CancelToken;
+use postio_account::secret::AccountKey;
 use secrecy::SecretString;
 use url::Url;
 

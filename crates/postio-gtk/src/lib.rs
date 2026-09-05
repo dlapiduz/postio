@@ -65,6 +65,7 @@
 
 pub mod app;
 pub mod autoscroll;
+pub mod capture;
 pub mod cheatsheet;
 pub mod composer;
 pub mod config;
@@ -80,6 +81,7 @@ pub mod list;
 pub mod list_state;
 pub mod list_view;
 pub mod onboarding;
+pub mod orientation;
 pub mod palette;
 pub mod parts;
 pub mod reader;
@@ -95,8 +97,8 @@ pub mod sidebar;
 pub mod startup;
 pub mod state;
 pub mod style;
-pub mod thread;
 pub mod thread_row;
 pub mod toast;
 pub mod unavailable;
+pub mod widgets;
 pub mod window;

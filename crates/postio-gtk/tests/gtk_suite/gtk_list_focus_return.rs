@@ -18,6 +18,7 @@
 //! property under test lives entirely inside `MessageListView`. Skips
 //! without a display. Nothing here touches the network.
 
+use crate::pump;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
@@ -58,13 +59,6 @@ fn row(position: u32) -> Row {
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
-    }
-}
-
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
     }
 }
 
@@ -115,7 +109,7 @@ fn a_list_with_neighbours_and_a_mid_list_cursor() -> Option<(
     MessageId,
 )> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return None;
     }
     let display = gdk::Display::default().unwrap();

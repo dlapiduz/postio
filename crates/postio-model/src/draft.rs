@@ -64,7 +64,27 @@ pub enum DraftState {
     /// Accepted by the submission server.
     Sent,
     /// Submission failed; the draft is editable again.
+    ///
+    /// Honest about what it claims: every failure that reaches here is on the
+    /// safe side of the boundary — auth, a rejected sender or recipient, a
+    /// rejected message, configuration, or retries exhausted *before* the
+    /// payload went — so "nothing was delivered" is true rather than hopeful.
+    /// The indeterminate case is [`DraftState::Unconfirmed`].
     Failed,
+    /// The connection died mid-submission; whether it arrived is unknowable.
+    ///
+    /// ADR 0021 Decision 3, #674. Once the payload has begun going out, a
+    /// dropped session leaves no way to tell delivery from failure — the
+    /// server may have accepted and been unable to say so. Retrying would
+    /// deliver a duplicate to somebody else's inbox, which cannot be
+    /// recalled; calling it `Failed` would claim more than is known.
+    ///
+    /// So it stops, and says so somewhere that persists. "Unconfirmed"
+    /// rather than "uncertain" or "maybe sent" because it names what is
+    /// missing, and stays true the moment the confirmation arrives — the
+    /// next sync of Sent finding the draft's reserved `Message-ID` (#461)
+    /// resolves it to [`DraftState::Sent`] with nothing asked of the user.
+    Unconfirmed,
 }
 
 impl DraftState {
@@ -76,6 +96,7 @@ impl DraftState {
             Self::Sending => "sending",
             Self::Sent => "sent",
             Self::Failed => "failed",
+            Self::Unconfirmed => "unconfirmed",
         }
     }
 
@@ -87,6 +108,7 @@ impl DraftState {
             "sending" => Some(Self::Sending),
             "sent" => Some(Self::Sent),
             "failed" => Some(Self::Failed),
+            "unconfirmed" => Some(Self::Unconfirmed),
             _ => None,
         }
     }
@@ -293,6 +315,7 @@ mod tests {
             DraftState::Sending,
             DraftState::Sent,
             DraftState::Failed,
+            DraftState::Unconfirmed,
         ] {
             assert_eq!(DraftState::from_name(state.as_str()), Some(state));
         }

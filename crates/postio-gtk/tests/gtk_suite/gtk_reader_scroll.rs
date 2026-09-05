@@ -22,18 +22,12 @@
 //!
 //! Skips without a display. Nothing here touches the network.
 
+use crate::pump;
 use gtk::gdk;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::MessageBody;
 use webkit6::prelude::WebViewExt;
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..40 {
-        while context.iteration(false) {}
-    }
-}
 
 fn press(window: &Window, key: gdk::Key) -> bool {
     window.handle_key(key, gdk::ModifierType::empty()) == glib::Propagation::Stop
@@ -63,7 +57,7 @@ fn fragment(window: &Window) -> Option<String> {
 
 pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -99,6 +93,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
         "Page_Down should be claimed, not passed through"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
@@ -107,6 +107,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
 
     assert!(press(&window, gdk::Key::Page_Down));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-2"));
 
     // -- Page_Up walks it back ------------------------------------------
@@ -115,11 +121,23 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
         "Page_Up should be claimed too"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-1"));
 
     // -- the space/shift+space alternates do the same thing -----------------
     assert!(press(&window, gdk::Key::space));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-2"),
@@ -127,6 +145,12 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     );
     assert!(press_shift(&window, gdk::Key::space));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-1", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
@@ -136,12 +160,24 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
     // -- Page_Up cannot go past the top --------------------------------
     assert!(press(&window, gdk::Key::Page_Up));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-0", || {
+        fragment(&window).as_deref() == Some("pos-0")
+    });
     assert_eq!(fragment(&window).as_deref(), Some("pos-0"));
     assert!(
         press(&window, gdk::Key::Page_Up),
         "still claimed at the top -- it is this command's key either way"
     );
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-0", || {
+        fragment(&window).as_deref() == Some("pos-0")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-0"),
@@ -158,7 +194,7 @@ pub fn page_down_and_page_up_move_a_marker_at_a_time() {
 
 pub fn a_new_message_resets_the_scroll_position() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -174,6 +210,12 @@ pub fn a_new_message_resets_the_scroll_position() {
     assert!(press(&window, gdk::Key::Page_Down));
     assert!(press(&window, gdk::Key::Page_Down));
     pump();
+    // The fragment navigation is asynchronous; wait for it rather
+    // than trusting the turn count above (#851, and this file again
+    // on #187).
+    crate::settle_until("the reader to reach pos-2", || {
+        fragment(&window).as_deref() == Some("pos-2")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-2"),
@@ -192,7 +234,15 @@ pub fn a_new_message_resets_the_scroll_position() {
     );
 
     assert!(press(&window, gdk::Key::Page_Down));
-    pump();
+    // A condition, not a count. `show_message` is a `load_html`, which is
+    // asynchronous: the forty pump rounds above are enough on an idle
+    // workstation and were not enough on a loaded runner, where this read
+    // `None` because the fragment navigation had not landed yet. Waiting for
+    // the thing being asserted removes the guess -- and a timeout now says
+    // what it was waiting for instead of failing an equality (#851).
+    crate::settle_until("the new message's first page marker", || {
+        fragment(&window).as_deref() == Some("pos-1")
+    });
     assert_eq!(
         fragment(&window).as_deref(),
         Some("pos-1"),
@@ -203,7 +253,7 @@ pub fn a_new_message_resets_the_scroll_position() {
 
 pub fn paging_with_nothing_open_does_nothing() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

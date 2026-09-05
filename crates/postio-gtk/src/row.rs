@@ -44,38 +44,38 @@ use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use postio_core::{CommandId, Keymap};
 use postio_model::address::EmailAddress;
+// The people in a conversation, short and newest-biased. The rule lives in
+// `postio-ui`: the list row and the conversation header both draw this line,
+// and two surfaces shortening the same names two ways is what moving it
+// prevents (#1002).
+use postio_ui::conversation::participants as participants_line;
 
 use crate::list::Row;
 
 /// The commands the focused row hints at, and the labels the canvas gives
 /// them — canvas order, not registry order.
-const HINT_COMMANDS: [(CommandId, &str); 3] = [
-    (CommandId::Reply, "reply"),
-    (CommandId::Archive, "archive"),
-    (CommandId::Thread, "thread"),
-];
+/// Two, not three. `t` used to be here, hinting at the drill-in column that
+/// a thread row could open; the conversation is what the reading pane shows
+/// the moment the cursor lands on the row, so there is no third verb to
+/// announce (#1003).
+const HINT_COMMANDS: [(CommandId, &str); 2] =
+    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
 
-/// The hints for a keymap alone, `Thread` included: the rebinding behaviour
-/// [`hints_for_row`] shares with every entry in [`HINT_COMMANDS`], tested
-/// here without a row to keep that half of the contract separate from the
-/// thread-count filter.
+/// The hints for a keymap alone.
 #[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, true)
+    filtered_hints(keymap)
 }
 
-/// [`hints_for`], minus `Thread` when the row has nothing to thread — the
-/// same test the badge uses (`thread_count > 1`, in `build`), so the badge
-/// and the hint can never disagree. A row that has not arrived yet (`None`)
-/// has nothing to thread either.
-fn hints_for_row(keymap: &Keymap, row: Option<&Row>) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap, row.is_some_and(|row| row.thread_count > 1))
+/// The hints a row shows. Every hint applies to every row now: none of them
+/// depends on whether the row stands for more than one message.
+fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
+    filtered_hints(keymap)
 }
 
-fn filtered_hints(keymap: &Keymap, threaded: bool) -> Vec<(String, &'static str)> {
+fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
     HINT_COMMANDS
         .iter()
-        .filter(|(command, _)| threaded || *command != CommandId::Thread)
         .filter_map(|(command, label)| {
             keymap
                 .binding(*command)
@@ -972,18 +972,34 @@ impl MessageRowView {
     /// background. A row that forgot its hints on alt-tab would be teaching
     /// the keyboard only while you were not using it.
     pub fn shows_hints(&self) -> bool {
-        self.imp().hints_enabled.get()
-            && self.imp().focused.get()
-            && self.imp().row.borrow().is_some()
+        self.imp().hints_enabled.get() && self.holds_keyboard() && self.imp().row.borrow().is_some()
     }
 
-    /// Work out whether the keyboard is on this row, and remember it.
+    /// Whether the keyboard is on this row, asked rather than remembered.
     ///
     /// Either place counts: inside a `GtkListView` the focus lands on the
     /// list item wrapping this widget, and anywhere else — a test, a bench,
     /// the row used as a plain widget — on the widget itself.
+    ///
+    /// Live, because the remembered answer could be another row's (#753).
+    /// The signals that maintain it fire when focus *moves*, and recycling
+    /// is the case where focus did not move and the row underneath the
+    /// widget changed: scrolling hands a widget that was on the focused row
+    /// to a row with no claim on it, and the stale flag rode along. Asking
+    /// costs two pointer comparisons, which is cheaper than the bookkeeping
+    /// that would keep a cache honest through recycling.
+    fn holds_keyboard(&self) -> bool {
+        self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus())
+    }
+
+    /// Note that the keyboard has arrived or left, and re-lay the row.
+    ///
+    /// [`shows_hints`](Self::shows_hints) reads the live answer, so this
+    /// exists for its side effect rather than for the flag: the hints take
+    /// vertical space, so a row that gains or loses them has to be measured
+    /// again. The remembered value is only how that change is detected.
     fn refresh_focus(&self) {
-        let focused = self.is_focus() || self.parent().is_some_and(|parent| parent.is_focus());
+        let focused = self.holds_keyboard();
         if self.imp().focused.replace(focused) == focused {
             return;
         }
@@ -1222,23 +1238,38 @@ impl MessageRowView {
         let fill = |color: &gdk::RGBA, x, y, w, h| snapshot.append_color(color, &rect(x, y, w, h));
 
         // Three facts, three devices, so they stay legible apart when a row
-        // is more than one of them at once (`postio-qhz.1`):
+        // is more than one of them at once (`postio-qhz.1`, #753):
         //
-        //   cursor    where the keyboard is — canvas 1b's accent tint
-        //   focused   the keyboard is *here*, in this window — the 3px edge
-        //             and the key hints
-        //   selected  what an action will hit — a steel check where the
-        //             avatar was, on its own ground
+        //   cursor    where the keyboard is — the 3px accent edge, always
+        //   selected  what an action will hit — its own deeper ground, and
+        //             a steel check where the avatar was
+        //   focused   the keyboard is *here*, in this window — the key hints
         //
-        // The check is what carries the meaning. Ground alone could not: the
-        // cursor tint and the selected ground are two steps of one colour in
-        // light and the same colour in dark (canvas 3c), and a distinction
-        // nobody can see in dark is not a distinction. A glyph reads at a
-        // glance, survives high contrast, and does not depend on hue.
+        // The pairing used to be different, and that was the bug. The ground
+        // carried *both* cursor and selection, as two steps of one colour —
+        // 2% apart in light and the identical token in dark — leaving the
+        // check glyph as the only real tiebreaker. Which gave two ways to
+        // see nothing at all: an icon theme without `object-select-symbolic`
+        // resolves the check to `None` and draws neither glyph nor initials,
+        // and this branch was `if selected … else if cursor`, so a row that
+        // was both never drew the cursor's tint. Bulk-selecting, the row the
+        // keyboard was on and the rows it had already taken were the same
+        // pixels.
+        //
+        // So the two facts get two *devices* rather than two shades of one:
+        // the edge is the cursor's, the ground is the selection's, and a row
+        // that is both shows both. Neither depends on an icon resolving, or
+        // on telling two tints apart in dark. The check stays where it
+        // renders, as reinforcement rather than as the whole distinction.
         //
         // The edge is also this widget's focus ring: it paints its own
-        // pixels, so no CSS `outline` reaches it.
-        let focused = self.shows_hints();
+        // pixels, so no CSS `outline` reaches it. It follows the *cursor*
+        // rather than `shows_hints()` — gating it on the hints flag meant
+        // `[ui] show_key_hints = false` silently deleted the focus
+        // indicator, and gating it on window focus meant clicking into the
+        // reading pane did too. The canvas draws it on the current row
+        // unconditionally (`Design/Mail Client.dc.html:76`); only the key
+        // caps are the flag's business.
         if selected {
             fill(&palette.checked_bg, 0.0, 0.0, width, height);
         } else if cursor {
@@ -1246,7 +1277,7 @@ impl MessageRowView {
         } else if hovered {
             fill(&palette.hover_bg, 0.0, 0.0, width, height);
         }
-        if focused {
+        if cursor {
             fill(&palette.selected_edge, 0.0, 0.0, EDGE, height);
         }
 
@@ -1513,80 +1544,6 @@ fn initials_source(row: &Row) -> String {
         .unwrap_or_else(|| "unknown sender".to_string())
 }
 
-/// How many names fit before the line starts eliding.
-const NAMES_SHOWN: usize = 3;
-
-/// The people in a conversation, short and newest-biased.
-///
-/// Short names, because the column is one line beside a subject and a
-/// snippet: a conversation between four people spelled out in full would push
-/// everything else off the row. First name where there is a display name, the
-/// address's local part where there is not — the same information a person
-/// uses to recognise a thread at a glance.
-///
-/// **Newest-biased when it elides.** Participants arrive in first-seen order,
-/// so the interesting end is the far one: who started the conversation still
-/// identifies it, and who spoke most recently is what changed since you last
-/// looked. Both survive; the middle is what goes.
-fn participants_line(participants: &[EmailAddress]) -> String {
-    let short = |address: &EmailAddress| -> String {
-        let display = address.display().to_string();
-        // A display name is "Ada Norwood"; an address falls back to its local
-        // part, which is what a sender without a name has to identify them.
-        let name = display
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim_matches(|c: char| c == '"' || c == '\'')
-            .to_string();
-        if name.contains('@') {
-            return name.split('@').next().unwrap_or(&name).to_string();
-        }
-        if name.is_empty() { display } else { name }
-    };
-
-    // Distinct first, on the full name: one person writing five times is one
-    // name, and two different people can share a first name.
-    let mut distinct: Vec<&EmailAddress> = Vec::new();
-    for address in participants {
-        if !distinct
-            .iter()
-            .any(|seen| seen.display() == address.display())
-        {
-            distinct.push(address);
-        }
-    }
-
-    // One participant is not a crowd, and shortening it loses information for
-    // nothing: "Site Office" becomes "Site" and an address with no display
-    // name becomes half of itself. A conversation with one voice reads
-    // exactly like the message row it replaced, which is what the canvas
-    // draws.
-    if distinct.len() == 1 {
-        return distinct[0].display().to_string();
-    }
-
-    let mut names: Vec<String> = Vec::new();
-    for address in distinct {
-        let name = short(address);
-        if !name.is_empty() && !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    match names.len() {
-        0 => String::new(),
-        n if n <= NAMES_SHOWN => names.join(", "),
-        _ => {
-            let last = names.len();
-            format!(
-                "{} .. {}",
-                names[0],
-                names[last - (NAMES_SHOWN - 1)..].join(", ")
-            )
-        }
-    }
-}
-
 /// The one number `lay_out` hands back; the layouts stay cached.
 struct Summary {
     height: f32,
@@ -1597,113 +1554,6 @@ mod tests {
     use super::*;
     use chrono::{Local, TimeZone, Utc};
     use postio_model::ids::MessageId;
-
-    // -- the participants line (ADR 0015 Q2, #307) ------------------------
-
-    fn people(names: &[(&str, &str)]) -> Vec<EmailAddress> {
-        names
-            .iter()
-            .map(|(name, address)| EmailAddress::new(Some(*name), *address))
-            .collect()
-    }
-
-    #[test]
-    fn one_participant_keeps_their_whole_name() {
-        // A conversation with one voice has to read exactly like the message
-        // row it replaced — every row in a folder is a thread row now, so
-        // shortening here would shorten the ordinary case. "Site Office"
-        // must not become "Site".
-        assert_eq!(
-            participants_line(&people(&[("Ada Norwood", "ada@example.com")])),
-            "Ada Norwood"
-        );
-        assert_eq!(
-            participants_line(&people(&[("Site Office", "site@example.com")])),
-            "Site Office"
-        );
-    }
-
-    #[test]
-    fn a_short_conversation_names_everyone_in_it() {
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-                ("Tove Bergstrom", "tove@example.com"),
-            ])),
-            "Ada, Quinn, Tove"
-        );
-    }
-
-    #[test]
-    fn a_long_conversation_keeps_both_ends_and_drops_the_middle() {
-        // Newest-biased: whoever started it still identifies the
-        // conversation, and whoever spoke last is what changed since you
-        // looked. The middle is what nobody scans for.
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-                ("Jonas Vek", "jonas@example.org"),
-                ("Tove Bergstrom", "tove@example.com"),
-                ("Priya Raman", "priya@example.org"),
-            ])),
-            "Ada .. Tove, Priya"
-        );
-    }
-
-    #[test]
-    fn one_person_writing_repeatedly_is_named_once() {
-        assert_eq!(
-            participants_line(&people(&[
-                ("Ada Norwood", "ada@example.com"),
-                ("Ada Norwood", "ada@example.com"),
-                ("Quinn Abara", "quinn@example.net"),
-            ])),
-            "Ada, Quinn"
-        );
-    }
-
-    #[test]
-    fn one_person_writing_repeatedly_and_alone_is_not_a_crowd() {
-        // Deduplication happens before the "is this one voice" test, or a
-        // thread where one person replied to themselves would read as two.
-        assert_eq!(
-            participants_line(&people(&[
-                ("Site Office", "site@example.com"),
-                ("Site Office", "site@example.com"),
-            ])),
-            "Site Office"
-        );
-    }
-
-    #[test]
-    fn a_lone_sender_with_no_display_name_keeps_their_whole_address() {
-        assert_eq!(
-            participants_line(&[EmailAddress::new(None::<&str>, "ada.norwood@example.com")]),
-            "ada.norwood@example.com"
-        );
-    }
-
-    #[test]
-    fn a_crowd_with_no_display_names_is_named_by_local_parts() {
-        // Several addresses do not fit; their local parts do, and are what
-        // distinguishes them.
-        assert_eq!(
-            participants_line(&[
-                EmailAddress::new(None::<&str>, "ada@example.com"),
-                EmailAddress::new(None::<&str>, "quinn@example.net"),
-            ]),
-            "ada, quinn"
-        );
-    }
-
-    #[test]
-    fn no_participants_is_empty_rather_than_a_placeholder() {
-        // A message row has none, and `initials_source` falls back to the
-        // sender rather than drawing something that looks like a thread.
-        assert_eq!(participants_line(&[]), "");
-    }
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
@@ -1746,11 +1596,7 @@ mod tests {
         let defaults = default_hints();
         assert_eq!(
             defaults,
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
             "the registry's own bindings, canvas order"
         );
 
@@ -1761,11 +1607,7 @@ mod tests {
         let rebound = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             rebound,
-            vec![
-                ("e".to_string(), "reply"),
-                ("x".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
+            vec![("e".to_string(), "reply"), ("x".to_string(), "archive")],
             "a rebind in [keys] must reach the hint, not just the resolver"
         );
     }
@@ -1788,51 +1630,6 @@ mod tests {
     }
 
     #[test]
-    fn a_row_with_no_thread_drops_the_thread_hint() {
-        // Matches the badge's own threshold (`row.rs`'s `build`, filtering
-        // on `thread_count > 1`): the badge and the hint must never disagree
-        // about whether there is a thread here to open.
-        let keymap = Keymap::resolve(&Default::default());
-        let mut row = Row {
-            id: MessageId::new(1),
-            thread: None,
-            from: None,
-            subject: None,
-            preview: None,
-            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
-            seen: true,
-            flagged: false,
-            answered: false,
-            draft: false,
-            has_attachments: false,
-            thread_count: 1,
-            participants: Vec::new(),
-        };
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive"),],
-            "one message in the thread is not a thread to open"
-        );
-
-        row.thread_count = 2;
-        assert_eq!(
-            hints_for_row(&keymap, Some(&row)),
-            vec![
-                ("e".to_string(), "reply"),
-                ("a".to_string(), "archive"),
-                ("t".to_string(), "thread"),
-            ],
-            "more than one message in the thread, so the hint returns"
-        );
-
-        assert_eq!(
-            hints_for_row(&keymap, None),
-            vec![("e".to_string(), "reply"), ("a".to_string(), "archive")],
-            "no row bound yet, nothing to thread either"
-        );
-    }
-
-    #[test]
     fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
         // Taking `a` for something else in the same context leaves Archive
         // with no key at all — reachable only from the palette. A hint that
@@ -1845,7 +1642,7 @@ mod tests {
         let hints = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             hints,
-            vec![("e".to_string(), "reply"), ("t".to_string(), "thread")],
+            vec![("e".to_string(), "reply")],
             "archive lost its key to forward, so its hint disappears rather than lying"
         );
     }

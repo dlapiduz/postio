@@ -115,3 +115,27 @@ pub struct SearchResults {
 /// The most `total_hits` will ever count exactly. See
 /// [`SearchResults::total_hits_capped`].
 pub const TOTAL_HITS_CAP: u64 = 10_000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggling_relevance_gives_newest_and_back_again() {
+        assert_eq!(ResultOrder::Relevance.toggled(), ResultOrder::Newest);
+        assert_eq!(ResultOrder::Newest.toggled(), ResultOrder::Relevance);
+    }
+
+    #[test]
+    fn toggling_twice_is_a_no_op() {
+        for order in [ResultOrder::Relevance, ResultOrder::Newest] {
+            assert_eq!(order.toggled().toggled(), order);
+        }
+    }
+
+    #[test]
+    fn each_order_names_itself_for_the_control() {
+        assert_eq!(ResultOrder::Relevance.label(), "Relevance");
+        assert_eq!(ResultOrder::Newest.label(), "Newest");
+    }
+}

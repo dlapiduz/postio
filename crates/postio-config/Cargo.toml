@@ -14,6 +14,13 @@ postio-model.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 toml = "1.1.4"
+toml_edit = "0.25"
 
-[lints]
-workspace = true
+[lints.rust]
+# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
+# `tests/validation_cost.rs` installs a counting global allocator, and
+# implementing `GlobalAlloc` is `unsafe impl` by definition. A test target
+# cannot opt out of `forbid`, which is why this is a crate-level `deny` rather
+# than a local allow. No library code here uses `unsafe`.
+unsafe_code = "deny"
+missing_docs = "warn"

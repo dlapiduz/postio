@@ -115,9 +115,9 @@ mod tests {
 
     use std::sync::Arc;
 
+    use postio_account::backend::{MockBackend, MockMailbox};
     use postio_core::bridge::{EventStream, event_channel};
     use postio_core::state::AppState;
-    use postio_imap::backend::{MockBackend, MockMailbox};
     use postio_model::MailboxRole;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::{BlobStore, test_support};
@@ -175,7 +175,8 @@ mod tests {
         let report = postio_storage::seed::seed_small(&database, 3);
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path()).expect("a blob store");
+        let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
         let (sink, _engine_events) = event_channel();
 
         let backend = Arc::new(
@@ -193,8 +194,8 @@ mod tests {
                 smtp: Arc::new(
                     postio_smtp::transport::RustlsConnector::new().expect("a connector"),
                 ),
-                tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                    postio_imap::secret::MemorySecretStore::default(),
+                tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                    postio_account::secret::MemorySecretStore::default(),
                 ))),
                 events: sink,
                 retry: Default::default(),

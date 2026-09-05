@@ -44,16 +44,17 @@ impl SessionError {
     /// Maps a keyring failure onto the case the frontend routes on.
     ///
     /// A match rather than `to_string`, and that is the entire point of this
-    /// function. ADR 0014's rule is that [`SecretError::Locked`] must survive
+    /// function. ADR 0014's rule is that
+    /// [`SecretError::Locked`](postio_account::secret::SecretError::Locked) must survive
     /// to the surface that asks the user to unlock, rather than being
     /// flattened into "something went wrong" and sent to onboarding — which
     /// would ask somebody with perfectly good mail to set up an account they
     /// already have. Every other keyring failure is a store that will not
     /// open, which is the honest reading: no key, no store.
-    fn from_secret_error(error: postio_imap::secret::SecretError) -> Self {
+    fn from_secret_error(error: postio_account::secret::SecretError) -> Self {
         let message = error.to_string();
         match error {
-            postio_imap::secret::SecretError::Locked { .. } => {
+            postio_account::secret::SecretError::Locked { .. } => {
                 SessionError::KeyringLocked { message }
             }
             _ => SessionError::StoreUnavailable { message },
@@ -70,7 +71,7 @@ impl SessionError {
 pub struct SessionOptions {
     store_path: Option<std::path::PathBuf>,
     bridge: Option<(tokio::runtime::Handle, CommandSender)>,
-    secrets: Option<Arc<dyn postio_imap::secret::SecretStore>>,
+    secrets: Option<Arc<dyn postio_account::secret::SecretStore>>,
     #[cfg(feature = "testing")]
     in_memory: bool,
     #[cfg(feature = "testing")]
@@ -114,7 +115,7 @@ impl SessionOptions {
     /// login keyring would prompt on a developer's machine and hang on a
     /// headless one. It is also how the locked-keyring path is exercised at
     /// all, since a working keyring cannot be asked to refuse.
-    pub fn with_secrets(mut self, secrets: Arc<dyn postio_imap::secret::SecretStore>) -> Self {
+    pub fn with_secrets(mut self, secrets: Arc<dyn postio_account::secret::SecretStore>) -> Self {
         self.secrets = Some(secrets);
         self
     }
@@ -174,10 +175,21 @@ impl SessionOptions {
     /// or it would end up with two runtimes and the deadlock that implies.
     #[cfg(feature = "testing")]
     pub fn in_memory_on(runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
-        Self {
-            bridge: Some((runtime, commands)),
-            ..Self::in_memory()
-        }
+        Self::in_memory().on_bridge(runtime, commands)
+    }
+
+    /// Run on a runtime and command bus the caller owns, keeping whatever
+    /// store these options already name.
+    ///
+    /// The production shape: Swift owns the bridge, and the store is
+    /// whichever one the session was opened over. The two used to be
+    /// expressible only separately — `in_memory_with` gave a seeded store
+    /// with no bus, `in_memory_on` a bus over an empty one — so a test that
+    /// wanted a verb to reach real handlers over real rows could have
+    /// neither (#721).
+    pub fn on_bridge(mut self, runtime: tokio::runtime::Handle, commands: CommandSender) -> Self {
+        self.bridge = Some((runtime, commands));
+        self
     }
 }
 
@@ -201,6 +213,29 @@ fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
     }
 }
 
+/// This installation's `[sync]`, or the built-in defaults.
+///
+/// The same shape as [`load_key_bindings`], and for the same reason: a
+/// config that will not parse is a reason to use the defaults, not a reason
+/// the session cannot open. `postio-app::open_with` reads `[sync]` this way
+/// for the GTK frontend (`notifications::config_at`); this is the
+/// counterpart for every `Wiring` this crate builds, which used to read
+/// nothing at all and so started every engine on `BackfillPolicy::default()`
+/// and `WatchPolicy::default()` regardless of what was on disk (#1014).
+fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
+    let config = match text {
+        Some(text) => postio_config::Config::from_toml_str(text).ok(),
+        None => postio_config::Config::load().ok(),
+    };
+    match config {
+        Some(config) => config.sync,
+        None => {
+            tracing::warn!("using the built-in sync policy: config.toml is absent or unreadable");
+            Default::default()
+        }
+    }
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -218,6 +253,27 @@ pub struct Session {
     /// What the window is currently showing, so a page fetch knows what to
     /// ask the store for.
     scope: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// What the user has marked, and where the keyboard is.
+    ///
+    /// Held here rather than passed in with every [`Session::invoke`] (#721).
+    /// A selection is not always a list of ids: `Ctrl+A` makes it a
+    /// *predicate* over the whole view, and marshalling that across the
+    /// boundary as an array would mean materialising a mailbox — the one
+    /// thing this list exists not to do. So the predicate stays on this side,
+    /// and Swift moves it with the same small verbs `postio-ui` gives GTK.
+    selection: Mutex<postio_core::state::Selection>,
+    /// The accounts an aggregate view could show when `Ctrl+A` was pressed.
+    ///
+    /// The other half of the same predicate: in the unified list a whole-view
+    /// selection is about the accounts the view could actually vouch for, and
+    /// that set is fixed at the gesture rather than looked up when the verb
+    /// runs (#811, ADR 0005 Q10). Empty until a frontend says otherwise,
+    /// which makes `Ctrl+A` in the aggregate a rejection rather than an
+    /// action over accounts nobody vouched for — the behaviour this boundary
+    /// had before the scope could carry them at all.
+    reachable: Mutex<Vec<postio_model::ids::AccountId>>,
+    /// The row the keyboard is on, as the frontend last reported it.
+    cursor: Mutex<Option<postio_model::ids::MessageId>>,
     /// Page reads still in flight, and how many have been issued in total.
     ///
     /// The first is what `settle_for_test` waits on. The second is how a test
@@ -323,6 +379,52 @@ impl Session {
     #[uniffi::method(name = "rowCount")]
     pub fn row_count_ffi(&self) -> u32 {
         self.row_count()
+    }
+
+    /// Run a command, aimed the way this view says it should be.
+    ///
+    /// `id` is the registry's own name for the verb, as
+    /// [`commands`](Session::commands_ffi) reports it. Nothing comes back:
+    /// a verb is local-first, and what happened arrives on `nextEvent` like
+    /// everything else. See [`Session::invoke`].
+    #[uniffi::method(name = "invoke")]
+    pub fn invoke_ffi(&self, id: String) {
+        self.invoke(&id);
+    }
+
+    /// Report which row the keyboard is on, or `None` for no row.
+    #[uniffi::method(name = "setCursor")]
+    pub fn set_cursor_ffi(&self, message: Option<i64>) {
+        self.set_cursor(message);
+    }
+
+    /// Mark a row, or take it back out.
+    #[uniffi::method(name = "toggleSelection")]
+    pub fn toggle_selection_ffi(&self, message: i64) {
+        self.toggle_selection(message);
+    }
+
+    /// Select everything this scope holds, without reading a page of it.
+    #[uniffi::method(name = "selectAll")]
+    pub fn select_all_ffi(&self) {
+        self.select_all();
+    }
+
+    /// Report which accounts the aggregate view can currently vouch for.
+    ///
+    /// Call it whenever a connection changes, from the same states the
+    /// "showing local mail" disclosure is drawn from: it is what a whole-view
+    /// selection in the unified list is scoped to, and it is read when the
+    /// selection is *made* rather than when a verb runs (#811).
+    #[uniffi::method(name = "setReachableAccounts")]
+    pub fn set_reachable_accounts_ffi(&self, accounts: Vec<i64>) {
+        self.set_reachable_accounts(&accounts);
+    }
+
+    /// Unmark everything.
+    #[uniffi::method(name = "clearSelection")]
+    pub fn clear_selection_ffi(&self) {
+        self.clear_selection();
     }
 
     /// The row at `position`, or `None` while its page is on its way.
@@ -469,12 +571,15 @@ impl Session {
                         tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                             message: error.to_string(),
                         })?;
-                    let blobs =
-                        postio_storage::BlobStore::open(scratch.path()).map_err(|error| {
-                            SessionError::StoreUnavailable {
-                                message: error.to_string(),
-                            }
-                        })?;
+                    let blobs = postio_storage::BlobStore::open(
+                        scratch.path(),
+                        &postio_storage::key::BlobKeys::derive(
+                            &postio_storage::key::StoreKey::generate(),
+                        ),
+                    )
+                    .map_err(|error| SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    })?;
                     (blobs, scratch)
                 }
             };
@@ -484,11 +589,17 @@ impl Session {
             // in-memory session still needs no Secret Service, no Keychain and
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
-            let wiring = Wiring::new(database, blobs, runtime, sink, commands);
+            let sync_config = load_sync_config(options.config_text.as_deref());
+            let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+                .with_backfill(postio_session::backfill_policy(&sync_config))
+                .with_watch(postio_session::watch_policy(&sync_config));
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keys: load_key_bindings(options.config_text.as_deref()),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+                selection: Mutex::new(postio_core::state::Selection::default()),
+                reachable: Mutex::new(Vec::new()),
+                cursor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
@@ -509,9 +620,9 @@ impl Session {
         // Asking in this order is what makes that true rather than merely
         // intended: nothing has touched the database by the time the key is
         // refused, so a locked keyring leaves no half-made store behind.
-        let secrets: Arc<dyn postio_imap::secret::SecretStore> = match options.secrets {
+        let secrets: Arc<dyn postio_account::secret::SecretStore> = match options.secrets {
             Some(secrets) => secrets,
-            None => postio_imap::secret::platform_keyring(),
+            None => postio_account::secret::platform_keyring(),
         };
         let key = postio_session::store_key_blocking(secrets.as_ref())
             .map_err(SessionError::from_secret_error)?;
@@ -527,12 +638,23 @@ impl Session {
         #[cfg(not(feature = "testing"))]
         let keys = load_key_bindings(None);
 
-        let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
+        #[cfg(feature = "testing")]
+        let sync_config = load_sync_config(options.config_text.as_deref());
+        #[cfg(not(feature = "testing"))]
+        let sync_config = load_sync_config(None);
+
+        let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+            .with_secrets(secrets)
+            .with_backfill(postio_session::backfill_policy(&sync_config))
+            .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
+            selection: Mutex::new(postio_core::state::Selection::default()),
+            reachable: Mutex::new(Vec::new()),
+            cursor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
@@ -560,6 +682,145 @@ impl Session {
         let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
         *self.scope.lock().expect("scope lock") = Some(listed);
         self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Turn a command id into the command it means here, and run it.
+    ///
+    /// **The whole of this frontend's aiming**, and it decides nothing: what
+    /// a gesture acts on is `postio_core::aim`'s rule, and this hands it the
+    /// facts — the scope on screen, what is marked, where the keyboard is,
+    /// and the rows the window is holding. `postio-app` is the same three
+    /// lines over GTK's own widgets (#589, #721). Two adapters, one rule; a
+    /// second copy of the rule here is exactly what that issue removed.
+    ///
+    /// `id` is the registry's own string — `"archive"`, `"open_message"` —
+    /// parsed through [`postio_core::CommandId`]'s `FromStr`, which is
+    /// generated from the same table the names come from. A `uniffi` enum
+    /// would be a second copy of that vocabulary, kept by hand, free to
+    /// drift; the string is the file format `ARCHITECTURE.md` §3 already
+    /// says it is.
+    ///
+    /// Returns nothing, deliberately. A verb is local-first: it writes to
+    /// SQLite, enqueues, and the frontend learns what happened from the
+    /// events it is already draining. A `Result` here would imply the caller
+    /// should wait for an answer, which is the shape this architecture spends
+    /// its effort not having.
+    ///
+    /// An id this build does not know is ignored rather than panicking — it
+    /// arrived from another process, and a boundary that aborts on a typo is
+    /// a boundary that can be crashed from Swift.
+    pub fn invoke(&self, id: &str) {
+        let Ok(id) = id.parse::<postio_core::CommandId>() else {
+            tracing::debug!(id, "not a command this build knows; ignored");
+            return;
+        };
+        let Some(commands) = self
+            .wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .map(|wiring| wiring.commands.clone())
+        else {
+            return;
+        };
+
+        let list = self.list.lock().expect("list lock");
+        let selection = self.selection.lock().expect("selection lock");
+        let aim = postio_core::aim::Aim {
+            // The shared conversion, not a second one: `ScopeFfi` becomes a
+            // `ListScope` on the way in, and `aim::view_scope` is the one
+            // rule for what a whole-view gesture is relative to (#670).
+            scope: self.scope.lock().expect("scope lock").and_then(|scope| {
+                postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
+            }),
+            selection: &selection,
+            cursor: *self.cursor.lock().expect("cursor lock"),
+            rows: &*list,
+        };
+        let command = postio_core::aim::command_for(id, &aim);
+        drop(selection);
+        drop(list);
+
+        if commands.send(command).is_err() {
+            // Only during teardown: the bridge has stopped and there is
+            // nothing left to run the verb on.
+            tracing::debug!("the runtime has stopped and did not run that");
+        }
+    }
+
+    /// Report where the keyboard is, so a verb with nothing marked knows
+    /// which row it is about.
+    pub fn set_cursor(&self, message: Option<i64>) {
+        *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
+    }
+
+    /// Mark `message`, or take it out of the selection again.
+    pub fn toggle_selection(&self, message: i64) {
+        let message = postio_model::ids::MessageId::new(message);
+        let mut selection = self.selection.lock().expect("selection lock");
+        *selection = match std::mem::take(&mut *selection) {
+            postio_core::state::Selection::These(mut marked) => {
+                if let Some(at) = marked.iter().position(|held| *held == message) {
+                    marked.remove(at);
+                } else {
+                    marked.push(message);
+                }
+                postio_core::state::Selection::These(marked)
+            }
+            // Taking a row out of "everything" is what `except` is for —
+            // turning the predicate into a list here would materialise the
+            // mailbox this boundary exists not to materialise.
+            postio_core::state::Selection::Everything { mut except } => {
+                if let Some(at) = except.iter().position(|held| *held == message) {
+                    except.remove(at);
+                } else {
+                    except.push(message);
+                }
+                postio_core::state::Selection::Everything { except }
+            }
+        };
+    }
+
+    /// Select everything the current scope holds — `Ctrl+A`.
+    ///
+    /// A predicate, not a list: the selection stays "everything in this view"
+    /// however many rows that is, and no page is read to answer it.
+    pub fn select_all(&self) {
+        *self.selection.lock().expect("selection lock") =
+            postio_core::state::Selection::Everything { except: Vec::new() };
+    }
+
+    /// Say which accounts the aggregate view can currently vouch for.
+    ///
+    /// Reported by the frontend, from the same connection states its own
+    /// "showing local mail" banner is drawn from, and read at the moment a
+    /// whole-view selection is *made*. A frontend that never calls this gets
+    /// the safe answer: `Ctrl+A` in the unified list selects nothing rather
+    /// than acting on accounts nothing vouched for (#811).
+    pub fn set_reachable_accounts(&self, accounts: &[i64]) {
+        *self.reachable.lock().expect("reachable lock") = accounts
+            .iter()
+            .copied()
+            .map(postio_model::ids::AccountId::new)
+            .collect();
+    }
+
+    /// Unmark everything.
+    pub fn clear_selection(&self) {
+        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+    }
+
+    /// What is marked right now, for a test or a frontend drawing a count.
+    ///
+    /// `None` while the selection is the whole view: there is no list to
+    /// hand back, which is the point of it being a predicate.
+    pub fn selected_messages(&self) -> Option<Vec<i64>> {
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => {
+                Some(marked.iter().map(|id| id.get()).collect())
+            }
+            postio_core::state::Selection::Everything { .. } => None,
+        }
     }
 
     /// How many rows the current scope has.
@@ -669,15 +930,33 @@ impl Session {
 
     /// The whole document for a message, ready to hand a web view.
     ///
-    /// Not fragments to assemble: the content security policy, the embedded
-    /// font faces, the reader tokens, the sanitized body, its `.postio-body`
-    /// container and the scroll markers all come from `postio_ui`, which is
-    /// what the GTK reader composes through too. **The frontend's entire job
-    /// is to build a hardened web view, hand it this string, and refuse
-    /// navigations** — so the two readers cannot disagree about the policy,
-    /// because there is only one that produces it (ADR 0019 Q6).
+    /// Not fragments to assemble: the content security policy, the
+    /// `@font-face` rules, the reader tokens, the sanitized body, its
+    /// `.postio-body` container and the scroll markers all come from
+    /// `postio_ui`, which is what the GTK reader composes through too. **The
+    /// frontend's entire job is to build a hardened web view, hand it this
+    /// string, and refuse navigations** — so the two readers cannot disagree
+    /// about the policy, because there is only one that produces it (ADR
+    /// 0019 Q6).
+    ///
+    /// # Two scheme handlers, not one
+    ///
+    /// The document *references* Postio's typefaces rather than carrying
+    /// them (ADR 0023): `font-src` is `postio-font:`, and a frontend that
+    /// does not serve it renders in system sans — silently, because a font
+    /// that never arrives is not an error. So a frontend registers two
+    /// handlers beside each other, both answering from compiled-in bytes,
+    /// neither touching the filesystem or the network:
+    ///
+    /// * `postio-cid:` — inline parts, through `postio_ui::reader::parts`.
+    /// * `postio-font:` — the eight vendored faces, through
+    ///   `postio_ui::reader::document::font_bytes`, which answers only for
+    ///   names in its `FACES` table and `None` for everything else.
     pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
+        use postio_ui::reader::document::{
+            Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
+            wrap_document,
+        };
 
         let remote = postio_body::RemoteImages::from(remote);
         // The blob store is not consulted: a body is a compressed column on
@@ -687,26 +966,54 @@ impl Session {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let Ok(connection) = database.connection() else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
         match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
-            postio_session::reading::Body::Ready(body) => {
-                let (content, _held_back) = body_html(&body, remote);
-                document_for(&content, remote)
+            // `encoding_problems` is bound and not used here, and that is a
+            // gap rather than a decision: this frontend renders a document
+            // and has no native strip to put a caveat in, the way the GTK
+            // reader's `DecodeNotice` is (#901). Named rather than elided so
+            // whoever gives this frontend a notice surface finds it.
+            postio_session::reading::Body::Ready {
+                body,
+                encoding_problems: _,
+            } => {
+                // Reader view is decided per message from the message, the
+                // same rule the GTK reader uses (#1009). This frontend has no
+                // notice surface to offer `View original` through yet — the
+                // same gap `encoding_problems` above names — so what it draws
+                // is what the rule chooses, and nothing can leave it.
+                let bulk = suits_reader_view(&body);
+                let rendering = if bulk {
+                    Rendering::Reader
+                } else {
+                    Rendering::Original
+                };
+                let drawn = body_html(&body, remote, rendering);
+                // The same rule the GTK reader applies, from the same
+                // function. Nothing here can reach `Sheet::Senders` while
+                // this frontend has no way to leave reader view -- which is
+                // the point of asking rather than assuming: the day it grows
+                // one, the sheet comes with it.
+                document_for(&drawn.html, remote, sheet_for(drawn.rendering, bulk))
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing
             // in it a sender wrote, and nothing for them to reach through.
-            postio_session::reading::Body::Absent(state) => {
-                wrap_document(&absent_html(state), postio_body::RemoteImages::Blocked)
-            }
+            postio_session::reading::Body::Absent(state) => wrap_document(
+                &absent_html(state),
+                postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
+            ),
         }
     }
 
@@ -855,6 +1162,7 @@ impl Session {
             wiring.secrets.clone(),
             wiring.mailbox_roles.clone(),
             wiring.backfill,
+            wiring.watch,
             &wiring.egress,
         )
         .map_err(|refusal| SessionError::StoreUnavailable {
@@ -887,10 +1195,10 @@ impl Session {
             account: 1.into(),
             database: wiring.database.clone(),
             blobs: wiring.blobs.clone(),
-            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            backend: Arc::new(postio_account::backend::MockBackend::new()),
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: wiring.events.clone(),
             mailbox_roles: wiring.mailbox_roles.clone(),
@@ -1053,5 +1361,27 @@ impl Session {
         {
             wiring.events.emit(event);
         }
+    }
+
+    /// Whether this session's `Wiring` was actually built with the backfill
+    /// and watch policy `[sync]` (as `expected` parses it) implies (#1014).
+    ///
+    /// Test-only, the same reason `emit_for_test` is: the wiring is private
+    /// so that nothing outside this crate can reach in, and a test proving
+    /// `open` read `[sync]` rather than merely compiling has to reach in
+    /// anyway. A comparison rather than a raw accessor so this crate need
+    /// not name `postio_sync`/`postio_runtime`'s policy types at its own
+    /// boundary — `postio-app` reaches `with_backfill`/`with_watch` the same
+    /// way, through `postio_session`'s functions, and never names them
+    /// either.
+    #[cfg(feature = "testing")]
+    pub fn honors_sync_config_for_test(&self, expected: &postio_config::SyncConfig) -> bool {
+        let expected_backfill = postio_session::backfill_policy(expected);
+        let expected_watch = postio_session::watch_policy(expected);
+        self.wiring.lock().ok().is_some_and(|guard| {
+            guard.as_ref().is_some_and(|wiring| {
+                wiring.backfill == expected_backfill && wiring.watch == expected_watch
+            })
+        })
     }
 }

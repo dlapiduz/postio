@@ -118,6 +118,25 @@ impl ThreadGroup {
     }
 }
 
+/// `alias`'s thread belongs to an account the user has switched on.
+///
+/// The unified view is every *enabled* account's mail, and ADR 0005 Q10 is
+/// explicit that this is the one omission that needs no disclosure: a
+/// disabled account drops out silently and correctly, because the user asked
+/// for that. It is a failing account that has to be named, and that is a
+/// different axis entirely.
+///
+/// Applied to the partner search as well as to the page, and that is the half
+/// that is easy to miss: a thread in a disabled account that absorbed its
+/// partner in an enabled one would take a row the user can still see and fold
+/// it into a row they cannot.
+fn enabled_account(alias: &str) -> String {
+    format!(
+        "{alias}account_id IN \
+         (SELECT id FROM accounts WHERE enabled = 1 AND pending_deletion = 0)"
+    )
+}
+
 /// `THREAD_COLUMNS`, each qualified with `alias.` for a joined statement.
 fn prefixed_thread_columns(alias: &str) -> String {
     THREAD_COLUMNS
@@ -257,11 +276,15 @@ impl<'a> ThreadRepository<'a> {
     /// messages are added, because every mutation here recomputes them.
     pub fn create(&self, thread: &mut Thread) -> Result<ThreadId> {
         let account_id = require_persisted(thread.account_id.get(), "account")?;
-        self.connection.execute(
-            "INSERT INTO threads (account_id, subject, message_count, unread_count,
+        // Cached: a first sync creates a thread for most messages it files, so
+        // this runs on the same order as the message insert itself (#728).
+        self.connection
+            .prepare_cached(
+                "INSERT INTO threads (account_id, subject, message_count, unread_count,
                                   has_attachments, is_flagged, first_at, last_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
+            )?
+            .execute(params![
                 account_id,
                 thread.subject,
                 thread.message_count,
@@ -270,8 +293,7 @@ impl<'a> ThreadRepository<'a> {
                 thread.is_flagged,
                 to_millis(thread.first_at),
                 to_millis(thread.last_at),
-            ],
-        )?;
+            ])?;
         thread.id = ThreadId::new(self.connection.last_insert_rowid());
         Ok(thread.id)
     }
@@ -351,10 +373,10 @@ impl<'a> ThreadRepository<'a> {
         let transaction = super::Scope::open(self.connection)?;
         let previous = thread_of(&transaction, message_id)?;
 
-        let changed = transaction.execute(
-            "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
-            params![message_id.get(), thread_id.get()],
-        )?;
+        // Cached: once per message filed (#728).
+        let changed = transaction
+            .prepare_cached("UPDATE messages SET thread_id = ?2 WHERE id = ?1")?
+            .execute(params![message_id.get(), thread_id.get()])?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -529,6 +551,97 @@ impl<'a> ThreadRepository<'a> {
         Ok(groups)
     }
 
+    /// One window of the unified list at a row offset, for a list model that
+    /// scrolls by index.
+    ///
+    /// The same bargain [`page_at`](Self::page_at) makes, for the same
+    /// reason: `ListWindow` addresses rows by position because "never
+    /// materialise a mailbox" requires it, and the grouping walk only knows
+    /// how to resume from a cursor. The offset is counted from `after` every
+    /// time, so `postio_runtime::store`'s seek marks are what keep it a
+    /// handful of rows rather than the whole list.
+    ///
+    /// It over-fetches by `offset` and drops the head, because absorption
+    /// means a group is not a fixed number of threads — the only thing that
+    /// knows where the *n*th row starts is the walk that produced the first
+    /// *n*.
+    pub fn unified_page_at(
+        &self,
+        query: &UnifiedThreadListQuery,
+        offset: u32,
+    ) -> Result<Vec<ThreadGroup>> {
+        if offset == 0 {
+            return self.unified_page(query);
+        }
+        let mut groups = self.unified_page(&UnifiedThreadListQuery {
+            limit: query.limit.saturating_add(offset),
+            after: query.after,
+        })?;
+        if offset as usize >= groups.len() {
+            return Ok(Vec::new());
+        }
+        Ok(groups.split_off(offset as usize))
+    }
+
+    /// How many rows the unified list would show.
+    ///
+    /// Not the number of threads: a conversation the user received at two
+    /// addresses is two threads and one row, so the count has to apply the
+    /// same absorption [`ThreadRepository::unified_page`] does. It is the
+    /// same shape the folder-scoped [`count_of`](Self::count_of) uses — a
+    /// `NOT EXISTS` for "something newer already stands for this" — with the
+    /// page's two partner rules in place of that one's thread identity:
+    ///
+    /// - the partner carries this thread's root `RfcMessageId`, or
+    /// - their normalised subjects match within the coalescing window,
+    ///
+    /// in a *different* account, and newer by the list's own `(last_at, id)`
+    /// order. A thread with a newer partner is one the walk absorbs, so this
+    /// counts exactly the threads the page emits a row for.
+    ///
+    /// Counting heads rather than building the groups is what keeps it
+    /// affordable: absorption is rare — almost every conversation arrives at
+    /// one address — so the inner query matches nothing for almost every
+    /// thread, and the work is one probe per row rather than a pass that has
+    /// to group the whole list to learn how long it is.
+    pub fn unified_count(&self) -> Result<u32> {
+        let window_millis = postio_model::subject::COALESCING_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+        // `MEMBER` on the head's messages and not on the partner's, because
+        // `group_partners_for` filters exactly that way. A count that
+        // disagreed with the page about which messages can carry a root
+        // would be a count that disagrees about how many rows there are.
+        let count: i64 = self.connection.query_row(
+            &format!(
+                "SELECT count(*) FROM threads t
+                  WHERE t.message_count > 0 AND {head_enabled}
+                    AND NOT EXISTS (
+                          SELECT 1 FROM threads p
+                           WHERE p.message_count > 0 AND {partner_enabled}
+                             AND p.account_id <> t.account_id
+                             AND (p.last_at, p.id) > (t.last_at, t.id)
+                             AND (
+                                   (t.subject IS NOT NULL AND t.subject <> ''
+                                    AND p.subject = t.subject
+                                    AND abs(p.last_at - t.last_at) <= ?1)
+                                OR EXISTS (
+                                     SELECT 1 FROM messages pm
+                                      WHERE pm.thread_id = p.id
+                                        AND pm.rfc_message_id IS NOT NULL
+                                        AND pm.rfc_message_id <> ''
+                                        AND pm.rfc_message_id = (
+                                              SELECT tm.rfc_message_id FROM messages tm
+                                               WHERE tm.thread_id = t.id AND tm.{MEMBER}
+                                               ORDER BY tm.received_at, tm.id
+                                               LIMIT 1))))",
+                head_enabled = enabled_account("t."),
+                partner_enabled = enabled_account("p."),
+            ),
+            [window_millis],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u32)
+    }
+
     /// One raw window of threads across every account, newest first.
     fn unified_raw_page(&self, limit: u32, after: Option<ThreadCursor>) -> Result<Vec<Thread>> {
         let cursor = if after.is_some() {
@@ -538,8 +651,9 @@ impl<'a> ThreadRepository<'a> {
         };
         let mut statement = self.connection.prepare(&format!(
             "SELECT {THREAD_COLUMNS} FROM threads
-              WHERE message_count > 0{cursor}
-              ORDER BY last_at DESC, id DESC LIMIT {limit}"
+              WHERE message_count > 0 AND {enabled}{cursor}
+              ORDER BY last_at DESC, id DESC LIMIT {limit}",
+            enabled = enabled_account("")
         ))?;
         let mut arguments: Vec<i64> = Vec::new();
         if let Some(after) = after {
@@ -605,8 +719,9 @@ impl<'a> ThreadRepository<'a> {
                 "SELECT DISTINCT m.rfc_message_id, {columns} FROM threads t
                    JOIN messages m ON m.thread_id = t.id
                   WHERE m.rfc_message_id IN ({root_placeholders})
-                    AND t.message_count > 0",
-                columns = prefixed_thread_columns("t")
+                    AND t.message_count > 0 AND {enabled}",
+                columns = prefixed_thread_columns("t"),
+                enabled = enabled_account("t.")
             ))?;
             let rows = statement.query_map(params_from_iter(&root_keys), |row| {
                 let root: String = row.get(0)?;
@@ -643,7 +758,9 @@ impl<'a> ThreadRepository<'a> {
                 .join(", ");
             let mut statement = self.connection.prepare(&format!(
                 "SELECT {THREAD_COLUMNS} FROM threads
-                  WHERE subject IN ({subject_placeholders}) AND message_count > 0"
+                  WHERE subject IN ({subject_placeholders}) AND message_count > 0
+                    AND {enabled}",
+                enabled = enabled_account("")
             ))?;
             let rows = statement.query_map(params_from_iter(&subjects), read_thread)?;
             for candidate in rows {

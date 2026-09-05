@@ -3,7 +3,7 @@
 
 `main` did not build on Linux for a day because of this, and the diff that
 did it looked tidy. `74d3b9c` added the macOS Keychain dependency to
-`postio-imap` by inserting a header into the middle of an alphabetically
+`postio-account` by inserting a header into the middle of an alphabetically
 sorted list:
 
     [dependencies]

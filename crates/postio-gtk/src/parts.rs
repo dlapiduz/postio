@@ -310,6 +310,19 @@ const TREE_MAX_HEIGHT: i32 = 360;
 
 type NodeHandler = Box<dyn Fn(&Node)>;
 /// A part, and where the user chose to put it.
+/// What the panel needs a destination for.
+///
+/// The argument to an [`Parts::connect_ask`] handler, which stands in for the
+/// `GtkFileDialog` the panel would otherwise open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    /// `s` — where to put this one part.
+    Part(Node),
+    /// `S` — which folder to put every part in.
+    Everything,
+}
+
+type AskHandler = Box<dyn Fn(&Ask)>;
 type SaveHandler = Box<dyn Fn(&Node, &gio::File)>;
 /// Where the user chose to put every part.
 type SaveAllHandler = Box<dyn Fn(&gio::File)>;
@@ -336,6 +349,7 @@ mod imp {
         /// then trackers. Drawn as the canvas' `remote blocked` tag.
         pub(super) held_back: Cell<(u32, u32)>,
         pub(super) on_open: RefCell<Vec<NodeHandler>>,
+        pub(super) on_ask: RefCell<Vec<AskHandler>>,
         pub(super) on_save: RefCell<Vec<SaveHandler>>,
         pub(super) on_save_all: RefCell<Vec<SaveAllHandler>>,
         pub(super) on_external: RefCell<Vec<NodeHandler>>,
@@ -392,6 +406,50 @@ impl PartsPanel {
     /// Metadata only: this neither fetches nor renders anything, and there is
     /// no path from here that could. See the module docs.
     pub fn show_parts(&self, root: &str, parts: &[Attachment]) {
+        self.draw(root, parts);
+        // The first *part*, not the message: the row the user came to look at
+        // is one of the things inside, and starting on the container would
+        // cost a keystroke every time.
+        self.select_index(if self.imp().nodes.borrow().len() > 1 {
+            1
+        } else {
+            0
+        });
+        self.refresh_detail();
+    }
+
+    /// Redraw the same message's tree, keeping the cursor where it is.
+    ///
+    /// What [`show_parts`](Self::show_parts) is for a message the user just
+    /// opened, this is for one whose parts *changed under them*:
+    /// `Node::downloaded` is written at runtime now (#377), so a chip that
+    /// said "download" has to start saying "open" the moment the bytes land
+    /// (#396).
+    ///
+    /// The cursor is what makes this a separate method. `show_parts` drops it
+    /// on the first part, which is right on the way in and wrong here: the
+    /// person who opened this panel is standing on the part they are waiting
+    /// for, and a payload arriving must not move them off it. It follows the
+    /// part id rather than the index, so a tree that gained or lost a row
+    /// still leaves the cursor on the same part.
+    pub fn update_parts(&self, root: &str, parts: &[Attachment]) {
+        let was = self.cursor().map(|node| node.part_id);
+        self.draw(root, parts);
+        let index = was
+            .and_then(|part_id| {
+                self.imp()
+                    .nodes
+                    .borrow()
+                    .iter()
+                    .position(|node| node.part_id == part_id)
+            })
+            .unwrap_or(0);
+        self.select_index(index);
+        self.refresh_detail();
+    }
+
+    /// Replace the rows with `parts`, saying nothing about the cursor.
+    fn draw(&self, root: &str, parts: &[Attachment]) {
         let imp = self.imp();
         let nodes = tree(root, parts);
         imp.summary.set_text(&summary(&nodes));
@@ -403,12 +461,6 @@ impl PartsPanel {
             imp.tree.append(&tree_row(node));
         }
         *imp.nodes.borrow_mut() = nodes;
-
-        // The first *part*, not the message: the row the user came to look at
-        // is one of the things inside, and starting on the container would
-        // cost a keystroke every time.
-        self.select_index(if imp.nodes.borrow().len() > 1 { 1 } else { 0 });
-        self.refresh_detail();
     }
 
     /// How much the reader held back on this message, for the canvas'
@@ -465,6 +517,9 @@ impl PartsPanel {
         let Some(node) = self.cursor().filter(Node::is_leaf) else {
             return;
         };
+        if self.asked(&Ask::Part(node.clone())) {
+            return;
+        }
         let dialog = gtk::FileDialog::builder()
             .title(format!("Save {}", node.label()))
             .initial_name(save_name(&node))
@@ -497,6 +552,9 @@ impl PartsPanel {
     /// A folder rather than a filename, because there is more than one file:
     /// [`save_name`] gives each part the name it goes in under.
     pub fn save_all(&self) {
+        if self.asked(&Ask::Everything) {
+            return;
+        }
         let dialog = gtk::FileDialog::builder()
             .title("Save every part")
             .modal(true)
@@ -542,6 +600,43 @@ impl PartsPanel {
     }
 
     /// Called with the part to save and the file the user chose for it.
+    /// Answer "where should this go?" instead of opening a file dialog.
+    ///
+    /// **Installed, this replaces the dialog entirely** — [`save_part`] and
+    /// [`save_all`] call the handler and construct nothing. That is the point
+    /// (#988): a `GtkFileDialog` cannot be safely opened inside `gtk_suite`.
+    /// The `GtkFileChooserNative` behind it keeps the parent window alive
+    /// past the case that opened it, so closing the stray dialog frees a
+    /// window its finalize later calls `gtk_window_destroy` on — a
+    /// use-after-free that lands on whichever *later* case next turns the
+    /// main loop, reading as flakiness in code that is fine. Cancelling with
+    /// a `gio::Cancellable` instead only moves the crash earlier, into GTK's
+    /// xdg-foreign export of the parent handle completing after the cancel.
+    ///
+    /// An override rather than the default path, deliberately: with nothing
+    /// installed the panel opens the real dialog exactly as before, so no
+    /// wiring has to be remembered in the application for `s` to work. A
+    /// forgotten wire is the failure this codebase keeps finding
+    /// (`postio-bl2`), and it is worse than the thing being worked around.
+    ///
+    /// [`save_part`]: Self::save_part
+    /// [`save_all`]: Self::save_all
+    pub fn connect_ask(&self, handler: impl Fn(&Ask) + 'static) {
+        self.imp().on_ask.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Whether an [`Ask`] handler answered, so no dialog should be built.
+    fn asked(&self, ask: &Ask) -> bool {
+        let handlers = self.imp().on_ask.borrow();
+        if handlers.is_empty() {
+            return false;
+        }
+        for handler in handlers.iter() {
+            handler(ask);
+        }
+        true
+    }
+
     pub fn connect_save(&self, handler: impl Fn(&Node, &gio::File) + 'static) {
         self.imp().on_save.borrow_mut().push(Box::new(handler));
     }
@@ -1202,6 +1297,34 @@ mod tests {
 
         assert!(nodes[1].downloaded);
         assert!(!nodes[2].downloaded, "described, not fetched");
+    }
+
+    #[test]
+    fn an_inline_image_too_big_for_the_text_axis_is_a_part_the_panel_explains() {
+        // #751's last acceptance criterion. An inline part over
+        // `[sync] max_inline_bytes` stays on the payload axis, so the `cid:`
+        // request 404s and the pane draws a broken box. What stops that being
+        // *silent* is this panel: the part is listed, sized, and said to be
+        // undownloaded, so there is somewhere to go and find out why.
+        let mut banner = part("2", "image/png", 4 * 1024 * 1024);
+        banner.content_id = Some("banner@example.com".to_owned());
+        banner.disposition = postio_model::Disposition::Inline;
+
+        let nodes = tree("multipart/related", &[part("1", "text/html", 900), banner]);
+        let node = &nodes[2];
+
+        assert!(
+            node.is_leaf(),
+            "an inline part is a part like any other: it gets a row and a chip"
+        );
+        assert!(!node.downloaded);
+        assert_eq!(detail(node), "image/png · 4.0 MB");
+        assert_eq!(spoken(node), "image/png, 4.0 MB, not downloaded");
+        assert_eq!(
+            NOT_FETCHED,
+            "Described by the server, not downloaded. Nothing here has touched the network.",
+            "the sentence the detail pane shows for it -- changing it is fine,              leaving the user with an unexplained broken box is not"
+        );
     }
 
     // -- the box drawing ---------------------------------------------------

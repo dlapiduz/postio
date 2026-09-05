@@ -33,11 +33,13 @@ pub mod export;
 pub mod feed;
 pub mod notifications;
 pub mod onboarding;
+pub mod orientation;
 pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
 mod settings_egress;
+mod settings_privacy;
 pub mod sidebar_backfill;
 
 // The toolkit-free half of the composition root lives in `postio-session`, so
@@ -137,8 +139,8 @@ pub fn run() -> glib::ExitCode {
     // An installation has exactly one keyring, and every credential read goes
     // to the same instance: the store key here, and every account password
     // through `Wiring::secrets`.
-    let secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore> =
-        std::sync::Arc::new(postio_imap::secret::KeyringSecretStore::default());
+    let secrets: std::sync::Arc<dyn postio_account::secret::SecretStore> =
+        std::sync::Arc::new(postio_account::secret::KeyringSecretStore::default());
 
     // `[mailboxes]`, read once here alongside `[sync]` and for the same
     // reason `notifications::config_at` gives. Which folder this server calls
@@ -149,11 +151,19 @@ pub fn run() -> glib::ExitCode {
         .map(postio_session::mailbox_roles_at)
         .unwrap_or_default();
 
+    // `[storage] max_bytes`, read once here for the same reason `[mailboxes]`
+    // is: `reclaim_disk` is spawned from `feed_the_window`, which runs before
+    // anything is watching the file.
+    let storage_ceiling = config_path
+        .as_deref()
+        .and_then(postio_session::storage_ceiling_at);
+
     let context = Rc::new(Installation {
         secrets,
         state,
         mailbox_roles,
         sync_config: sync_config.clone(),
+        storage_ceiling,
     });
 
     // The store's key, before the store. ADR 0014 Q3: a locked keyring means
@@ -166,6 +176,11 @@ pub fn run() -> glib::ExitCode {
     let first = postio_session::store_key_blocking(context.secrets.as_ref())
         .map_err(|error| error.to_string())
         .and_then(|key| open_with(&key, &context));
+    // Marked whether or not the store opened: a refused keyring still spent
+    // the time, and a phase that only appears on the happy path measures the
+    // wrong startup. #790 -- this and the widget tree used to share one
+    // phase, and the 228 ms they summed to got attributed to GTK.
+    timeline.mark(Phase::Store);
     let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
     // Whether `open_or_onboard` has already run for this window (#514): a
     // second `activate` -- a second launch of a single-instance app just
@@ -319,10 +334,10 @@ pub fn open_or_onboard(
                     notifier,
                     repairing.map(|account| *account),
                     std::sync::Arc::new(
-                        postio_imap::discovery::PimalayaTransport::new()
+                        postio_account::discovery::PimalayaTransport::new()
                             .with_egress(wiring.egress.clone()),
                     ),
-                    std::sync::Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
+                    std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
                 ),
             }
         }
@@ -364,7 +379,7 @@ fn open_account(
     // them — and `take`, because a second `activate` must not drain a stream
     // that is already being drained.
     if let Some(stream) = events.borrow_mut().take() {
-        commands::drain(window, &feeds, stream, notifier.clone());
+        commands::drain(window, &feeds, stream, notifier.clone(), state.clone());
     }
 }
 
@@ -437,14 +452,21 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         .map(|account| (account.id, account.display_name))
         .collect();
     //
-    // `offer_unified: false` until #184: a unified *list* is that issue's
-    // work, and a row that selects a scope nothing can draw would be a dead
-    // end. `g a` cycles through the accounts for the same reason.
-    window.sidebar().set_accounts(
-        &named,
-        postio_core::state::Scope::Account(account.id),
-        false,
-    );
+    // `offer_unified: true` since `ListScope::Unified` gave the row somewhere
+    // to lead (#185). It opens on an account rather than on Unified: the
+    // scope a person left in is not remembered yet, and one account's inbox
+    // is the smaller surprise on a cold start.
+    window
+        .sidebar()
+        .set_accounts(&named, postio_core::state::Scope::Account(account.id), true);
+    // And the window, which is a separate thing from the strip: the strip is
+    // what a person clicks, `Window::scope` is what decides whether a command
+    // needing somewhere in *one* account to put a message is offered at all
+    // (`Requirement::SingleAccount`). Nothing set it before this, and
+    // `AccountScope`'s own default is Unified -- so every window, including
+    // every single-account one, has been hiding "Move to…" from the palette
+    // and the cheat sheet since the requirement was added.
+    window.set_scope(postio_core::state::Scope::Account(account.id));
     // With more than one account the sidebar draws a section each, so the feed
     // has to read every tree rather than the current one (#185). `install_feeds`
     // has already opened the current account's; this re-points it, and only
@@ -455,20 +477,50 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
             .folders
             .open_sections(&ids, account.id, &account.address.address);
     }
+    // The status line's manual sync (#495). Through `Window::act`, so the
+    // pointer and `F5`/`R` reach one verb rather than two implementations of
+    // it -- and so the command's own filters, the palette and the cheat
+    // sheet all go on describing the same thing.
+    window.sidebar().connect_refresh_requested(glib::clone!(
+        #[weak]
+        window,
+        move || window.act(postio_core::Command::Refresh)
+    ));
     window.sidebar().connect_scope_selected({
         let feeds = feeds.clone();
+        let sidebar = glib::object::ObjectExt::downgrade(&window.sidebar());
+        let window_for_scope = glib::object::ObjectExt::downgrade(window);
         let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
         let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
             .into_iter()
             .map(|account| (account.id, account.address.address))
             .collect();
         move |scope| {
+            // What is available follows the scope wherever it goes, so this
+            // is first and unconditional: both branches below change what the
+            // list is showing, and a window still claiming the old scope
+            // offers the wrong verbs for the new one.
+            if let Some(window) = window_for_scope.upgrade() {
+                window.set_scope(scope);
+            }
             // Re-point the folder feed, which re-reads that account's tree
             // and, through its own loaded handler, opens its inbox. Nothing
             // here reaches into the list: the folders are what the list
             // follows, so there is one path rather than two that can
             // disagree about which account is on screen.
             let Some(id) = scope.account() else {
+                // Unified is the exception, and it has to be: it is a view
+                // over every account rather than a folder in one, so there
+                // is no tree to re-point and no inbox for a loaded handler
+                // to open. The list is addressed directly, and the folder
+                // highlight is cleared because no folder is showing -- a
+                // sidebar still pointing at Inbox while the list draws every
+                // account's mail is the app disagreeing with itself about
+                // where the user is.
+                feeds.messages.open(postio_model::ListScope::Unified);
+                if let Some(sidebar) = sidebar.upgrade() {
+                    sidebar.clear_folder_selection();
+                }
                 return;
             };
             let Some((_, address)) = addresses.iter().find(|(candidate, _)| *candidate == id)
@@ -507,14 +559,29 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // pane and the window wires their swap when the composer is installed.
     reading::install(window, wiring, &feeds, showing);
 
+    // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
+    // Installed here rather than in `postio-gtk` because the two questions
+    // it turns on -- has this been seen, and has a sync finished -- are a
+    // store read and an engine event, and the view layer has neither.
+    orientation::install(window, wiring, &feeds);
+
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
     export::install(window, wiring);
 
-    // The settings panel's account rows: enable/disable, remove-with-undo.
-    settings_accounts::install(window, wiring);
+    // Which accounts are rebuilding their local search index right now
+    // (#981) -- shared between the settings panel, which owns the set, and
+    // search, which reads it to raise a search outcome's own corpus caveat
+    // while a rebuild is running.
+    let reindexing: settings_accounts::Reindexing = Default::default();
+
+    // The settings panel's account rows: enable/disable, remove-with-undo,
+    // rebuild-index.
+    settings_accounts::install(window, wiring, reindexing.clone());
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
+    // The privacy pane's unsubscribe-activation log (#971).
+    settings_privacy::install(window, wiring);
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
@@ -530,13 +597,101 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
+    let search =
+        search::install(window, wiring, &feeds, reindexing).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
+    repair_the_header_blocks(wiring);
+    catch_up_the_header_index(wiring);
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
+    // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
+    // through `Wiring::storage_ceiling` -- this is the other half. Lowering
+    // it evicts without a restart; raising it needs nothing beyond the next
+    // pass reading the new number. Off the main thread, the same reason
+    // `reclaim_disk`'s own ceiling pass above is: `evict_to_fit` reads and
+    // deletes blobs.
+    window.connect_storage_changed({
+        let database = wiring.database.clone();
+        let blobs = wiring.blobs.clone();
+        let runtime = wiring.runtime.clone();
+        move |max_bytes| {
+            let database = database.clone();
+            let blobs = blobs.clone();
+            runtime.spawn_blocking(move || {
+                if let Err(error) =
+                    postio_session::enforce_storage_ceiling(&database, &blobs, max_bytes)
+                {
+                    tracing::warn!(%error, "could not bring the store under its new ceiling");
+                }
+            });
+        }
+    });
+
     Some(Wired { feeds, search })
+}
+
+/// Rebuild the header blocks of mail that arrived before there was anywhere
+/// to put them, out of the way.
+///
+/// `messages.body_headers` has been NULL on every row in every store since the
+/// schema was written, because both backfill paths passed `headers: None` on
+/// purpose (#884). New mail carries its block now; this is the mail already
+/// here, and without it `header:` would answer "no such mail" across a mailbox
+/// somebody has been using for a year — which reads as the feature being
+/// broken rather than as an index catching up.
+///
+/// `spawn_blocking` and once per start, the same two reasons
+/// [`catch_up_the_body_index`] has: it is a blob read and a header parse per
+/// message, synchronous from beginning to end, and nothing on screen is
+/// waiting for it. After the index catch-up rather than before, for the same
+/// reason that one goes first — somebody is waiting to search their mail, and
+/// this only makes a *later* search sharper.
+///
+/// Every pass after the first costs one query that finds nothing.
+fn repair_the_header_blocks(wiring: &Wiring) {
+    let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::repair_header_blocks(&database, &blobs) {
+            // Recoverable, like every other idle pass here: `header:` is a
+            // little less complete until the next start tries again, and a
+            // mail client that would not open over it would be trading the
+            // wrong thing.
+            tracing::warn!(%error, "could not rebuild the stored header blocks");
+        }
+    });
+}
+
+/// Index the header blocks that are already on this machine, out of the way.
+///
+/// `header:` matches `message_headers`, which is derived from
+/// `messages.body_headers` (ADR 0025 Q2) — so on every store that exists, and
+/// after every bump of the headers schema half, there is a mailbox's worth of
+/// stored blocks with no rows. The fetch path indexes the mail that arrives
+/// from now on; this is the mail that is already here.
+///
+/// After [`repair_the_header_blocks`] rather than before, and the order is
+/// load-bearing rather than tidy: that pass is what *writes* the blocks this
+/// one reads, so on a store that predates #884 running them the other way
+/// round would leave this pass with almost nothing to index and everything to
+/// do again next start. Both are spawned, so the ordering is a head start
+/// rather than a guarantee — and a message either pass misses is picked up by
+/// whichever of them runs next, which is what makes that acceptable.
+///
+/// `spawn_blocking` and once per start, the same two reasons
+/// [`catch_up_the_body_index`] has: it is synchronous SQLite that
+/// decompresses and parses a block per message, and nothing on screen waits
+/// for it. Every pass after the first costs one query that finds nothing.
+fn catch_up_the_header_index(wiring: &Wiring) {
+    let database = wiring.database.clone();
+    wiring.runtime.spawn_blocking(move || {
+        if let Err(error) = postio_session::index_local_headers(&database) {
+            // Recoverable, like every other idle pass here: `header:` is a
+            // little less complete until the next start tries again.
+            tracing::warn!(%error, "could not index the header blocks already on disk");
+        }
+    });
 }
 
 /// Train a body-compression dictionary from the mail already here.
@@ -603,8 +758,19 @@ fn train_the_body_dictionary(wiring: &Wiring) {
 /// Once per start, not on a timer. Orphans are produced by deletes, moves and
 /// resyncs — none of which happen fast enough to be worth a schedule, and all
 /// of which will still be there next time.
+///
+/// # And the third sweep
+///
+/// `BlobStore::evict_to_fit` was the one #416 left behind, on the argument
+/// that it is opt-in and so less urgent than the two that leaked
+/// unconditionally. It stayed uncalled, which meant `[storage] max_bytes` was
+/// a setting that parsed and did nothing (#862). It runs last here, after the
+/// two sweeps that take only what nothing wants: there is no sense evicting a
+/// blob somebody would have to refetch when an orphan of the same size was
+/// about to go for free.
 fn reclaim_disk(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
+    let ceiling = wiring.storage_ceiling;
     wiring.runtime.spawn_blocking(move || {
         if let Err(error) = postio_session::purge_fetch_debris(&blobs) {
             tracing::warn!(%error, "could not remove debris from unfinished fetches");
@@ -630,6 +796,36 @@ fn reclaim_disk(wiring: &Wiring) {
             // client that could not tidy up still reads mail, and the next
             // start tries again.
             tracing::warn!(%error, "could not reclaim blobs nothing references");
+        }
+        // Last, and only when somebody has set a ceiling: this is the sweep
+        // that costs a refetch, so it takes what the free sweeps left.
+        if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling) {
+            tracing::warn!(%error, "could not bring the store under its ceiling");
+        }
+        // The database's own pages, after the blob sweeps and for the same
+        // reason (#381). Deleting a message frees pages inside the file and
+        // hands nothing back to the filesystem: under `auto_vacuum = NONE`
+        // there is no mechanism to, and that is what a store about to hold a
+        // whole mailbox replica cannot afford -- a `UIDVALIDITY` reset wipes
+        // and re-syncs an entire folder from one server-side event.
+        //
+        // The conversion first, because it is what makes the reclaim
+        // possible on a store written before the setting existed, and it is
+        // a full rewrite -- minutes on a mailbox, which is exactly why it is
+        // here on the housekeeping worker and not on the startup path.
+        match database.adopt_incremental_vacuum() {
+            Ok(true) => tracing::info!("converted the store to incremental vacuum"),
+            Ok(false) => {}
+            // Recoverable, and the ordinary reason is another connection
+            // mid-transaction: nothing changed and the next start tries
+            // again.
+            Err(error) => tracing::warn!(%error, "could not convert the store"),
+        }
+        match database.reclaim_free_pages() {
+            Ok(0) => {}
+            // Pages and bytes, never what was in them.
+            Ok(pages) => tracing::info!(pages, "returned free pages to the filesystem"),
+            Err(error) => tracing::warn!(%error, "could not return free pages"),
         }
     });
 }
@@ -693,6 +889,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     ) {
         Ok(engines) => engines,
@@ -743,6 +940,7 @@ pub fn attach_account(
         wiring.secrets.clone(),
         wiring.mailbox_roles.clone(),
         wiring.backfill,
+        wiring.watch,
         &wiring.egress,
     )?;
     if let Some(sync) = started {
@@ -751,7 +949,7 @@ pub fn attach_account(
     // The surfaces that list accounts, now that there is one more. Nothing
     // else reads the account table while the window is up; when something
     // does, this is where it joins.
-    settings_accounts::refresh(window, &wiring.database);
+    settings_accounts::refresh(window, wiring);
     Ok(())
 }
 
@@ -890,10 +1088,15 @@ const BACKFILL_PER_MAILBOX: u32 = 200;
 /// keyring, which folder is the archive, how hard to sync. None of it depends
 /// on the store, which is exactly why it survives the store not opening.
 struct Installation {
-    secrets: std::sync::Arc<dyn postio_imap::secret::SecretStore>,
+    secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
     state: SharedState,
     mailbox_roles: postio_model::RoleOverrides,
     sync_config: postio_config::SyncConfig,
+    /// `[storage] max_bytes`, or `None` for the documented default of
+    /// unbounded. Read here beside the other two sections, and for the same
+    /// reason: the sweep that reads it runs before there is anywhere else to
+    /// have put it.
+    storage_ceiling: Option<u64>,
 }
 
 /// Everything downstream of the store key.
@@ -958,6 +1161,8 @@ fn open_with(
         ..Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
             .with_mailbox_roles(context.mailbox_roles.clone())
             .with_backfill(postio_session::backfill_policy(&context.sync_config))
+            .with_watch(postio_session::watch_policy(&context.sync_config))
+            .with_storage_ceiling(context.storage_ceiling)
             .with_secrets(context.secrets.clone())
     };
 
@@ -1135,13 +1340,13 @@ fn reap_pending_accounts(database: &Database) {
 /// and an error means onboarding rather than a window that never decides.
 pub async fn startup_route(
     database: &Database,
-    secrets: &dyn postio_imap::secret::SecretStore,
+    secrets: &dyn postio_account::secret::SecretStore,
 ) -> Startup {
     reap_pending_accounts(database);
     let Some(account) = first_account(database) else {
         return Startup::Onboard(None);
     };
-    let key = postio_imap::secret::AccountKey::new(account.address.address.clone());
+    let key = postio_account::secret::AccountKey::new(account.address.address.clone());
     // The account's domain, never the local part, for the same reason
     // `feed_the_window` logs only that.
     let domain = account.address.domain().unwrap_or("unknown").to_owned();
@@ -1169,7 +1374,7 @@ mod tests {
     //! on a real first run.
 
     use super::*;
-    use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+    use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 
     /// A store with one enabled account in it, and the key its credential
     /// would be filed under.

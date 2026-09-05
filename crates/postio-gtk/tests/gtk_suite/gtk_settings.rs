@@ -18,34 +18,14 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
-use std::time::{Duration, Instant};
+use crate::settle;
+use crate::wait_until;
 
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::CommandId;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-
-/// How long to give the write debounce and the watcher's own debounce
-/// together. Generous: this is a correctness check, not a latency budget.
-const PATIENCE: Duration = Duration::from_secs(5);
-
-/// Runs the main loop until `condition` holds, or gives up.
-fn wait_until(condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// The binding the window currently has for a command, as the cheat sheet
 /// would print it — which is the live keymap, not the registry default.
@@ -67,7 +47,7 @@ pub fn the_settings_panel_edits_the_file_in_place() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -244,7 +224,7 @@ pub fn a_keymap_problem_shows_up_on_the_settings_footer_not_only_a_debug_log() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

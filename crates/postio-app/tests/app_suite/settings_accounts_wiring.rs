@@ -14,6 +14,8 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::feed_the_window;
@@ -25,29 +27,13 @@ use postio_storage::repository::AccountRepository;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
-
 pub fn account_rows_persist_enable_and_mark_removal() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -58,7 +44,11 @@ pub fn account_rows_persist_enable_and_mark_removal() {
     let database = test_support::memory();
     seed_small(&database, 41);
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     // A second account: "one row per account" proves nothing with only the
     // one `seed_small` itself creates.
@@ -192,7 +182,8 @@ fn frames(window: &Window, count: u32) -> bool {
     let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(10), || {
         glib::ControlFlow::Continue
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
     while left.get() > 0 && std::time::Instant::now() < deadline {
         context.iteration(true);
     }

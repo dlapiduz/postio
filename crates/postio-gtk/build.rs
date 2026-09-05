@@ -10,10 +10,17 @@
 //!    convention. The generated file is checked in so that a build outside
 //!    the repository (or without the `Design/` tree) still works, and
 //!    `postio-ui`'s own drift tests fail if the checked-in copy has
-//!    drifted from the source.
+//!    drifted from the source. The reader's palette, `reader-tokens.css`,
+//!    is generated the same way but written into `postio-ui`'s own data
+//!    directory (#799) rather than this crate's — the reader's data lives
+//!    with the reader, this crate only builds it.
 //! 2. Compile `data/postio.gresource.xml` into the GResource bundle that
-//!    carries the stylesheet and the vendored OFL fonts, so the app resolves
-//!    both without a system font installation and without touching the network.
+//!    carries the stylesheet and the app icons, so the app resolves both
+//!    without a system font installation and without touching the network.
+//!    The vendored fonts and the reader's stylesheets are not in this
+//!    bundle: they are `postio-ui`'s data, embedded directly where that
+//!    crate reads them, so the bytes have one owner instead of a second
+//!    copy here.
 
 use std::path::{Path, PathBuf};
 
@@ -21,31 +28,32 @@ use postio_ui::tokens;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/tokens.rs");
     println!("cargo:rerun-if-changed=data/postio.gresource.xml");
     println!("cargo:rerun-if-changed=data/shell.css");
     println!("cargo:rerun-if-env-changed=POSTIO_DESIGN_SYSTEM");
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let data_dir = manifest_dir.join("data");
+    let ui_data_dir = manifest_dir
+        .parent()
+        .expect("crates/postio-gtk")
+        .join("postio-ui")
+        .join("data");
 
     match design_system_path(&manifest_dir) {
         Some(source) => {
             println!("cargo:rerun-if-changed={}", source.display());
             generate_tokens(&source, &data_dir.join("tokens.css"));
-            generate_reader_tokens(&source, &data_dir.join("reader-tokens.css"));
+            generate_reader_tokens(&source, &ui_data_dir.join("reader-tokens.css"));
         }
         None => {
             println!(
                 "cargo:warning=Industry design system not found; \
-                 keeping the checked-in data/tokens.css and data/reader-tokens.css. \
+                 keeping the checked-in data/tokens.css and \
+                 ../postio-ui/data/reader-tokens.css. \
                  Set POSTIO_DESIGN_SYSTEM to the styles.css to regenerate them."
             );
         }
-    }
-
-    for font in font_files(&data_dir) {
-        println!("cargo:rerun-if-changed={}", font.display());
     }
 
     glib_build_tools::compile_resources(
@@ -131,24 +139,4 @@ fn relative_label(source: &Path) -> String {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
     }
-}
-
-fn font_files(data_dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![data_dir.join("fonts")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    out
 }

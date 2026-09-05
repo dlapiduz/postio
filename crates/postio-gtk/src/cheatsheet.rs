@@ -78,7 +78,7 @@ const IN_THE_BOX: &str = "In the search box";
 fn heading(context: Context) -> &'static str {
     match context {
         Context::List => "Message list",
-        Context::Thread => "Thread",
+        Context::Conversation => "Conversation",
         Context::Reader => "Reading",
         Context::Composer => "Composing",
         Context::Search => "Search",
@@ -88,6 +88,13 @@ fn heading(context: Context) -> &'static str {
         // the pane.
         Context::Sidebar => "Folders",
         Context::Parts => "Parts",
+        // "Accounts" rather than "Settings": the section is about the account
+        // list, which is the only part of the settings panel these keys reach
+        // (ADR 0005 Q6c).
+        Context::Accounts => "Accounts",
+        // Same reasoning as `Accounts`, one section down: these keys reach
+        // only the keybinding list, not the whole settings panel.
+        Context::Keys => "Keybindings",
     }
 }
 
@@ -481,10 +488,6 @@ mod tests {
             !listed.contains(&ActionId::Builtin(CommandId::Send)),
             "sending belongs to the composer; offering it here teaches a key \
              that does nothing"
-        );
-        assert!(
-            !listed.contains(&ActionId::Builtin(CommandId::ToggleThreadUnread)),
-            "the thread filter needs a thread column on screen"
         );
     }
 

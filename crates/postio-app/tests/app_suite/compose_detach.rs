@@ -24,8 +24,9 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, glib};
 use postio_app::feed_the_window;
 use postio_core::Context;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
@@ -34,10 +35,6 @@ use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// A key press into the main window. GTK4 gives no supported way to
 /// synthesize a GDK event, so this is the same call the window's own
@@ -53,7 +50,7 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -65,7 +62,11 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();

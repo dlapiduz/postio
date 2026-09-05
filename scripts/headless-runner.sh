@@ -61,41 +61,164 @@ exec_target() { exec "$@"; }
 [ -n "${XDG_RUNTIME_DIR:-}" ]     || exec_target "$@"
 command -v mutter >/dev/null 2>&1 || exec_target "$@"
 
-# Only test and bench binaries belong on the hidden compositor. Cargo names
-# them with a 16-hex metadata suffix; everything else -- the application via
-# `cargo run`, examples -- is exec'd unchanged so it reaches the real display.
-SUFFIX="${1##*-}"
-case "$SUFFIX" in
-????????????????)
+# The two examples whose entire output is a file, not a window.
+#
+# #315 sends examples to the real display on the grounds that an example is
+# someone launching a program to look at it. `shot` and `surface` are not
+# that: they render a PNG and exit, and nobody ever sees their window. Sending
+# them to the session's display made the visual check `/gtk-design` requires
+# depend on whether the maintainer's screen happened to be awake -- a locked
+# or blanked screen stops delivering frames, and #809 is what that cost. The
+# private compositor always presents, so here they always work, and on a
+# machine with no session at all they work for the first time.
+case "$(basename "${1:-}")" in
+shot|surface) ;;
+*)
+    # Only test and bench binaries belong on the hidden compositor. Cargo
+    # names them with a 16-hex metadata suffix; everything else -- the
+    # application via `cargo run`, other examples -- is exec'd unchanged so it
+    # reaches the real display.
+    SUFFIX="${1##*-}"
     case "$SUFFIX" in
-    *[!0-9a-f]*) exec_target "$@" ;;   # 16 chars, but not a hash
+    ????????????????)
+        case "$SUFFIX" in
+        *[!0-9a-f]*) exec_target "$@" ;;   # 16 chars, but not a hash
+        esac
+        ;;
+    *) exec_target "$@" ;;
     esac
     ;;
-*) exec_target "$@" ;;
 esac
 
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"
 SOCKET="$XDG_RUNTIME_DIR/$DISPLAY_NAME"
+UNAVAILABLE="$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable"
+
+# Whether a compositor is actually behind the socket, rather than a socket
+# file being present.
+#
+# These are different questions and the difference is not academic: mutter can
+# bind the socket and then exit -- on a machine with no DRM device, which is
+# every GitHub-hosted runner -- leaving a file that passes `-S` with nothing
+# listening. Committing to that is worse than never starting one, because the
+# lines below unset DISPLAY and force GDK_BACKEND=wayland, so the fallback
+# display is thrown away too and *every* GTK test skips itself for want of a
+# display it actually had. That is what #781 spent a day discovering, and it
+# is the opposite of this script's promise to exec the binary unchanged when
+# anything is wrong.
+# Asked of the socket, not of the process table. `pgrep -f
+# wayland-display=<name>` looks like the obvious check and is wrong twice
+# over: a compositor for a *different* XDG_RUNTIME_DIR can share the display
+# name, and `-f` happily matches any shell whose command line mentions it.
+# Both were observed while writing this.
+#
+# `ss` prints a line only when something is actually listening on that exact
+# path. If ss is missing, this cannot tell, and says so by keeping the old
+# behaviour rather than inventing an answer.
+compositor_alive() {
+    command -v ss >/dev/null 2>&1 || return 0
+    [ -n "$(ss -lxH src "$SOCKET" 2>/dev/null)" ]
+}
+
+# One binary learning the compositor will not come up saves the next twenty
+# from waiting ten seconds each to learn it again.
+#
+# It expires, though, and that is not a detail. `XDG_RUNTIME_DIR` lives as
+# long as the login session, so a marker nothing removes is not "this run has
+# no compositor", it is "this machine has no compositor until someone deletes
+# a file they do not know exists". The nested compositor here exited nine
+# hours into a run, and every suite afterwards would have been quietly demoted
+# to the session's display -- throwing test windows at whoever was at the
+# keyboard, and proving the suites pass on a configuration Postio does not
+# ship. A shortcut may save the next twenty binaries; it may not decide
+# tomorrow's run.
+if [ -e "$UNAVAILABLE" ]; then
+    # `find -mmin +N` prints the file only when it is older than N minutes.
+    if [ -z "$(find "$UNAVAILABLE" -mmin +"${POSTIO_UNAVAILABLE_MINUTES:-5}" 2>/dev/null)" ]; then
+        exec_target "$@"
+    fi
+    rm -f "$UNAVAILABLE" 2>/dev/null || true
+fi
 
 if [ ! -S "$SOCKET" ]; then
     # A lock so twenty test binaries starting at once bring up one compositor
     # between them rather than twenty racing to bind the same socket.
     LOCK="$XDG_RUNTIME_DIR/$DISPLAY_NAME.startlock"
     if mkdir "$LOCK" 2>/dev/null; then
+        # `GTK_A11Y`/`NO_AT_BRIDGE` here and not only further down: the
+        # export below runs 60-odd lines after this line, so mutter was
+        # started without them and spent a run complaining
+        #
+        #   ** (process:2): WARNING **: Can't connect to a11y bus:
+        #      Could not connect: No such file or directory
+        #
+        # once per window it created. That is the *compositor's* warning, not
+        # the test binary's -- which is why setting the variable for the
+        # tests never silenced it, and why the noise looked like it came from
+        # the suite. There is no accessibility bus on a headless runner and
+        # nothing here wants one: `gtk_accessibility.rs` asserts through
+        # GTK's own `gtk_test_accessible_*` API, which needs no bridge.
+        GTK_A11Y=none NO_AT_BRIDGE=1 \
         setsid mutter --headless --wayland-display="$DISPLAY_NAME" \
             --virtual-monitor "${POSTIO_TEST_GEOMETRY:-1280x800}" \
             >"$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" 2>&1 </dev/null &
-        for _ in $(seq 1 40); do [ -S "$SOCKET" ] && break; sleep 0.25; done
+        # Ten seconds on an idle machine, scaled by POSTIO_TEST_PATIENCE like
+        # every other deadline. A runner that is slow to start mutter is the
+        # ordinary case, not a broken one: a CI run failed with mutter's log
+        # saying only "Running Mutter … as a Wayland display server" -- it was
+        # coming up, and the wait gave up first. Everything then skipped for
+        # want of a display and `gtk_display_required` failed the run, which
+        # is the loud failure #114 asked for but not for this reason.
+        TICKS=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+            'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 40 * factor }')
+        for _ in $(seq 1 "$TICKS"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
         rmdir "$LOCK" 2>/dev/null || true
     else
         # Someone else is starting it; wait for them rather than racing.
-        for _ in $(seq 1 60); do [ -S "$SOCKET" ] && break; sleep 0.25; done
+        WAIT=$(awk -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+            'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", 60 * factor }')
+        for _ in $(seq 1 "$WAIT"); do [ -S "$SOCKET" ] && break; sleep 0.25; done
     fi
 fi
 
 # Still nothing? Then run on whatever the session has. A test that needs a
 # display will skip itself; one that does not is unaffected.
-[ -S "$SOCKET" ] || exec_target "$@"
+#
+# Out loud, because the alternative is a silence that means two opposite
+# things. The path below announces its fallback, this one used not to, so a CI
+# log grepped for `postio runner:` came back empty whether mutter had worked
+# perfectly or never started at all -- and "which display did the suites
+# actually run on" is not a question a green tick answers. Leaving a marker
+# too, for the same reason the path below does: the next twenty binaries
+# should not each wait ten seconds to rediscover this.
+if [ ! -S "$SOCKET" ]; then
+    : > "$UNAVAILABLE" 2>/dev/null || true
+    echo "postio runner: mutter never bound $SOCKET; using the session's display" >&2
+    if [ -s "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" ]; then
+        echo "postio runner: mutter said --" >&2
+        tail -n 15 "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" | sed 's/^/  /' >&2
+    fi
+    exec_target "$@"
+fi
+
+# A socket with nothing behind it is the same situation wearing a disguise.
+# Clear it and say so once, so the rest of the run stops paying for the
+# attempt, then fall back to the session's own display -- which on CI is the
+# Xvfb the workflow started and verified.
+if ! compositor_alive; then
+    : > "$UNAVAILABLE" 2>/dev/null || true
+    rm -f "$SOCKET" 2>/dev/null || true
+    echo "postio runner: no compositor behind $SOCKET; using the session's display" >&2
+    # Mutter's own account of why, which is written to a log nobody has ever
+    # read: the failure is silent by construction, and "the compositor did not
+    # come up" is not a diagnosis. Bounded, because a compositor that failed
+    # noisily should not bury the test output that follows it.
+    if [ -s "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" ]; then
+        echo "postio runner: mutter said --" >&2
+        tail -n 15 "$XDG_RUNTIME_DIR/$DISPLAY_NAME.log" | sed 's/^/  /' >&2
+    fi
+    exec_target "$@"
+fi
 
 export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
@@ -119,7 +242,24 @@ gtk_reader-*|e2e-*|gtk_suite-*|app_suite-*|gtk_editable_dialect-*|gtk_editor*|gt
     # NetworkProcess children die with it), a hard deadline, and a dump of
     # kernel-side state before the kill so a hang leaves a diagnosis rather
     # than a mystery.
-    LIMIT="${POSTIO_TEST_WATCHDOG:-300}"
+    # Scaled by POSTIO_TEST_PATIENCE, like every other deadline in the suite
+    # (#842). This one guards a *hang*, so it is deliberately generous rather
+    # than tight -- but 300s was chosen on an idle workstation, and the
+    # machines most likely to take longer than it are exactly the loaded ones
+    # where a wrongly-killed suite is hardest to interpret. `awk` because this
+    # is POSIX sh and the multiplier may be fractional.
+    # 900s, not 300. This bounds a *hang* -- #272's DMA-BUF handshake wedging
+    # at 0% CPU -- and a hang never finishes, so the only thing a larger bound
+    # costs is how long a wedged run takes to fail. Sizing it close to the
+    # legitimate runtime buys nothing and kills real work.
+    #
+    # 300 was chosen when gtk_suite was ~76 cases. #841 consolidated 45 more
+    # into it, and it now takes ~220s on an idle workstation -- inside 300, but
+    # not while a gate run is also compiling. It was killed at 142 passing
+    # cases with nothing wrong.
+    LIMIT="${POSTIO_TEST_WATCHDOG:-900}"
+    LIMIT=$(awk -v base="$LIMIT" -v factor="${POSTIO_TEST_PATIENCE:-1}" \
+        'BEGIN { if (factor + 0 <= 0) factor = 1; printf "%d", base * factor }')
     setsid "$@" &
     GROUP=$!
     trap 'kill -9 -"$GROUP" 2>/dev/null' INT TERM

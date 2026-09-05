@@ -1,0 +1,99 @@
+[package]
+name = "postio-bench"
+description = "The workspace's benchmarks, kept out of the crates they measure."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# No library and no binary: this crate is nine bench targets and nothing else.
+# Without this, cargo looks for `src/lib.rs` and fails.
+[lib]
+path = "src/lib.rs"
+
+# Everything is a dev-dependency, deliberately.
+#
+# Bench targets can read them, and `cargo build --workspace` cannot -- which
+# matters because `postio-storage/test-support` pulls in seeding and fixture
+# code that has no business being reachable from an ordinary build. As
+# ordinary dependencies, feature unification would switch that on for every
+# crate in the workspace.
+[dev-dependencies]
+adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+criterion = "0.7.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
+gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+postio-config.workspace = true
+postio-core.workspace = true
+postio-gtk.workspace = true
+postio-account.workspace = true
+postio-index.workspace = true
+postio-model.workspace = true
+postio-runtime.workspace = true
+postio-search.workspace = true
+postio-session.workspace = true
+postio-storage = { workspace = true, features = ["test-support"] }
+postio-sync.workspace = true
+# Throwaway stores: a bench that measured a database it had to keep would be
+# measuring the disk it was left on.
+tempfile = "3.27.0"
+# `sync_writes` drives the write path a transaction at a time, so it holds a
+# `rusqlite` connection itself. The feature string has to match every other
+# consumer's: one `links = "sqlite3"` crate in the graph, and ADR 0014 is why
+# it is the SQLCipher one.
+rusqlite = { version = "0.40.2", features = [
+    "bundled-sqlcipher-vendored-openssl",
+] }
+# `store_reads` builds a multi-thread runtime and `sync_lanes` a current-thread
+# one, both by hand: the store and the sync engine are async, and a bench has
+# to own the runtime it measures them on.
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true
+
+# The perf budgets CLAUDE.md names -- startup, interaction, search -- plus the
+# store, sync and list benchmarks. `harness = false` on every one: each owns
+# its `main`, whether through criterion or by printing its own table.
+[[bench]]
+name = "action_round_trip"
+harness = false
+
+[[bench]]
+name = "perf_budgets"
+harness = false
+
+[[bench]]
+name = "list_scroll"
+harness = false
+
+[[bench]]
+name = "composer_open"
+harness = false
+
+[[bench]]
+name = "conversation_rows"
+harness = false
+
+[[bench]]
+name = "search_budget"
+harness = false
+
+[[bench]]
+name = "search_under_load"
+harness = false
+
+[[bench]]
+name = "store_reads"
+harness = false
+
+[[bench]]
+name = "sync_writes"
+harness = false
+
+[[bench]]
+name = "sync_lanes"
+harness = false

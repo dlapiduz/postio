@@ -12,13 +12,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aead"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1973cfbc1a2daf9cf550e74e1f088c28e7f7d8c1e1418fb6c9dc5184b7e84c99"
+dependencies = [
+ "crypto-common 0.2.2",
+ "inout 0.2.2",
+]
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
- "cipher",
+ "cipher 0.4.4",
  "cpufeatures 0.2.17",
  "zeroize",
 ]
@@ -361,7 +371,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
 dependencies = [
- "cipher",
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -394,13 +404,26 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
+ "cipher 0.5.2",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chacha20poly1305"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
+dependencies = [
+ "aead",
+ "chacha20",
+ "cipher 0.5.2",
+ "poly1305",
 ]
 
 [[package]]
@@ -460,8 +483,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common 0.1.7",
- "inout",
+ "inout 0.1.4",
  "zeroize",
+]
+
+[[package]]
+name = "cipher"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
+dependencies = [
+ "block-buffer 0.12.1",
+ "crypto-common 0.2.2",
+ "inout 0.2.2",
 ]
 
 [[package]]
@@ -502,6 +536,12 @@ name = "clap_lex"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "combine"
@@ -642,7 +682,9 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
+ "getrandom 0.4.3",
  "hybrid-array",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -654,6 +696,15 @@ dependencies = [
  "dtoa-short",
  "itoa",
  "smallvec",
+]
+
+[[package]]
+name = "ctutils"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+dependencies = [
+ "cmov",
 ]
 
 [[package]]
@@ -1619,6 +1670,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "io-gmail"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2285,7 +2345,7 @@ dependencies = [
  "aes",
  "ashpd",
  "cbc",
- "cipher",
+ "cipher 0.4.4",
  "digest 0.10.7",
  "endi",
  "futures-util",
@@ -2548,6 +2608,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "poly1305"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c"
+dependencies = [
+ "cpufeatures 0.3.0",
+ "universal-hash",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2563,19 +2633,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-account"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "domain",
+ "io-http",
+ "io-imap",
+ "io-oauth",
+ "io-pim-discovery",
+ "io-sasl",
+ "log",
+ "oo7",
+ "pimalaya-stream",
+ "postio-account",
+ "postio-config",
+ "postio-model",
+ "postio-test-support",
+ "rustls",
+ "rustls-platform-verifier",
+ "secrecy",
+ "security-framework",
+ "serde",
+ "serde-xml-rs",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "toml 1.1.4+spec-1.1.0",
+ "tracing",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "postio-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "async-trait",
  "chrono",
- "criterion",
  "gtk4",
  "libadwaita",
+ "postio-account",
  "postio-config",
  "postio-core",
  "postio-gtk",
- "postio-imap",
  "postio-index",
  "postio-jmap",
  "postio-model",
@@ -2584,19 +2691,43 @@ dependencies = [
  "postio-session",
  "postio-smtp",
  "postio-storage",
+ "postio-test-support",
  "serde-xml-rs",
  "tempfile",
  "tokio",
  "tracing",
- "tracing-journald",
- "tracing-log",
  "tracing-subscriber",
  "url",
 ]
 
 [[package]]
+name = "postio-bench"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "futures-util",
+ "gtk4",
+ "libadwaita",
+ "postio-account",
+ "postio-config",
+ "postio-core",
+ "postio-gtk",
+ "postio-index",
+ "postio-model",
+ "postio-runtime",
+ "postio-search",
+ "postio-session",
+ "postio-storage",
+ "postio-sync",
+ "rusqlite",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "postio-body"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ammonia",
  "html5ever",
@@ -2607,23 +2738,24 @@ dependencies = [
 
 [[package]]
 name = "postio-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "notify",
  "postio-model",
  "serde",
  "thiserror",
  "toml 1.1.4+spec-1.1.0",
+ "toml_edit",
 ]
 
 [[package]]
 name = "postio-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
- "criterion",
  "postio-config",
  "postio-model",
+ "postio-test-support",
  "serde",
  "serde_json",
  "tempfile",
@@ -2634,21 +2766,22 @@ dependencies = [
 
 [[package]]
 name = "postio-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "async-trait",
  "chrono",
+ "postio-account",
  "postio-body",
  "postio-config",
  "postio-core",
  "postio-ffi",
- "postio-imap",
  "postio-model",
  "postio-runtime",
  "postio-session",
  "postio-smtp",
  "postio-storage",
+ "postio-test-support",
  "postio-ui",
  "tempfile",
  "thiserror",
@@ -2659,28 +2792,24 @@ dependencies = [
 
 [[package]]
 name = "postio-gmail"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
  "io-gmail",
  "pimalaya-stream",
- "postio-imap",
+ "postio-account",
  "postio-model",
- "secrecy",
- "thiserror",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
 name = "postio-gtk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "chrono",
- "criterion",
  "gio",
  "glib",
  "glib-build-tools",
@@ -2694,6 +2823,7 @@ dependencies = [
  "postio-core",
  "postio-model",
  "postio-search",
+ "postio-test-support",
  "postio-ui",
  "tempfile",
  "thiserror",
@@ -2702,49 +2832,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "postio-imap"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "io-http",
- "io-imap",
- "io-oauth",
- "io-pim-discovery",
- "io-sasl",
- "log",
- "oo7",
- "pimalaya-stream",
- "postio-config",
- "postio-imap",
- "postio-model",
- "rand 0.9.5",
- "rustls",
- "rustls-platform-verifier",
- "secrecy",
- "security-framework",
- "serde",
- "serde-xml-rs",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "toml 1.1.4+spec-1.1.0",
- "tracing",
- "url",
- "zeroize",
-]
-
-[[package]]
 name = "postio-index"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
- "criterion",
  "postio-body",
  "postio-model",
  "postio-search",
@@ -2756,25 +2847,22 @@ dependencies = [
 
 [[package]]
 name = "postio-jmap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
  "io-jmap",
  "pimalaya-stream",
- "postio-imap",
+ "postio-account",
  "postio-model",
  "secrecy",
- "serde_json",
- "thiserror",
  "tokio",
- "tracing",
  "url",
 ]
 
 [[package]]
 name = "postio-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "mail-builder",
@@ -2786,20 +2874,20 @@ dependencies = [
 
 [[package]]
 name = "postio-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "chrono",
- "criterion",
  "futures-util",
+ "postio-account",
  "postio-core",
- "postio-imap",
  "postio-index",
  "postio-model",
  "postio-search",
  "postio-smtp",
  "postio-storage",
  "postio-sync",
+ "postio-test-support",
  "rusqlite",
  "tempfile",
  "tokio",
@@ -2810,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "postio-search"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "postio-model",
@@ -2818,13 +2906,14 @@ dependencies = [
 
 [[package]]
 name = "postio-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "blake3",
  "chrono",
+ "postio-account",
  "postio-config",
  "postio-core",
  "postio-gmail",
- "postio-imap",
  "postio-index",
  "postio-jmap",
  "postio-model",
@@ -2832,7 +2921,10 @@ dependencies = [
  "postio-search",
  "postio-smtp",
  "postio-storage",
+ "postio-sync",
  "postio-ui",
+ "rusqlite",
+ "secrecy",
  "tempfile",
  "tokio",
  "tracing",
@@ -2843,10 +2935,11 @@ dependencies = [
 
 [[package]]
 name = "postio-smtp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "idna",
  "io-sasl",
  "io-smtp",
  "postio-model",
@@ -2856,14 +2949,14 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
- "tracing",
 ]
 
 [[package]]
 name = "postio-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
+ "chacha20poly1305",
  "chrono",
  "getrandom 0.3.4",
  "postio-model",
@@ -2879,12 +2972,12 @@ dependencies = [
 
 [[package]]
 name = "postio-sync"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "postio-imap",
+ "postio-account",
  "postio-index",
  "postio-model",
  "postio-smtp",
@@ -2897,15 +2990,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-test-support"
+version = "0.2.0"
+
+[[package]]
 name = "postio-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "postio-body",
  "postio-config",
  "postio-core",
  "postio-model",
- "postio-search",
  "thiserror",
 ]
 
@@ -3812,6 +3909,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 
@@ -4050,6 +4148,16 @@ dependencies = [
  "textwrap",
  "uniffi_meta",
  "weedle2",
+]
+
+[[package]]
+name = "universal-hash"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4987bdc12753382e0bec4a65c50738ffaabc998b9cdd1f952fb5f39b0048a96"
+dependencies = [
+ "crypto-common 0.2.2",
+ "ctutils",
 ]
 
 [[package]]

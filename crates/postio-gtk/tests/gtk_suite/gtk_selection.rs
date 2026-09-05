@@ -10,6 +10,7 @@
 //! unpainted window, and "selected draws differently" is `gtk_row.rs`'s job
 //! anyway. What is checked here is the state the drawing reads.
 
+use crate::pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -58,13 +59,6 @@ fn row(position: u32) -> Row {
     }
 }
 
-fn pump() {
-    let context = gtk::glib::MainContext::default();
-    for _ in 0..64 {
-        while context.iteration(false) {}
-    }
-}
-
 /// The row widget currently showing `position`, if it is realised.
 fn realised_row(pane: &MessageListView, position: u32) -> Option<MessageRowView> {
     let found = RefCell::new(None);
@@ -82,7 +76,7 @@ fn id(position: u32) -> MessageId {
 
 pub fn the_cursor_and_the_selection_are_two_different_things() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

@@ -46,7 +46,7 @@
 
 use std::process::ExitCode;
 
-use postio_imap::secret::{Password, platform_keyring};
+use postio_account::secret::{Password, platform_keyring};
 use postio_session::provision::{Provisioned, account_from, provision, settings_for};
 
 /// A set variable, treating empty as unset — an exported-but-blank variable

@@ -13,6 +13,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ const INTERACTION_BUDGET: Duration = Duration::from_millis(16);
 
 pub fn the_preview_follows_the_focus_and_answers_the_query_on_screen() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -268,11 +269,6 @@ fn snippet_runs(window: &Window) -> Vec<(String, bool)> {
         runs.push((rest.to_string(), false));
     }
     runs
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

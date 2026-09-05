@@ -33,6 +33,7 @@ mod contacts;
 mod cross_account;
 mod drafts;
 mod egress;
+mod labels;
 mod mailboxes;
 mod messages;
 mod operations;
@@ -40,6 +41,7 @@ mod settings;
 mod sync_state;
 mod threading;
 mod threads;
+mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
@@ -49,6 +51,7 @@ pub use cross_account::{
 };
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
+pub use labels::LabelRepository;
 pub use mailboxes::MailboxRepository;
 pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use settings::SettingsRepository;
@@ -58,6 +61,7 @@ pub use threads::{
     DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
     ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
 };
+pub use unsubscribe::UnsubscribeRepository;
 
 pub use messages::{
     BackfillCandidate, ColumnFlag, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,

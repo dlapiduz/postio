@@ -40,9 +40,9 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use postio_account::auth::TokenSource;
+use postio_account::backend::{BackendError, MailBackend};
 use postio_core::event::MailFootprint;
-use postio_imap::auth::TokenSource;
-use postio_imap::backend::{BackendError, MailBackend};
 use postio_model::RoleOverrides;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_smtp::transport::SmtpConnector;
@@ -89,6 +89,14 @@ pub struct DrainSummary {
     pub deferred: usize,
     /// Rows given up on, each with the reason the user should see.
     pub failed: Vec<String>,
+    /// Rows that may or may not have happened, each with its reason.
+    ///
+    /// Separate from `failed` because the two say different things and the
+    /// user is told different things (#674): a failure did not happen, and
+    /// this may have. Nothing here becomes an `Event::Error` — a send that
+    /// might be in somebody's inbox is not an error, it is a question, and
+    /// the `Unconfirmed` draft is where it is asked.
+    pub uncertain: Vec<String>,
     /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
 }
@@ -101,6 +109,7 @@ impl DrainSummary {
             && self.obsolete == 0
             && self.deferred == 0
             && self.failed.is_empty()
+            && self.uncertain.is_empty()
     }
 }
 
@@ -310,8 +319,16 @@ pub fn stop_retained() {
         return;
     }
     tracing::debug!(count = engines.len(), "stopping the sync engines");
+    // Close every channel before joining anything, so the engines wind down
+    // concurrently — and give the joins one shared deadline: a machine with
+    // N accounts owes the user one grace on the way out, not N of them
+    // (#759).
     for engine in &engines {
-        engine.stop();
+        engine.jobs.close();
+    }
+    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    for engine in &engines {
+        engine.thread.join_until(deadline);
     }
 }
 
@@ -366,6 +383,38 @@ pub struct Engine {
 #[derive(Debug)]
 struct EngineThread {
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// What the thread was last seen doing, for the warning when it outstays
+    /// the grace.
+    busy: Busy,
+}
+
+/// What the engine's thread was last seen doing.
+///
+/// Written by the engine's thread as it moves between phases and read by
+/// [`EngineThread::join_until`] when the grace expires, so the warning can
+/// name what was still running instead of leaving the reader to guess which
+/// of a dozen awaits went long (#759).
+#[derive(Clone, Debug)]
+struct Busy(Arc<Mutex<String>>);
+
+impl Busy {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new("starting up".to_owned())))
+    }
+
+    fn set(&self, what: impl Into<String>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = what.into();
+    }
+
+    fn what(&self) -> String {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 /// How long dropping the last [`Engine`] waits for its thread to stop.
@@ -385,6 +434,13 @@ impl EngineThread {
     /// The caller must have closed the job channel first, or there is nothing
     /// telling the thread to finish and this simply spends the grace period.
     fn join_bounded(&self) {
+        self.join_until(Instant::now() + SHUTDOWN_GRACE);
+    }
+
+    /// As [`join_bounded`](Self::join_bounded), against a deadline the caller
+    /// chose — which is what lets [`stop_retained`] give N engines one shared
+    /// grace on the way out instead of N graces in a row (#759).
+    fn join_until(&self, deadline: Instant) {
         let Some(handle) = self
             .handle
             .lock()
@@ -400,7 +456,6 @@ impl EngineThread {
             return;
         }
 
-        let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
         while !handle.is_finished() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -411,6 +466,7 @@ impl EngineThread {
             // window shut. This is the state everything was in before the
             // handle was kept, so the risk is the one that was always there.
             tracing::warn!(
+                busy = %self.busy.what(),
                 "the sync engine did not stop within {SHUTDOWN_GRACE:?}; leaving it running"
             );
         }
@@ -459,18 +515,23 @@ impl Engine {
         // the engine. What arrives is a handful of small jobs, not a stream.
         let (jobs, inbox) = async_channel::unbounded::<Job>();
         let pool = parts.database.pool().clone();
+        let busy = Busy::new();
 
         // The handle is kept, not dropped. See `EngineThread` for the
         // coredump that came of dropping it.
         let handle = std::thread::Builder::new()
             .name("postio-sync".to_string())
-            .spawn(move || run(parts, pool, inbox))
+            .spawn({
+                let busy = busy.clone();
+                move || run(parts, pool, inbox, busy)
+            })
             .map_err(|error| EngineError::new(format!("the sync engine did not start: {error}")))?;
 
         Ok(Engine {
             jobs,
             thread: Arc::new(EngineThread {
                 handle: Mutex::new(Some(handle)),
+                busy,
             }),
         })
     }
@@ -646,7 +707,7 @@ impl Engine {
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a current-thread runtime and a connection of its own.
-fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
+fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy: Busy) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -669,6 +730,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
     runtime.block_on(tracing::Instrument::instrument(
         async move {
             let mut state = State {
+                busy,
                 backfill: Backfill::new(parts.backfill),
                 backfill_announced: None,
                 footprint: None,
@@ -710,7 +772,10 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
             loop {
                 tokio::select! {
                     job = inbox.recv() => match job {
-                        Ok(job) => serve(job, &parts, &pool, &mut state).await,
+                        Ok(job) => {
+                            state.busy.set(format!("serving {job:?}"));
+                            serve(job, &parts, &pool, &mut state).await;
+                        }
                         // Every handle dropped: nothing more will be asked.
                         Err(_) => break,
                     },
@@ -746,11 +811,25 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // job arrives rather than waiting to be noticed here, which is
                 // what keeps that true now that a wave is more than one
                 // mailbox long. See `sync_wave`.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
+                    && !has_queued_work(&parts, &pool)
                     && !state.to_sync.is_empty()
                 {
+                    state.busy.set("a sync wave");
                     sync_wave(&parts, &pool, &mut state, &inbox).await;
+                }
+
+                // A wave that yielded to queued work has to be followed by the
+                // drain it yielded *for*. Without this the operation waits at
+                // the `select!` above for up to `POLL_INTERVAL` — the wave
+                // stops promptly and then nothing happens, which is most of
+                // the delay #944 reported and the half that is easy to miss
+                // once the yielding itself looks fixed.
+                if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
+                    state.busy.set("draining after a wave");
+                    let outcome = drain(&parts, &pool, &mut state).await;
+                    announce_drain(&parts.events, parts.account, &outcome);
                 }
 
                 // Then fetch bodies, but only while nothing else is asking. One
@@ -763,10 +842,10 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // want next, and a queued operation is something they have already
                 // done. Speculation must not outrank it — a first sync of a large
                 // mailbox is thousands of bodies long.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &pool)
-                    && pump_body(&parts, &pool, &mut state).await
+                    && pump_body(&parts, &pool, &mut state, &inbox).await
                 {}
 
                 // Then queue the next batch, and fetch that too. `seed` takes
@@ -780,36 +859,42 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
                 // or the user is doing something), and topping up then would
                 // pull an entire archive into memory that policy has just said
                 // not to fetch.
-                while inbox.is_empty()
+                while nothing_asked(&inbox)
                     && state.supervisor.link().is_online()
                     && !has_queued_work(&parts, &pool)
                     && state.backfill.is_idle()
                     && top_up_backfill(&parts, &pool, &mut state) > 0
                 {
-                    while inbox.is_empty()
+                    while nothing_asked(&inbox)
                         && state.supervisor.link().is_online()
                         && !has_queued_work(&parts, &pool)
-                        && pump_body(&parts, &pool, &mut state).await
+                        && pump_body(&parts, &pool, &mut state, &inbox).await
                     {}
                 }
 
-                // Then wait to be told about mail. This is the branch that idles,
-                // so it goes last and races the inbox: a job arriving while an
-                // `IDLE` is held must not wait out the timeout.
+                // Then wait to be told about mail. This is the branch that
+                // idles, so it goes last — and `keep_watch` itself watches
+                // the inbox and the queue, so a job arriving while an `IDLE`
+                // is held does not wait out the timeout.
+                //
+                // It used to be a `select!` here that *dropped* `keep_watch`
+                // when a job arrived, and that drop is a wedge twice over: a
+                // step the watcher handed out is outstanding until reported,
+                // so the dropped future left its mailbox unwatched for the
+                // rest of the session — never idled, never polled — and the
+                // pool got a session back that was still inside `IDLE`,
+                // poisoning the next checkout. A delivery then sat unseen
+                // until reconnect. #755 is where that surfaced; the wedge
+                // itself predates the conversation pane.
                 if inbox.is_empty() && state.to_sync.is_empty() {
-                    tokio::select! {
-                        biased;
-                        // Peeking rather than taking: whichever branch loses is
-                        // cancelled, and a job taken off the queue by a branch
-                        // that is then dropped is a job nobody serves.
-                        _ = wait_for_job(&inbox) => {}
-                        // A local mutation is not a job — nobody tells this thread
-                        // that a row was written — and an `IDLE` is held for
-                        // minutes. Without this branch, a flag set or a draft
-                        // autosaved while connected would wait out the whole watch
-                        // before going anywhere.
-                        _ = wait_for_queued_work(&parts, &pool) => {}
-                        _ = keep_watch(&parts, &mut state) => {}
+                    state.busy.set("idle");
+                    keep_watch(&parts, &pool, &mut state, &inbox).await;
+                    // Defence in depth: `keep_watch` now runs its step to
+                    // completion and always reports it, but a step that ever
+                    // again vanishes unreported must not leave its mailbox
+                    // treated as covered for ever.
+                    if let Some(watcher) = state.watcher.as_mut() {
+                        watcher.interrupted(Utc::now());
                     }
                 }
             }
@@ -820,6 +905,9 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>) {
 
 /// What the engine's thread keeps between jobs.
 struct State {
+    /// What this thread is doing right now, shared with the handle that will
+    /// one day wait for it. See [`Busy`].
+    busy: Busy,
     backfill: Backfill,
     /// When the body queue last said how far it had got.
     ///
@@ -967,7 +1055,27 @@ async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut St
 /// `recv` would take the job and then be cancelled by the other branch of the
 /// `select!`, losing it. This only ever observes.
 async fn wait_for_job(inbox: &async_channel::Receiver<Job>) {
-    while inbox.is_empty() && !inbox.is_closed() {
+    while nothing_asked(inbox) {
+        tokio::time::sleep(WATCH_FLOOR).await;
+    }
+}
+
+/// Whether the engine may start — or keep doing — unattended work.
+///
+/// The guard every background loop shares: nothing is waiting in the inbox,
+/// and nobody has closed it. The second half is not implied by the first —
+/// a **closed** channel is also empty, so a loop gating on `is_empty` alone
+/// reads shutdown as leisure and drains a queue nobody is staying for
+/// (#759).
+fn nothing_asked(inbox: &async_channel::Receiver<Job>) -> bool {
+    inbox.is_empty() && !inbox.is_closed()
+}
+
+/// Resolve once every [`Engine`] handle is gone and the channel is closed —
+/// never otherwise. Polled, like [`wait_for_job`], and like it only ever
+/// observes.
+async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
+    while !inbox.is_closed() {
         tokio::time::sleep(WATCH_FLOOR).await;
     }
 }
@@ -1046,11 +1154,36 @@ async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
     state.watcher = Some(watcher);
 }
 
+/// Resolve once something needs the engine's attention: a job in the inbox,
+/// or the account's queue holding something due.
+///
+/// What lets [`keep_watch`] end a held `IDLE` early without being dropped
+/// mid-command. Both halves only ever observe.
+async fn interruption(parts: &EngineParts, pool: &Pool, inbox: &async_channel::Receiver<Job>) {
+    tokio::select! {
+        _ = wait_for_job(inbox) => {}
+        // A local mutation is not a job — nobody tells this thread that a
+        // row was written — and an `IDLE` is held for minutes. Without this
+        // half, a flag set or a draft autosaved while connected would wait
+        // out the whole watch before going anywhere.
+        _ = wait_for_queued_work(parts, pool) => {}
+    }
+}
+
 /// Do whatever the watcher says is due, and queue a sync if anything moved.
 ///
-/// Returns when there is something to report or the step ends. The caller
-/// races this against the inbox, so an `IDLE` being held never delays a job.
-async fn keep_watch(parts: &EngineParts, state: &mut State) {
+/// Returns when there is something to report, the step ends, or something
+/// else needs the engine — a job, queued work. The interruption is
+/// **cooperative**: the step's own cancel token is fired and the command
+/// awaited to completion, never dropped. A dropped command is a wedge twice
+/// over — the watcher never hears about its step, and the pool gets back a
+/// session still inside `IDLE` that poisons the next checkout (#755).
+async fn keep_watch(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) {
     if !state.supervisor.link().is_online() {
         // Nothing to watch over. Wait rather than spin.
         //
@@ -1063,11 +1196,21 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             link = %postio_model::address::redact_addresses(&format!("{:?}", state.supervisor.link())),
             "not connected; nothing to watch"
         );
-        tokio::time::sleep(POLL_INTERVAL).await;
+        // Dropping a sleep is harmless, so the plain race is fine here.
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = interruption(parts, pool, inbox) => {}
+        }
+        return;
+    }
+    if state.watcher.is_none() {
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            _ = interruption(parts, pool, inbox) => {}
+        }
         return;
     }
     let Some(watcher) = state.watcher.as_mut() else {
-        tokio::time::sleep(POLL_INTERVAL).await;
         return;
     };
 
@@ -1087,15 +1230,35 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             path,
             timeout,
             cancel,
-        } => match parts.backend.idle(&path, timeout, &cancel).await {
-            Ok(events) => watcher.woke(mailbox, &events, Utc::now()),
-            Err(error) => {
-                watcher.failed(mailbox, Utc::now());
-                let moved = state.supervisor.observe(&error, Utc::now());
-                announce_link(parts, state, moved);
-                return;
+        } => {
+            // Run to completion, whatever else happens: an interruption
+            // fires the token and *waits* — `round_of_idle` observes it
+            // mid-read, winds down with `DONE`, and the session goes back
+            // to the pool usable. Dropping this future instead returns a
+            // session still inside `IDLE`, and the next checkout hangs on
+            // it (#755).
+            let command = parts.backend.idle(&path, timeout, &cancel);
+            tokio::pin!(command);
+            let result = tokio::select! {
+                biased;
+                result = &mut command => result,
+                () = interruption(parts, pool, inbox) => {
+                    cancel.cancel();
+                    command.await
+                }
+            };
+            match result {
+                Ok(events) => watcher.woke(mailbox, &events, Utc::now()),
+                Err(error) => {
+                    watcher.failed(mailbox, Utc::now());
+                    let moved = state.supervisor.observe(&error, Utc::now());
+                    announce_link(parts, state, moved);
+                    return;
+                }
             }
-        },
+        }
+        // A `STATUS` is one round trip; an interruption waits it out rather
+        // than dropping a half-read reply back into the pool.
         Watch::Poll { mailbox, path } => match parts.backend.status(&path).await {
             Ok(status) => watcher.observed(mailbox, &status, Utc::now()),
             Err(error) => {
@@ -1111,7 +1274,10 @@ async fn keep_watch(parts: &EngineParts, state: &mut State) {
             let delay = until
                 .map(|at| (at - Utc::now()).to_std().unwrap_or_default())
                 .unwrap_or(POLL_INTERVAL);
-            tokio::time::sleep(delay.clamp(WATCH_FLOOR, POLL_INTERVAL)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(delay.clamp(WATCH_FLOOR, POLL_INTERVAL)) => {}
+                _ = interruption(parts, pool, inbox) => {}
+            }
             return;
         }
     };
@@ -1248,6 +1414,36 @@ fn top_up_backfill(parts: &EngineParts, pool: &Pool, state: &mut State) -> usize
         if queued > 0 {
             // Counts and a folder id, which is all a log may carry about mail.
             tracing::debug!(mailbox = mailbox.id.get(), queued, "backfill topped up");
+            announce_backfill(parts, state, std::time::Instant::now());
+            return queued;
+        }
+    }
+
+    // Blocks for the rows that cannot rebuild one from disk (#884). After the
+    // words and before the payloads: it is a small fetch that makes `header:`
+    // stop lying about mail already on this machine, where a payload is bytes
+    // nobody has asked for yet. Unconditional, unlike the payload lane below,
+    // because it is not a policy anyone opts into -- it is a store finishing a
+    // migration -- and it stops finding work once every block is stored.
+    for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+        let queued = match backfill::seed_header_blocks(
+            &connection,
+            &mut state.backfill,
+            mailbox.id,
+            parts.backfill.seed_batch,
+        ) {
+            Ok(queued) => queued,
+            Err(error) => {
+                tracing::warn!(%error, "cannot top up the header blocks for a folder");
+                continue;
+            }
+        };
+        if queued > 0 {
+            tracing::debug!(
+                mailbox = mailbox.id.get(),
+                queued,
+                "header blocks topped up"
+            );
             announce_backfill(parts, state, std::time::Instant::now());
             return queued;
         }
@@ -1482,11 +1678,19 @@ impl Committed<'_> {
 /// queue is empty. One body per call on purpose: `Backfill::next_body` hands
 /// out one at a time and holds it until `finished` reports it, which is what
 /// bounds how long anything else can be stuck behind the backfill.
-async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool {
+async fn pump_body(
+    parts: &EngineParts,
+    pool: &Pool,
+    state: &mut State,
+    inbox: &async_channel::Receiver<Job>,
+) -> bool {
     let Some(claim) = state.backfill.next_body() else {
         return false;
     };
     let message = claim.request.message;
+    state
+        .busy
+        .set(format!("the body backfill (message {message})"));
 
     let connection = match pool.get() {
         Ok(connection) => connection,
@@ -1503,15 +1707,33 @@ async fn pump_body(parts: &EngineParts, pool: &Pool, state: &mut State) -> bool 
         }
     };
 
-    let outcome = backfill::fetch_body(
+    let fetch = backfill::fetch_body(
         &connection,
         &parts.blobs,
         parts.backend.as_ref(),
         &claim.request,
+        // ADR 0017's inline rule, from the same policy the queue is scheduled
+        // under, so `[sync] max_inline_bytes` reaches the fetch that honours
+        // it rather than stopping at a struct field nobody reads (#751).
+        state.backfill.policy().max_inline_bytes,
         &claim.cancel,
-    )
-    .await
-    .unwrap_or_else(|error| {
+    );
+    tokio::pin!(fetch);
+    // Shutdown must not wait for the wire: when the channel closes mid-fetch,
+    // fire the claim's token — the one [`Backfill::cancel`] would fire — so
+    // the fetch unwinds cooperatively instead of running to the command
+    // timeout, which is twelve times the shutdown grace (#759). Nothing is
+    // lost: what a cancelled fetch leaves unfetched stays `body_state <>
+    // 'full'`, and the next seed derives the queue from that.
+    let result = tokio::select! {
+        biased;
+        result = &mut fetch => result,
+        () = wait_for_close(inbox) => {
+            claim.cancel.cancel();
+            fetch.await
+        }
+    };
+    let outcome = result.unwrap_or_else(|error| {
         if let SyncError::Backend(backend) = &error {
             let moved = state.supervisor.observe(backend, Utc::now());
             announce_link(parts, state, moved);
@@ -1798,6 +2020,7 @@ async fn drain(
         obsolete = report.obsolete,
         deferred = report.deferred,
         failed = report.failed.len(),
+        uncertain = report.uncertain.len(),
         needs_resync = report.needs_resync.len(),
         "drained the operation queue"
     );
@@ -1812,24 +2035,37 @@ async fn drain(
             .iter()
             .map(|failure| failure.reason.clone())
             .collect(),
+        uncertain: report
+            .uncertain
+            .iter()
+            .map(|unresolved| unresolved.reason.clone())
+            .collect(),
         needs_resync: report.needs_resync.clone(),
     })
 }
 
-/// How many mailboxes the engine will sync at the same time.
+/// The most mailboxes a wave will ever sync at once, whatever the pool.
 ///
-/// Bounded by the *database* pool rather than the IMAP one, because that is
-/// the scarcer of the two here: each concurrent pass holds one SQLite
-/// connection for as long as it runs, and the UI thread reads through the
-/// same pool. Leaving [`RESERVED_FOR_ELSEWHERE`] behind is what keeps the
-/// message list answering while a first sync is working through an archive.
-///
-/// The ceiling is separate and lower: the IMAP pool defaults to four
-/// connections with one lane spoken for by `IDLE`, so a fourth concurrent
-/// mailbox would not get a connection of its own — it would take turns on
-/// somebody else's and pay a `SELECT` on every batch for the privilege (see
-/// `postio_imap::imap::selection`). More lanes than the server will give
+/// This is the *IMAP* side's ceiling: that pool defaults to four connections
+/// with one spoken for by `IDLE`, so a fourth concurrent mailbox would not
+/// get a connection of its own — it would take turns on somebody else's and
+/// pay a `SELECT` on every batch for the privilege (see
+/// `postio_account::imap::selection`). More lanes than the server will give
 /// connections is slower than fewer.
+///
+/// **It does not bind today, and that is worth knowing before touching it.**
+/// [`sync_lanes`] is bounded by the *database* pool, which is smaller:
+/// `DEFAULT_MAX_CONNECTIONS` is 4, so a shipped wave gets
+/// `4 - `[`RESERVED_FOR_ELSEWHERE`]` = 2` and this clamp never applies.
+/// `the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling` pins
+/// that, because the two used to disagree with nothing to notice (#729).
+///
+/// Kept rather than deleted: raising the database pool is what would reach
+/// it, and #733 measured what reaching it buys — nothing at or below a 20 ms
+/// round trip, ~12% at 120 ms, on top of the ~30% the second lane is worth
+/// there. Whoever raises the pool should read that table and answer the
+/// question it does not: what a third lane costs the UI's own reads, which
+/// is what [`RESERVED_FOR_ELSEWHERE`] exists to protect.
 const MAX_SYNC_LANES: usize = 3;
 
 /// Database connections a sync wave will not touch.
@@ -1839,6 +2075,13 @@ const MAX_SYNC_LANES: usize = 3;
 const RESERVED_FOR_ELSEWHERE: usize = 2;
 
 /// How many mailboxes may be in flight at once, for this pool.
+///
+/// The *database* pool decides, because it is the scarcer of the two: each
+/// concurrent pass holds one SQLite connection for as long as it runs, and
+/// the UI thread reads through the same pool. Leaving
+/// [`RESERVED_FOR_ELSEWHERE`] behind is what keeps the message list answering
+/// while a first sync works through an archive. [`MAX_SYNC_LANES`] is the
+/// IMAP-side ceiling above that, and does not bind on the shipped pool.
 fn sync_lanes(pool: &Pool) -> usize {
     pool.max_connections()
         .saturating_sub(RESERVED_FOR_ELSEWHERE)
@@ -1849,13 +2092,29 @@ fn sync_lanes(pool: &Pool) -> usize {
 ///
 /// # Why concurrently
 ///
-/// A first sync of a real account is the slowest thing Postio does, and
-/// almost all of that wall clock is a round trip: measured against a live
-/// server, a batch of two hundred headers spent an order of magnitude longer
-/// waiting for the server than writing to SQLite. One mailbox at a time
-/// leaves every one of those waits unused. Running two or three passes
+/// A first sync of a real account is the slowest thing Postio does, and one
+/// mailbox at a time leaves every round trip unused. Running two passes
 /// together overlaps them, and costs nothing but connections the pool was
 /// already sized for (`postio-0d9.7`).
+///
+/// **The original justification no longer holds and is worth correcting
+/// rather than repeating.** It read: "almost all of that wall clock is a
+/// round trip — a batch of two hundred headers spent an order of magnitude
+/// longer waiting for the server than writing to SQLite." Measured against a
+/// real account since, it is an order of magnitude the *other* way: 13.8 s of
+/// fetch against 165.5 s of write, with the write path ~97% occupied across
+/// both lanes (#78). #77's read-ahead is most of the reason — the fetch now
+/// hides behind the previous write, so what is left in the open is the write.
+///
+/// The conclusion survives the premise, which is why this still runs passes
+/// concurrently. #733 measured lane counts directly against injected latency
+/// and found no crossover: extra lanes are neutral at and below a 20 ms round
+/// trip and a clear win above it — ~30% for the second lane at 120 ms.
+/// Serialising writes does not *add* work, it only fails to remove any, and a
+/// lane whose write is queued still overlaps its fetch. A real account's
+/// median batch sits in the range where lanes do nothing and its tail in the
+/// range where they do a great deal (#78 measured `fetch_ms` p50 22 ms, p90
+/// 118 ms), so the lanes earn their place on the tail.
 ///
 /// # Why INBOX still comes first
 ///
@@ -1917,7 +2176,7 @@ async fn sync_wave(
     // is waiting on must not queue behind three mailboxes. A cancelled pass
     // keeps everything it committed and resumes from there, so this costs at
     // most the batch that was on the wire.
-    let cancel = postio_imap::cancel::CancelToken::new();
+    let cancel = postio_account::cancel::CancelToken::new();
 
     // Cloned, not borrowed: every pass folds its own batches into this for as
     // long as it runs (`Committed::batch`, never across an await), and below
@@ -1966,14 +2225,25 @@ async fn sync_wave(
                         message: error.message().to_string(),
                     });
                 }
-                // Not once a job is waiting: draining the backfill queue
+                // Not once a job is waiting — draining the backfill queue
                 // here is exactly the extra work a waiting job must not
-                // queue behind.
+                // queue behind — and re-checked between bodies, because a
+                // job (or the shutdown's close) can land mid-drain and this
+                // queue is the whole account's backlog (#759).
                 if !asked_to_stop {
-                    while pump_body(parts, pool, state).await {}
+                    while nothing_asked(inbox)
+                        && !has_queued_work(parts, pool)
+                        && pump_body(parts, pool, state, inbox).await
+                    {}
                 }
             }
-            _ = wait_for_job(inbox), if !asked_to_stop => {
+            // `interruption`, not `wait_for_job`: a local mutation is not a
+            // job -- nobody tells this thread that a row was written -- so a
+            // wave that woke only for jobs made the user's send, mark-read or
+            // move wait out every folder left in `to_sync` (#944). The idle
+            // watcher and the backfill loops have always had this half; the
+            // wave was the one place it was never applied.
+            _ = interruption(parts, pool, inbox), if !asked_to_stop => {
                 asked_to_stop = true;
                 cancel.cancel();
             }
@@ -2052,7 +2322,7 @@ async fn sync_pass(
     connection: &PooledConnection,
     status: &RefCell<StatusTracker>,
     mailbox: MailboxId,
-    cancel: &postio_imap::cancel::CancelToken,
+    cancel: &postio_account::cancel::CancelToken,
 ) -> PassOutcome {
     let failed = |failure: PassFailure| PassOutcome {
         mailbox,
@@ -2228,6 +2498,33 @@ fn settle_pass(
                         message: error.to_string(),
                     });
                 }
+
+                // A sync is also when a send nobody could confirm may have
+                // turned up (#674). The draft reserved its `Message-ID`
+                // before the first attempt, so a message arriving with that
+                // id *is* the confirmation — no user action, no extra
+                // request, nothing that leaves the machine. Only when the
+                // pass actually changed something: an unchanged mailbox
+                // cannot have brought the copy down.
+                match postio_sync::send::confirm_unconfirmed(connection, parts.account) {
+                    Ok(resolved) => {
+                        for (draft, message) in resolved {
+                            // The Drafts list has a row that has stopped
+                            // being a draft, and the pane may be showing it.
+                            tracing::debug!(draft = draft.get(), "an unconfirmed send is resolved");
+                            parts.events.emit(Event::MessagesChanged {
+                                account: parts.account,
+                                messages: vec![message],
+                            });
+                        }
+                    }
+                    // Worth a line, not a banner: the drafts stay
+                    // `Unconfirmed`, which is the honest state, and the next
+                    // pass looks again.
+                    Err(error) => {
+                        tracing::warn!(%error, "could not check for resolved sends");
+                    }
+                }
             }
             Ok(summary)
         }
@@ -2272,7 +2569,7 @@ async fn sync(
     let connection = pool
         .get()
         .map_err(|error| EngineError::new(error.to_string()))?;
-    let cancel = postio_imap::cancel::CancelToken::new();
+    let cancel = postio_account::cancel::CancelToken::new();
     let outcome = sync_pass(parts, &connection, &state.status, mailbox, &cancel).await;
     settle_pass(parts, state, &connection, outcome)
 }
@@ -2433,6 +2730,14 @@ fn announce_drain(
                     message: reason.clone(),
                 });
             }
+            // And deliberately *not* an error (#674). A send that may have
+            // arrived is not a failure to report and dismiss; it is a
+            // question, and the durable place it is asked is the
+            // `Unconfirmed` draft the send path left behind. Logged so a bug
+            // report can see it happened at all.
+            for reason in &summary.uncertain {
+                tracing::warn!(reason, "an operation settled without a knowable outcome");
+            }
         }
         Err(error) => {
             events.emit(Event::Error {
@@ -2468,6 +2773,118 @@ fn with_connection<T>(
 
 #[cfg(test)]
 mod tests {
+    /// The warning for a thread that outstays the grace names what the
+    /// thread was doing, because "it did not stop" without *what* leaves a
+    /// bug report with nothing to chase (#759).
+    #[test]
+    fn the_stall_warning_names_what_the_engine_was_doing() {
+        use std::io::Write;
+
+        #[derive(Clone, Default)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+        impl Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("not poisoned").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+            type Writer = Captured;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let busy = Busy::new();
+        busy.set("the body backfill (message 7)");
+        let thread = EngineThread {
+            handle: Mutex::new(Some(
+                std::thread::Builder::new()
+                    .spawn(|| std::thread::sleep(Duration::from_millis(200)))
+                    .expect("a sleeper thread"),
+            )),
+            busy,
+        };
+
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .finish();
+        // A deadline already in the past: the sleeper cannot have finished,
+        // so this warns immediately rather than costing the test a grace.
+        tracing::subscriber::with_default(subscriber, || thread.join_until(Instant::now()));
+
+        let log = String::from_utf8_lossy(&captured.0.lock().expect("not poisoned")).into_owned();
+        assert!(
+            log.contains("did not stop within"),
+            "the expired deadline logged no warning at all:\n{log}"
+        );
+        assert!(
+            log.contains("the body backfill (message 7)"),
+            "the warning does not say what was still running:\n{log}"
+        );
+    }
+
+    /// What `sync_lanes` actually yields, pinned so the constants and the
+    /// prose cannot drift apart again.
+    ///
+    /// This is the whole of #729: `MAX_SYNC_LANES` reasoned carefully about
+    /// the *IMAP* pool, while `sync_lanes` is bounded by the *database* one,
+    /// which is smaller and binds first. The ceiling documented a number the
+    /// shipped configuration could not reach and nothing noticed, because
+    /// nothing asserted the relationship.
+    ///
+    /// Green when written -- the behaviour was always right; it was the
+    /// description that was wrong. Its job is to fail if
+    /// `DEFAULT_MAX_CONNECTIONS`, `RESERVED_FOR_ELSEWHERE` or
+    /// `MAX_SYNC_LANES` move without the doc comments moving with them.
+    #[test]
+    fn the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling() {
+        let database = postio_storage::test_support::memory();
+        assert_eq!(
+            database.pool().max_connections(),
+            postio_storage::db::DEFAULT_MAX_CONNECTIONS,
+            "a default store opens the default pool"
+        );
+        assert_eq!(
+            sync_lanes(database.pool()),
+            postio_storage::db::DEFAULT_MAX_CONNECTIONS - RESERVED_FOR_ELSEWHERE,
+            "the reserve against the database pool decides, not MAX_SYNC_LANES"
+        );
+        // Asserted on what the pool actually yields rather than on the
+        // constants: clippy rejects an assertion whose operands are all
+        // constant, and reading it back off the pool is the honest form
+        // anyway -- the pool's answer is the thing that matters.
+        assert!(
+            sync_lanes(database.pool()) < MAX_SYNC_LANES,
+            "MAX_SYNC_LANES is a ceiling held in reserve: it does not bind on \
+             the shipped pool, and #733 measured what reaching it would buy"
+        );
+    }
+
+    /// A pool large enough that the IMAP-side ceiling is what stops it.
+    ///
+    /// The other half of the same rule: `MAX_SYNC_LANES` is not dead, it is
+    /// simply not reached today. Raising the database pool is what would
+    /// reach it, which is why the constant stays.
+    #[test]
+    fn a_larger_database_pool_runs_into_max_sync_lanes() {
+        let database = postio_storage::Database::open_in_memory_with(
+            &postio_storage::test_support::key(),
+            MAX_SYNC_LANES * 4,
+        )
+        .expect("a roomier database");
+        assert_eq!(
+            sync_lanes(database.pool()),
+            MAX_SYNC_LANES,
+            "with connections to spare the IMAP ceiling is what caps a wave"
+        );
+    }
 
     #[test]
     fn a_refused_credential_fails_as_auth_and_anything_else_as_config() {
@@ -2512,6 +2929,7 @@ mod tests {
     /// [`queue_every_mailbox`]'s effect on `to_sync`.
     fn empty_state() -> State {
         State {
+            busy: Busy::new(),
             backfill: Backfill::new(BackfillPolicy::default()),
             backfill_announced: None,
             footprint: None,
@@ -2538,16 +2956,20 @@ mod tests {
         let account = postio_storage::test_support::account(&connection);
         drop(connection);
         let directory = tempfile::tempdir().expect("a blob directory");
-        let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
         let (sink, events) = postio_core::bridge::event_channel();
         let parts = EngineParts {
             account: account.id,
             database,
             blobs,
-            backend: Arc::new(postio_imap::backend::MockBackend::new()),
+            backend: Arc::new(postio_account::backend::MockBackend::new()),
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
-            tokens: Arc::new(postio_imap::auth::StoredPasswordSource::new(Arc::new(
-                postio_imap::secret::MemorySecretStore::default(),
+            tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
+                postio_account::secret::MemorySecretStore::default(),
             ))),
             events: sink,
             retry: RetryPolicy::default(),

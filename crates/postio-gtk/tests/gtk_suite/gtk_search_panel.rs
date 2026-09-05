@@ -12,6 +12,7 @@
 //!
 //! One test function, for the reason `gtk_style.rs` gives.
 
+use crate::settle as pump;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -25,7 +26,7 @@ use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 
 pub fn the_scope_column_narrows_a_search_without_retyping_it() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -320,11 +321,6 @@ fn label_text(widget: &gtk::Widget) -> String {
         .downcast::<gtk::Label>()
         .map(|label| label.text().to_string())
         .unwrap_or_default()
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    while context.iteration(false) {}
 }
 
 /// Depth-first search of a widget tree.

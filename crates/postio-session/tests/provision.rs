@@ -21,8 +21,8 @@
 //! the safe order leaves behind is a credential no row names, which nothing
 //! reads and which is rolled back anyway.
 
-use postio_imap::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_session::provision::{Provisioned, account_from, provision};
 use postio_storage::repository::AccountRepository;

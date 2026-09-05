@@ -77,14 +77,18 @@ command_ids! {
     PrevView => "prev_view",
     /// Leave the current overlay, search or composer.
     Back => "back",
-    /// Show the whole thread the focused message belongs to.
-    Thread => "thread",
-    /// Show only unread messages in the open thread, or show everything again.
-    ToggleThreadUnread => "toggle_thread_unread",
-    /// Reverse which end of the open thread comes first.
-    ToggleThreadOrder => "toggle_thread_order",
     /// Switch a search's results between ranked and date order.
     ToggleResultOrder => "toggle_result_order",
+    /// Move to the next message inside the open conversation.
+    NextInConversation => "next_in_conversation",
+    /// Move to the previous message inside the open conversation.
+    PrevInConversation => "prev_in_conversation",
+    /// Fold or unfold the focused message of the open conversation.
+    ToggleFold => "toggle_fold",
+    /// Draw the message on screen as its sender wrote it, not reduced.
+    ViewOriginal => "view_original",
+    /// Open every collapsed message in the conversation.
+    ExpandAll => "expand_all",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -123,6 +127,8 @@ command_ids! {
     SaveDraft => "save_draft",
     /// Throw away the draft in the composer.
     DiscardDraft => "discard_draft",
+    /// Settle an unconfirmed send by hand: it did arrive.
+    MarkSent => "mark_sent",
     /// Attach a file to the draft.
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
@@ -155,6 +161,10 @@ command_ids! {
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
     FocusSidebar => "focus_sidebar",
+    /// Move the keyboard to the next pane: sidebar, list, reader, round.
+    CyclePane => "cycle_pane",
+    /// Move the keyboard to the previous pane.
+    CyclePaneBack => "cycle_pane_back",
     /// Move to the next folder in the sidebar.
     NextFolder => "next_folder",
     /// Move to the previous folder in the sidebar.
@@ -169,6 +179,14 @@ command_ids! {
     MoveSavedSearchDown => "move_saved_search_down",
     /// Delete the focused saved search.
     DeleteSavedSearch => "delete_saved_search",
+    /// Enable or disable the focused account.
+    ToggleAccountEnabled => "toggle_account_enabled",
+    /// Remove the focused account.
+    RemoveAccount => "remove_account",
+    /// Update the focused account's stored credential.
+    UpdateCredential => "update_credential",
+    /// Rebuild the focused account's local search index.
+    RebuildAccountIndex => "rebuild_account_index",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -346,17 +364,33 @@ pub enum Command {
     PrevView,
     /// Leave the current overlay, search or composer.
     Back,
-    /// Show a thread, or the focused message's thread when `thread` is `None`.
-    Thread {
-        /// The thread to show; `None` means the focused message's thread.
-        thread: Option<ThreadId>,
-    },
-    /// Toggle the open thread's unread-only filter.
-    ToggleThreadUnread,
-    /// Reverse the open thread's message order.
-    ToggleThreadOrder,
     /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder,
+    /// Walk down the open conversation's stack (#1007).
+    ///
+    /// No payload: `j`/`k` move between *threads* in the list, and these
+    /// move between messages inside the one that is open. Two axes, two
+    /// pairs of keys, and which one you are on is a fact about where the
+    /// keyboard is rather than about what you pressed.
+    NextInConversation,
+    /// Walk up the open conversation's stack (#1007).
+    PrevInConversation,
+    /// Fold or unfold the conversation's focused message (#1007).
+    ///
+    /// The only way to *collapse* the focused message: landing on one
+    /// expands it, so a collapsed-and-focused message is a state only this
+    /// reaches.
+    ToggleFold,
+    /// Leave reader view for the sender's own markup (#1009).
+    ///
+    /// No payload: it always means the message on screen. Reader view is a
+    /// per-message state, so there is nothing else it could mean.
+    ViewOriginal,
+    /// Expand every collapsed message in the open conversation (#1004).
+    ///
+    /// No payload: it means the conversation on screen, which is the only
+    /// one there is.
+    ExpandAll,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -451,12 +485,21 @@ pub enum Command {
         /// The message the cursor rested on.
         message: MessageId,
     },
-    /// Attach a label.
+    /// Attach a label, or take one off.
     AddLabel {
         /// What to label.
         target: MessageTarget,
         /// The label; `None` opens the label picker.
         label: Option<LabelId>,
+        /// On, off, or `None` to toggle.
+        ///
+        /// [`Command::Flag`]'s shape, and for its reason: `u` takes an action
+        /// back by *dispatching its inverse*, so removing a label has to be
+        /// something a `Command` can say. One registered verb that can do
+        /// both beats a second entry in the registry that has no binding, no
+        /// menu item and no way for a person to reach it -- which is what
+        /// `AddLabel` itself was before #766 removed it (#780).
+        on: Option<bool>,
     },
 
     // -- Search ----------------------------------------------------------
@@ -490,6 +533,18 @@ pub enum Command {
     SaveDraft,
     /// Throw away the composer's draft.
     DiscardDraft,
+    /// Settle a draft whose send could not be confirmed: it did arrive
+    /// (ADR 0021 Decision 3, #674).
+    ///
+    /// `None` means the draft in view. A user who has checked with the
+    /// recipient and learnt the message got there otherwise has only two
+    /// exits -- discard, which throws the message away, or send again, which
+    /// duplicates it -- and an `Unconfirmed` draft with no honest way out is
+    /// a dead end.
+    MarkSent {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
     /// Attach a file to the draft.
     AttachFile {
         /// The file; `None` opens the file chooser.
@@ -536,6 +591,14 @@ pub enum Command {
     ToggleSidebar,
     /// Put the keyboard in the folder list.
     FocusSidebar,
+    /// Move the keyboard to the next pane: sidebar, list, reader, round.
+    ///
+    /// The *top-level* meaning of bare Tab, for when a pane itself has the
+    /// keyboard. Panes that own Tab for their own purpose -- a refine chip,
+    /// recipient completion, the finder -- keep first claim on it (#494).
+    CyclePane,
+    /// Move the keyboard to the previous pane.
+    CyclePaneBack,
     /// Move to the next folder.
     NextFolder,
     /// Move to the previous folder.
@@ -550,6 +613,23 @@ pub enum Command {
     MoveSavedSearchDown,
     /// Delete the focused saved search.
     DeleteSavedSearch,
+    /// Enable or disable the focused account.
+    ///
+    /// No payload, like the saved-search verbs above and for the same reason:
+    /// these are only ever offered while `Context::Accounts` is active, which
+    /// means an account row has focus, which means the target is that row --
+    /// exactly as `Archive`'s target is the current selection (ADR 0005 Q6c).
+    ToggleAccountEnabled,
+    /// Remove the focused account.
+    RemoveAccount,
+    /// Update the focused account's stored credential.
+    UpdateCredential,
+    /// Rebuild the focused account's local search index.
+    ///
+    /// No payload, the same reason as the two above: the target is the row
+    /// with focus. Local mail only -- nothing here reaches the network; see
+    /// `postio_session::reindex_account`'s own doc for why (#981).
+    RebuildAccountIndex,
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -629,7 +709,7 @@ impl Command {
             Command::MarkUnread { unread, .. } => Command::MarkUnread { target, unread },
             Command::Snooze { .. } => Command::Snooze { target },
             Command::Unsnooze { .. } => Command::Unsnooze { target },
-            Command::AddLabel { label, .. } => Command::AddLabel { target, label },
+            Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
             other => other,
         }
     }
@@ -648,10 +728,12 @@ impl Command {
             Command::SelectAll => CommandId::SelectAll,
             Command::PrevView => CommandId::PrevView,
             Command::Back => CommandId::Back,
-            Command::Thread { .. } => CommandId::Thread,
-            Command::ToggleThreadUnread => CommandId::ToggleThreadUnread,
-            Command::ToggleThreadOrder => CommandId::ToggleThreadOrder,
             Command::ToggleResultOrder => CommandId::ToggleResultOrder,
+            Command::NextInConversation => CommandId::NextInConversation,
+            Command::PrevInConversation => CommandId::PrevInConversation,
+            Command::ToggleFold => CommandId::ToggleFold,
+            Command::ViewOriginal => CommandId::ViewOriginal,
+            Command::ExpandAll => CommandId::ExpandAll,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -673,6 +755,7 @@ impl Command {
             Command::ScheduleSend => CommandId::ScheduleSend,
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
+            Command::MarkSent { .. } => CommandId::MarkSent,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
             Command::Bold => CommandId::Bold,
@@ -689,6 +772,8 @@ impl Command {
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::CyclePane => CommandId::CyclePane,
+            Command::CyclePaneBack => CommandId::CyclePaneBack,
             Command::NextFolder => CommandId::NextFolder,
             Command::PrevFolder => CommandId::PrevFolder,
             Command::ToggleFolder => CommandId::ToggleFolder,
@@ -696,6 +781,10 @@ impl Command {
             Command::MoveSavedSearchUp => CommandId::MoveSavedSearchUp,
             Command::MoveSavedSearchDown => CommandId::MoveSavedSearchDown,
             Command::DeleteSavedSearch => CommandId::DeleteSavedSearch,
+            Command::ToggleAccountEnabled => CommandId::ToggleAccountEnabled,
+            Command::RemoveAccount => CommandId::RemoveAccount,
+            Command::UpdateCredential => CommandId::UpdateCredential,
+            Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -729,10 +818,12 @@ impl Command {
             CommandId::SelectAll => Command::SelectAll,
             CommandId::PrevView => Command::PrevView,
             CommandId::Back => Command::Back,
-            CommandId::Thread => Command::Thread { thread: None },
-            CommandId::ToggleThreadUnread => Command::ToggleThreadUnread,
-            CommandId::ToggleThreadOrder => Command::ToggleThreadOrder,
             CommandId::ToggleResultOrder => Command::ToggleResultOrder,
+            CommandId::NextInConversation => Command::NextInConversation,
+            CommandId::PrevInConversation => Command::PrevInConversation,
+            CommandId::ToggleFold => Command::ToggleFold,
+            CommandId::ViewOriginal => Command::ViewOriginal,
+            CommandId::ExpandAll => Command::ExpandAll,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },
@@ -764,6 +855,7 @@ impl Command {
             CommandId::AddLabel => Command::AddLabel {
                 target: MessageTarget::Selection,
                 label: None,
+                on: None,
             },
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
@@ -772,6 +864,7 @@ impl Command {
             CommandId::ScheduleSend => Command::ScheduleSend,
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
+            CommandId::MarkSent => Command::MarkSent { draft: None },
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::Bold => Command::Bold,
@@ -788,6 +881,8 @@ impl Command {
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::CyclePane => Command::CyclePane,
+            CommandId::CyclePaneBack => Command::CyclePaneBack,
             CommandId::NextFolder => Command::NextFolder,
             CommandId::PrevFolder => Command::PrevFolder,
             CommandId::ToggleFolder => Command::ToggleFolder,
@@ -795,6 +890,10 @@ impl Command {
             CommandId::MoveSavedSearchUp => Command::MoveSavedSearchUp,
             CommandId::MoveSavedSearchDown => Command::MoveSavedSearchDown,
             CommandId::DeleteSavedSearch => Command::DeleteSavedSearch,
+            CommandId::ToggleAccountEnabled => Command::ToggleAccountEnabled,
+            CommandId::RemoveAccount => Command::RemoveAccount,
+            CommandId::UpdateCredential => Command::UpdateCredential,
+            CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,

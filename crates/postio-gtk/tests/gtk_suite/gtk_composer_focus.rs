@@ -42,7 +42,7 @@ fn settle_until(done: impl Fn() -> bool) {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(5), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_millis(3000);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_millis(3000));
     while !done() && Instant::now() < deadline {
         context.iteration(true);
     }
@@ -51,7 +51,7 @@ fn settle_until(done: impl Fn() -> bool) {
 
 pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

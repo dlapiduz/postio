@@ -48,7 +48,7 @@
 //! [ADR 0015]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0015-threaded-list.md
 //! [ADR 0019]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0019-macos-frontend.md
 
-use postio_model::{ListScope, MessageId, ThreadId};
+use postio_model::{AccountId, ListScope, MessageId, ThreadId};
 
 use crate::bridge::EventSink;
 use crate::command::{Command, CommandId, MessageTarget};
@@ -121,7 +121,8 @@ pub struct Aim<'a> {
 /// a thread is not a gesture, and `MessageTarget::Thread` is how a thread
 /// gets acted on instead.
 ///
-/// Also `None` for Snoozed (#493) and for the unified per-account view:
+/// Also `None` for Snoozed (#493), for the unified per-account view and for
+/// the cross-account one:
 /// unlike Flagged, nothing here needs `Ctrl+A` to select every snoozed or
 /// every account-wide message at once yet, so it is not worth a
 /// `MessageSet` predicate of its own until something does. A person can
@@ -134,10 +135,20 @@ pub struct Aim<'a> {
 /// something to apply the rule to. `ViewScope`'s smaller variant set stays —
 /// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
 /// is the function that produces it.
-pub fn view_scope(scope: ListScope) -> Option<ViewScope> {
+pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope> {
     match scope {
         ListScope::Mailbox(mailbox) => Some(ViewScope::Mailbox(mailbox)),
         ListScope::Flagged(account) => Some(ViewScope::Flagged(account)),
+        // The aggregate is the one scope that needs something from the
+        // caller, and `reachable` is deliberately not optional: a frontend
+        // that has not decided which accounts its list could show has not
+        // decided what `Ctrl+A` there means either. Empty is an answer --
+        // nothing is reachable, so there is no view for a selection to be
+        // relative to, and the verb rejects as it did before (#811).
+        ListScope::Unified if reachable.is_empty() => None,
+        ListScope::Unified => Some(ViewScope::Unified {
+            accounts: reachable.to_vec(),
+        }),
         ListScope::Account(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => None,
     }
 }
@@ -252,7 +263,7 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
 pub fn mirror(state: &SharedState, quiet: &EventSink, aim: &Aim<'_>) {
     state.update(quiet, |app| {
         let mut events = Vec::new();
-        if let Some(scope) = aim.scope {
+        if let Some(scope) = aim.scope.clone() {
             // Opening a different view drops the selection with it, on both
             // sides — the list does the same. So this goes first, or it
             // would throw away the selection just mirrored.
@@ -296,6 +307,136 @@ pub fn mirror(state: &SharedState, quiet: &EventSink, aim: &Aim<'_>) {
 /// [`Dispatcher::wired`]: crate::dispatch::Dispatcher::wired
 pub fn is_wired(wired: &[CommandId], command: &Command) -> bool {
     wired.contains(&command.id())
+}
+
+/// One gesture, and what it has to mean — a row of the conformance table.
+///
+/// See [`conformance_cases`].
+#[derive(Clone, Debug)]
+pub struct Conformance {
+    /// What was invoked.
+    pub id: CommandId,
+    /// What the user had marked at the time.
+    pub selection: Selection,
+    /// Where the keyboard was.
+    pub cursor: Option<MessageId>,
+    /// The rows the frontend's list is holding, and what kind each one is.
+    /// A frontend builds its *own* row source from these, which is the
+    /// point — the table is not a mock, it is the fixture both sources are
+    /// filled from.
+    pub rows: Vec<(MessageId, RowKind)>,
+    /// The command that must come out.
+    pub expected: Command,
+    /// Why this row is in the table, for a failure message that explains
+    /// itself rather than printing two enums.
+    pub because: &'static str,
+}
+
+/// The aiming rules, as a table both frontends run.
+///
+/// [`command_for`] is one implementation, so a test of it proves the rule
+/// once — but the rule is only half of what a frontend does. The other half
+/// is the adapter: reading a selection off a widget, a cursor off a list,
+/// and a row kind out of whatever model that frontend keeps. Two adapters
+/// can both call the same correct function and still disagree, because they
+/// disagree about what they *hand* it. That is what this table is for.
+///
+/// Each frontend fills its own row source from [`Conformance::rows`], builds
+/// its own [`Aim`], and asserts the command that comes out. Same rows, same
+/// gesture, same command, on both sides of the FFI (#589, #721).
+///
+/// The cases are the ones where a frontend could plausibly differ: what a
+/// verb on a thread row means, what it means when the row is a message,
+/// what happens when the cursor points at a row nobody is holding any more,
+/// and what a whole-view selection does to a verb that would otherwise be
+/// narrowed.
+pub fn conformance_cases() -> Vec<Conformance> {
+    let thread_row = MessageId::new(1);
+    let thread = ThreadId::new(11);
+    let message_row = MessageId::new(2);
+    let gone = MessageId::new(99);
+    let rows = || {
+        vec![
+            (thread_row, RowKind::Thread(thread)),
+            (message_row, RowKind::Message),
+        ]
+    };
+    let nothing_marked = || Selection::These(Vec::new());
+
+    vec![
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Thread(thread),
+            },
+            because: "a verb on a thread row acts on the conversation (ADR 0015 Q3)",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(message_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a message row is one message, so the verb stays as it was",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: nothing_marked(),
+            cursor: Some(gone),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a cursor on a row nobody holds any more must not be \
+                      guessed into a conversation (#468)",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: Selection::These(vec![message_row]),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "something is marked, so the gesture is about the marks \
+                      rather than about the row the cursor happens to be on",
+        },
+        Conformance {
+            id: CommandId::Archive,
+            selection: Selection::Everything { except: Vec::new() },
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            because: "a whole-view selection is a predicate; narrowing it to \
+                      the cursor's conversation would act on less than was asked",
+        },
+        Conformance {
+            id: CommandId::Flag,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Flag {
+                target: MessageTarget::Thread(thread),
+                flagged: None,
+            },
+            because: "the rule is about the target, not about which verb it is",
+        },
+        Conformance {
+            id: CommandId::Refresh,
+            selection: nothing_marked(),
+            cursor: Some(thread_row),
+            rows: rows(),
+            expected: Command::Refresh,
+            because: "a command with no message target is handed over untouched",
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -343,27 +484,46 @@ mod tests {
         use postio_model::{AccountId, MailboxId};
 
         assert_eq!(
-            view_scope(ListScope::Mailbox(MailboxId::new(4))),
+            view_scope(ListScope::Mailbox(MailboxId::new(4)), &[]),
             Some(ViewScope::Mailbox(MailboxId::new(4))),
         );
         assert_eq!(
-            view_scope(ListScope::Flagged(AccountId::new(1))),
+            view_scope(ListScope::Flagged(AccountId::new(1)), &[]),
             Some(ViewScope::Flagged(AccountId::new(1))),
         );
         assert_eq!(
-            view_scope(ListScope::Account(AccountId::new(1))),
+            view_scope(ListScope::Account(AccountId::new(1)), &[]),
             None,
             "nothing needs an account-wide `MessageSet` predicate yet",
         );
         assert_eq!(
-            view_scope(ListScope::Snoozed(AccountId::new(1))),
+            view_scope(ListScope::Snoozed(AccountId::new(1)), &[]),
             None,
             "nothing needs a `MessageSet::Snoozed` predicate yet (#493)",
         );
         assert_eq!(
-            view_scope(ListScope::Thread(ThreadId::new(3))),
+            view_scope(ListScope::Thread(ThreadId::new(3)), &[]),
             None,
             "`Ctrl+A` inside a conversation is not a gesture",
+        );
+    }
+
+    /// #811: the aggregate is the sixth shape, and the only one whose scope
+    /// carries something the list has to tell it.
+    #[test]
+    fn the_unified_view_is_relative_to_the_accounts_it_could_actually_show() {
+        use postio_model::AccountId;
+
+        assert_eq!(
+            view_scope(ListScope::Unified, &[AccountId::new(1), AccountId::new(3)]),
+            Some(ViewScope::Unified {
+                accounts: vec![AccountId::new(1), AccountId::new(3)],
+            }),
+        );
+        assert_eq!(
+            view_scope(ListScope::Unified, &[]),
+            None,
+            "no account is reachable, so there is no view to be relative to",
         );
     }
 

@@ -33,10 +33,12 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle_until;
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
+use postio_core::state::SharedState;
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -51,24 +53,6 @@ use postio_storage::{BlobStore, test_support};
 /// A word every fixture in the corpus carries in a header, so the query is
 /// about the wiring rather than about the corpus.
 const QUERY: &str = "example.com";
-
-/// Run the main loop until `done`, or give up.
-///
-/// A search crosses to the runtime, answers over a channel, is emitted as an
-/// event, is drained on another task, and only then asks for a page — which
-/// crosses to the runtime again. A deadline rather than a spin count: what is
-/// being waited for is several round trips.
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// Every id the list model is currently holding, in list order.
 ///
@@ -87,7 +71,7 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -104,7 +88,11 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     );
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();
@@ -143,8 +131,9 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         wiring.runtime.clone(),
         Default::default(),
     );
+    let state = SharedState::default();
     for stream in [events, replies] {
-        commands::drain(&window, &feeds, stream, notifier.clone());
+        commands::drain(&window, &feeds, stream, notifier.clone(), state.clone());
     }
 
     // ── the list starts on the folder ───────────────────────────────────

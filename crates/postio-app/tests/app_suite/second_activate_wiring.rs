@@ -27,18 +27,20 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::gdk;
+use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel};
 use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::{Account, EmailAddress, Flag, Message, TransportSecurity};
 use postio_session::{Wiring, actions};
 use postio_storage::repository::{AccountRepository, MessageRepository};
@@ -47,22 +49,6 @@ use std::sync::Arc;
 
 const ADDRESS: &str = "ada@example.com";
 const PASSWORD: &str = "hunter2";
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 pub fn a_second_activate_does_not_double_wire_the_window() {
     let state_dir = tempfile::tempdir().expect("a state directory");
@@ -132,7 +118,11 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
     );
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
     let (sink, events) = event_channel();
     let wiring = Wiring::new(

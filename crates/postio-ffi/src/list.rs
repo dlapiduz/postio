@@ -18,11 +18,18 @@ pub enum ScopeFfi {
         /// The folder.
         mailbox: i64,
     },
-    /// Every folder in an account: the unified view.
+    /// Every folder in an account: that account's whole mail.
     Account {
         /// The account.
         account: i64,
     },
+    /// Every folder in every enabled account at once (ADR 0005 Q4).
+    ///
+    /// A view, never a destination: it names no account, so it carries no
+    /// field. Present here because this enum is the ABI mirror of
+    /// `ListScope`, and a variant missing from it is a view the second
+    /// frontend cannot select at all.
+    Unified,
     /// The sidebar's "Flagged" view.
     Flagged {
         /// The account.
@@ -40,6 +47,7 @@ impl From<ScopeFfi> for ListScope {
         match scope {
             ScopeFfi::Mailbox { mailbox } => ListScope::Mailbox(mailbox.into()),
             ScopeFfi::Account { account } => ListScope::Account(account.into()),
+            ScopeFfi::Unified => ListScope::Unified,
             ScopeFfi::Flagged { account } => ListScope::Flagged(account.into()),
             ScopeFfi::Snoozed { account } => ListScope::Snoozed(account.into()),
         }

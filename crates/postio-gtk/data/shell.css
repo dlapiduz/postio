@@ -367,6 +367,35 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* The manual sync, beside the status text rather than inside the banner
+   that hides itself the moment a sync starts (#495).
+   As quiet as the line it sits on: this is an affordance that has to be
+   *findable*, not one that competes with the mail. It takes the accent on
+   hover and focus, the way every other quiet control here does. */
+.postio-status-refresh {
+  padding: 2px;
+  min-width: 24px;
+  min-height: 24px;
+  color: var(--postio-faint);
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.postio-status-refresh:hover {
+  color: var(--postio-accent);
+  background: var(--postio-hover-bg);
+}
+
+.postio-status-refresh:active {
+  background: var(--postio-active-bg);
+}
+
+.postio-status-refresh:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
 /* A failing connection is the one thing in this sidebar that shouts. */
 .postio-status.error {
   color: var(--postio-accent-text);
@@ -576,12 +605,12 @@ button.postio-compose {
   color: var(--postio-selected-fg);
 }
 
+/* #829: content, not affordance — a person reads the preview line to
+   triage mail, so it wears `--postio-dim` (the 4.5:1 floor) rather than
+   `--postio-faint` (3:1, the key hint's floor below) in every state, read
+   or unread. */
 .postio-row-snippet {
   font-size: 0.8182rem;
-  color: var(--postio-faint);
-}
-
-.postio-row-snippet.unread {
   color: var(--postio-dim);
 }
 
@@ -591,12 +620,9 @@ button.postio-compose {
   font-family: var(--postio-font-mono);
 }
 
+/* #829: same content floor as the snippet above. */
 .postio-row-time {
   font-size: 0.75rem;
-  color: var(--postio-faint);
-}
-
-.postio-row-time.unread {
   color: var(--postio-dim);
 }
 
@@ -886,6 +912,34 @@ button.postio-compose {
 }
 
 .postio-liststate-hint-label {
+  font-size: 0.8182rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* ── The first-run keyboard orientation (ADR 0012 Q4) ────────────────
+   Once, after the first sync, and never again. Deliberately the same strip
+   vocabulary as `.postio-liststate-banner` above — a hairline under it,
+   rows still visible below — because it is the same promise: something to
+   say about the list without taking the list away. No accent fill and no
+   card: it is a sentence and three keys, and anything louder would be the
+   modal welcome ADR 0012 Q4 rules out. */
+.postio-orientation {
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.postio-orientation-icon {
+  color: var(--postio-accent);
+}
+
+.postio-orientation-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 0.8863rem;
+  color: var(--postio-ink);
+}
+
+.postio-orientation-hint-label {
   font-size: 0.8182rem;
   color: var(--postio-ink-secondary);
 }
@@ -1263,13 +1317,6 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
-/* `Ret`, in the mono face every other key hint wears. */
-.postio-unavailable-hint {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  opacity: 0.75;
-}
-
 /* ── First run (canvas 3e) ───────────────────────────────────────────
    One screen, on its own plate in the middle of the window. The same plate
    the palette and the parts panel use, because it is the same kind of thing:
@@ -1475,6 +1522,19 @@ button.postio-compose {
   color: var(--postio-faint);
 }
 
+/* What an account's mail weighs, under its name (#411).
+
+   Secondary to the name in the ordinary way -- the identity is what the row
+   is for and the size is a fact about it -- and dimmed through the token
+   rather than libadwaita's `dim-label`, so high contrast can bring it back
+   up with everything else that fades. Proportional, not the mono face the
+   status line uses: that line is almost entirely number and sits in a
+   column of them; this one is a sentence with two numbers in it. */
+.postio-settings-account-weight {
+  font-size: 0.7841rem;
+  color: var(--postio-dim);
+}
+
 /* The canvas' "Revert file": a quiet, bordered button, not the ghost style
    the header's own controls use — Revert is a recovery action and reads as
    one rather than blending into the row. */
@@ -1490,6 +1550,71 @@ button.postio-settings-revert {
 
 button.postio-settings-revert:hover {
   background-color: var(--postio-hover-bg);
+}
+
+
+/* The account's signatures (#1086). Rows rather than bare text: each one
+   opens an editor, so it has to look like something you can press. */
+.postio-settings-signature-list {
+  background-color: transparent;
+}
+
+.postio-settings-signature-list row {
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-settings-signature-list row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-row {
+  padding: var(--postio-space-2) var(--postio-space-3);
+}
+
+/* The body. A framed field like the Name entry above it: without this it is
+   text on the ground, and nothing says it can be typed into. */
+.postio-settings-signature-text {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-text text {
+  background-color: transparent;
+}
+
+/* Why a signature would not save -- a name already taken, so far. The
+   accent's warning cousin, like every other refusal in this app: nothing has
+   gone wrong, the store said no. */
+.postio-settings-signature-error {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+  font-size: 0.8864rem;
+}
+
+/* What the last connection test found (#980). Under the servers it is about,
+   because the result is something you read, compare against the fields above,
+   and then edit -- a toast would take it away before either. */
+.postio-settings-account-detail-test-status {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+  font-size: 0.8864rem;
+  line-height: 1.5;
+}
+
+/* A refusal, in the accent's warning cousin rather than a red banner: the
+   same call `.postio-onboarding-failed` makes, for the same reason. Nothing
+   has gone wrong with Postio -- the server said no. */
+.postio-settings-account-detail-test-status.postio-settings-account-detail-test-failed {
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
 }
 
 /* ── The composer (canvas 2a) ─────────────────────────────────────────
@@ -1690,4 +1815,83 @@ button.postio-compose-more {
 
 .conversation-actions button:hover {
   color: var(--postio-accent-text);
+}
+
+/* ── The shared controls (#1002) ─────────────────────────────────────
+   A button with its key beside it, a row of them, and a one-line notice.
+   Postio had three or four hand-rolled copies of each; these are the
+   classes the single implementation wears, and every surface that draws
+   one of these draws this. `postio_gtk::widgets` is the code. */
+
+/* An action bar is a row of real buttons with keycap hints, identical on
+   every screen — the canvas's turn-7 rule. The surfaces that mount one add
+   their own class beside this for the padding and the rule above it. */
+.postio-action-bar {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+/* ── One-line notices ────────────────────────────────────────────────
+   Icon, ellipsised text, one action, an overflow. It never wraps: a notice
+   that grows vertically pushes the mail down the pane, which is the
+   opposite of what a notice is for. The height is fixed for the same
+   reason — a notice appearing must not reflow the message under it by a
+   variable amount. */
+.postio-notice {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.postio-notice-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-notice-label {
+  color: var(--postio-ink-secondary);
+  font-size: 0.8523rem;
+}
+
+/* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)
+   The header names the conversation and the footer carries its verbs; both
+   sit outside the scroller, so a long thread never loses either. Between
+   them the stack, and the dividers that stand in for folded runs. */
+.conversation-header {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+/* The largest type in the pane. This is the one place the conversation is
+   named -- before #1003 there were two and they could disagree. */
+.conversation-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.4318rem;
+  color: var(--postio-ink);
+}
+
+/* `8 messages · Ada, Bo, Site Office · 10-25 Aug`. One line, ellipsised --
+   the participants are the unbounded part and must not grow the header. */
+.conversation-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
+.conversation-divider {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+.conversation-divider-label {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* The conversation's verbs, against the per-message ones inside an entry. */
+.conversation-footer {
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
 }

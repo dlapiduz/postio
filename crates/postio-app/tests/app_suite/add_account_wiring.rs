@@ -31,20 +31,22 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::settle_until;
 use std::sync::{Arc, Mutex};
 
 use adw::prelude::*;
 use async_trait::async_trait;
-use gtk::{gdk, glib};
+use gtk::gdk;
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::secret::MemorySecretStore;
 use postio_app::feed_the_window;
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::secret::MemorySecretStore;
 use postio_session::Wiring;
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
@@ -93,25 +95,13 @@ impl DiscoveryTransport for HangingTransport {
     ) -> Result<DiscoverySrvReport, TransportError> {
         Err(self.hold(cancel).await)
     }
+
+    async fn mx(&self, _domain: &str, cancel: &CancelToken) -> Result<Vec<String>, TransportError> {
+        Err(self.hold(cancel).await)
+    }
 }
 
 // --- harness ------------------------------------------------------------
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
-
-fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        settle();
-        if done() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    done()
-}
 
 /// A running application over a seeded store: a window with mail in it, its
 /// panes fed, and the add-account command wired.
@@ -125,7 +115,11 @@ fn running_application() -> (
     seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
 
     let (bridge, _replies) =
         postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))

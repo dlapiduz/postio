@@ -28,16 +28,37 @@
 //!
 //! # Driving the model from events
 //!
-//! | Event | What the list does |
-//! |---|---|
-//! | [`Event::NewMail`] | [`MessageList::inserted_at_top`] — the selection and the scroll anchor move down with their row |
-//! | [`Event::MessagesChanged`] | refetch only the resident pages holding them, so the rows keep their `GObject` and nothing loses its place |
-//! | [`Event::MessagesRemoved`] | refetch; the row count moved |
-//! | [`Event::MessageListChanged`] | refetch; the order itself moved |
+//! [`ListScope::reaction`] answers this, per scope, and both sides agree on
+//! one rule: a list reacts to an event only when the event can change its
+//! own membership or order, and it inserts at the top only when its own
+//! order guarantees the new rows belong there. Everything else reloads
+//! (`Feed::reload`, dropping everything cached and asking again). #773 is
+//! the investigation this table closes.
 //!
-//! Anything about another mailbox is ignored outright — the list shows one
-//! mailbox, and a folder nobody is looking at costs nothing to be wrong
-//! about until it is opened.
+//! | Scope | [`Event::NewMail`] | [`Event::MessagesRemoved`] | [`Event::MessageListChanged`] | [`Event::MessagesChanged`] |
+//! |---|---|---|---|---|
+//! | [`ListScope::Mailbox`] | insert at top when the mailbox matches | reload when the mailbox matches | reload when the mailbox matches | refetch resident pages holding them |
+//! | [`ListScope::Account`] | insert at top when the account matches | reload when the account matches | reload when the account matches | refetch resident pages holding them |
+//! | [`ListScope::Flagged`] / [`ListScope::Snoozed`] | ignore — a delivery is neither flagged nor snoozed | reload when the account matches | reload when the account matches | **reload** when the account matches |
+//! | a result set | ignore | ignore | ignore | refetch resident pages holding them |
+//!
+//! `Flagged`/`Snoozed` reloading on `MessagesChanged` rather than
+//! refetching is the one cell that looks like the others and is not: for
+//! them the flag or the snooze *is* the membership predicate, so a change
+//! can remove a row the same event would repaint for a mailbox. A page
+//! refetch cannot express a row leaving; only a reload can, because the
+//! total moved. They are gated on the *account*, not the mailbox, because
+//! they span every folder in one — the mailbox an event names carries no
+//! information for them.
+//!
+//! [`ListScope::Thread`] never reaches a `Feed` at all: a drill-in issues
+//! one direct [`MessageSource::fetch`] instead
+//! (`postio_gtk::window::Window::open_thread`), so it has no event routing
+//! to get wrong.
+//!
+//! An event naming a different mailbox, or a different account, is ignored
+//! outright — a folder or a scope nobody is looking at costs nothing to be
+//! wrong about until it is opened.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -51,6 +72,7 @@ use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
+use postio_model::{Arrival, Reaction};
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
 use crate::sidebar::SyncStatus;
@@ -169,6 +191,14 @@ struct Inner {
     /// search wired to it, which is the only reason this is an `Option`.
     hits: RefCell<Option<Rc<dyn ResultSource>>>,
     errors: RefCell<Vec<ErrorHandler>>,
+    /// Told whenever the list is pointed at a different scope.
+    ///
+    /// What the pane says about the rows depends on *which* scope they came
+    /// from — an aggregate view answers ADR 0005 Q10's rule and a folder does
+    /// not — so a scope change has to re-derive it. Nothing else did: the
+    /// pane was refreshed on a status change and on rows arriving, and
+    /// switching from a folder to the unified list is neither.
+    opened: RefCell<Vec<Box<dyn Fn()>>>,
     /// Told when a result set takes the list, with how many hits it holds.
     ///
     /// The `Feed` is what changes mode, so it is what says so. Anything that
@@ -299,16 +329,34 @@ impl Inner {
         }
     }
 
-    /// Whether the list is showing `mailbox` — which a list showing search
-    /// results is not, however much it remembers which folder to go back to.
+    /// What the list showing `self.scope` does with one mailbox-shaped
+    /// `arrival`.
     ///
-    /// This is the guard on every mailbox-shaped event at once. `NewMail`
-    /// is the one that matters: the mailbox got longer, the result set did
-    /// not, and inserting at the top of a result set would put a message
-    /// that does not match the query above one that does.
-    fn showing(&self, mailbox: MailboxId) -> bool {
-        self.results.borrow().is_none()
-            && self.scope.get().and_then(ListScope::mailbox) == Some(mailbox)
+    /// A result set has taken the list — however much it remembers which
+    /// folder to go back to — behaves like [`ListScope::Mailbox`] for
+    /// [`Arrival::MessagesChanged`] (the same rows in the same order;
+    /// refetch the pages holding them) and ignores the other three, the
+    /// scope underneath set aside until the result set is left: its
+    /// membership is decided by the query, not by delivery order or a
+    /// resync. Nothing has been opened yet answers [`Reaction::Ignore`] too.
+    fn reaction(
+        &self,
+        arrival: Arrival,
+        account: AccountId,
+        mailbox: Option<MailboxId>,
+    ) -> Reaction {
+        if self.results.borrow().is_some() {
+            return match arrival {
+                Arrival::MessagesChanged => Reaction::Refetch,
+                Arrival::NewMail | Arrival::MessagesRemoved | Arrival::MessageListChanged => {
+                    Reaction::Ignore
+                }
+            };
+        }
+        self.scope
+            .get()
+            .map(|scope| scope.reaction(arrival, account, mailbox))
+            .unwrap_or(Reaction::Ignore)
     }
 }
 
@@ -331,6 +379,7 @@ impl Feed {
             results: RefCell::new(None),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
+            opened: RefCell::new(Vec::new()),
             on_results: RefCell::new(Vec::new()),
         }))
     }
@@ -357,6 +406,19 @@ impl Feed {
         // for a page. The reply caches page 0, so the view's own first
         // request finds it already there.
         inner.clone().request(0);
+        for handler in inner.opened.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Called whenever the list is pointed at a different scope.
+    ///
+    /// Separate from [`connect_results`](Self::connect_results): that one is
+    /// about a result set arriving, this one about the list being aimed
+    /// somewhere else, and a pane that reads the scope has to hear about the
+    /// second even when the first never happens.
+    pub fn connect_opened(&self, handler: impl Fn() + 'static) {
+        self.0.opened.borrow_mut().push(Box::new(handler));
     }
 
     /// The mailbox in view, if the list is showing one.
@@ -454,37 +516,62 @@ impl Feed {
     ///
     /// Everything it does not recognise it ignores, deliberately: the event
     /// stream carries the whole application, and a list that reacted to all
-    /// of it would repaint on every keystroke in the composer.
+    /// of it would repaint on every keystroke in the composer. What each
+    /// scope does with the four that remain is [`ListScope::reaction`]'s
+    /// table, in the module docs above.
     pub fn apply(&self, event: &Event) {
         let inner = &self.0;
         let Some(list) = inner.list.upgrade() else {
             return;
         };
         match event {
-            // New mail lands at the top and every row shifts down. This is
-            // an insertion, not a reload, which is what keeps the selection
-            // on the message it was on and the scroll where it was.
             Event::NewMail {
-                mailbox, messages, ..
-            } if inner.showing(*mailbox) => {
-                list.inserted_at_top(messages.len() as u32);
+                account,
+                mailbox,
+                messages,
+                ..
+            } => {
+                if inner.reaction(Arrival::NewMail, *account, Some(*mailbox))
+                    == Reaction::InsertAtTop
+                {
+                    list.inserted_at_top(messages.len() as u32);
+                }
             }
-            // Flags, read state, labels: the rows are still the same rows in
-            // the same order, so only the pages holding them are refetched.
-            // `MessageList::deliver` replaces the data inside the existing
-            // `GObject`, so nothing above rediscovers anything.
-            Event::MessagesChanged { messages, .. } => {
-                for page in list.pages_holding(messages) {
-                    inner.clone().request(page);
+            // Flags, read state, labels, a snooze: the same rows in the same
+            // order for a mailbox, so only the pages holding them are
+            // refetched -- `MessageList::deliver` replaces the data inside
+            // the existing `GObject`, so nothing above rediscovers anything.
+            // For `Flagged`/`Snoozed` the flag *is* the membership predicate,
+            // so `ListScope::reaction` answers `Reload` there instead: a page
+            // refetch cannot express a row leaving.
+            Event::MessagesChanged { account, messages } => {
+                match inner.reaction(Arrival::MessagesChanged, *account, None) {
+                    Reaction::Refetch => {
+                        for page in list.pages_holding(messages) {
+                            inner.clone().request(page);
+                        }
+                    }
+                    Reaction::Reload => self.reload(),
+                    Reaction::Ignore | Reaction::InsertAtTop => {}
                 }
             }
             // The count moved, and so did every position after the gap.
-            Event::MessagesRemoved { mailbox, .. } if inner.showing(*mailbox) => {
-                self.reload();
+            Event::MessagesRemoved {
+                account, mailbox, ..
+            } => {
+                if inner.reaction(Arrival::MessagesRemoved, *account, Some(*mailbox))
+                    == Reaction::Reload
+                {
+                    self.reload();
+                }
             }
             // The order itself moved: a resync, a re-sort, a filter change.
-            Event::MessageListChanged { mailbox, .. } if inner.showing(*mailbox) => {
-                self.reload();
+            Event::MessageListChanged { account, mailbox } => {
+                if inner.reaction(Arrival::MessageListChanged, *account, Some(*mailbox))
+                    == Reaction::Reload
+                {
+                    self.reload();
+                }
             }
             // The hits are the list now. Handled here rather than by whoever
             // ran the search because this is where the list's source lives,
@@ -548,6 +635,86 @@ pub struct SyncTracker {
     status: SyncStatus,
     /// The last error seen, waiting to explain a failure that may not come.
     reason: Option<String>,
+}
+
+/// One [`SyncTracker`] per account, so no account's server speaks for another.
+///
+/// Every status-bearing event names the account it is about, and a single
+/// tracker threw that away: with two accounts configured, the status line
+/// showed whichever server reported most recently. That is invisible with one
+/// account, which is why it survived — and it is load-bearing for ADR 0005
+/// Q10, whose whole subject is *which* account is not answering.
+///
+/// [`Event::Error`] is the exception, because it carries no account. It goes
+/// to the account whose line is on screen, which is exactly what the single
+/// tracker did with it; writing it down here makes it a decision rather than
+/// an accident of which arm ran first.
+#[derive(Clone, Debug, Default)]
+pub struct Trackers {
+    per_account: std::collections::BTreeMap<AccountId, SyncTracker>,
+}
+
+impl Trackers {
+    /// Fold `event` in, routed to the account it names.
+    ///
+    /// `current` is the account whose status line is on screen, used only
+    /// for the events that name none. Returns whether anything changed.
+    pub fn apply(&mut self, event: &Event, current: Option<AccountId>) -> bool {
+        let account = match event {
+            Event::ConnectionChanged { account, .. }
+            | Event::SyncProgress { account, .. }
+            | Event::BackfillProgress { account, .. } => Some(*account),
+            _ => current,
+        };
+        let Some(account) = account else {
+            return false;
+        };
+        self.per_account.entry(account).or_default().apply(event)
+    }
+
+    /// What `account`'s line should say.
+    ///
+    /// An account nothing has been heard about is offline — the same default
+    /// [`postio_core::AppState::connection`] gives, and for the same reason:
+    /// silence is not a claim that the server is reachable.
+    pub fn status(&self, account: AccountId) -> SyncStatus {
+        self.per_account
+            .get(&account)
+            .map(|tracker| tracker.status().clone())
+            .unwrap_or_default()
+    }
+
+    /// Fold `account`'s own folders' last-sync time into its tracker.
+    ///
+    /// Per account and not over the whole flat list: in section mode the
+    /// sidebar reads every account's tree into one vector, and the newest
+    /// `last_synced_at` in it belongs to whichever account synced most
+    /// recently — which is exactly the cross-account confusion this type
+    /// exists to end.
+    pub fn note_last_sync(&mut self, account: AccountId, mailboxes: &[Mailbox]) -> bool {
+        let theirs: Vec<Mailbox> = mailboxes
+            .iter()
+            .filter(|mailbox| mailbox.account_id == account)
+            .cloned()
+            .collect();
+        self.per_account
+            .entry(account)
+            .or_default()
+            .note_last_sync(&theirs)
+    }
+
+    /// The statuses of `accounts`, in the order given.
+    ///
+    /// The caller's order, because it is the sidebar's, which is the order
+    /// the per-account hues are keyed to. An account nothing has been heard
+    /// about still gets an entry: dropping it would be its own omission, in
+    /// the one place whose subject is not omitting things.
+    pub fn statuses(&self, accounts: &[AccountId]) -> Vec<(AccountId, SyncStatus)> {
+        accounts
+            .iter()
+            .map(|account| (*account, self.status(*account)))
+            .collect()
+    }
 }
 
 impl SyncTracker {
@@ -697,7 +864,7 @@ struct FolderInner {
     /// The folders as last read — including the synthetic ones — so picking
     /// one can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
-    tracker: RefCell<SyncTracker>,
+    trackers: RefCell<Trackers>,
     generation: Cell<u64>,
     /// Whether a reload is already queued for this turn of the main loop.
     queued: Cell<bool>,
@@ -760,7 +927,21 @@ impl FolderInner {
         // status line is about servers and syncs, and a query has neither —
         // a `last_synced_at` on it would be a claim about a sync that never
         // happened to anything.
-        let moved = self.tracker.borrow_mut().note_last_sync(&mailboxes);
+        let moved = {
+            let mut trackers = self.trackers.borrow_mut();
+            let accounts: Vec<AccountId> = match self.sections.borrow().as_slice() {
+                [] => self.account.get().into_iter().collect(),
+                many => many.to_vec(),
+            };
+            // Every account, and deliberately not `any`: that short-circuits
+            // on the first one that moved, and the rest would never be told
+            // their own last-sync time at all.
+            let mut moved = false;
+            for account in accounts {
+                moved |= trackers.note_last_sync(account, &mailboxes);
+            }
+            moved
+        };
         // The smart folder goes in here, before anything else sees the list,
         // so the sidebar keeps drawing exactly what it is handed and learns
         // nothing about folders the server does not have. The next one — a
@@ -783,7 +964,10 @@ impl FolderInner {
     }
 
     fn publish(&self) {
-        let status = self.tracker.borrow().status().clone();
+        let status = match self.account.get() {
+            Some(account) => self.trackers.borrow().status(account),
+            None => SyncStatus::default(),
+        };
         self.sidebar.set_status(status.clone());
         for handler in self.statuses.borrow().iter() {
             handler(&status);
@@ -862,7 +1046,7 @@ impl Folders {
             account: Cell::new(None),
             sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
-            tracker: RefCell::new(SyncTracker::new()),
+            trackers: RefCell::new(Trackers::default()),
             generation: Cell::new(0),
             queued: Cell::new(false),
             statuses: RefCell::new(Vec::new()),
@@ -900,6 +1084,22 @@ impl Folders {
         inner.clone().reload_now();
     }
 
+    /// Which reading of the folder tree this is.
+    ///
+    /// Bumped by [`open`](Self::open) and
+    /// [`open_sections`](Self::open_sections) -- the two things that change
+    /// *which* account's folders are on screen -- and by nothing else. A
+    /// reload for a `MailboxesChanged` keeps the generation it had.
+    ///
+    /// That is the distinction #813 needed and could not get from the feed:
+    /// a smart folder on screen looks the same whether the user chose it or
+    /// `GtkListBox` auto-selected its sentinel before the real folders
+    /// arrived, but "have I already picked a folder for *this* tree" tells
+    /// the two apart.
+    pub fn generation(&self) -> u64 {
+        self.0.generation.get()
+    }
+
     /// The folders as last read.
     pub fn mailboxes(&self) -> Vec<Mailbox> {
         self.0.mailboxes.borrow().clone()
@@ -931,7 +1131,24 @@ impl Folders {
 
     /// Where the account stands with its server, right now.
     pub fn status(&self) -> SyncStatus {
-        self.0.tracker.borrow().status().clone()
+        match self.0.account.get() {
+            Some(account) => self.0.trackers.borrow().status(account),
+            None => SyncStatus::default(),
+        }
+    }
+
+    /// Every account the sidebar is drawing, and where each stands with its
+    /// server — what an aggregate view needs to say which one is away.
+    ///
+    /// In single-account mode this is the one account, so a caller does not
+    /// have to know which shape the sidebar is in.
+    pub fn statuses(&self) -> Vec<(AccountId, SyncStatus)> {
+        let inner = &self.0;
+        let accounts: Vec<AccountId> = match inner.sections.borrow().as_slice() {
+            [] => inner.account.get().into_iter().collect(),
+            many => many.to_vec(),
+        };
+        inner.trackers.borrow().statuses(&accounts)
     }
 
     /// Called whenever the status line moves — for the list pane's own
@@ -954,10 +1171,20 @@ impl Folders {
     /// into no folder has asked the user a question before saying hello.
     pub fn default_mailbox(&self) -> Option<MailboxId> {
         let mailboxes = self.0.mailboxes.borrow();
-        mailboxes
-            .iter()
+        // Real folders only. The synthetic rows are in this list too --
+        // `arrived` appends Flagged and Snoozed before anything else sees it,
+        // and it does so even when the account has no folders yet -- so
+        // `first()` on an unsynced account was the Flagged sentinel, and this
+        // answered "open Flagged" to a question that means "which folder".
+        //
+        // That is #813's second half. The caller opened the sentinel, counted
+        // its turn as spent, and never opened the inbox when the first sync
+        // finally delivered the tree; `postio-app`'s `e2e` sees it as a
+        // window that syncs three messages and lists none.
+        let real = || mailboxes.iter().filter(|mailbox| mailbox.id.get() > 0);
+        real()
             .find(|mailbox| mailbox.role == postio_model::mailbox::MailboxRole::Inbox)
-            .or_else(|| mailboxes.first())
+            .or_else(|| real().next())
             .map(|mailbox| mailbox.id)
     }
 
@@ -969,7 +1196,11 @@ impl Folders {
     /// Apply one runtime event to the sidebar.
     pub fn apply(&self, event: &Event) {
         let inner = &self.0;
-        if inner.tracker.borrow_mut().apply(event) {
+        if inner
+            .trackers
+            .borrow_mut()
+            .apply(event, inner.account.get())
+        {
             inner.publish();
         }
         let ours = |account: &AccountId| inner.account.get() == Some(*account);
@@ -1015,13 +1246,48 @@ pub struct Feeds {
     pub messages: Feed,
     /// The folders and the status line.
     pub folders: Folders,
+    /// Whatever else the composition root put on screen — see
+    /// [`Feeds::connect_event`]. Shared, so a clone of these feeds delivers
+    /// to the same consumers rather than to a copy that nobody registered
+    /// with.
+    others: Rc<RefCell<Vec<EventHandler>>>,
 }
 
+/// What [`Feeds::connect_event`] holds.
+type EventHandler = Box<dyn Fn(&Event)>;
+
 impl Feeds {
+    /// The two panes this crate builds, plus room for the ones it does not.
+    pub fn new(messages: Feed, folders: Folders) -> Self {
+        Feeds {
+            messages,
+            folders,
+            others: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Take another consumer of the event stream.
+    ///
+    /// The sidebar and the list are fed from inside this crate because their
+    /// contents *are* this crate's. The reading pane is not: what a body is
+    /// and how one is read from the store live in `postio-app`, which is why
+    /// [`Event::BodyLoaded`] had no consumer for as long as it did (#396) —
+    /// it is addressed to a surface this file cannot name.
+    ///
+    /// So the seam is left open rather than the dependency inverted: whoever
+    /// assembles the application still hands [`apply`](Self::apply) every
+    /// event, and everything on screen is still fed by that one call.
+    pub fn connect_event(&self, handler: impl Fn(&Event) + 'static) {
+        self.others.borrow_mut().push(Box::new(handler));
+    }
+
     /// Apply one event to everything that cares about it.
     pub fn apply(&self, event: &Event) {
         self.messages.apply(event);
         self.folders.apply(event);
+        for handler in self.others.borrow().iter() {
+            handler(event);
+        }
     }
 }
 
@@ -1306,5 +1572,124 @@ mod tests {
         ]));
         let age = Instant::now().saturating_duration_since(tracker.status().last_sync.unwrap());
         assert!(age.as_secs() <= 13, "the age came out as {age:?}");
+    }
+}
+
+#[cfg(test)]
+mod trackers_tests {
+    use super::*;
+
+    const WORK: AccountId = AccountId::new(1);
+    const HOME: AccountId = AccountId::new(2);
+
+    #[test]
+    fn each_account_keeps_its_own_connection_state() {
+        // The bug this type exists to fix: one tracker folded every
+        // account's `ConnectionChanged` into one status, last writer wins,
+        // so with two accounts the sidebar's line showed whichever server
+        // happened to report most recently.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: WORK,
+                state: ConnectionState::Online,
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Offline,
+            },
+            Some(WORK),
+        );
+
+        assert_eq!(
+            trackers.status(WORK).state,
+            ConnectionState::Online,
+            "Home going offline said nothing about Work"
+        );
+        assert_eq!(trackers.status(HOME).state, ConnectionState::Offline);
+    }
+
+    #[test]
+    fn an_account_nothing_has_been_heard_about_is_working_locally() {
+        // The same default `AppState::connection` gives, and for the same
+        // reason: silence is not a claim that the server is reachable.
+        let trackers = Trackers::default();
+        assert_eq!(trackers.status(WORK).state, ConnectionState::Offline);
+    }
+
+    #[test]
+    fn progress_lands_on_the_account_it_names_and_no_other() {
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::SyncProgress {
+                account: HOME,
+                done: 3,
+                total: 10,
+            },
+            Some(WORK),
+        );
+        assert_eq!(trackers.status(HOME).progress, Some((3, 10)));
+        assert_eq!(
+            trackers.status(WORK).progress,
+            None,
+            "Work is not syncing and its line must not say it is"
+        );
+    }
+
+    #[test]
+    fn an_error_carries_no_account_so_it_lands_on_the_one_in_view() {
+        // `Event::Error` has no account field. Routing it to the account
+        // whose line is on screen is exactly what the single tracker did,
+        // so this is no worse -- and it is written down here rather than
+        // left as an accident of which arm ran.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::Error {
+                message: "the server refused the password".to_owned(),
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: WORK,
+                state: ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Auth,
+                },
+            },
+            Some(WORK),
+        );
+        assert_eq!(
+            trackers.status(WORK).detail.as_deref(),
+            Some("the server refused the password")
+        );
+        assert_eq!(
+            trackers.status(HOME).detail,
+            None,
+            "an error with no account named must not be attributed to one"
+        );
+    }
+
+    #[test]
+    fn statuses_are_reported_for_the_accounts_asked_for_in_that_order() {
+        // The order is the caller's -- the sidebar's -- because that is the
+        // order the hues are keyed to, and an account absent from the map
+        // still has to appear rather than silently drop out of the banner.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Offline,
+            },
+            Some(WORK),
+        );
+        let named = trackers.statuses(&[WORK, HOME]);
+        assert_eq!(named.len(), 2);
+        assert_eq!(named[0].0, WORK);
+        assert_eq!(named[0].1.state, ConnectionState::Offline, "never heard of");
+        assert_eq!(named[1].0, HOME);
+        assert_eq!(named[1].1.state, ConnectionState::Offline);
     }
 }

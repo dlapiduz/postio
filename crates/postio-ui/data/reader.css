@@ -1,0 +1,264 @@
+/* Postio's reading-pane stylesheet, injected into the `WebView` that
+ * renders a message body (crates/postio-gtk/src/reader/view.rs).
+ *
+ * This is NOT the GTK stylesheet tokens.css/shell.css are. A `WebView` has
+ * its own CSS engine with no notion of GTK's style context, so the
+ * `--postio-*` custom properties tokens.css defines are invisible here.
+ * Structure only, below: every colour is a `var(--r-*)` reference, and those
+ * variables are generated from the same design tokens by
+ * `crates/postio-gtk/src/tokens.rs::generate_reader` into the checked-in
+ * `data/reader-tokens.css`, loaded into this document ahead of this file
+ * (see `reader_css` in view.rs). Retune the design system, rebuild, and both
+ * sheets follow — the pipeline #296 fixed. A drift test
+ * (`tests/reader_tokens.rs`) fails the build if either falls out of sync.
+ *
+ * `@font-face` rules for Barlow / Barlow Condensed / IBM Plex Mono are
+ * prepended at runtime (see `embedded_font_faces` in postio-ui's
+ * `reader/document.rs`), not written here: the `WebView`'s web process never
+ * sees the PangoFontMap the rest of the app registers fonts into, so the
+ * faces have to reach it some other way. The rules name `postio-font:` URLs
+ * and a scheme handler serves the vendored bytes in-process (ADR 0023).
+ * They used to carry those bytes inline as base64, which put ~1.21 MB into
+ * every document the reader composed (#768).
+ *
+ * Postio owns the type: `ammonia` strips every sender `style` attribute and
+ * `<style>` tag before a body ever reaches this document (see
+ * `reader/sanitize.rs`), so nothing here competes with a sender's CSS.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--r-ground);
+  color: var(--r-ink);
+  font-family: "Barlow", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 16px 20px;
+  /* Long unbroken tokens (a tracking URL, a base64 fragment a sender left
+     visible) must wrap rather than force horizontal scroll on the pane. */
+  overflow-wrap: anywhere;
+}
+
+body:empty::before {
+  content: "";
+}
+
+/* The message body's own bounded surface (postio-3s2): a sender's content
+   sits inside this, distinct from Postio's own words. The banner and the
+   header (#319) never render into this document at all — they are native
+   GTK widgets stacked around the `WebView` — so this is the only edge that
+   needs drawing. A hairline is the only edge this design draws (see
+   tokens.rs), so the boundary is a border, not a shadow or a card fill.
+
+   `min-height` keeps a one-line plain-text message from reading as a
+   truncated or broken box; `overflow-x` contains a sender's wide table or
+   marketing layout so the *pane* never scrolls sideways. */
+.postio-body {
+  padding: 20px 24px;
+  border: 1px solid var(--r-hairline);
+  border-radius: var(--r-radius);
+  min-height: 3em;
+  overflow-x: auto;
+}
+
+/* High contrast: the edge gains weight rather than changing colour scheme,
+   the same treatment tokens.css's own hairlines get. */
+@media (prefers-contrast: more) {
+  .postio-body {
+    border-width: 2px;
+    border-color: var(--r-hairline-strong);
+  }
+}
+
+p {
+  margin: 0 0 1em 0;
+}
+
+/* Links look like links (#752). Colour alone was doing the whole job, which
+ * left the reader relying on the engine's default underline for the only
+ * other cue — and said nothing at all about hover or keyboard focus. The
+ * underline is stated here so it is Postio's decision rather than WebKit's,
+ * and offset so it does not cut through descenders at body size. */
+a {
+  color: var(--r-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* `:focus-visible`, not `:focus`: a link the keyboard reached should say so,
+ * one the pointer clicked should not keep a ring afterwards. */
+a:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-radius);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  max-width: 100%;
+}
+
+/* A sender's own <table> layout keeps its structure — ammonia allows the
+   generic layout attributes (width, align, valign, cellpadding) — but never
+   its colours or fonts, which are stripped with the `style` attribute. */
+
+pre.postio-body-text {
+  font-family: "Barlow", sans-serif;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0 0 1em 0;
+}
+
+/* Quoted-text folding (postio-1bz): closed by default — no `open` attribute
+   — and expands on click with no script involved. */
+details.postio-quote {
+  margin: 0.4em 0;
+  border-left: 2px solid var(--r-hairline);
+  padding-left: 0.8em;
+}
+
+details.postio-quote > summary {
+  cursor: pointer;
+  color: var(--r-dim);
+  font-size: 0.9em;
+  padding: 0.2em 0;
+  list-style: none;
+}
+
+details.postio-quote > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.postio-quote > summary::before {
+  content: "\25B8  ";
+}
+
+details.postio-quote[open] > summary::before {
+  content: "\25BE  ";
+}
+
+details.postio-quote blockquote {
+  background: var(--r-quote-bg);
+  border-radius: 4px;
+  padding: 0.6em 0.8em;
+}
+
+blockquote {
+  margin: 0.4em 0 0.4em 0;
+  padding-left: 0.8em;
+  border-left: 2px solid var(--r-hairline);
+  color: var(--r-ink-secondary);
+}
+
+/* Where the search matched, per canvas 2b's `preview · match highlighted`.
+   The artboard's own steel tint at 28%: strong enough to find by scanning,
+   weak enough to read straight through. `crate::search::mark_html` puts
+   these in, after the sanitizer, and only for terms the executed query
+   actually asked for.
+
+   No colour of its own — the tint carries it. A highlight that also
+   recoloured the text would fight the reader's own type, and would have to
+   pick a foreground that works over both this tint and a quoted block's. */
+mark.postio-match {
+  background: var(--r-match-bg);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* The pane explaining why it has no body — issue #70, Cause A.
+   `Reader::show_absent` renders these; `reader/view.rs::absent_html` writes
+   the words.
+
+   Centred and dim on purpose: this is a *state*, not content, and it must
+   not read as a message whose body happens to be one short line. The whole
+   plate sits well inside the pane so it cannot be mistaken for a header. */
+.postio-absent {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+  padding: 0 2.5em;
+  text-align: center;
+}
+
+.postio-absent-heading {
+  font-family: "Barlow Condensed", "Barlow", sans-serif;
+  font-size: 1.15em;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--r-ink-secondary);
+  margin: 0 0 0.35em 0;
+}
+
+.postio-absent-detail {
+  max-width: 34em;
+  color: var(--r-dim);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* The retry key, named the way the rest of the app names keys. Monospace
+   because every count and key in Postio is IBM Plex Mono. */
+.postio-absent kbd {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9em;
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--r-hairline);
+  border-radius: 3px;
+  color: var(--r-ink-secondary);
+}
+
+/* The facts block transactional mail buries in a paragraph, drawn above the
+   body copy (canvas turn 7, screen 20; #1030). `postio_body::reader_view`
+   finds the rows and takes them out of the copy; `reader/document.rs` emits
+   them as a description list, which is what they are — a label and the value
+   it names, in order, for anything reading the document rather than looking
+   at it.
+
+   Two columns are a grid over that list rather than a table, so the markup
+   stays a list. `max-content` on the first track keeps the labels aligned to
+   the longest one without letting a long value push them around, and the
+   whole thing falls back to plain stacked rows wherever grid is unavailable.
+
+   The labels are IBM Plex Mono for the same reason every count and key in
+   Postio is: this is metadata, and the mono face is what says so. */
+dl.postio-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25em 1em;
+  margin: 0 0 1.1em 0;
+  padding: 0 0 0.9em 0;
+  border-bottom: 1px solid var(--r-hairline);
+}
+
+dl.postio-facts dt {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+  /* The labels read as a column of keys, not as sentence starts. */
+  text-transform: lowercase;
+}
+
+dl.postio-facts dd {
+  margin: 0;
+  color: var(--r-ink);
+}

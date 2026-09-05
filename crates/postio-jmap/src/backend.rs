@@ -22,12 +22,12 @@ use io_jmap::rfc8621::email::query::{JmapEmailComparator, JmapEmailFilter, JmapE
 use io_jmap::rfc8621::email::set::{JmapEmailPatch, JmapEmailSetArgs};
 use io_jmap::rfc8621::mailbox::JmapMailbox;
 use io_jmap::rfc8621::mailbox::get::JmapMailboxGetOptions;
-use postio_imap::backend::{
+use postio_account::backend::{
     AppendMessage, BackendError, BackendResult, BodyPart, BodySink, Capabilities, FetchedBody,
     FetchedMessage, FlagChange, FlagUpdate, MailBackend, MailboxEvent, MailboxFilter,
     MailboxStatus, MailboxSummary, SelectMode, UidMapping, UidSet,
 };
-use postio_imap::cancel::CancelToken;
+use postio_account::cancel::CancelToken;
 use postio_model::{FlagSet, Generation, ModSeq, RemoteId, Uid, UidValidity};
 use url::Url;
 
@@ -59,8 +59,8 @@ impl JmapBackend {
     /// A backend whose bearer comes from the account's token source.
     pub fn with_token_source(
         session_url: Url,
-        key: postio_imap::secret::AccountKey,
-        tokens: std::sync::Arc<dyn postio_imap::auth::TokenSource>,
+        key: postio_account::secret::AccountKey,
+        tokens: std::sync::Arc<dyn postio_account::auth::TokenSource>,
     ) -> Self {
         Self {
             connection: JmapConnection::with_token_source(session_url, key, tokens),
@@ -222,7 +222,7 @@ impl MailBackend for JmapBackend {
         if changed_since.is_some() {
             // Unreachable through the engine: CONDSTORE is never claimed.
             return Err(BackendError::Unsupported {
-                capability: postio_imap::backend::Capability::CondStore,
+                capability: postio_account::backend::Capability::CondStore,
             });
         }
         let mut positions = uids.uids();
@@ -281,7 +281,7 @@ impl MailBackend for JmapBackend {
             // seam ever learns a section to ask for; the backfill's
             // no-sections path fetches the whole message instead.
             return Err(BackendError::Unsupported {
-                capability: postio_imap::backend::Capability::Binary,
+                capability: postio_account::backend::Capability::Binary,
             });
         }
 

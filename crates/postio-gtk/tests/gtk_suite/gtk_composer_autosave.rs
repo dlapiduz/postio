@@ -16,6 +16,7 @@
 // the environment. These tests set it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
 use std::time::{Duration, Instant};
 
 use gtk::gdk;
@@ -23,10 +24,6 @@ use postio_gtk::composer;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft, DraftId};
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 /// Pumps the main loop, including its timers, until `condition` holds or
 /// `timeout` passes. What a test does instead of a fixed real-time sleep when
@@ -53,7 +50,7 @@ pub fn typing_debounces_into_one_autosave_and_closing_flushes_what_is_pending() 
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -130,7 +127,7 @@ pub fn saving_twice_carries_the_assigned_id_forward_into_the_second_save() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

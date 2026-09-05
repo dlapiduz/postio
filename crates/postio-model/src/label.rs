@@ -31,3 +31,14 @@ impl Label {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_label_starts_uncoloured() {
+        let label = Label::new(AccountId::new(1), "Receipts");
+        assert_eq!(label.color, None);
+    }
+}

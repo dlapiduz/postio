@@ -140,7 +140,7 @@ def main() -> int:
         # guard arrived after this test did, and without this the run dies at
         # the guard instead of exercising blockedBy at all.
         origin = Path(directory) / "origin.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         git("remote", "add", "origin", str(origin), cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
 

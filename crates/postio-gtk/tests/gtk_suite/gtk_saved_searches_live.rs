@@ -14,9 +14,10 @@
 // the environment. This test sets it before the app under test starts, which
 // is the one moment it is sound. The crate's library code forbids `unsafe`.
 
+use crate::settle;
+use crate::wait_until;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use gtk::gdk;
 use gtk::prelude::*;
@@ -26,24 +27,6 @@ use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
-
-const PATIENCE: Duration = Duration::from_secs(5);
-
-fn wait_until(condition: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + PATIENCE;
-    while Instant::now() < deadline {
-        while glib::MainContext::default().iteration(false) {}
-        if condition() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    false
-}
-
-fn settle() {
-    while glib::MainContext::default().iteration(false) {}
-}
 
 fn saved_search_names(window: &Window) -> Vec<String> {
     fn collect(widget: &gtk::Widget, out: &mut Vec<String>) {
@@ -95,7 +78,7 @@ pub fn pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -226,7 +209,7 @@ pub fn keyboard_reaches_saved_searches_and_their_move_verbs() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -391,7 +374,7 @@ pub fn a_pinned_saved_search_does_not_auto_run_on_first_present() {
     unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();

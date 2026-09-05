@@ -136,9 +136,171 @@ fn push_pre(out: &mut String, lines: &[&str]) {
         if n > 0 {
             out.push('\n');
         }
-        escape_into(out, line);
+        push_linkified(out, line);
     }
     out.push_str("</pre>");
+}
+
+/// Escape `line` into `out`, turning the URLs and bare email addresses in it
+/// into anchors as it goes (#752).
+///
+/// **Order matters, and it is the whole security argument.** The anchor is
+/// built here, out of a span this function matched, and every piece of it —
+/// the `href` and the visible text alike — goes through [`escape_into`]. A
+/// sender therefore cannot close the attribute or the tag: the only markup in
+/// the output is markup this function wrote. Linkifying the *escaped* string
+/// instead would be the tempting shape and the wrong one, because it would
+/// mean matching against text in which `&amp;` has already become five
+/// characters.
+///
+/// Nothing else linkifies: a `text/plain` body is not run through ammonia
+/// (see `document::body_html`), so what this emits is what the reader shows.
+fn push_linkified(out: &mut String, line: &str) {
+    let mut cursor = 0;
+    let mut at = 0;
+    while at < line.len() {
+        if !line.is_char_boundary(at) {
+            at += 1;
+            continue;
+        }
+        if starts_a_token(line, at)
+            && let Some(link) = match_link(&line[at..])
+        {
+            escape_into(out, &line[cursor..at]);
+            out.push_str("<a href=\"");
+            escape_into(out, &link.href);
+            out.push_str("\">");
+            escape_into(out, link.text);
+            out.push_str("</a>");
+            at += link.text.len();
+            cursor = at;
+            continue;
+        }
+        at += 1;
+    }
+    escape_into(out, &line[cursor..]);
+}
+
+/// A span worth linking: what to show, and where it points.
+struct Link<'a> {
+    text: &'a str,
+    href: String,
+}
+
+/// Whether `at` begins a word — so `example.com` inside `notexample.com` is
+/// not matched, and neither is the `ada@` of a URL's userinfo.
+fn starts_a_token(line: &str, at: usize) -> bool {
+    let Some(before) = line[..at].chars().next_back() else {
+        return true;
+    };
+    before.is_whitespace() || matches!(before, '(' | '[' | '{' | '<' | '"' | '\'' | ',' | ';')
+}
+
+/// Match a URL or a bare email address at the head of `rest`.
+fn match_link(rest: &str) -> Option<Link<'_>> {
+    let token = trim_trailing_punctuation(token_at(rest));
+    if token.is_empty() {
+        return None;
+    }
+    let lower = token.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        // A scheme and nothing after it is not a link.
+        let after = token.find("//").map(|slash| slash + 2)?;
+        if token[after..].is_empty() {
+            return None;
+        }
+        return Some(Link {
+            text: token,
+            href: token.to_owned(),
+        });
+    }
+    if let Some(address) = lower.strip_prefix("mailto:") {
+        if address.is_empty() {
+            return None;
+        }
+        return Some(Link {
+            text: token,
+            href: token.to_owned(),
+        });
+    }
+    if lower.starts_with("www.") && lower.len() > 4 && looks_like_host(&lower[4..]) {
+        // Written without a scheme, so one has to be chosen. `https` rather
+        // than `http`: the reader never fetches either, and handing a
+        // downgrade to the browser would be this application's choice, not
+        // the sender's.
+        return Some(Link {
+            text: token,
+            href: format!("https://{token}"),
+        });
+    }
+    if let Some(address) = match_email(token) {
+        return Some(Link {
+            text: address,
+            href: format!("mailto:{address}"),
+        });
+    }
+    None
+}
+
+/// Everything up to the first character that cannot be inside a URL.
+fn token_at(rest: &str) -> &str {
+    let end = rest
+        .find(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '>' | '"'))
+        .unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// Drop the punctuation a sentence put after a URL rather than inside it.
+///
+/// `(see https://example.com/x).` ends in `).`, and neither belongs to the
+/// link — but `https://example.com/a_(b)` does end in a bracket that does, so
+/// a closing one is only dropped when nothing opened it.
+fn trim_trailing_punctuation(mut token: &str) -> &str {
+    loop {
+        let Some(last) = token.chars().next_back() else {
+            return token;
+        };
+        let drop = match last {
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' => true,
+            ')' => !token.contains('('),
+            ']' => !token.contains('['),
+            '}' => !token.contains('{'),
+            _ => false,
+        };
+        if !drop {
+            return token;
+        }
+        token = &token[..token.len() - last.len_utf8()];
+    }
+}
+
+/// Whether `host` reads as a domain name: labels, dots, and a final alphabetic
+/// label of at least two characters.
+fn looks_like_host(host: &str) -> bool {
+    let host = host.split('/').next().unwrap_or(host);
+    let Some((_, tld)) = host.rsplit_once('.') else {
+        return false;
+    };
+    tld.len() >= 2
+        && tld.chars().all(|ch| ch.is_ascii_alphabetic())
+        && host
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+}
+
+/// A bare `local@domain`, or `None` if `token` is not one.
+fn match_email(token: &str) -> Option<&str> {
+    let (local, domain) = token.split_once('@')?;
+    if local.is_empty() || domain.contains('@') {
+        return None;
+    }
+    let local_ok = local
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-'));
+    if !local_ok || !looks_like_host(&domain.to_ascii_lowercase()) || domain.contains('/') {
+        return None;
+    }
+    Some(token)
 }
 
 fn escape_into(out: &mut String, text: &str) {
@@ -234,5 +396,92 @@ mod tests {
     fn a_message_that_is_entirely_quoted_still_folds() {
         let out = text_to_html("> all quoted\n> every line");
         assert!(out.starts_with("<details class=\"postio-quote\">"));
+    }
+
+    // ── #752: a URL in a plain-text body is a link ──────────────────────
+
+    #[test]
+    fn a_plain_text_url_becomes_an_anchor() {
+        let out = text_to_html("See https://example.com/report for the figures.");
+        assert!(
+            out.contains("<a href=\"https://example.com/report\">https://example.com/report</a>"),
+            "a bare URL should be clickable: {out}"
+        );
+        assert!(out.contains("See "), "the surrounding words survive: {out}");
+    }
+
+    #[test]
+    fn a_scheme_less_host_gets_one_and_a_bare_address_gets_mailto() {
+        let out = text_to_html("www.example.com and ada@example.com");
+        assert!(
+            out.contains("<a href=\"https://www.example.com\">www.example.com</a>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<a href=\"mailto:ada@example.com\">ada@example.com</a>"),
+            "{out}"
+        );
+    }
+
+    /// A sentence's punctuation is not part of the address it follows, but a
+    /// bracket the URL opened for itself is.
+    #[test]
+    fn trailing_punctuation_stays_outside_the_link() {
+        let out = text_to_html("(see https://example.com/a).");
+        assert!(
+            out.contains("<a href=\"https://example.com/a\">https://example.com/a</a>"),
+            "{out}"
+        );
+        assert!(out.contains("</a>)."), "the `).` is text, not href: {out}");
+
+        let balanced = text_to_html("https://example.com/a_(b)");
+        assert!(
+            balanced.contains("<a href=\"https://example.com/a_(b)\">"),
+            "a bracket the URL opened belongs to it: {balanced}"
+        );
+    }
+
+    /// The security property, stated as a test: the anchor is built out of a
+    /// span this module matched and every part of it is escaped, so a sender
+    /// cannot close the attribute or the tag. `text/plain` bodies are not run
+    /// through ammonia, so nothing downstream would catch it if they could.
+    #[test]
+    fn a_url_cannot_inject_markup_through_the_anchor_it_becomes() {
+        let out = text_to_html("https://example.com/\"><script>alert(1)</script>");
+        assert!(
+            !out.contains("<script>"),
+            "markup in the source must not survive as markup: {out}"
+        );
+        assert!(out.contains("&lt;script&gt;"), "{out}");
+        assert!(
+            !out.contains("\"><script"),
+            "the href attribute must not be closable: {out}"
+        );
+    }
+
+    #[test]
+    fn linkifying_leaves_the_quote_fold_alone() {
+        let out = text_to_html("> https://example.com/quoted\n\nreply");
+        assert!(out.starts_with("<details class=\"postio-quote\">"), "{out}");
+        assert!(
+            out.contains("<a href=\"https://example.com/quoted\">"),
+            "a link inside a quoted run is still a link: {out}"
+        );
+    }
+
+    /// Words that merely contain a dot, an `@` inside a longer token, or a
+    /// scheme with nothing after it are not links — a false positive here is
+    /// a clickable thing in the middle of somebody's prose.
+    #[test]
+    fn ordinary_prose_is_not_linkified() {
+        for text in [
+            "Sentences end. Like this one.",
+            "the ratio was 3.5 or so",
+            "read notexample.com/x",
+            "https://",
+        ] {
+            let out = text_to_html(text);
+            assert!(!out.contains("<a "), "{text:?} should not linkify: {out}");
+        }
     }
 }

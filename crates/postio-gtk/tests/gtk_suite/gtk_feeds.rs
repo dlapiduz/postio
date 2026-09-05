@@ -9,12 +9,12 @@
 //! replies are awaited on the thread-default main context, which the test
 //! harness would otherwise drive from two threads at once.
 
+use crate::pump;
 use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::{TimeZone, Utc};
 use gtk::gdk;
-use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_gtk::feed::{
@@ -96,6 +96,7 @@ impl MessageSource for Store {
         let mailbox = match request.scope {
             ListScope::Mailbox(id) => id,
             ListScope::Account(_)
+            | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
             | ListScope::Thread(_) => MailboxId::new(0),
@@ -135,7 +136,7 @@ impl MessageSource for Store {
 
 pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `xvfb-run` to exercise this)");
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
     let display = gdk::Display::default().unwrap();
@@ -231,13 +232,13 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         ("syncing · imap".to_string(), "fetched 30".to_string())
     );
 
-    // ── bodies arriving is its own state, on the real widget ─────────────
+    // ── mail arriving is its own state, on the real widget ───────────────
     //
     // Issue #74: the backfill announced nothing, so the longest phase of a
     // first sync drew `idle` -- not merely unreported but reported as
     // nothing happening, which reads as stuck. It is a separate word from
     // `syncing` because the consequences differ: a mailbox whose list is
-    // still arriving cannot be read, and one whose bodies are still arriving
+    // still arriving cannot be read, and one whose mail is still arriving
     // can.
     feeds.apply(&Event::SyncProgress {
         account: AccountId::new(ACCOUNT),
@@ -255,9 +256,9 @@ pub fn the_panes_follow_the_account_the_sync_and_the_folder_you_pick() {
         status_text(&window),
         (
             "downloading · imap".to_string(),
-            "bodies 412 of 2000".to_string()
+            "mail 412 of 2000".to_string()
         ),
-        "the list is complete and the bodies are not, and the line has to \
+        "the list is complete and the mail is not, and the line has to \
          say which"
     );
 
@@ -424,11 +425,4 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
         child = current.next_sibling();
     }
     found
-}
-
-fn pump() {
-    let context = glib::MainContext::default();
-    for _ in 0..80 {
-        while context.iteration(false) {}
-    }
 }

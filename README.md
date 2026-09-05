@@ -79,6 +79,27 @@ sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel \
 # @INC` inside a cargo build script, one module at a time.
 sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
                  perl-Text-Template perl-Time-Piece
+
+# Optional but strongly recommended on a machine with more than one checkout:
+# every fresh target directory rebuilds that OpenSSL from C source (~4 min),
+# and ccache is what lets the second one cost seconds. Wired in automatically
+# via scripts/cc-wrapper.sh; without ccache the build is unchanged. #736.
+#
+# mold is the linker, selected by scripts/linker.sh whenever it is present.
+# Not for speed -- there is only ~1.2s of link to contest either way -- but
+# for memory: it peaks ~265 MB below lld, and this workstation runs several
+# sessions that link at once, which is what the jobserver's token count
+# defends (scripts/jobserver.sh, #1104). Without it lld
+# links the binary and nothing says so; `readelf -p .comment <binary>` is the
+# only thing that tells you which one ran. #1092.
+sudo dnf install ccache mold
+
+# The linker and C compiler .cargo/config.toml names are bare program names
+# (postio-linker, postio-cc), so one compile cache serves every worktree.
+# The claim, land and test scripts run this themselves; a plain `cargo build`
+# in a fresh clone needs it once, or fails with "linker `postio-linker` not
+# found". #1101
+scripts/install-shims.sh
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
@@ -87,6 +108,12 @@ Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
                  libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
+```
+
+The same two optional tools, for the same reasons as the Fedora block above:
+
+```bash
+sudo apt install ccache mold
 ```
 
 Debian and Ubuntu ship the perl modules OpenSSL needs in `perl-base` and
@@ -104,6 +131,23 @@ nothing said which Python. It is optional: `mise install` once if you use
 you do not. It deliberately does not pin Rust (`rust-toolchain.toml` owns
 that, and a second place to say it is the bug that pin exists to prevent) or
 the system libraries above, which are distro packages rather than tooling.
+
+`cargo-nextest` runs the integration tiers, and is the one piece of tooling
+`mise.toml` cannot pin — it has no entry in mise's registry. Install it with
+the script that holds the pin, which is also what `ci.yml` runs:
+
+```bash
+scripts/install-nextest.sh
+```
+
+It fails open the way `mold` and `ccache` do: `scripts/issue-land.sh` runs
+`cargo test` when nextest is absent and reaches the same verdict, slower. On
+this workspace "slower" is most of a landing — `app_suite` takes 200s against
+20.4s, and the whole workspace ~500s against 118.6s, because nextest runs test
+*binaries* concurrently and there are 140 of them. The `--lib` tiers
+(`scripts/test-fast.sh`, `scripts/test-sanity.sh`) stay on `cargo test` on
+purpose: a process per test is 2.2x *slower* for ~1,459 small tests in ~19
+binaries.
 
 `gh` needs to be **2.94.0 or newer**: `scripts/issue-claim.sh` reads
 `--json blockedBy`, which that release added (cli/cli#13057). An older `gh`
@@ -146,6 +190,23 @@ install flathub dev.postio.Postio`; the listing's own description is kept in
 [`dev.postio.Postio.metainfo.xml`](crates/postio-gtk/data/dev.postio.Postio.metainfo.xml)
 rather than written twice.
 
+A tagged release also publishes a prebuilt `.flatpak` bundle on the
+[Releases page](https://github.com/dlapiduz/postio/releases), alongside a
+signed build-provenance attestation and a software bill of materials — a
+mail client holds your credentials and your mail, so a downloaded bundle
+should be checkable rather than merely trusted because it appeared on a
+release page. Verify one with the [GitHub
+CLI](https://cli.github.com):
+
+```bash
+gh attestation verify postio-VERSION-x86_64.flatpak --repo dlapiduz/postio
+```
+
+A successful verification confirms the bundle was built by this project's
+`release.yml` workflow, from the tagged commit, and has not been modified
+since. The SBOM (`postio-VERSION.spdx.json`, also attached to the release) is
+attested the same way and lists every dependency the build actually shipped.
+
 First run opens onto a one-screen setup: type your email address and the
 autoconfig probe fills in the server settings (a preset table, Thunderbird
 autoconfig, then DNS SRV — or manual entry). The password goes straight into
@@ -168,11 +229,10 @@ you actually have against the floors in
 [`docs/PRODUCT.md`](docs/PRODUCT.md) §2.
 
 **The window fails to open, or opens with no decorations / broken
-rendering**: Postio is a GTK4/libadwaita app and only Wayland is verified —
-X11 sessions are expected to work but aren't part of the tested path. If
-you're on X11 and hit a rendering issue, running under a Wayland session
-(or, as a fallback, forcing the X11 backend with `GDK_BACKEND=x11 cargo run
--p postio-app`) is the first thing to try before filing an issue.
+rendering**: Postio is a GTK4/libadwaita app and targets Wayland. X11 is not
+a supported configuration — nothing tests it and there is no plan to support
+it — so running under a Wayland session is the first thing to try before
+filing an issue.
 
 **Onboarding can't save the account, or every launch reopens onboarding**:
 Postio stores credentials in the OS keyring over the Secret Service D-Bus

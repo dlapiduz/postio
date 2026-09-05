@@ -14,7 +14,7 @@ repository.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-config.workspace = true
 postio-core.workspace = true
-postio-imap.workspace = true
+postio-account.workspace = true
 postio-jmap.workspace = true
 postio-gmail.workspace = true
 postio-index.workspace = true
@@ -24,10 +24,18 @@ postio-model.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-smtp.workspace = true
+# `watch_policy`'s `WatchPolicy` (#932). Already in the graph under
+# `postio-runtime`; naming it here is what lets a config value reach it
+# rather than only `postio-runtime`'s own tests.
+postio-sync.workspace = true
 postio-storage.workspace = true
 # `reader::Absent` and `reader::parts::BlobSource`: the frontend-independent
 # half of the reader. Toolkit-free, so no cycle and no widget reaches in.
 postio-ui.workspace = true
+# The credential a "test connection" hands to SMTP. Same version the two
+# crates that already carry one use, because a second `SecretString` type in
+# the graph would defeat the zeroing this exists for.
+secrecy = "0.10.3"
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-journald = "0.3"
@@ -40,6 +48,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"]
 # is the whole argument for the crate: the verbs are testable without a
 # toolkit, and they were not while they lived beside a GTK binary.
 postio-storage = { workspace = true, features = ["test-support"] }
+# `store_key.rs` builds a *plaintext* store to prove `open_store_at` encrypts
+# it. Nothing shipping here touches SQL, so this is dev-only -- and the
+# features match `postio-storage`'s, because one `links = "sqlite3"` crate in
+# the graph means the feature selecting SQLCipher has to agree everywhere
+# (ADR 0014).
+rusqlite = { version = "0.40.2", features = [
+    "bundled-sqlcipher-vendored-openssl",
+] }
+# The unkeyed digest a blob written before ADR 0014 was named by, so the
+# fixture is the shape a real pre-release store has rather than a plausible
+# one.
+blake3 = "1.8.7"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 

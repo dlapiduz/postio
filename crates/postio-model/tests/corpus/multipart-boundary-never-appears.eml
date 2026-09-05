@@ -1,0 +1,23 @@
+Message-ID: <20260304T140000.lostboundary@lists.example.org>
+Date: Wed, 4 Mar 2026 14:00:00 +0000
+From: Announcements <announce@lists.example.org>
+To: ada@example.com
+Subject: The boundary parameter no longer matches the body
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_rewritten_in_transit_9f2a"
+
+This is a multipart message in MIME format.
+
+--=_original_boundary_4c1b
+Content-Type: text/plain; charset=utf-8
+
+The body a person is supposed to read. Nothing in this message is malformed
+except that the boundary named in the header is not the one used below it,
+which is what a gateway that rewrote one and not the other leaves behind.
+
+--=_original_boundary_4c1b
+Content-Type: text/html; charset=utf-8
+
+<p>The same words, as HTML.</p>
+
+--=_original_boundary_4c1b--

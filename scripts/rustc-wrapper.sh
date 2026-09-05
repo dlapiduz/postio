@@ -52,7 +52,39 @@ if [ -n "${TMPDIR:-}" ]; then
     mkdir -p "$TMPDIR" 2>/dev/null || true
 fi
 
+# # Sizing, and why the default is wrong here (2026-09-03)
+#
+# sccache's default cache is 10 GiB, nobody had ever changed it, and on this
+# box it was **full**: 10 GiB of 10 GiB, 11G on disk. A full cache is a cache
+# in permanent eviction -- every new compile throws out somebody else's entry,
+# and with nine worktrees each holding ~2.1 GB of dependency artifacts, the
+# sessions were evicting each other continuously. That reads from inside a
+# session as "the compile cache died and it fell back to compiling locally".
+#
+# 30G rather than a bigger number because the disk is shared with the
+# worktrees themselves: /home had 88 GB free with nine of them present, and
+# a target directory is the larger appetite of the two.
+#
+# `SCCACHE_IDLE_TIMEOUT=0` keeps the server up. The default stops it after ten
+# idle minutes, which does not lose the on-disk cache but does mean several
+# sessions a day pay a cold start and re-read config.
+#
+# `SCCACHE_ERROR_LOG` because when this does go wrong there is currently no
+# evidence at all -- the failure above was diagnosed from `--show-stats`
+# after the fact, and only because someone happened to mention it.
+#
+# **These are read when the server STARTS, not per invocation.** A running
+# server keeps whatever it was born with, exactly like the TMPDIR hazard
+# below (#359). After changing them: `sccache --stop-server`, and the next
+# compile starts a server that honours them. `sccache --show-stats` prints
+# "Max cache size" and is how you check which one you have.
+#
+# Set with `:-` like everything else here, so an explicit value in the
+# environment still wins.
 if command -v sccache >/dev/null 2>&1; then
+    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
+    export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
+    export SCCACHE_ERROR_LOG="${SCCACHE_ERROR_LOG:-${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/sccache.log}"
     scratch="${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/tmp"
     # Fail open, like everything else in this file: a temp directory that
     # cannot be created costs the pinning, never the build.

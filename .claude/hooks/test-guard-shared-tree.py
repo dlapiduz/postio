@@ -75,7 +75,7 @@ ALLOW = [
     "git commit -- crates/postio-core",
     "git commit -m 'wip' -- crates/postio-core/src/lib.rs",
     "git stash show",
-    "cargo test --workspace",
+    "cargo test --workspace --lib",  # a bare --workspace run is refused since #1131
     "git status",
     "git push",
     "git push origin main",
@@ -122,10 +122,20 @@ ALLOW = [
 ]
 
 
-def decide(cmd: str, cwd: str | None = None) -> str:
+def decide(
+    cmd: str,
+    cwd: str | None = None,
+    session: str | None = None,
+    worktrees: str | None = None,
+    background: bool = False,
+) -> str:
     body = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    if background:
+        body["tool_input"]["run_in_background"] = True
     if cwd:
         body["cwd"] = cwd
+    if session:
+        body["session_id"] = session
     payload = json.dumps(body)
     # `CLAUDE_PROJECT_DIR` is set for real, so set it here. Without it the
     # hook reads `project` as empty and its "this is not our repository at
@@ -134,6 +144,12 @@ def decide(cmd: str, cwd: str | None = None) -> str:
     # regression in it invisible. An interactive shell happens not to export
     # this, which is exactly why the test must not depend on inheriting it.
     env = dict(os.environ, CLAUDE_PROJECT_DIR=SHARED)
+    if worktrees:
+        # The claim cases build their worktrees somewhere disposable rather
+        # than in the real `~/src/postio-worktrees`: a leftover directory with
+        # a `.git` file in it is something `/lanes` and `issue-claim.sh` would
+        # both go and read.
+        env["POSTIO_WORKTREES"] = worktrees
     r = subprocess.run(
         [sys.executable, HOOK],
         input=payload,
@@ -300,5 +316,384 @@ for cmd, want in [
     print(f"  {'ok  ' if ok else 'FAIL'} {want:<5} {cmd!r} -> {got}")
     scoped += 1
 
-print(f"\n{len(DENY) + len(ALLOW) + scoped} cases, {failures} failure(s)")
+# ── One worktree, one session ───────────────────────────────────────────────
+#
+# #412. The claim lock in `issue-claim.sh` is checked only inside
+# `issue-claim.sh`, so a session that reached a worktree any other way -- told
+# to work an issue directly, a path pasted from an earlier transcript, a
+# resumed session whose worktree was released and recreated -- was subject to
+# nothing. Two sessions edited one crate for four minutes and neither knew.
+#
+# These cases are about the *arriving*, not the claiming: every one of them
+# reaches the worktree without going anywhere near the script.
+
+import json as _json
+import tempfile
+import time as _time
+
+
+class FakeWorktree:
+    """A directory shaped like a `git worktree`: a `.git` FILE naming a real
+    git directory elsewhere, which is where the claim stamp lives.
+
+    Shaped rather than real because the stamp's whole point is that it sits
+    *outside* the working tree -- so a test against a plain directory would
+    prove nothing about the thing that makes the mechanism invisible to
+    `git status`.
+    """
+
+    def __init__(self, root: str, name: str, gitdirs: str) -> None:
+        self.root = os.path.join(root, name)
+        self.gitdir = os.path.join(gitdirs, name)
+        os.makedirs(self.root, exist_ok=True)
+        os.makedirs(self.gitdir, exist_ok=True)
+        with open(os.path.join(self.root, ".git"), "w", encoding="utf-8") as fh:
+            fh.write(f"gitdir: {self.gitdir}\n")
+
+    @property
+    def stamp(self) -> str:
+        return os.path.join(self.gitdir, "postio-claim")
+
+    def holder(self) -> str:
+        try:
+            with open(self.stamp, encoding="utf-8") as fh:
+                return _json.load(fh)["session"]
+        except (OSError, ValueError, KeyError):
+            return ""
+
+    def backdate(self, seconds: float) -> None:
+        with open(self.stamp, encoding="utf-8") as fh:
+            record = _json.load(fh)
+        record["at"] = _time.time() - seconds
+        with open(self.stamp, "w", encoding="utf-8") as fh:
+            _json.dump(record, fh)
+
+    def free(self) -> None:
+        try:
+            os.remove(self.stamp)
+        except OSError:
+            pass
+
+
+claims = 0
+
+
+def claim_case(label: str, got: str, want: str) -> None:
+    global failures, claims
+    ok = got == want
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} {want:<5} {label} -> {got}")
+
+
+# Under `$HOME`, so the `~`- and `$HOME`-spelled cases below are the same
+# paths the shell would expand -- that expansion is a real branch in the guard
+# and #87 is what an untested one costs.
+with tempfile.TemporaryDirectory(
+    dir=os.path.expanduser("~"), prefix=".postio-guard-test-"
+) as scratch:
+    WORKTREES = os.path.join(scratch, "postio-worktrees")
+    gitdirs = os.path.join(scratch, "gitdirs")
+    os.makedirs(WORKTREES)
+    os.makedirs(gitdirs)
+
+    def decide(  # noqa: F811 - the claim cases all speak to one worktrees root
+        cmd: str,
+        cwd: str | None = None,
+        session: str | None = None,
+        background: bool = False,
+        _outer=decide,
+    ) -> str:
+        return _outer(cmd, cwd=cwd, session=session, worktrees=WORKTREES, background=background)
+
+    mine = FakeWorktree(WORKTREES, "issue-9001", gitdirs)
+
+    # An unclaimed worktree is taken by the first session that works in it,
+    # whether or not it ever ran the claim script.
+    claim_case(
+        "first session adopts a free worktree",
+        decide("cargo test -p postio-core", cwd=mine.root, session="alpha"),
+        "allow",
+    )
+    ok = mine.holder() == "alpha"
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} stamp names the session -> {mine.holder()!r}")
+
+    # And the owner keeps it, including the destructive commands a worktree is
+    # exempt from in the first place.
+    for cmd in ["git add -A", "cargo fmt --all", "git reset --hard"]:
+        claim_case(
+            f"owner runs {cmd!r} in its own worktree",
+            decide(cmd, cwd=mine.root, session="alpha"),
+            "allow",
+        )
+
+    # The failure #412 is about: a second session, arriving by cwd alone.
+    for cmd in ["cargo test -p postio-core", "git add -A", "ls"]:
+        claim_case(
+            f"a second session runs {cmd!r} there",
+            decide(cmd, cwd=mine.root, session="beta"),
+            "deny",
+        )
+    ok = mine.holder() == "alpha"
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} a refused session did not steal it -> {mine.holder()!r}")
+
+    # A `cd` into it is the same arrival, spelled differently -- and this is
+    # the one the transcript in #412 actually shows.
+    claim_case(
+        "a second session cd's into it",
+        decide(f"cd {mine.root} && git status", cwd=SHARED, session="beta"),
+        "deny",
+    )
+    claim_case(
+        "and the owner still may",
+        decide(f"cd {mine.root} && git status", cwd=SHARED, session="alpha"),
+        "allow",
+    )
+
+    # Reaching in from outside never changes directory, so `cd_destination`
+    # cannot see it. These are the commands that write into a worktree from
+    # the shared checkout.
+    for cmd in [
+        f"git -C {mine.root} checkout .",
+        f"echo x > {mine.root}/crates/postio-index/src/index.rs",
+        f"rm -rf {mine.root}/target",
+        # The shell expands these before any command sees them, so the guard
+        # has to read them the same way.
+        f"git -C ~{mine.root[len(os.path.expanduser('~')):]} checkout .",
+        f"rustfmt --edition 2024 $HOME{mine.root[len(os.path.expanduser('~')):]}/src/x.rs",
+    ]:
+        claim_case(
+            f"a second session reaches in: {cmd!r}",
+            decide(cmd, cwd=SHARED, session="beta"),
+            "deny",
+        )
+        claim_case(
+            f"the owner reaches in: {cmd!r}",
+            decide(cmd, cwd=SHARED, session="alpha"),
+            "allow",
+        )
+
+    # Reading somebody else's worktree from your own is not the failure #412
+    # is about, and refusing it would refuse `/lanes` -- the tool sessions are
+    # told to use to find out who else is here. Only a reach-in that WRITES is
+    # refused; being *in* the worktree is enough on its own, above.
+    for cmd in [
+        f"cat {mine.root}/Cargo.toml",
+        f"git -C {mine.root} log --oneline -5",
+        f"git -C {mine.root} status --porcelain",
+        f"ls {mine.root}/crates",
+        f"grep -rn frobnicator {mine.root}/crates",
+        f"cat $HOME{mine.root[len(os.path.expanduser('~')):]}/Cargo.toml",
+    ]:
+        claim_case(
+            f"a second session reads it: {cmd!r}",
+            decide(cmd, cwd=SHARED, session="beta"),
+            "allow",
+        )
+
+    # Documenting a path is not writing to it, the same rule the rest of this
+    # guard keeps.
+    claim_case(
+        "a heredoc mentioning the path",
+        decide(
+            f"cat > note.md <<'EOF'\nWork happens in {mine.root} now.\nEOF",
+            cwd=SHARED,
+            session="beta",
+        ),
+        "allow",
+    )
+
+    # A claim is a lease. A session that died holding one must not leave a
+    # worktree nobody can ever have -- that is the failure that would get the
+    # whole guard switched off.
+    mine.backdate(46 * 60)
+    claim_case(
+        "a silent owner's claim expires",
+        decide("cargo test -p postio-core", cwd=mine.root, session="beta"),
+        "allow",
+    )
+    ok = mine.holder() == "beta"
+    failures += not ok
+    claims += 1
+    print(f"  {'ok  ' if ok else 'FAIL'} and passes to whoever took it -> {mine.holder()!r}")
+
+    # ...but not while the owner is merely being patient. A session waiting on
+    # a backgrounded `issue-land.sh --full` runs no commands for twenty
+    # minutes, and stealing its worktree then is exactly #412 again.
+    mine.backdate(20 * 60)
+    claim_case(
+        "a patient owner's claim holds",
+        decide("cargo test -p postio-core", cwd=mine.root, session="alpha"),
+        "deny",
+    )
+
+    # A `cd` inside a quoted string is prose, not a destination (#889). This
+    # bit within an hour of #412 landing: a `gh issue comment` whose body
+    # quoted the command that had just been refused was itself refused, twice,
+    # because the body contained the words `&& cd <worktree> &&`.
+    #
+    # What matters is whether the `cd` *keyword* is quoted, never whether its
+    # argument is -- `cd '<worktree>' && …` is a correct invocation and is
+    # covered above.
+    for cmd in [
+        # The exact shape that was refused: a shell operator before the `cd`,
+        # which is what makes it look like a command position, inside a
+        # quoted argument that is only ever text.
+        f'gh issue comment 412 -b "my next command was scripts/issue-claim.sh 478 '
+        f'&& cd {mine.root} && wc -l"',
+        f"git commit -m 'reproduced with: cd {mine.root}; cargo test'",
+        f'echo "run it as | cd {mine.root} | and see"',
+    ]:
+        claim_case(
+            f"prose mentioning a cd: {cmd[:60]!r}…",
+            decide(cmd, cwd=SHARED, session="gamma"),
+            "allow",
+        )
+
+    # The same weakness pointing the other way, which was latent rather than
+    # harmless: before #889 a quoted `cd` could *grant* the worktree exemption
+    # on the strength of a commit message, in the shared checkout where every
+    # rule in `RULES` applies.
+    quoted_cd_out = os.path.join(WORKTREES, "issue-9003")
+    claim_case(
+        "a quoted cd does not grant the exemption either",
+        decide(
+            f"git commit -m 'as we did in && cd {quoted_cd_out}' && git add -A",
+            cwd=SHARED,
+            session="gamma",
+        ),
+        "deny",
+    )
+
+    # Fail open where there is nothing to arbitrate: no session id (the hook
+    # run by hand, or by these very tests above), and a directory under the
+    # worktrees root that no `git worktree add` ever made.
+    claim_case(
+        "no session id",
+        decide("git add -A", cwd=mine.root),
+        "allow",
+    )
+    bare = os.path.join(WORKTREES, "issue-9002")
+    os.makedirs(bare, exist_ok=True)
+    claim_case(
+        "a directory that is not a checkout",
+        decide("git add -A", cwd=bare, session="gamma"),
+        "allow",
+    )
+
+    # Two sessions in two different worktrees is the ordinary state and must
+    # cost nothing.
+    theirs = FakeWorktree(WORKTREES, "issue-9003", gitdirs)
+    claim_case(
+        "a second session in its own worktree",
+        decide("git add -A", cwd=theirs.root, session="delta"),
+        "allow",
+    )
+    claim_case(
+        "and the first is undisturbed",
+        decide("git add -A", cwd=mine.root, session="beta"),
+        "allow",
+    )
+
+# ── the jobserver side effect (#1104) ─────────────────────────────────────
+#
+# A command that runs cargo gets the machine-wide jobserver created (or
+# repaired) first, because cargo reads MAKEFLAGS at startup and the fifo it
+# names has to be there by then. A command that does not run cargo pays
+# nothing. The pool lands in a directory of this test's own so the real one
+# other sessions are drawing from right now is never touched.
+import subprocess
+import tempfile
+
+with tempfile.TemporaryDirectory() as raw:
+    pool = os.path.join(raw, "js")
+    saved = {k: os.environ.get(k) for k in ("POSTIO_JOBSERVER_DIR", "POSTIO_JOBSERVER_TOKENS", "POSTIO_JOBSERVER_IDLE")}
+    os.environ["POSTIO_JOBSERVER_DIR"] = pool
+    os.environ["POSTIO_JOBSERVER_TOKENS"] = "2"
+    os.environ["POSTIO_JOBSERVER_IDLE"] = "1"
+    try:
+        got = decide("ls crates", cwd=SHARED)
+        ok = got == "allow" and not os.path.exists(os.path.join(pool, "fifo"))
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} a command without cargo starts no jobserver -> {got}")
+
+        got = decide("cargo build -p postio-core", cwd=SHARED)
+        ok = got == "allow" and os.path.exists(os.path.join(pool, "fifo"))
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} a cargo command finds the jobserver up -> {got}, fifo={os.path.exists(os.path.join(pool, 'fifo'))}")
+
+        got = decide("cargo fmt --all", cwd=SHARED)
+        ok = got == "deny"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} the side effect does not change a refusal -> {got}")
+    finally:
+        subprocess.run(["bash", os.path.join(os.path.dirname(HOOK), "..", "..", "scripts", "jobserver.sh"), "stop"],
+                       capture_output=True)
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+# ── the loop's own shape (#1131) ───────────────────────────────────────────
+#
+# Not a shared-tree hazard, so these hold in a private worktree too. The
+# transcripts show 427 workspace test runs and 852 whole-crate runs used as
+# the inner loop against 6 runs of test-fast.sh, and 79 landings killed by a
+# foreground tool call's cap. The docs say otherwise and are not read at the
+# moment it matters; the hook is.
+LOOP_DENY = [
+    "cargo test --workspace",
+    "cargo test --workspace --no-fail-fast",
+    "cargo test --all",
+    "cargo nextest run --workspace",
+    "cd ~/src/postio-worktrees/issue-27 && cargo test --workspace",
+    "scripts/issue-land.sh",
+    "scripts/issue-land.sh -m 'feat(gtk): x'",
+    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --full",
+    "nohup scripts/issue-land.sh > land.log 2>&1 &",
+]
+LOOP_ALLOW = [
+    "cargo test --workspace --lib",
+    "cargo test --workspace --lib -- quote",
+    "cargo test --workspace --no-run",
+    "cargo test --workspace --doc",
+    "cargo check --workspace --all-targets",
+    "cargo test -p postio-core",
+    "cargo nextest run -p postio-app --test app_suite",
+    "POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast",
+    "scripts/test-sanity.sh",
+    "scripts/issue-land.sh --detach",
+    "scripts/issue-land.sh --status",
+    "scripts/issue-land.sh --gates-only --detach",
+    "cd ~/src/postio-worktrees/issue-27 && scripts/issue-land.sh --detach",
+]
+for where in (SHARED, WORKTREE):
+    for cmd in LOOP_DENY:
+        got = decide(cmd, cwd=where)
+        ok = got == "deny"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} deny  {cmd!r} in {where} -> {got}")
+    for cmd in LOOP_ALLOW:
+        got = decide(cmd, cwd=where)
+        ok = got == "allow"
+        failures += not ok
+        scoped += 1
+        print(f"  {'ok  ' if ok else 'FAIL'} allow {cmd!r} in {where} -> {got}")
+# A backgrounded land is the other spelling of --detach.
+got = decide("scripts/issue-land.sh", cwd=WORKTREE, background=True)
+ok = got == "allow"
+failures += not ok
+scoped += 1
+print(f"  {'ok  ' if ok else 'FAIL'} allow a run_in_background land -> {got}")
+
+print(f"\n{len(DENY) + len(ALLOW) + scoped + claims} cases, {failures} failure(s)")
 sys.exit(1 if failures else 0)

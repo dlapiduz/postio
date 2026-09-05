@@ -204,6 +204,54 @@ render-to-PNG loop — are in `/gtk-design`. This skill decides *what the
 experience should be*; that one gets it built correctly.
 
 When you make an experience decision that future surfaces should follow,
-record it in `docs/engineering-notes.md`, or as a comment on the issue. An
+record it as a new file under `docs/notes/` (listed in
+`docs/engineering-notes.md`), or as a comment on the issue. An
 invariant nobody wrote down
 lasts exactly as long as the session that invented it.
+
+---
+
+## Working the `needs-architecture` queue
+
+Your queue is issues labelled `needs-architecture` — the label means a
+judgement has not been made, and developers are blocked from taking them for
+exactly that reason:
+
+```bash
+gh issue list --label needs-architecture --state open
+```
+
+Take one. **Check whether an ADR already decides it before you decide
+anything** — `grep -rn "#<issue>" docs/decisions/` and read the section, not
+just the filename. A session spent an afternoon deriving a decision that ADR
+0005 Q6b had already made in full, and its implementation then diverged from
+the written one in two places. The label means nobody has decided *and
+recorded* it here; it does not always mean nobody decided.
+
+Then read the code it touches before proposing anything; several of these
+have a real constraint already sitting in the tree that makes the obvious
+answer wrong. Then write the decision down:
+
+- A decision that shapes the codebase becomes an ADR in `docs/decisions/`,
+  numbered in sequence, in the form the existing ones use. Say what was
+  decided, what was rejected, and why — the rejected option is the part
+  future readers need.
+- A decision about how a surface behaves goes in a comment on the issue,
+  specific enough that a developer can build it without guessing: the
+  states, the verbs, what happens when it is empty, loading, failed, or
+  offline.
+- When you have decided, remove `needs-architecture` and add `ready`. That
+  is the handoff. An issue nobody can start is worse than one that does not
+  exist.
+
+Two things constrain you more than they look: providers are data, not code
+(`docs/PRODUCT.md` §3 — one row in a table, never a named constant), and
+nothing leaves the machine that the user did not ask for. When you design
+anything that could make a request, the question is not "is this useful"
+but "did the user ask for it".
+
+You may open issues freely, and you should — splitting a vague one into
+decided parts is the job. Do not claim `ready` implementation work; leave
+that for a developer session. Print to the session only when a decision is
+genuinely the maintainer's (`needs-maintainer`); everything else goes in the
+issue or the ADR, where the next session will find it.

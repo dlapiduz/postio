@@ -1,0 +1,133 @@
+# Providers Postio ships settings for, as data -- not Rust literals.
+#
+# Every provider is one `[provider.<id>]` table. No named constant, no
+# special-cased branch, no identifier that mentions a vendor anywhere else
+# in the source (`docs/PRODUCT.md` §3). Adding the next provider is adding a
+# table here and nothing else: no rebuild-by-hand, no Rust syntax.
+#
+# `crates/postio-account/src/discovery/providers_toml.rs` is the schema this
+# parses against, and `build.rs` fails the build if this file does not
+# parse and validate against it -- see that module's doc comment. A user's
+# own `$XDG_CONFIG_HOME/postio/providers.toml` is layered over this table at
+# startup, in the same shape, with the user's own rows winning.
+#
+# `auth` is the preference order among the ways a provider can be signed
+# into -- "app-password" or "oauth2" today. A row listing "oauth2" must
+# carry an `[provider.<id>.oauth]` table naming `issuer`, or both
+# `authorize` and `token`: RFC 8414 discovery metadata is one source for
+# those two endpoints and the row is the other, and a row that names
+# neither is a validation error caught here rather than at sign-in
+# (ADR 0006 Q4, as amended by #152).
+#
+# A row listing "oauth2" first prefers the browser sign-in (#534): the
+# wizard offers it, with the row's other `auth` entries as the fallback.
+# `sources` says how a token may be obtained (ADR 0006 Q1) -- "own-client"
+# and "broker" need nothing from Postio; "builtin" appears only when a
+# verified Postio client exists for the provider (#195, none yet).
+
+[provider.icloud]
+display_name = "iCloud"
+domains = ["icloud.com", "me.com", "mac.com"]
+# A custom domain delegated here publishes these as its MX (#94). The suffix
+# is matched on a label boundary, so `alice-com.mx01.mail.icloud.com` counts
+# and `evilmail.icloud.com` does not.
+mx_suffixes = ["mail.icloud.com"]
+imap_host = "imap.mail.me.com"
+imap_port = 993
+imap_security = "tls"
+smtp_host = "smtp.mail.me.com"
+smtp_port = 465
+smtp_security = "tls"
+requires_app_password = true
+password_help_url = "https://appleid.apple.com/account/manage"
+auth = ["app-password"]
+# iCloud advertises no RFC 6154 SPECIAL-USE, so a role is guessed from the
+# name -- and iCloud's own webmail has, over the years, left a look-alike
+# folder next to each of these that another client created (#959, #501,
+# #943): a plain "Sent"/"Trash"/"Archive" beside the ones below, which is
+# where the account's mail actually lives. A name below wins the tie only
+# when the server declares nothing; the user's own [mailboxes] mapping
+# still outranks this.
+[provider.icloud.mailboxes]
+sent = "Sent Messages"
+trash = "Deleted Messages"
+archive = "Archives"
+
+[provider.gmail]
+# IMAP first until #195 clears Google's CASA review for Postio's own
+# client (ADR 0018 Q5); the REST backend is reachable today with the
+# user's own client or a broker, and flipping the order is a data
+# change, not a release.
+backend = ["imap", "gmail"]
+display_name = "Gmail"
+domains = ["gmail.com", "googlemail.com"]
+# Google Workspace domains publish these; a custom domain on Workspace is
+# reached at the same IMAP/SMTP hosts as a consumer account.
+mx_suffixes = ["google.com", "googlemail.com"]
+imap_host = "imap.gmail.com"
+imap_port = 993
+imap_security = "tls"
+smtp_host = "smtp.gmail.com"
+smtp_port = 465
+smtp_security = "tls"
+requires_app_password = true
+password_help_url = "https://myaccount.google.com/apppasswords"
+auth = ["oauth2", "app-password"]
+
+[provider.gmail.oauth]
+# RFC 8414/OpenID metadata resolves the endpoints from the issuer, so a
+# rotated endpoint keeps working without a Postio release (ADR 0006 Q4 as
+# amended by #152).
+issuer = "https://accounts.google.com"
+# Full mail scope: what IMAP/SMTP XOAUTH2 requires. Restricted scope --
+# usable with the user's own client or a broker today; Postio's own
+# verified client is #195's CASA process.
+scopes = ["https://mail.google.com/"]
+sources = ["own-client", "broker"]
+
+[provider.office365]
+display_name = "Outlook / Microsoft 365"
+domains = ["outlook.com", "hotmail.com", "live.com", "msn.com"]
+# A Microsoft 365 tenant on a custom domain (the mockup's own "contoso.com
+# uses Microsoft 365" scenario) publishes this as its MX (#94); matched on a
+# label boundary like every other provider's suffix.
+mx_suffixes = ["mail.protection.outlook.com"]
+imap_host = "outlook.office365.com"
+imap_port = 993
+imap_security = "tls"
+smtp_host = "smtp.office365.com"
+smtp_port = 587
+smtp_security = "start-tls"
+# Basic auth is retired tenant by tenant across Microsoft 365; oauth2 is the
+# only method this row offers rather than a fallback nobody can rely on.
+auth = ["oauth2"]
+
+[provider.office365.oauth]
+# RFC 8414 discovery from the common (multi-tenant) v2 issuer -- works for
+# both a personal Microsoft account and any work/school tenant, without
+# Postio having to know which in advance.
+issuer = "https://login.microsoftonline.com/common/v2.0"
+scopes = ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send", "offline_access"]
+sources = ["own-client", "broker"]
+
+[provider.fastmail]
+display_name = "Fastmail"
+domains = ["fastmail.com", "fastmail.fm"]
+mx_suffixes = ["messagingengine.com"]
+# Fastmail's native protocol first (ADR 0018 Q5); the add-account proof
+# tries backends in this order and stores the first that works, so a
+# credential that only speaks IMAP still lands.
+backend = ["jmap", "imap"]
+imap_host = "imap.fastmail.com"
+imap_port = 993
+imap_security = "tls"
+smtp_host = "smtp.fastmail.com"
+smtp_port = 465
+smtp_security = "tls"
+requires_app_password = true
+password_help_url = "https://app.fastmail.com/settings/security/devicekeys"
+
+auth = ["app-password"]
+
+[provider.fastmail.jmap]
+session_url = "https://api.fastmail.com/jmap/session/"

@@ -11,6 +11,30 @@
 //!    credential that only speaks IMAP still lands, no dead ends.
 //!
 //! One test function, for the reason `wiring.rs` gives.
+//!
+//! # Why this needs its own process (#973)
+//!
+//! It cannot share `app_suite`. The test writes user-overlay preset rows advertising `backend = ["jmap", "imap"]`
+//! into a temporary `XDG_CONFIG_HOME` and needs discovery to read it, and
+//! the table discovery reads is a `LazyLock` in
+//! `postio_account::discovery::builtin` whose own doc says it is "computed
+//! once and shared for the life of the process". The first case in a process
+//! to resolve a preset fixes that table for every case after it, overlay and
+//! all -- so a second case with a different overlay silently gets the first
+//! one's, discovery answers `Manual` with a guessed suggestion, and the test
+//! fails on something that has nothing to do with what it is testing.
+//!
+//! That is a fourth reason to stay out, beside the watchdog (#272), a private
+//! display (#45/#114) and a wall-clock budget (#841): **process-global state
+//! computed once from the environment**. #973 moved five of this crate's
+//! seven top-level tests into the suite and found this one by moving it and
+//! watching it fail; it is recorded here so the next person does not repeat
+//! the experiment.
+//!
+//! Making the overlay injectable -- `builtin::overlay_rows_from` already
+//! takes a lookup closure, so the seam exists -- would let this move too,
+//! but that is a change to production code for a test's benefit and belongs
+//! in its own issue rather than in a mechanical consolidation.
 
 #![allow(unsafe_code)]
 // Rust 2024 made `std::env::set_var` unsafe; these run before the app starts.
@@ -23,17 +47,17 @@ use std::thread;
 use adw::prelude::*;
 use async_trait::async_trait;
 use gtk::{gdk, glib};
+use postio_account::discovery::{
+    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
+    TransportError,
+};
+use postio_account::secret::MemorySecretStore;
+use postio_account::test_server::{TestMailbox, TestServer};
 use postio_app::notifications;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::onboarding::{Onboarding, Status};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_imap::discovery::{
-    AutoconfigEndpoint, CancelToken, DiscoveryAutoconfig, DiscoverySrvReport, DiscoveryTransport,
-    TransportError,
-};
-use postio_imap::secret::MemorySecretStore;
-use postio_imap::test_server::{TestMailbox, TestServer};
 use postio_model::account::Backend;
 use postio_session::Wiring;
 use postio_storage::repository::AccountRepository;
@@ -57,6 +81,14 @@ impl DiscoveryTransport for DeadTransport {
         _domain: &str,
         _cancel: &CancelToken,
     ) -> Result<DiscoverySrvReport, TransportError> {
+        Err(TransportError::new("this test resolves from presets only"))
+    }
+
+    async fn mx(
+        &self,
+        _domain: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<String>, TransportError> {
         Err(TransportError::new("this test resolves from presets only"))
     }
 }
@@ -117,7 +149,8 @@ fn session_server(accepted: &'static str) -> u16 {
 }
 
 fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
@@ -195,7 +228,11 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     // ── the app ─────────────────────────────────────────────────────────
     let database = test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(directory.path().to_path_buf()).expect("a blob store");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, events) = event_channel();
     let wiring = Wiring::new(
@@ -226,7 +263,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
         notifier,
         None,
         Arc::new(DeadTransport),
-        Arc::new(postio_imap::oauth::browser::SystemBrowserOpener),
+        Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
     );
     let screen = window
         .content()
@@ -244,12 +281,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("the-api-token");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the add never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "the JMAP add failed: {:?}",
         screen.status()
     );
@@ -266,12 +303,12 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("imap-only-password");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Saved | Status::Failed(_))),
+        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
         "the fallback add never settled: {:?}",
         screen.status()
     );
     assert!(
-        matches!(screen.status(), Status::Saved),
+        matches!(screen.status(), Status::SyncWindow),
         "a credential that only speaks IMAP must still land: {:?}",
         screen.status()
     );
@@ -319,4 +356,10 @@ fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     app::install_icons(&display);
 
     drive();
+
+    // The window this test built joins GTK's toplevel list at
+    // construction and stays there, holding a WebProcess, until it is
+    // destroyed -- which at exit() is a segfault after a passing test
+    // (#794). No harness here to sweep, so the test does it.
+    postio_gtk::window::close_all_windows();
 }

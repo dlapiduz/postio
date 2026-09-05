@@ -3,7 +3,7 @@
 //! This crate is deliberately *pure*. It contains no SQL, no IMAP, no GTK and no
 //! I/O of any kind — only value types and the logic that belongs to them
 //! (flag canonicalization, special-use resolution, subject normalization).
-//! `postio-storage` persists these types, `postio-imap` translates the wire into
+//! `postio-storage` persists these types, `postio-account` translates the wire into
 //! them, `postio-gtk` renders them, and none of that leaks back here. That is
 //! what lets a second protocol or a second frontend be added without reshaping
 //! the model, and CI enforces it.
@@ -67,6 +67,7 @@ pub mod sync;
 pub mod test_corpus;
 pub mod thread;
 pub mod threading;
+pub mod unsubscribe;
 
 pub use account::{
     Account, AccountScope, AuthMethod, Backend, Identity, OAuthConfig, ServerConfig, Signature,
@@ -90,8 +91,9 @@ pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentif
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
 pub use outgoing::{BuiltMessage, OutgoingAttachment};
-pub use scope::ListScope;
+pub use scope::{Arrival, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
+pub use unsubscribe::UnsubscribeActivation;
