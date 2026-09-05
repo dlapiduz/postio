@@ -71,11 +71,6 @@ cp "$GENERATED/postio_ffiFFI.modulemap" "$C_TARGET/module.modulemap"
 cp "$GENERATED/postio_ffi.swift" "$SWIFT_TARGET/"
 echo "  -> $C_TARGET, $SWIFT_TARGET"
 
-if [ "$LIB_ONLY" = 1 ]; then
-    echo "library and bindings only, as asked."
-    exit 0
-fi
-
 # The design tokens, emitted from the same parsed source the GTK frontend uses
 # (#661). Generated rather than typed: a Swift file with `#5980a6` in it is a
 # copy that is right on the day it is written.
@@ -86,6 +81,18 @@ if [ -n "$DESIGN" ] && [ -f "$DESIGN" ]; then
         "$DESIGN" macos/Sources/PostioKit/Generated/Tokens.swift
 else
     echo "  no design system found; skipping (the application will not build)" >&2
+fi
+
+if [ "$LIB_ONLY" = 1 ]; then
+    # After the tokens, deliberately. `--lib-only` means "stop before
+    # `swift build`", and the tokens are an *input* to that build exactly as
+    # the bindings are -- `MessageRowCell` will not compile without
+    # `PostioTokens`. With the step below the exit, `scripts/macos-test.sh`
+    # (which calls this) could not build the Swift tests in a fresh worktree
+    # at all: it worked only where some earlier full build had left the
+    # generated file behind.
+    echo "library, bindings and tokens only, as asked."
+    exit 0
 fi
 
 echo "--- swift build ---"

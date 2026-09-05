@@ -569,6 +569,23 @@ impl Session {
         self.selection_summary()
     }
 
+    /// The cursor rested on `message` long enough to count as read.
+    /// See [`Session::mark_read_on_dwell`].
+    #[uniffi::method(name = "markReadOnDwell")]
+    pub fn mark_read_on_dwell_ffi(&self, message: i64) {
+        self.mark_read_on_dwell(message);
+    }
+
+    /// How long the cursor must rest before that happens.
+    ///
+    /// From `postio_ui::dwell`, so the two frontends wait the same time.
+    /// Milliseconds because uniffi has no `Duration`; the frontend turns it
+    /// back into whatever its own timer takes.
+    #[uniffi::method(name = "dwellMilliseconds")]
+    pub fn dwell_milliseconds_ffi(&self) -> u64 {
+        postio_ui::dwell::DWELL_TO_READ.as_millis() as u64
+    }
+
     /// Put the cursor on `row` — what a click on the list means.
     ///
     /// Sets the position *and* the message, which
@@ -1331,6 +1348,39 @@ impl Session {
             Some(self.row_count()),
             &[],
         )
+    }
+
+    /// The cursor rested on `message` long enough for it to count as read.
+    ///
+    /// **Not `invoke`, and the difference matters.** `MarkReadOnDwell` is
+    /// deliberately not a registry command: it routes to
+    /// `CommandId::MarkUnread`'s handler so there is one "mark read" in the
+    /// vocabulary, and it is the one dispatch that is *not* recorded on the
+    /// undo stack — `u` takes back what you did, and reading a mailbox
+    /// produces one of these per message rested on. Going through `invoke`
+    /// would make every message read an undo entry and bury the archive you
+    /// actually wanted back.
+    ///
+    /// The message is named rather than taken from the cursor, for the reason
+    /// `postio-app` gives on the same call: the cursor may have moved on
+    /// between the frontend's timer firing and this running, and the message
+    /// that was read is the one the clock was started for.
+    pub fn mark_read_on_dwell(&self, message: i64) {
+        let Some(commands) = self
+            .wiring
+            .lock()
+            .expect("wiring lock")
+            .as_ref()
+            .map(|wiring| wiring.commands.clone())
+        else {
+            return;
+        };
+        let command = postio_core::Command::MarkReadOnDwell {
+            message: postio_model::ids::MessageId::new(message),
+        };
+        if commands.send(command).is_err() {
+            tracing::debug!("the runtime has stopped and did not mark that read");
+        }
     }
 
     /// Report where the keyboard is, so a verb with nothing marked knows
