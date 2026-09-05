@@ -106,7 +106,7 @@ fn many_databases_open_at_once_without_a_key_failure() {
 /// instinct, something going wrong below the Rust layer, and away from key
 /// derivation entirely.
 #[test]
-fn the_key_pragma_error_means_an_empty_string_and_nothing_else() {
+fn an_empty_key_string_produces_the_reported_error() {
     let cases = [
         ("an empty double-quoted key", "PRAGMA key = \"\";", true),
         ("an empty single-quoted key", "PRAGMA key = '';", true),
@@ -138,9 +138,12 @@ fn the_key_pragma_error_means_an_empty_string_and_nothing_else() {
 
         assert_eq!(
             is_the_reported_error, expected_to_fail,
-            "{name}: #710's message must come from a zero-length key string \
-             and from nothing else -- otherwise it is not the signature this \
-             test claims it is. Got {text:?}"
+            "{name}: a zero-length key string is one of the two ways into \
+             #710's message, and this pins which key values take it. The \
+             other way -- `sqlite3_key_v2` returning an error, with a \
+             perfectly good key -- is `tests/key_pragma_failure.rs`, and it \
+             is why this case no longer claims `and nothing else`. \
+             Got {text:?}"
         );
     }
 }
