@@ -34,6 +34,18 @@ use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
 use postio_storage::key::{Purpose, STORE_KEY_ENTRY, StoreKey};
 use rusqlite::{Connection, OpenFlags};
 
+/// One mailbox competing for a role: its row id, its path, and how much mail
+/// is in it. The counts are the point — telling two look-alike folders apart
+/// is what #1178 turned on.
+struct Claimant {
+    id: i64,
+    path: String,
+    messages: i64,
+}
+
+/// Claimants keyed by the account and role they are competing for.
+type ByRole = BTreeMap<(i64, String), Vec<Claimant>>;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = dirs_store_path();
     println!("store: {}", path.display());
@@ -97,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{:>5}  {:>4}  {:<12} {:>4} {:>7} {:>9}  path",
         "id", "acct", "role", "sel", "parent", "messages"
     );
-    let mut by_role: BTreeMap<(i64, String), Vec<(i64, String, i64)>> = BTreeMap::new();
+    let mut by_role: ByRole = BTreeMap::new();
     for row in rows {
         let (id, account, path, role, selectable, parent, messages) = row?;
         println!(
@@ -108,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             by_role
                 .entry((account, role))
                 .or_default()
-                .push((id, path, messages));
+                .push(Claimant { id, path, messages });
         }
     }
 
@@ -122,11 +134,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         any = true;
         // The sidebar and `MailboxRepository::by_role` both crown the lowest
         // path, so this ordering is the one that decides.
-        claimants.sort_by(|a, b| a.1.cmp(&b.1));
+        claimants.sort_by(|a, b| a.path.cmp(&b.path));
         println!("  account {account}  role {role}");
-        for (index, (id, path, messages)) in claimants.iter().enumerate() {
+        for (index, claimant) in claimants.iter().enumerate() {
             let crown = if index == 0 { "CROWNED" } else { "demoted" };
-            println!("    {crown:>7}  id {id:>4}  {messages:>8} messages  {path}");
+            println!(
+                "    {crown:>7}  id {:>4}  {:>8} messages  {}",
+                claimant.id, claimant.messages, claimant.path
+            );
         }
     }
     if !any {
