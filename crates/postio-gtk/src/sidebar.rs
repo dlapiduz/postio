@@ -335,25 +335,11 @@ pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
     (count > 0).then_some(count)
 }
 
-/// Where a role sits in the sidebar, or `None` for an ordinary folder.
-///
-/// The canvas' order — Inbox, Flagged, Drafts, Sent, Archive — with the two
-/// folders it does not happen to draw after them. Snoozed joins right after
-/// Flagged: the same client-only, no-`SPECIAL-USE` shape, and the same kind
-/// of "things you will come back to soon" list.
-fn role_order(role: MailboxRole) -> Option<u8> {
-    match role {
-        MailboxRole::Inbox => Some(0),
-        MailboxRole::Flagged => Some(1),
-        MailboxRole::Snoozed => Some(2),
-        MailboxRole::Drafts => Some(3),
-        MailboxRole::Sent => Some(4),
-        MailboxRole::Archive => Some(5),
-        MailboxRole::Junk => Some(6),
-        MailboxRole::Trash => Some(7),
-        MailboxRole::Regular => None,
-    }
-}
+// Moved to `postio-ui` in #1155 so the macOS sidebar draws the same order and
+// the same one-row-per-role rule rather than deciding either for itself. The
+// names are re-exported so nothing in this crate had to change, and so every
+// comment that names `sections` still reads.
+pub use postio_ui::sidebar::{primary_within, role_order, sections};
 
 /// One row of the accounts strip.
 ///
@@ -408,32 +394,6 @@ fn first_label(widget: &gtk::Widget) -> Option<String> {
         child = node.next_sibling();
     }
     None
-}
-
-/// Split the mailboxes into the two sections the canvas draws, each in order.
-///
-/// Unselectable folders — `\Noselect` containers that exist only to hold a
-/// hierarchy — are dropped: a row you cannot open is a row that wastes a
-/// keystroke.
-pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
-    let mut special: Vec<Mailbox> = Vec::new();
-    let mut ordinary: Vec<Mailbox> = Vec::new();
-
-    for mailbox in mailboxes.iter().filter(|m| m.selectable) {
-        // One row per role (#501): an account that has passed through more
-        // than one client holds two folders per role, and a special section
-        // that renamed both to the role drew `Sent, Sent, Archive, Archive`.
-        // Only the primary — the mailbox actions route to — gets the role
-        // treatment; its twin is an ordinary folder under its server name.
-        match role_order(mailbox.role) {
-            Some(_) if primary_within(mailbox, mailboxes) => special.push(mailbox.clone()),
-            _ => ordinary.push(mailbox.clone()),
-        }
-    }
-
-    special.sort_by_key(|m| (role_order(m.role).unwrap_or(u8::MAX), m.name.clone()));
-    ordinary.sort_by_key(|m| m.path.to_lowercase());
-    (special, ordinary)
 }
 
 /// One row of the ordinary folder tree (#324), positioned in the hierarchy
@@ -2242,30 +2202,6 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
         MailboxRole::Trash => "Trash".to_string(),
         MailboxRole::Regular => mailbox.name.clone(),
     }
-}
-
-/// Whether `mailbox` is the folder its role actually routes to, among its
-/// account's mailboxes.
-///
-/// The same answer `MailboxRepository::by_role` gives — first by path — so
-/// the folder the sidebar crowns with the role name is the folder `a`
-/// archives into and `d` deletes into. Two rules diverging here is how a
-/// sidebar says `Archive` over one folder while the key files into another.
-///
-/// A role-less mailbox is trivially primary: there is nothing to be the
-/// twin of.
-pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
-    if role_order(mailbox.role).is_none() {
-        return true;
-    }
-    // Identity by path, not id: paths are unique within an account and are
-    // what `by_role` orders by, while ids are storage rowids a fixture never
-    // sets.
-    !among.iter().any(|other| {
-        other.account_id == mailbox.account_id
-            && other.role == mailbox.role
-            && other.path < mailbox.path
-    })
 }
 
 /// Pixels of indent per nesting level (#324). Not a design token — this

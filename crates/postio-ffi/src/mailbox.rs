@@ -70,9 +70,21 @@ pub struct MailboxFfi {
     /// Whether the folder can hold messages. A `\Noselect` folder is a
     /// container in the hierarchy and opening it shows nothing.
     pub selectable: bool,
+    /// Whether this row belongs in the sidebar's special-use section.
+    ///
+    /// Decided by `postio_ui::sidebar`, not by the frontend, and it is not
+    /// simply "has a role": an account that has been through more than one
+    /// client holds two folders per role, and only the primary gets the
+    /// role's treatment. Its twin is `false` here and draws as an ordinary
+    /// folder under its server name — which is #501, already fixed on the
+    /// GTK side and reproduced on macOS until #1155.
+    pub special: bool,
 }
 
 impl From<Mailbox> for MailboxFfi {
+    /// Ordinary by default. `Session::mailboxes` is what knows about the
+    /// other folders in the account, so it is what decides `special` — a
+    /// single mailbox cannot answer "am I the primary for my role".
     fn from(mailbox: Mailbox) -> Self {
         MailboxFfi {
             id: mailbox.id.into(),
@@ -83,6 +95,7 @@ impl From<Mailbox> for MailboxFfi {
             unread: mailbox.counts.unread,
             total: mailbox.counts.total,
             selectable: mailbox.selectable,
+            special: false,
         }
     }
 }

@@ -1825,24 +1825,35 @@ impl Session {
     /// a sidebar is drawn before anything can be selected in it, and the read
     /// is a few milliseconds of SQLite rather than the network.
     pub fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
-        let Some((store, runtime)) = self.reader() else {
-            return Vec::new();
-        };
+        let mut folders = Vec::new();
         let Some((database, _)) = self.store_and_blobs() else {
-            return Vec::new();
+            return folders;
         };
         let Ok(connection) = database.connection() else {
-            return Vec::new();
+            return folders;
         };
-        let accounts = postio_storage::repository::AccountRepository::new(&connection)
-            .list_enabled()
-            .unwrap_or_default();
-        drop(connection);
-
-        let mut folders = Vec::new();
+        let Ok(accounts) =
+            postio_storage::repository::AccountRepository::new(&connection).list_enabled()
+        else {
+            return folders;
+        };
+        let Some((store, runtime)) = self.reader() else {
+            return folders;
+        };
         for account in accounts {
             if let Ok(found) = runtime.block_on(store.mailboxes(account.id)) {
-                folders.extend(found.into_iter().map(crate::MailboxFfi::from));
+                // Ordered and split here rather than in the frontend.
+                // `postio_ui::sidebar` is the canvas' order -- Inbox first --
+                // and the rule that a role gets one row however many folders
+                // carry it. A frontend sorting for itself is a second answer
+                // to "where is my inbox", and the duplicate rule took a bug
+                // report to find (#501, #1155).
+                let (special, ordinary) = postio_ui::sidebar::sections(&found);
+                folders.extend(special.into_iter().map(|mailbox| crate::MailboxFfi {
+                    special: true,
+                    ..crate::MailboxFfi::from(mailbox)
+                }));
+                folders.extend(ordinary.into_iter().map(crate::MailboxFfi::from));
             }
         }
         folders

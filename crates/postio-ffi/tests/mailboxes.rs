@@ -97,3 +97,72 @@ fn a_session_with_no_account_has_no_folders() {
     assert!(session.mailboxes().is_empty());
     session.shutdown();
 }
+
+#[test]
+fn the_sidebar_gets_the_inbox_first_and_one_row_per_role() {
+    // #1155, seen against a real iCloud account: the macOS sidebar sorted
+    // alphabetically, so the inbox was the sixth row, below a user folder
+    // called Garagiste — and every role appeared twice, because an account
+    // that has been through more than one client holds `Archive` *and*
+    // `Archives`, `Sent` *and* `Sent Messages`.
+    //
+    // Both are `postio_ui::sidebar`'s answers now rather than the frontend's,
+    // which is what #501 already established on the GTK side. This asserts
+    // they survive the crossing.
+    let database = test_support::memory();
+    {
+        let connection = database.connection().expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection);
+        for path in [
+            "Archive",
+            "Archives",
+            "Sent",
+            "Sent Messages",
+            "Trash",
+            "Deleted Messages",
+            "Garagiste",
+        ] {
+            test_support::mailbox(&connection, &account, path);
+        }
+    }
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    let folders = session.mailboxes();
+
+    let specials: Vec<&postio_ffi::MailboxFfi> =
+        folders.iter().filter(|folder| folder.special).collect();
+
+    assert_eq!(
+        specials.first().map(|folder| folder.role),
+        Some(MailboxRoleFfi::Inbox),
+        "the first row is {:?}",
+        specials.iter().map(|f| &f.name).collect::<Vec<_>>()
+    );
+
+    for role in [
+        MailboxRoleFfi::Archive,
+        MailboxRoleFfi::Sent,
+        MailboxRoleFfi::Trash,
+    ] {
+        assert_eq!(
+            specials.iter().filter(|folder| folder.role == role).count(),
+            1,
+            "{role:?} appears more than once in the sidebar's special section"
+        );
+    }
+
+    // The twins are still there, as ordinary folders under their own names.
+    let ordinary: Vec<&str> = folders
+        .iter()
+        .filter(|folder| !folder.special)
+        .map(|folder| folder.name.as_str())
+        .collect();
+    assert!(
+        ordinary.contains(&"Archives"),
+        "the twin was dropped rather than listed: {ordinary:?}"
+    );
+    assert!(
+        ordinary.contains(&"Garagiste"),
+        "an ordinary folder went missing: {ordinary:?}"
+    );
+    session.shutdown();
+}

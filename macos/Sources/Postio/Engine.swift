@@ -191,14 +191,29 @@ final class Engine {
     /// waits is a keyboard that feels like it stopped responding.
     private(set) var pendingChord: String?
 
-    /// Folders with no parent, in the order the store returned them.
-    var folderRoots: [MailboxFfi] {
-        mailboxes.filter { $0.parent == nil }
+    /// The special-use folders, in the order the boundary put them in.
+    ///
+    /// Inbox first, then the canvas' order — and one row per role, however
+    /// many folders carry it. Both decisions are `postio_ui::sidebar`'s and
+    /// neither is re-made here: sorting in Swift would be a second answer to
+    /// "where is my inbox", and the duplicate rule took a bug report to find
+    /// on the other frontend (#501, #1155).
+    var specialFolders: [MailboxFfi] {
+        mailboxes.filter(\.special)
     }
 
-    /// The children of `parent`.
+    /// Ordinary folders with no parent, as a tree's roots.
+    ///
+    /// A folder whose role is already represented above appears here under
+    /// its server name rather than being dropped — it is still real mail and
+    /// still reachable.
+    var folderRoots: [MailboxFfi] {
+        mailboxes.filter { !$0.special && $0.parent == nil }
+    }
+
+    /// The children of `parent`, ordinary folders only.
     func children(of parent: Int64) -> [MailboxFfi] {
-        mailboxes.filter { $0.parent == parent }
+        mailboxes.filter { !$0.special && $0.parent == parent }
     }
 
     /// Show a folder's messages.

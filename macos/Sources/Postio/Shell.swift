@@ -39,10 +39,19 @@ struct Shell: View {
                         .foregroundStyle(.secondary)
                         .font(.callout)
                 } else {
-                    // Roots first, each with its children under it. The tree
-                    // is rebuilt here from the flat list's parent ids —
-                    // flattening it for display would turn a tidy account into
-                    // slash-separated strings.
+                    // The special-use folders first, in the order the
+                    // boundary gave them — Inbox at the top, one row per
+                    // role. Nothing is sorted here; see `Engine.specialFolders`.
+                    ForEach(engine.specialFolders, id: \.id) { folder in
+                        FolderRow(folder: folder, children: [])
+                    }
+                    if !engine.specialFolders.isEmpty, !engine.folderRoots.isEmpty {
+                        Divider().padding(.vertical, 4)
+                    }
+                    // Then the ordinary folders, each with its children under
+                    // it. The tree is rebuilt here from the flat list's parent
+                    // ids — flattening it for display would turn a tidy
+                    // account into slash-separated strings.
                     ForEach(engine.folderRoots, id: \.id) { folder in
                         FolderRow(folder: folder, children: engine.children(of: folder.id))
                     }
