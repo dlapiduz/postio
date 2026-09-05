@@ -209,3 +209,52 @@ fn a_resync_does_not_take_a_label_off_a_message() {
          must survive the next sync of its mailbox"
     );
 }
+
+/// A rule names a label the way a person types it, not by id (#1141).
+///
+/// So a lookup by name is what `label:invoices` resolves through, and it has
+/// to match the way the account's own uniqueness rule matches: the index is
+/// `COLLATE NOCASE`, so a rule that said `invoices` and a label called
+/// `Invoices` are the same label. A case-sensitive lookup here would leave a
+/// rule silently doing nothing against a label the user can see in the
+/// picker, which is the worst shape a rule failure takes.
+#[test]
+fn a_label_is_found_by_name_whatever_its_case_and_only_in_its_own_account() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let other = another_account(&connection);
+    let labels = LabelRepository::new(&connection);
+
+    let mut mine = Label::new(account.id, "Invoices");
+    labels.create(&mut mine).expect("create");
+    let mut theirs = Label::new(other.id, "Receipts");
+    labels.create(&mut theirs).expect("create");
+
+    assert_eq!(
+        labels
+            .by_name(account.id, "invoices")
+            .expect("look up")
+            .map(|label| label.id),
+        Some(mine.id),
+        "a rule types the name, and the account's own uniqueness rule is \
+         case-insensitive -- so this lookup has to be too"
+    );
+    assert_eq!(
+        labels
+            .by_name(account.id, "Receipts")
+            .expect("look up")
+            .map(|label| label.id),
+        None,
+        "another account's label is not this account's to apply: the message \
+         could not carry it"
+    );
+    assert_eq!(
+        labels
+            .by_name(account.id, "Nowhere")
+            .expect("look up")
+            .map(|label| label.id),
+        None,
+        "and a name nobody has created is simply absent"
+    );
+}

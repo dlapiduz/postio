@@ -18,9 +18,9 @@ use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::rule::{Rule, RuleSource};
-use postio_model::{Account, Flag, Mailbox, Operation, RfcMessageId, Uid, UidValidity};
+use postio_model::{Account, Flag, Label, Mailbox, Operation, RfcMessageId, Uid, UidValidity};
 use postio_search::rules::RuleSet;
-use postio_storage::repository::{MessageRepository, OperationQueueRepository};
+use postio_storage::repository::{LabelRepository, MessageRepository, OperationQueueRepository};
 use postio_storage::test_support::{self, TempDatabase};
 use postio_sync::sync_mailbox_with_rules;
 
@@ -364,4 +364,84 @@ async fn stop_halts_that_message_only_and_not_the_pass() {
              this one"
         );
     }
+}
+
+#[tokio::test]
+async fn label_writes_the_join_the_keyword_and_the_queue() {
+    let local = local();
+    let label = a_label(&local, "Invoices");
+    let message = arrive(&local, &compile(&[rule("tag", &["label:Invoices"])])).await;
+
+    assert_eq!(
+        LabelRepository::new(&local.connection)
+            .for_message(message.id)
+            .expect("read the labels"),
+        vec![label.id],
+        "`label:` has to reach the join row -- that is what the list and the \
+         reader draw a label from"
+    );
+    assert!(
+        message
+            .flags
+            .contains(&Flag::Keyword("Invoices".to_owned())),
+        "and the keyword, which is how the label travels to the server: a \
+         join row alone is a label no other client ever sees. Got {:?}",
+        message.flags
+    );
+    assert!(
+        queued(&local).iter().any(|operation| matches!(
+            operation,
+            Operation::SetFlags { flags } if flags.contains(&Flag::Keyword("Invoices".to_owned()))
+        )),
+        "and the queue row, or the next resync takes the keyword back off"
+    );
+}
+
+#[tokio::test]
+async fn a_label_naming_one_that_does_not_exist_leaves_the_mail_alone() {
+    let local = local();
+    let message = arrive(&local, &compile(&[rule("tag", &["label:Nowhere", "flag"])])).await;
+
+    assert!(
+        LabelRepository::new(&local.connection)
+            .for_message(message.id)
+            .expect("read the labels")
+            .is_empty(),
+        "an unresolvable label must not put some other label on the message"
+    );
+    assert!(
+        message.flags.contains(&Flag::Flagged),
+        "and it must not stop the actions after it, for the same reason an \
+         unresolvable `move:` does not: ADR 0008 Q6 is that an error never \
+         drops mail"
+    );
+}
+
+#[tokio::test]
+async fn a_label_the_message_already_carries_is_not_queued_again() {
+    let local = local();
+    a_label(&local, "Invoices");
+    let rules = compile(&[rule("tag", &["label:Invoices", "label:Invoices"])]);
+    arrive(&local, &rules).await;
+
+    let keyword_writes = queued(&local)
+        .into_iter()
+        .filter(|operation| matches!(operation, Operation::SetFlags { .. }))
+        .count();
+    assert_eq!(
+        keyword_writes, 1,
+        "the second `label:` finds the label already on the message and has \
+         nothing to do: a rule that fires on every arrival would otherwise \
+         queue a redundant SetFlags per message, which is the same filter \
+         `flag` applies"
+    );
+}
+
+/// A label the account owns, created the way the picker creates one.
+fn a_label(local: &Local, name: &str) -> Label {
+    let mut label = Label::new(local.account.id, name);
+    LabelRepository::new(&local.connection)
+        .create(&mut label)
+        .expect("create a label");
+    label
 }

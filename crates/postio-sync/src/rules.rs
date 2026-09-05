@@ -37,10 +37,6 @@
 //!
 //! # Not here yet
 //!
-//! * `label:` — its mutating half has not been lifted into `postio-storage`
-//!   the way `relocate` and `set_flag` were (#1125), and re-implementing it
-//!   here would be exactly the rules-only mutation path the ADR forbids
-//!   (#1141).
 //! * `forward:` — needs a body an on-arrival rule has not fetched, which is a
 //!   staging question ADR 0028 does not answer (#1142).
 //! * Per-rule error isolation and Attention are #483. What this module does
@@ -57,7 +53,7 @@ use postio_model::mailbox::MailboxRole;
 use postio_model::rule::Action;
 use postio_model::{AccountId, Flag, Message};
 use postio_storage::actions::{self, Relocation};
-use postio_storage::repository::MailboxRepository;
+use postio_storage::repository::{LabelRepository, MailboxRepository};
 
 use crate::initial::Result;
 
@@ -119,9 +115,10 @@ pub(crate) fn apply(
                     at,
                 )?;
             }
-            // See the module docs: both are filed, and doing half of either
+            Action::Label(name) => label(transaction, account, message, name, at)?,
+            // See the module docs: `forward:` is filed, and doing half of it
             // here is worse than not doing it.
-            Action::Label(_) | Action::Forward(_) => {}
+            Action::Forward(_) => {}
         }
     }
     Ok(())
@@ -149,6 +146,38 @@ fn flag(
     } else {
         message.flags.remove(&flag);
     }
+    Ok(())
+}
+
+/// Put the label called `name` on `message`, and keep the in-memory copy
+/// honest for the next action in the list.
+///
+/// A label a rule names but the account has not got leaves the message alone
+/// and lets the rules after it run — the same answer an unresolvable `move:`
+/// gets, and for the same reason (ADR 0008 Q6). Creating one here instead
+/// would be a rule inventing a row in the user's own label set, which is a
+/// product decision and not this issue's (#1150).
+fn label(
+    transaction: &Transaction<'_>,
+    account: AccountId,
+    message: &mut Message,
+    name: &str,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    let labels = LabelRepository::new(transaction);
+    let Some(label) = labels.by_name(account, name)? else {
+        return Ok(());
+    };
+    // The verb writes what it is given, exactly as `set_flag` does, so a
+    // message already carrying the label is filtered here -- otherwise a rule
+    // that fires on every arrival queues a redundant keyword write per
+    // message. The join row is what is asked, not the keyword: the two are
+    // written together and the join is the one a resync cannot disturb.
+    if labels.for_message(message.id)?.contains(&label.id) {
+        return Ok(());
+    }
+    actions::set_label(transaction, account, &[&*message], &label, true, at)?;
+    message.flags.insert(Flag::Keyword(label.name));
     Ok(())
 }
 
