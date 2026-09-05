@@ -485,6 +485,71 @@ fn show_account_weights(window: &Window) {
 ///
 /// The canvas' addresses are not ours to ship: every one here is a reserved
 /// domain, per CLAUDE.md.
+/// The add-account dialogue, on whichever of its three steps was asked for.
+///
+/// **The widget, driven directly — not the flow.** `Onboarding` is a form
+/// and a set of states (`postio_gtk::onboarding`'s own module doc): it does
+/// not probe, connect or write, and the composition root supplies all
+/// three. So a shot can put it in any of its states without dialling
+/// anything, which is the only way this screen is renderable at all — it
+/// otherwise needs a provider, a browser and a person.
+///
+/// It is a layout check, not a wiring check, and says so for the reason
+/// #596 recorded: a picture drawn from state the tool wrote itself cannot
+/// fail when the wiring is broken. What it *can* catch is the thing the
+/// browser step is for — whether a person waiting on their browser can see
+/// what they are about to approve.
+fn show_add_account(window: &Window, step: &str) {
+    use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status};
+
+    let screen = Onboarding::new();
+    screen.set_address("lena.tomlin@example.com");
+    let settings = Settings {
+        imap: Server {
+            host: "outlook.office365.com".to_owned(),
+            port: 993,
+            security: postio_model::TransportSecurity::Tls,
+        },
+        smtp: Server {
+            host: "smtp.office365.com".to_owned(),
+            port: 587,
+            security: postio_model::TransportSecurity::StartTls,
+        },
+        login: "lena.tomlin@example.com".to_owned(),
+        source: "Microsoft 365".to_owned(),
+        oauth_sign_in: true,
+        ..Settings::default()
+    };
+    screen.set_status(Status::Found(settings));
+
+    match step {
+        "browser" => {
+            screen.set_browser_sign_in(BrowserSignIn {
+                provider: "Microsoft 365".to_owned(),
+                scopes: vec![
+                    "https://outlook.office.com/IMAP.AccessAsUser.All".to_owned(),
+                    "https://outlook.office.com/SMTP.Send".to_owned(),
+                    "offline_access".to_owned(),
+                ],
+                redirect_uri: "http://127.0.0.1:41337/".to_owned(),
+                authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+                    .to_owned(),
+            });
+            screen.set_status(Status::WaitingForBrowser);
+        }
+        "syncwindow" => screen.set_status(Status::SyncWindow),
+        _ => {}
+    }
+
+    let dialog = adw::Dialog::builder()
+        .title("Add account")
+        .content_width(460)
+        .content_height(520)
+        .child(&screen)
+        .build();
+    dialog.present(Some(window));
+}
+
 fn show_composer(window: &Window) {
     let account = AccountId::new(1);
     let identity = |name: &str, address: &str, default| postio_model::Identity {
@@ -606,6 +671,9 @@ const KNOWN_FLAGS: &[&str] = &[
     "tested",
     "signature",
     "compose",
+    "addaccount",
+    "browser",
+    "syncwindow",
     "detached",
     "selected",
     "thread",
@@ -932,6 +1000,16 @@ fn main() -> glib::ExitCode {
     }
     if flag("account") {
         show_account_detail(&window, flag("tested"), flag("signature"));
+    }
+    if flag("addaccount") {
+        let step = if flag("browser") {
+            "browser"
+        } else if flag("syncwindow") {
+            "syncwindow"
+        } else {
+            "route"
+        };
+        show_add_account(&window, step);
     }
     if flag("compose") {
         show_composer(&window);

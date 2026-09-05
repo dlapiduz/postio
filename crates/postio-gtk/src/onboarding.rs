@@ -409,6 +409,11 @@ mod imp {
         /// button — shown only on [`Status::SyncWindow`].
         /// The browser sign-in panel: what is happening, what is being
         /// asked for, and what is not. Shown only while the browser is out.
+        /// The name and address fields, as one group — so the last step,
+        /// which is about an account that is already saved, can put the
+        /// whole credential form away rather than leaving a form nobody can
+        /// usefully type in above the picker.
+        pub(super) identity_rows: gtk::Box,
         pub(super) browser_box: gtk::Box,
         pub(super) browser_flow: gtk::Label,
         pub(super) browser_scopes: gtk::Box,
@@ -567,6 +572,13 @@ impl Onboarding {
         if url.is_empty() {
             return;
         }
+        // POSTIO-CONSENT: opened only from the `Open link again` button on
+        // the browser sign-in step, which is only on screen because the
+        // user already asked for a browser sign-in and the browser is
+        // already out. One press, one open — never on render, never
+        // retried on its own, and the URL is the very one `authorize`
+        // handed the opener a moment ago rather than a second one built
+        // here. See ADR 0006 Q3 and CLAUDE.md, "Privacy is a feature".
         gtk::UriLauncher::new(&url).launch(
             self.root().and_downcast_ref::<gtk::Window>(),
             gtk::gio::Cancellable::NONE,
@@ -1032,12 +1044,19 @@ impl Onboarding {
         // and leaving the credential fields on screen invites somebody to
         // try — which is the exact confusion this step exists to avoid.
         let waiting = matches!(status, Status::WaitingForBrowser);
+        // Once the account is saved there is nothing in the credential form
+        // left to fill in, and leaving it above the sync-window picker made
+        // the last step look like the first one with an extra card on it.
+        let settled = matches!(status, Status::SyncWindow | Status::Saved);
+        let asking = !waiting && !settled;
+        imp.identity_rows.set_visible(asking);
         if let Some(row) = imp.password_row.get() {
-            row.set_visible(!oauth && !waiting);
+            row.set_visible(!oauth && asking);
         }
         if let Some(rows) = imp.oauth_rows.get() {
-            rows.set_visible(oauth && !waiting);
+            rows.set_visible(oauth && asking);
         }
+        imp.manual.set_visible(imp.manual.is_visible() && asking);
         imp.cancel_sign_in.set_visible(waiting);
         imp.browser_box.set_visible(waiting);
 
@@ -1451,8 +1470,13 @@ impl Onboarding {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
         body.add_css_class("postio-onboarding-body");
-        body.append(&field("Your name", &imp.name));
-        body.append(&field("Email address", &imp.address));
+        imp.identity_rows
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.identity_rows.set_spacing(9);
+        imp.identity_rows.append(&field("Your name", &imp.name));
+        imp.identity_rows
+            .append(&field("Email address", &imp.address));
+        body.append(&imp.identity_rows);
         let password_row = field("Password", &imp.password);
         body.append(&password_row);
         let _ = imp.password_row.set(password_row);
