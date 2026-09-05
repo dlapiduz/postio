@@ -21,7 +21,12 @@ public struct MessageListView: NSViewRepresentable {
         table.style = .inset
         table.rowHeight = 62
         table.usesAutomaticRowHeights = false
-        table.allowsMultipleSelection = true
+        // The table's own selection is the **cursor**, and only ever one row.
+        // The multi-message selection is Postio's, lives behind the boundary,
+        // and is drawn per row -- `PRODUCT.md` §9. Left at `true`,
+        // `NSTableView` would conflate them and shift-click would destroy
+        // what the user had built up.
+        table.allowsMultipleSelection = false
         table.dataSource = controller
         table.delegate = controller
 

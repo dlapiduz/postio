@@ -140,6 +140,20 @@ final class Engine {
     /// keyboard starts.
     var context: UiContext = .list
 
+    /// The message the cursor is on, for the reading pane.
+    ///
+    /// Reported by the engine rather than read off the table, because the
+    /// cursor is the boundary's: a keystroke moves it without the table
+    /// having been touched at all.
+    private(set) var cursorShowing: Int64?
+
+    /// What to draw above the list — "12 selected" — or nothing.
+    ///
+    /// Read fresh rather than cached: it is a property of a model that a
+    /// keystroke can change, and a stale count is a claim about what an
+    /// action is going to hit.
+    var selectionSummary: String? { session?.selectionSummary }
+
     /// The chords of a half-typed sequence, for the shell to show.
     ///
     /// `nil` when nothing is pending. A sequence that is invisible while it
@@ -203,6 +217,13 @@ final class Engine {
             controller.tableView?.reloadData()
         case .messageListChanged, .messagesChanged, .messagesRemoved:
             controller.tableView?.reloadData()
+        case let .cursorMoved(row, message):
+            // The table follows the model, never the other way round. `j` and
+            // `k` move the cursor behind the boundary -- where the list
+            // window, the selection and `aim` all are -- and this is the
+            // table catching up with where it ended.
+            controller.showCursor(on: row)
+            cursorShowing = message
         case .mailboxesChanged:
             mailboxes = session?.mailboxes ?? []
         case let .newMail(account, mailbox, messages):
@@ -253,6 +274,14 @@ final class Engine {
     /// archive the row being read rather than nothing at all.
     func cursorMoved(to message: Int64?) {
         session?.setCursor(message)
+    }
+
+    /// The user clicked a row.
+    ///
+    /// The row rather than the message, because that is what the boundary
+    /// moves from: `j` after a click has to step from where the click landed.
+    func cursorClicked(row: UInt32?) {
+        session?.setCursorRow(row)
     }
 
     /// Stop the engines and drop the store, in that order.

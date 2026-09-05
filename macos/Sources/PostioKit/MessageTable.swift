@@ -45,7 +45,11 @@ public final class MessageTableController: NSObject {
     /// identical and only one of them is worth waiting for.
     public func presentation(at position: UInt32) -> RowPresentation {
         guard let row = source.row(at: position) else { return .placeholder }
-        return RowPresentation(row: row)
+        // The mark comes from the model, every redraw, rather than from
+        // anything this controller remembers. A cached copy is how a table
+        // ends up drawing a selection the engine would not act on -- and the
+        // engine's answer is the one an action uses.
+        return RowPresentation(row: row, selected: source.isSelected(row.id))
     }
 
     /// Called when the row under the cursor changes, with its message.
@@ -56,6 +60,13 @@ public final class MessageTableController: NSObject {
     /// shift-click destroy what the user had. The full semantics are their own
     /// work; this is the one signal the reading pane needs.
     public var onCursorChanged: ((Int64?) -> Void)?
+
+    /// Called when the user moves the cursor with the mouse, with its row.
+    ///
+    /// The *row*, because that is what the boundary moves from: after a click,
+    /// `j` has to step from where the user clicked, and an id alone would make
+    /// the boundary scan the window to find out where that was.
+    public var onCursorRowChanged: ((UInt32?) -> Void)?
 
     /// The message under the cursor, if the row has arrived.
     public func messageAt(row: Int) -> Int64? {
@@ -78,6 +89,34 @@ public final class MessageTableController: NSObject {
         cellsCreated += 1
         return made
     }
+
+    /// Show the cursor on `row`, scrolling it into view.
+    ///
+    /// `NSTableView`'s own selection *is* the cursor here — one row, never
+    /// more (`allowsMultipleSelection` is off). The multi-message selection
+    /// is Postio's, lives behind the boundary and is drawn per row. Keeping
+    /// them apart is `PRODUCT.md` §9, and conflating them is what makes
+    /// shift-click destroy what the user had built up.
+    ///
+    /// Guarded against re-entering the delegate: selecting a row programmatically
+    /// fires `tableViewSelectionDidChange`, which would report the move back
+    /// to the boundary that just made it.
+    public func showCursor(on row: UInt32?) {
+        guard let tableView else { return }
+        guard let row, Int(row) < tableView.numberOfRows else {
+            following = true
+            tableView.deselectAll(nil)
+            following = false
+            return
+        }
+        following = true
+        tableView.selectRowIndexes(IndexSet(integer: Int(row)), byExtendingSelection: false)
+        tableView.scrollRowToVisible(Int(row))
+        following = false
+    }
+
+    /// Whether the selection change now arriving is one we just made.
+    private var following = false
 
     /// Reload exactly the rows a delivered page covers.
     ///
@@ -107,7 +146,11 @@ extension MessageTableController: NSTableViewDataSource {
 
 extension MessageTableController: NSTableViewDelegate {
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        // Ours, echoing back. Reporting it would tell the boundary about a
+        // move the boundary made.
+        guard !following else { return }
         guard let table = notification.object as? NSTableView else { return }
+        onCursorRowChanged?(table.selectedRow < 0 ? nil : UInt32(table.selectedRow))
         onCursorChanged?(messageAt(row: table.selectedRow))
     }
 

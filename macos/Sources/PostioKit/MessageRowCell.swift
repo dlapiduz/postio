@@ -13,6 +13,12 @@ public final class MessageRowCell: NSTableCellView {
     private let preview = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let flag = NSImageView()
+    /// The tint behind a *marked* row.
+    ///
+    /// Behind everything else and inset, so it reads as a state of the row
+    /// rather than as a second highlight competing with `NSTableView`'s own —
+    /// which is the cursor, and which a marked row may or may not also be.
+    private let marked = NSView()
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -25,6 +31,13 @@ public final class MessageRowCell: NSTableCellView {
     }
 
     private func build() {
+        marked.wantsLayer = true
+        marked.layer?.cornerRadius = PostioTokens.radiusSm
+        marked.layer?.backgroundColor = PostioTokens.colorAccent.withAlphaComponent(0.18).cgColor
+        marked.translatesAutoresizingMaskIntoConstraints = false
+        marked.isHidden = true
+        addSubview(marked)
+
         unreadDot.wantsLayer = true
         unreadDot.layer?.cornerRadius = 4
         // Postio's accent, from the design system, not the system's — the
@@ -67,8 +80,21 @@ public final class MessageRowCell: NSTableCellView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space3),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: PostioTokens.space2),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2),
+
+            marked.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space1),
+            marked.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space1),
+            marked.topAnchor.constraint(equalTo: topAnchor),
+            marked.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
+
+    /// Whether this cell is currently drawn as marked.
+    ///
+    /// For the same reason `renderedForTesting` exists: the mark is a state
+    /// the cell has to *clear* on reuse, and a cell that only ever set it
+    /// would show the previous row's mark on this row's message — which
+    /// misreports what an action is about to hit.
+    public var isMarkedForTesting: Bool { !marked.isHidden }
 
     /// What this cell is currently showing.
     ///
@@ -99,5 +125,12 @@ public final class MessageRowCell: NSTableCellView {
         // A row still waiting for its page is dimmed rather than blank, so
         // "not here yet" reads differently from "nothing here".
         alphaValue = presentation.isPlaceholder ? 0.45 : 1
+
+        // Marked rows are tinted; the cursor is `NSTableView`'s own highlight.
+        // Two different things drawn two different ways, because they are two
+        // different things (`PRODUCT.md` §9) -- a row can be either, both or
+        // neither, and a user who cannot tell which cannot tell what an
+        // action is about to hit.
+        marked.isHidden = !presentation.selected
     }
 }

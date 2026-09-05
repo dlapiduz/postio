@@ -14,6 +14,9 @@ import Testing
 final class StubRowSource: MessageRowSource {
     var rowCount: UInt32
     var rows: [UInt32: RowFfi]
+    /// The messages the *model* says are marked, which is not the same thing
+    /// as the row the table has highlighted.
+    var marked: Set<Int64> = []
     private(set) var asked: [UInt32] = []
 
     init(rowCount: UInt32, rows: [UInt32: RowFfi] = [:]) {
@@ -25,6 +28,8 @@ final class StubRowSource: MessageRowSource {
         asked.append(position)
         return rows[position]
     }
+
+    func isSelected(_ message: Int64) -> Bool { marked.contains(message) }
 }
 
 private func makeRow(
@@ -162,5 +167,54 @@ struct MessageTableTests {
         #expect(rendered.sender == "grace@example.com")
         #expect(rendered.subject == "(no subject)")
         #expect(!rendered.subject.contains("First"))
+    }
+}
+
+
+/// The cursor and the selection, which are not the same thing.
+///
+/// `docs/PRODUCT.md` §9. The model lives behind the boundary and is asserted
+/// there (`ffi_suite/selection.rs`); what Swift has to get right is that the
+/// table *draws* it rather than keeping its own — and that the mark is
+/// cleared on reuse, which is the classic recycled-cell bug wearing a
+/// different hat.
+@MainActor
+@Suite struct SelectionDrawingTests {
+    @Test func aMarkedRowIsDrawnMarked() {
+        let source = StubRowSource(rowCount: 2, rows: [0: makeRow(id: 7), 1: makeRow(id: 8)])
+        source.marked = [8]
+        let controller = MessageTableController(source: source)
+
+        #expect(controller.presentation(at: 0).selected == false)
+        #expect(controller.presentation(at: 1).selected == true)
+    }
+
+    @Test func theMarkComesFromTheModelOnEveryDraw() {
+        // Not cached. A controller holding its own copy is how a table ends
+        // up drawing a selection the engine would not act on, and the
+        // engine's answer is the one an action uses.
+        let source = StubRowSource(rowCount: 1, rows: [0: makeRow(id: 7)])
+        let controller = MessageTableController(source: source)
+        #expect(controller.presentation(at: 0).selected == false)
+
+        source.marked = [7]
+        #expect(controller.presentation(at: 0).selected == true)
+    }
+
+    @Test func aReusedCellDoesNotKeepTheLastRowsMark() {
+        // The recycled-cell bug, applied to the one field that misreports
+        // what an action is about to hit.
+        let cell = MessageRowCell()
+        cell.show(RowPresentation(row: makeRow(id: 7), selected: true))
+        #expect(cell.isMarkedForTesting == true)
+
+        cell.show(RowPresentation(row: makeRow(id: 8), selected: false))
+        #expect(cell.isMarkedForTesting == false)
+    }
+
+    @Test func aRowThatHasNotArrivedIsNotMarked() {
+        // A placeholder stands for a message nobody has seen an id for, so
+        // claiming it is marked would be a claim about nothing.
+        #expect(RowPresentation.placeholder.selected == false)
     }
 }

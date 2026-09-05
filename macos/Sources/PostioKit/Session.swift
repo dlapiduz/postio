@@ -153,6 +153,39 @@ public final class PostioSession {
     /// separate, and moving down the list must not build a selection.
     public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
 
+    /// Whether `message` is *marked*.
+    ///
+    /// Not whether it is under the cursor: `PRODUCT.md` §9 keeps those apart,
+    /// and `NSTableView`'s own selection is the cursor here. Answered without
+    /// enumerating a whole-view selection, which is what makes "select all,
+    /// then deselect three" cost three ids rather than a hundred thousand.
+    public func isSelected(_ message: Int64) -> Bool { inner.isSelected(message: message) }
+
+    /// What to show above the list — "12 selected" — or nothing.
+    ///
+    /// From the model, which knows the answer for a whole-view selection
+    /// without listing it. Counting ids on this side could not draw the one
+    /// case that most needs a count.
+    public var selectionSummary: String? { inner.selectionSummary() }
+
+    /// The row the cursor is on, or `nil` when the list has none.
+    public var cursorRow: UInt32? { inner.cursorRow() }
+
+    /// The message the cursor is on, if its page has arrived.
+    public var cursorMessage: Int64? { inner.cursorMessage() }
+
+    /// Put the cursor on `row` — what a click on the list means.
+    ///
+    /// The position, not just the message: after a click, `j` has to move
+    /// from where the user clicked.
+    public func setCursorRow(_ row: UInt32?) { inner.setCursorRow(row: row) }
+
+    /// Mark `message`, or take it out of the selection again.
+    public func toggleSelection(_ message: Int64) { inner.toggleSelection(message: message) }
+
+    /// Unmark everything.
+    public func clearSelection() { inner.clearSelection() }
+
     /// The binding in force for a command, for drawing an accelerator.
     ///
     /// The user's override if there is one, the built-in default otherwise,

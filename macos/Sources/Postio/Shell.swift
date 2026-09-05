@@ -86,6 +86,11 @@ struct Shell: View {
         // A notification click. The engine has already switched the list to
         // the folder; the sidebar selection and the reader follow so that all
         // three panes agree about what is being shown.
+        // A keystroke moves the cursor without touching the table, so the
+        // reading pane follows the engine rather than the click.
+        .onChange(of: engine.cursorShowing) { _, message in
+            if let message { showing = message }
+        }
         .onChange(of: engine.requestedToken) { _, _ in
             guard let requested = engine.requested else { return }
             selectedFolder = requested.mailbox
@@ -131,18 +136,41 @@ struct Shell: View {
                     description: Text("This store has no mail in it yet.")
                 )
             } else {
-                MessageListView(controller: controller)
-                    .onAppear {
-                        controller.onCursorChanged = { message in
-                            showing = message
-                            // The engine needs it too, and for a different
-                            // reason: the reader draws what the cursor is on,
-                            // and `aim` decides what a verb with nothing
-                            // marked acts on. Without this `a` archives
-                            // nothing at all.
-                            engine.cursorMoved(to: message)
+                VStack(spacing: 0) {
+                    // "12 selected", when there is a selection to say it
+                    // about. From the model, which knows the answer for a
+                    // whole-view selection without enumerating it -- a count
+                    // taken from ids on this side could not draw the one case
+                    // that most needs a count.
+                    if let summary = engine.selectionSummary {
+                        HStack {
+                            Text(summary)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Spacer()
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.quaternary.opacity(0.4))
                     }
+                    MessageListView(controller: controller)
+                }
+                .onAppear {
+                    controller.onCursorChanged = { message in
+                        showing = message
+                        // The engine needs it too, and for a different
+                        // reason: the reader draws what the cursor is on,
+                        // and `aim` decides what a verb with nothing
+                        // marked acts on. Without this `a` archives
+                        // nothing at all.
+                        engine.cursorMoved(to: message)
+                    }
+                    // A click moves the cursor, and the boundary has to be
+                    // told *where* -- `j` afterwards steps from there.
+                    controller.onCursorRowChanged = { row in
+                        engine.cursorClicked(row: row)
+                    }
+                }
             }
         case let .unavailable(reason):
             ContentUnavailableView {

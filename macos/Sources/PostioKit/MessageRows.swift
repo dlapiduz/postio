@@ -26,6 +26,15 @@ public protocol MessageRowSource: AnyObject {
     /// redraw, on the main thread. `nil` means draw a placeholder; the page is
     /// already being fetched by the time this returns.
     func row(at position: UInt32) -> RowFfi?
+
+    /// Whether `message` is *marked*, which is not whether it is under the
+    /// cursor.
+    ///
+    /// `PRODUCT.md` §9 keeps the two apart, and this is the half
+    /// `NSTableView` does not have: its own selection is the cursor here, and
+    /// the marks are drawn from the model. Answered without enumerating a
+    /// whole-view selection, which is the point of it being a predicate.
+    func isSelected(_ message: Int64) -> Bool
 }
 
 /// A row source backed by the engine.
@@ -39,6 +48,8 @@ public final class SessionRowSource: MessageRowSource {
     public var rowCount: UInt32 { session.rowCount }
 
     public func row(at position: UInt32) -> RowFfi? { session.row(at: position) }
+
+    public func isSelected(_ message: Int64) -> Bool { session.isSelected(message) }
 }
 
 /// What one row shows, once the decisions are made.
@@ -62,6 +73,12 @@ public struct RowPresentation: Equatable, Sendable {
     public let threadBadge: String?
     /// Whether this row is still waiting for its page.
     public let isPlaceholder: Bool
+    /// Whether this row is *marked* — part of the multi-message selection.
+    ///
+    /// Drawn separately from `NSTableView`'s own highlight, which is the
+    /// cursor. A table left to conflate the two makes shift-click destroy
+    /// what the user had built up, which is exactly what §9 forbids.
+    public let selected: Bool
 
     /// The presentation for a row that has not arrived yet.
     ///
@@ -74,7 +91,8 @@ public struct RowPresentation: Equatable, Sendable {
         unread: false,
         flagged: false,
         threadBadge: nil,
-        isPlaceholder: true
+        isPlaceholder: true,
+        selected: false
     )
 
     public init(
@@ -84,7 +102,8 @@ public struct RowPresentation: Equatable, Sendable {
         unread: Bool,
         flagged: Bool,
         threadBadge: String?,
-        isPlaceholder: Bool
+        isPlaceholder: Bool,
+        selected: Bool = false
     ) {
         self.sender = sender
         self.subject = subject
@@ -93,10 +112,12 @@ public struct RowPresentation: Equatable, Sendable {
         self.flagged = flagged
         self.threadBadge = threadBadge
         self.isPlaceholder = isPlaceholder
+        self.selected = selected
     }
 
     /// How a delivered row is drawn.
-    public init(row: RowFfi) {
+    public init(row: RowFfi, selected: Bool = false) {
+        self.selected = selected
         // A message with no `From` is not a bug to hide: it happens, and
         // "(no sender)" is more honest than a blank column that reads as a
         // rendering failure.

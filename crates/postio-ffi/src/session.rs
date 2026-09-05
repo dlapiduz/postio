@@ -296,6 +296,20 @@ pub struct Session {
     reachable: Mutex<Vec<postio_model::ids::AccountId>>,
     /// The row the keyboard is on, as the frontend last reported it.
     cursor: Mutex<Option<postio_model::ids::MessageId>>,
+    /// Where that row *is*, so motion and range extension have something to
+    /// count from.
+    ///
+    /// Held beside the id rather than derived from it: finding an id's
+    /// position means scanning the window, `j` happens on every keypress, and
+    /// a row whose page has not arrived has no id to be found by at all.
+    cursor_row: Mutex<Option<u32>>,
+    /// Where a shift-extension started.
+    ///
+    /// The anchor is what makes shift *extend* rather than accumulate: the
+    /// range is always anchor-to-cursor, so shrinking it back unmarks the rows
+    /// it passed. Set on the first extension from wherever the cursor was, and
+    /// dropped whenever the selection is cleared or the list is re-scoped.
+    anchor: Mutex<Option<u32>>,
     /// Page reads still in flight, and how many have been issued in total.
     ///
     /// The first is what `settle_for_test` waits on. The second is how a test
@@ -448,6 +462,51 @@ impl Session {
     #[uniffi::method(name = "invoke")]
     pub fn invoke_ffi(&self, id: String) {
         self.invoke(&id);
+    }
+
+    /// Where the cursor is, as a row. See [`Session::cursor_row`].
+    #[uniffi::method(name = "cursorRow")]
+    pub fn cursor_row_ffi(&self) -> Option<u32> {
+        self.cursor_row()
+    }
+
+    /// The message the cursor is on, if its page has arrived.
+    #[uniffi::method(name = "cursorMessage")]
+    pub fn cursor_message_ffi(&self) -> Option<i64> {
+        self.cursor_message()
+    }
+
+    /// Whether `message` is marked, for a row deciding how to draw itself.
+    ///
+    /// The *selection*, not the cursor. A table drawing its own selection
+    /// would be drawing the cursor and calling it a selection, which is the
+    /// conflation `PRODUCT.md` §9 forbids.
+    #[uniffi::method(name = "isSelected")]
+    pub fn is_selected_ffi(&self, message: i64) -> bool {
+        self.is_selected(message)
+    }
+
+    /// What to show above the list — "12 selected" — or nothing.
+    #[uniffi::method(name = "selectionSummary")]
+    pub fn selection_summary_ffi(&self) -> Option<String> {
+        self.selection_summary()
+    }
+
+    /// Put the cursor on `row` — what a click on the list means.
+    ///
+    /// Sets the position *and* the message, which
+    /// [`setCursor`](Session::set_cursor_ffi) does not: after a click, `j`
+    /// has to move from where the user clicked, and a boundary told only the
+    /// id would have to scan the window to find out where that was.
+    ///
+    /// Raises `CursorMoved`, the same as a keystroke would. A frontend that
+    /// only heard about keyboard moves would have two paths to keep in step.
+    #[uniffi::method(name = "setCursorRow")]
+    pub fn set_cursor_row_ffi(&self, row: Option<u32>) {
+        if self.cursor_row() == row {
+            return;
+        }
+        self.put_cursor_on(row);
     }
 
     /// Report which row the keyboard is on, or `None` for no row.
@@ -660,6 +719,8 @@ impl Session {
                 selection: Mutex::new(postio_core::state::Selection::default()),
                 reachable: Mutex::new(Vec::new()),
                 cursor: Mutex::new(None),
+                cursor_row: Mutex::new(None),
+                anchor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
@@ -716,6 +777,8 @@ impl Session {
             selection: Mutex::new(postio_core::state::Selection::default()),
             reachable: Mutex::new(Vec::new()),
             cursor: Mutex::new(None),
+            cursor_row: Mutex::new(None),
+            anchor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
@@ -742,6 +805,14 @@ impl Session {
         };
         let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
         *self.scope.lock().expect("scope lock") = Some(listed);
+        // "These twelve" means something else the moment the list does, and an
+        // action carrying a selection across would land on mail the user
+        // cannot see. The cursor goes with it: it named a row in a list that
+        // no longer exists.
+        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+        *self.cursor.lock().expect("cursor lock") = None;
+        *self.cursor_row.lock().expect("cursor row lock") = None;
+        *self.anchor.lock().expect("anchor lock") = None;
         self.list.lock().expect("list lock").reset(total)
     }
 
@@ -784,6 +855,22 @@ impl Session {
         else {
             return;
         };
+
+        // The commands that move this frontend's own state rather than the
+        // engine's, handled here and not sent down. `postio-gtk`'s
+        // `run_action` does exactly the same with the same ids -- the list
+        // walks its own rows, and `Command::NextMessage` reaching the engine
+        // would be a message to nobody.
+        //
+        // They live on *this* side of the boundary rather than in Swift
+        // because the cursor, the selection and the row window are all here.
+        // A frontend that moved them would need its own copy of all three,
+        // which is the second model ADR 0019 exists to prevent -- and the
+        // selection in particular is a predicate that must never be
+        // enumerated to be moved.
+        if self.handle_locally(id) {
+            return;
+        }
 
         let list = self.list.lock().expect("list lock");
         let selection = self.selection.lock().expect("selection lock");
@@ -869,6 +956,163 @@ impl Session {
             .expect("resolver lock")
             .press(&chord, context, in_text_entry, std::time::Instant::now())
             .into()
+    }
+
+    /// Run `id` here if it is this frontend's own state, and say whether it
+    /// was.
+    ///
+    /// The split is the one `PRODUCT.md` §9 draws and `postio-gtk` already
+    /// implements: **the cursor is not the selection**, and neither is
+    /// anything the engine knows about. Moving down a list and marking a row
+    /// are frontend state; archiving what is marked is not.
+    fn handle_locally(&self, id: postio_core::CommandId) -> bool {
+        use postio_core::CommandId as C;
+        match id {
+            C::NextMessage => self.move_cursor(1),
+            C::PrevMessage => self.move_cursor(-1),
+            C::FirstMessage => self.put_cursor_on(Some(0)),
+            C::LastMessage => {
+                let last = self.row_count().checked_sub(1);
+                self.put_cursor_on(last);
+            }
+            C::ToggleSelection => {
+                if let Some(message) = *self.cursor.lock().expect("cursor lock") {
+                    // The anchor follows a deliberate mark: a shift-extension
+                    // afterwards runs from the row the user chose, not from
+                    // wherever a previous range happened to start.
+                    *self.anchor.lock().expect("anchor lock") =
+                        *self.cursor_row.lock().expect("cursor row lock");
+                    self.toggle_selection(message.get());
+                }
+            }
+            C::ExtendSelectionDown => self.extend(1),
+            C::ExtendSelectionUp => self.extend(-1),
+            C::SelectAll => self.select_all(),
+            // Escape means "get me out of here", and with mail marked the
+            // thing to get out of is the selection. Only then: an Escape that
+            // always cleared a selection would give the frontend no way to
+            // close anything else, so an empty selection falls through to the
+            // engine's own `Back`.
+            C::Back if !self.selection_is_empty() => self.clear_selection(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Whether nothing is marked.
+    fn selection_is_empty(&self) -> bool {
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => marked.is_empty(),
+            postio_core::state::Selection::Everything { .. } => false,
+        }
+    }
+
+    /// Move the cursor by `delta` rows, clamped to the list.
+    ///
+    /// Clamped rather than wrapping: `j` at the bottom of a mailbox staying
+    /// where it is what every list on the platform does, and jumping to the
+    /// top would move the reader to a message the user did not ask for.
+    fn move_cursor(&self, delta: i64) {
+        let total = self.row_count();
+        if total == 0 {
+            return;
+        }
+        let at = match *self.cursor_row.lock().expect("cursor row lock") {
+            // No cursor yet: the first `j` lands on the first row rather than
+            // the second, and the first `k` on the last.
+            None => {
+                if delta > 0 {
+                    0
+                } else {
+                    total - 1
+                }
+            }
+            Some(row) => (row as i64 + delta).clamp(0, total as i64 - 1) as u32,
+        };
+        self.put_cursor_on(Some(at));
+    }
+
+    /// Put the cursor on `row`, and remember which message that is.
+    ///
+    /// Both, because they answer different questions: `aim` needs the id and
+    /// motion needs the position. A row whose page has not arrived has a
+    /// position and no id, which is a real state — the cursor is somewhere,
+    /// and what is there is still being read.
+    fn put_cursor_on(&self, row: Option<u32>) {
+        *self.cursor_row.lock().expect("cursor row lock") = row;
+        let message = row.and_then(|row| self.row_at(row)).map(|row| row.id);
+        *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
+        self.emit_local(UiEvent::CursorMoved { row, message });
+    }
+
+    /// Extend the selection by one row in `delta`'s direction.
+    ///
+    /// Anchor-to-cursor, always, which is what makes this *extend* rather
+    /// than accumulate: shrinking the range back unmarks the rows it passed,
+    /// the way every list on the platform behaves.
+    fn extend(&self, delta: i64) {
+        {
+            let mut anchor = self.anchor.lock().expect("anchor lock");
+            if anchor.is_none() {
+                *anchor = *self.cursor_row.lock().expect("cursor row lock");
+            }
+        }
+        self.move_cursor(delta);
+
+        let (Some(anchor), Some(cursor)) = (
+            *self.anchor.lock().expect("anchor lock"),
+            *self.cursor_row.lock().expect("cursor row lock"),
+        ) else {
+            return;
+        };
+        // `postio_ui::selection::range` rather than a loop here: it skips the
+        // rows whose pages have not arrived rather than waiting for them,
+        // which is the rule a selection that stutters would break.
+        let rows: Vec<Option<postio_model::ids::MessageId>> = (0..self.row_count())
+            .map(|row| self.list.lock().expect("list lock").peek(row))
+            .collect();
+        let marked = postio_ui::selection::range(&rows, anchor as usize, cursor as usize);
+        *self.selection.lock().expect("selection lock") =
+            postio_core::state::Selection::These(marked);
+    }
+
+    /// Where the cursor is, as a row.
+    pub fn cursor_row(&self) -> Option<u32> {
+        *self.cursor_row.lock().expect("cursor row lock")
+    }
+
+    /// The message the cursor is on, if its page has arrived.
+    pub fn cursor_message(&self) -> Option<i64> {
+        self.cursor
+            .lock()
+            .expect("cursor lock")
+            .map(|message| message.get())
+    }
+
+    /// Whether `message` is marked, for a row deciding how to draw itself.
+    ///
+    /// Answers correctly for a whole-view selection without enumerating it,
+    /// which is the point of the predicate: a row in `Everything` is marked
+    /// unless it is one of the few taken out.
+    pub fn is_selected(&self, message: i64) -> bool {
+        let message = postio_model::ids::MessageId::new(message);
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => marked.contains(&message),
+            postio_core::state::Selection::Everything { except } => !except.contains(&message),
+        }
+    }
+
+    /// What to show above the list — "12 selected" — or nothing.
+    ///
+    /// From the model, which knows the answer for a whole-view selection
+    /// without listing it. A frontend counting ids would be unable to draw
+    /// this at all for the selection that most needs it.
+    pub fn selection_summary(&self) -> Option<String> {
+        postio_ui::selection::summary(
+            &self.selection.lock().expect("selection lock"),
+            Some(self.row_count()),
+            &[],
+        )
     }
 
     /// Report where the keyboard is, so a verb with nothing marked knows
@@ -973,6 +1217,17 @@ impl Session {
             self.fetch(generation, page);
         }
         None
+    }
+
+    /// Raise an event this boundary made up itself.
+    ///
+    /// The frontend's drain does not distinguish these from the engine's, and
+    /// should not: "the cursor moved" and "mail arrived" are both things that
+    /// happened, and a second channel would be a second thing to forget to
+    /// read. `try_send` because the channel is unbounded and the only way it
+    /// fails is a session that has already shut down.
+    fn emit_local(&self, event: UiEvent) {
+        let _ = self.local.0.try_send(event);
     }
 
     /// Read one page into the window, behind the caller.

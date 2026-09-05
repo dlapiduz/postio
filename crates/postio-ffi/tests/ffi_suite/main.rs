@@ -22,6 +22,7 @@ mod keys;
 mod list;
 mod reader;
 mod registry;
+mod selection;
 mod session;
 mod store_on_disk;
 mod syncing;
