@@ -96,6 +96,28 @@ public final class MessageRowCell: NSTableCellView {
     /// misreports what an action is about to hit.
     public var isMarkedForTesting: Bool { !marked.isHidden }
 
+    /// How tall a row has to be for its three lines to fit.
+    ///
+    /// Derived rather than chosen. It was a literal `62` in the table, and 62
+    /// is not enough: sender, subject and preview at their token sizes, with
+    /// the token gaps between them and the token padding around them, come to
+    /// about 68 — so **every row after the first had its sender clipped**, in
+    /// a way no test could see and a screenshot showed immediately.
+    ///
+    /// Computed from the same tokens the layout uses, so the two cannot drift
+    /// apart again, and `aRowIsTallEnoughForItsContents` measures a real laid
+    /// out cell against it rather than trusting this arithmetic.
+    public static var preferredHeight: CGFloat {
+        let sender = NSFont(name: PostioTokens.fontBody, size: 13)
+            ?? .systemFont(ofSize: 13, weight: .semibold)
+        let subject = NSFont(name: PostioTokens.fontBody, size: 13) ?? .systemFont(ofSize: 13)
+        let preview = NSFont.systemFont(ofSize: 12)
+        let lines = ceil(sender.boundingRectForFont.height)
+            + ceil(subject.boundingRectForFont.height)
+            + ceil(preview.boundingRectForFont.height)
+        return ceil(lines + PostioTokens.space1 * 2 + PostioTokens.space2 * 2)
+    }
+
     /// What this cell is currently showing.
     ///
     /// Exists so reuse can be asserted: the recycled-cell bug leaves the

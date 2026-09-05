@@ -19,7 +19,9 @@ public struct MessageListView: NSViewRepresentable {
         let table = NSTableView()
         table.headerView = nil
         table.style = .inset
-        table.rowHeight = 62
+        // From the cell, not a literal. A row shorter than its contents clips
+        // the sender on every row it draws, which is what `62` did.
+        table.rowHeight = MessageRowCell.preferredHeight
         table.usesAutomaticRowHeights = false
         // The table's own selection is the **cursor**, and only ever one row.
         // The multi-message selection is Postio's, lives behind the boundary,

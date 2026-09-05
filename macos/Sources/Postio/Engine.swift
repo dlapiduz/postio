@@ -211,11 +211,34 @@ final class Engine {
         guard let session, case let .open(controller) = state else { return }
         showingMailbox = mailbox
         session.openScope(.mailbox(mailbox: mailbox))
+        listVersion += 1
         controller.tableView?.reloadData()
     }
 
+    /// Bumped whenever the open list's contents change.
+    ///
+    /// **SwiftUI needs something it can observe, and a row count is not it.**
+    /// `rowCount` reads through to the boundary, so it is a computed property
+    /// over a `session` reference that never changes — which means the shell's
+    /// `if engine.rowCount == 0` was evaluated once, when the folder opened
+    /// empty, and never again. `reloadData()` refreshed the *table* inside a
+    /// branch SwiftUI had already decided not to draw: 37 unread in the
+    /// sidebar, "No messages" beside it (#1150).
+    ///
+    /// A counter rather than a cached count, because the count itself belongs
+    /// to the boundary and a second copy here is a second thing to be wrong.
+    /// This says only *that* it changed; `rowCount` still says what it is.
+    private(set) var listVersion = 0
+
     /// How many rows the open scope has, or zero when there is no session.
-    var rowCount: UInt32 { session?.rowCount ?? 0 }
+    ///
+    /// Reads `listVersion` so that SwiftUI registers a dependency on it: this
+    /// is a computed property, and what a view actually observes is whatever
+    /// stored property it touches on the way through.
+    var rowCount: UInt32 {
+        _ = listVersion
+        return session?.rowCount ?? 0
+    }
 
     /// Drain the engine's events for as long as the session is open.
     ///
@@ -240,6 +263,15 @@ final class Engine {
     private func handle(_ event: UiEvent) {
         guard case let .open(controller) = state else { return }
         switch event {
+        case .newMail:
+            // Counted as a list change as well as a notification: mail
+            // arriving into the folder on screen is exactly the case where
+            // the plate has to give way to the list.
+            listVersion += 1
+            controller.tableView?.reloadData()
+            if case let .newMail(account, mailbox, messages) = event {
+                arrived(MailArrival(account: account, mailbox: mailbox, messages: messages))
+            }
         case .pageReady:
             // The page the table asked for arrived. Redrawing everything is
             // right at this size and wrong at scale; narrowing it to the rows
@@ -247,6 +279,10 @@ final class Engine {
             // belongs with the rest of the list work.
             controller.tableView?.reloadData()
         case .messageListChanged, .messagesChanged, .messagesRemoved:
+            // Both halves: the table redraws its rows, and `listVersion`
+            // tells SwiftUI that the *count* moved — which is what decides
+            // between the list and the "No messages" plate around it.
+            listVersion += 1
             controller.tableView?.reloadData()
         case let .cursorMoved(row, message):
             // The table follows the model, never the other way round. `j` and
@@ -257,8 +293,6 @@ final class Engine {
             cursorShowing = message
         case .mailboxesChanged:
             mailboxes = session?.mailboxes ?? []
-        case let .newMail(account, mailbox, messages):
-            arrived(MailArrival(account: account, mailbox: mailbox, messages: messages))
         default:
             // Everything else is something this build has no opinion about.
             break
@@ -355,6 +389,7 @@ final class Engine {
     /// catching up with a row count that changed underneath it.
     func listChanged() {
         guard case let .open(controller) = state else { return }
+        listVersion += 1
         controller.tableView?.reloadData()
     }
 

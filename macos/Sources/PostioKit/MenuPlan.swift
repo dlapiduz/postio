@@ -88,13 +88,31 @@ public enum MenuPlan {
         let held = Set(parts.map { $0.lowercased() })
         if held.contains("ctrl") || held.contains("control") { glyphs += "⌃" }
         if held.contains("alt") || held.contains("option") { glyphs += "⌥" }
-        if held.contains("shift") { glyphs += "⇧" }
+        // Shift is written two ways and they mean the same key. The resolver
+        // *folds* it into the character for a key that types one — `shift+a`
+        // **is** `A`, because that is what a keyboard delivers — so eleven
+        // registry defaults are bare capitals with no `shift` in the string.
+        // Uppercasing them for display threw the fold away and drew `A` for
+        // both `archive` and `archive_thread`: two commands, two keys, one
+        // accelerator. Seen in the Message menu, invisible to every test that
+        // existed before this one.
+        if held.contains("shift") || isFoldedShift(key) { glyphs += "⇧" }
         if held.contains("cmd") || held.contains("command") || held.contains("super")
             || held.contains("meta")
         {
             glyphs += "⌘"
         }
         return glyphs + keyGlyph(key)
+    }
+
+    /// Whether `key` is a character that already carries a folded Shift.
+    ///
+    /// A single uppercase letter, and only that. `A` is `shift+a`; `Return`
+    /// is a named key that merely starts with a capital, and `F5` is not
+    /// shifted either.
+    private static func isFoldedShift(_ key: String) -> Bool {
+        guard key.count == 1, let only = key.first else { return false }
+        return only.isUppercase && only.isLetter
     }
 
     /// The key half, as a menu draws it.
@@ -104,8 +122,34 @@ public enum MenuPlan {
     /// a single character and is shown uppercased, the way every menu on the
     /// system shows it — an uppercase letter in a menu is not a claim about
     /// Shift, which has its own glyph.
+    ///
+    /// The punctuation names are `postio_ui::keymap`'s `PUNCTUATION_NAMES`,
+    /// which is why they are here at all: `mod+comma` is Settings' default,
+    /// and a menu that printed the *name* showed `⌘COMMA` — not a key anybody
+    /// can find on a keyboard. This is the rendering table ADR 0019 Q4 says
+    /// each frontend owns, and `noAcceleratorLeaksAKeyName` is what notices
+    /// when the core learns a name this does not know.
     private static func keyGlyph(_ key: String) -> String {
         switch key.lowercased() {
+        case "comma": return ","
+        case "period": return "."
+        case "slash": return "/"
+        case "backslash": return "\\"
+        case "question": return "?"
+        case "semicolon": return ";"
+        case "colon": return ":"
+        case "plus": return "+"
+        case "minus": return "-"
+        case "equal": return "="
+        case "asterisk": return "*"
+        case "underscore": return "_"
+        case "less": return "<"
+        case "greater": return ">"
+        case "bracketleft": return "["
+        case "bracketright": return "]"
+        case "grave": return "`"
+        case "apostrophe": return "'"
+        case "quotedbl": return "\""
         case "return", "enter": return "↩"
         case "escape", "esc": return "⎋"
         case "tab": return "⇥"

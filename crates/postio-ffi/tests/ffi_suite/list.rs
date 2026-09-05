@@ -165,3 +165,88 @@ fn the_unified_scope_crosses_the_abi_and_lists_every_accounts_mail() {
     );
     session.shutdown();
 }
+
+#[test]
+fn mail_arriving_into_the_open_scope_changes_the_row_count() {
+    // The bug that a running application found and no test did (#1150).
+    //
+    // `open_scope` counts, once. Everything after that arrives as an event,
+    // and the frontend's answer to an event is to reload its table -- which
+    // asks `row_count`, which reads the window's `total`, which was set by
+    // that one count and never again. So the first sync of a folder opened
+    // while it was empty put 99 messages in the store and left the list
+    // saying "No messages", with every layer working exactly as written.
+    let database = test_support::memory();
+    let (account, mailbox) = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        (account.id, inbox)
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database.clone())).expect("a session");
+    session.open_scope(ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    });
+    assert_eq!(session.row_count(), 0, "the fixture starts empty");
+
+    // The engine writes to the store and then says so, which is the order
+    // every sync uses.
+    {
+        let connection = database.connection().expect("a connection");
+        let repository = MessageRepository::new(&connection);
+        for _ in 0..7 {
+            let mut message = Message::new(account, mailbox, Utc::now());
+            repository.create(&mut message).expect("a message");
+        }
+    }
+    session.emit_for_test(postio_core::Event::MessageListChanged { account, mailbox });
+    let _ = session.next_event_blocking();
+
+    assert_eq!(
+        session.row_count(),
+        7,
+        "the list still reports the count it was opened with, so a folder \
+         that filled after it was opened draws as empty"
+    );
+    session.shutdown();
+}
+
+#[test]
+fn a_sender_crosses_as_the_name_a_person_reads() {
+    // `EmailAddress::display()`, which is what `postio-gtk`'s row draws --
+    // not `to_string()`, which is the RFC form `Name <addr>`. The boundary
+    // used the second, so the macOS list drew
+    // `Fidelity Investments <Fidelity.Investments@...` where the GTK list
+    // drew `Fidelity Investments`: one row, two frontends, two answers, on a
+    // field whose own comment says "already rendered for display" (#1150).
+    let database = test_support::memory();
+    let (account, mailbox) = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        (account.id, inbox)
+    };
+    {
+        let connection = database.connection().expect("a connection");
+        let repository = MessageRepository::new(&connection);
+        let mut message = Message::new(account, mailbox, Utc::now());
+        message.from = vec![postio_model::EmailAddress::new(
+            Some("Ada Lovelace"),
+            "ada@example.com",
+        )];
+        repository.create(&mut message).expect("a message");
+    }
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.open_scope(ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    });
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    let row = session.row_at(0).expect("the page landed");
+    assert_eq!(
+        row.from.as_deref(),
+        Some("Ada Lovelace"),
+        "the row drew the RFC address form instead of the display name"
+    );
+    session.shutdown();
+}

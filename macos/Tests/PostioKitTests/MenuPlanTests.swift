@@ -71,6 +71,59 @@ import Testing
         #expect(MenuPlan.accelerator(from: "shift+Tab") == "⇧⇥")
     }
 
+    @Test func aShiftFoldedCapitalKeepsItsShift() {
+        // The resolver folds Shift into the character for a key that types
+        // one -- `shift+a` *is* `A` -- so eleven registry defaults are bare
+        // capitals. Uppercasing them for display loses the fold, and
+        // `Archive` and `Archive thread` then draw the identical accelerator
+        // for two different commands. Seen in the Message menu before it was
+        // fixed; invisible in every test that existed.
+        #expect(MenuPlan.accelerator(from: "A") == "⇧A")
+        #expect(MenuPlan.accelerator(from: "a") == "A")
+        #expect(MenuPlan.accelerator(from: "cmd+A") == "⇧⌘A")
+        // Explicit shift and a folded capital are the same key, drawn once.
+        #expect(MenuPlan.accelerator(from: "shift+A") == "⇧A")
+    }
+
+    @Test func aPunctuationKeyIsDrawnAsItsCharacter() {
+        // The resolver spells punctuation by name -- `mod+comma` is Settings'
+        // default -- and the names are GDK's. A menu that printed the name
+        // showed `⌘COMMA`, which is not a key anybody can find.
+        #expect(MenuPlan.accelerator(from: "cmd+comma") == "⌘,")
+        #expect(MenuPlan.accelerator(from: "question") == "?")
+        #expect(MenuPlan.accelerator(from: "slash") == "/")
+    }
+
+    @Test func noAcceleratorLeaksAKeyName() {
+        // The class, over the whole registry rather than the three spellings
+        // that happened to be wrong. A key name reaching a menu renders as a
+        // run of capitals -- COMMA, RETURN, PAGE_UP -- and a real accelerator
+        // never has one: modifiers are glyphs and the key is one character.
+        for spec in PostioRegistry.commands {
+            let binding = spec.defaultBinding.replacingOccurrences(of: "mod+", with: "cmd+")
+            guard let drawn = MenuPlan.accelerator(from: binding) else { continue }
+            let letters = drawn.filter { $0.isLetter }
+            let leak = "`\(spec.id)` draws `\(drawn)`, a key name rather than a key"
+            #expect(letters.count <= 1, Comment(rawValue: leak))
+        }
+    }
+
+    @Test func twoCommandsThatBindDifferentKeysDrawDifferentAccelerators() {
+        // The failure that started this: `Archive` (`a`) and `Archive thread`
+        // (`A`) are different keys and drew the same string. Checked over the
+        // whole registry, because any pair could do it.
+        var drawnBy: [String: String] = [:]
+        for spec in PostioRegistry.commands {
+            let binding = spec.defaultBinding.replacingOccurrences(of: "mod+", with: "cmd+")
+            guard let drawn = MenuPlan.accelerator(from: binding) else { continue }
+            if let already = drawnBy[drawn], already != spec.defaultBinding {
+                let clash = "`\(already)` and `\(spec.defaultBinding)` both draw `\(drawn)`"
+                Issue.record(Comment(rawValue: clash))
+            }
+            drawnBy[drawn] = spec.defaultBinding
+        }
+    }
+
     @Test func aSequenceIsDrawnAsNoAcceleratorAtAll() {
         // `g g` cannot be expressed as a key equivalent, and showing `G` for
         // a command that `G` does not run is worse than showing nothing. This

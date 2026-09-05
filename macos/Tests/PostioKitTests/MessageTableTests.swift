@@ -222,3 +222,46 @@ struct MessageTableTests {
         #expect(RowPresentation.placeholder.selected == false)
     }
 }
+
+
+/// A row has to be tall enough for what it draws.
+///
+/// The bug this exists for was a literal `62` in the table against a cell that
+/// lays out to about 68: every row after the first had its sender clipped.
+/// Invisible to every other test here — they all assert *what* a cell shows,
+/// and this is about whether it fits.
+@MainActor
+@Suite struct RowHeightTests {
+    @Test func aRowIsTallEnoughForItsContents() {
+        let cell = MessageRowCell()
+        cell.show(
+            RowPresentation(
+                sender: "ada@example.com",
+                subject: "A subject long enough to need its own line",
+                preview: "And a preview under it, which is the third line",
+                unread: true,
+                flagged: true,
+                threadBadge: "12",
+                isPlaceholder: false
+            )
+        )
+        // A realistic width: narrow enough to be a list column, wide enough
+        // that nothing wraps and the height is the three lines.
+        cell.frame = NSRect(x: 0, y: 0, width: 360, height: MessageRowCell.preferredHeight)
+        cell.layoutSubtreeIfNeeded()
+
+        let clipped = "the cell lays out to \(cell.fittingSize.height) in a row of "
+            + "\(MessageRowCell.preferredHeight), so its top line is clipped"
+        #expect(
+            cell.fittingSize.height <= MessageRowCell.preferredHeight,
+            Comment(rawValue: clipped)
+        )
+    }
+
+    @Test func theRowHeightIsNotAbsurd() {
+        // The other direction: a derived number that ran away would give a
+        // list of six enormous rows, which is its own kind of broken.
+        #expect(MessageRowCell.preferredHeight > 40)
+        #expect(MessageRowCell.preferredHeight < 120)
+    }
+}

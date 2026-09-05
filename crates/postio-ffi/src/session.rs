@@ -2104,17 +2104,74 @@ impl Session {
         // Whichever speaks first. The engine's stream ends when the session
         // shuts down, and that is what must end the frontend's loop -- so a
         // closed engine stream wins even if the local one is merely idle.
-        tokio::select! {
+        let event = tokio::select! {
             engine = self.events.next() => engine.map(UiEvent::from),
             local = self.local.1.recv() => local.ok(),
-        }
+        }?;
+        self.recount_if_the_list_changed(&event);
+        Some(event)
     }
 
     /// [`next_event`](Self::next_event), for callers that are not async.
     ///
     /// Rust-only. Swift always awaits.
     pub fn next_event_blocking(&self) -> Option<UiEvent> {
-        self.events.next_blocking().map(UiEvent::from)
+        let event = self.events.next_blocking().map(UiEvent::from)?;
+        self.recount_if_the_list_changed(&event);
+        Some(event)
+    }
+
+    /// Re-count the open scope when an event says its contents moved.
+    ///
+    /// **`open_scope` counts once**, because a table asks how tall it is
+    /// before it draws and that question cannot await. Everything after that
+    /// arrives as an event — and a frontend's whole answer to an event is to
+    /// reload its table, which asks `row_count`, which reads the total that
+    /// one count set. Nothing ever set it again.
+    ///
+    /// So a folder opened while it was empty and filled a moment later by the
+    /// first sync stayed empty on screen: 99 messages in the store, "No
+    /// messages" in the list, every layer doing exactly what it was written
+    /// to do. Found by running the application against a real account (#1150);
+    /// invisible to every test, because no test had a list whose contents
+    /// changed after it was opened.
+    ///
+    /// It belongs here rather than in either frontend for the reason the whole
+    /// boundary does: the count is the window's, the window is here, and a
+    /// frontend that re-opened the scope to refresh it would be making a
+    /// navigation decision to fix a bookkeeping one. `postio-gtk`'s feed does
+    /// the same thing on the same events, one layer up.
+    ///
+    /// Deliberately not `PageReady` — that is this boundary telling itself a
+    /// page landed, and re-counting there would reset the window inside its
+    /// own fetch.
+    fn recount_if_the_list_changed(&self, event: &UiEvent) {
+        if !matches!(
+            event,
+            UiEvent::MessageListChanged { .. }
+                | UiEvent::MessagesChanged { .. }
+                | UiEvent::MessagesRemoved { .. }
+                | UiEvent::NewMail { .. }
+        ) {
+            return;
+        }
+        // A search holds its own ranking; its hits do not change because a
+        // folder did, and re-counting would reset the window to a folder's
+        // size while showing search results.
+        if self.is_searching() {
+            return;
+        }
+        let Some(scope) = *self.scope.lock().expect("scope lock") else {
+            return;
+        };
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let total = runtime.block_on(store.list_count(scope)).unwrap_or(0);
+        let mut list = self.list.lock().expect("list lock");
+        if list.total() != total {
+            list.reset(total);
+        }
     }
 
     /// Emits an event as the engine would.
