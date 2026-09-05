@@ -73,10 +73,100 @@ pub struct ComposeConfig {
     pub extra: Extras,
 }
 
+/// Rewrites `text`'s `[compose]` table to match `compose`, leaving every
+/// other section — and any comment attached to one — untouched.
+///
+/// The Composing pane's write path (#1179), and the same bargain
+/// [`crate::patch_ui`] and [`crate::patch_filters`] already make for the
+/// same reason: `Config::to_toml_string` reserializes the whole file and
+/// would reorder every key and drop every comment in it, not only in the
+/// table the pane owns. `[compose]` itself is regenerated whole, so a
+/// comment attached to `[compose]`'s own header does not survive — two
+/// settings chosen from a segmented control are not the kind of TOML
+/// anyone hand-annotates.
+pub fn patch_compose(text: &str, compose: &ComposeConfig) -> crate::Result<String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| crate::ConfigError::parse(None, &err))?;
+    doc.as_table_mut().remove("compose");
+
+    let fragment = toml::to_string(&ComposeOnly { compose })
+        .map_err(|err| crate::ConfigError::Serialize(err.to_string()))?;
+    let fragment_doc = fragment
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| crate::ConfigError::parse(None, &err))?;
+    if let Some(item) = fragment_doc.as_table().get("compose") {
+        doc.as_table_mut().insert("compose", item.clone());
+    }
+    Ok(doc.to_string())
+}
+
+/// Serializes as just a `[compose]` table — [`patch_compose`]'s bridge from
+/// `toml`'s serde output to a fragment `toml_edit` can splice in.
+#[derive(Serialize)]
+struct ComposeOnly<'a> {
+    compose: &'a ComposeConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Config;
+
+    #[test]
+    fn patching_compose_leaves_every_other_section_and_its_comments_alone() {
+        let original = "\
+# a hand-written comment nobody wants to lose
+[ui]
+density = \"compact\"
+
+[compose]
+signature_on_reply = \"above_quote\"
+signature_on_forward = \"above_quote\"
+";
+        let compose = ComposeConfig {
+            signature_on_reply: SignaturePlacement::BelowQuote,
+            ..ComposeConfig::default()
+        };
+
+        let patched = patch_compose(original, &compose).expect("patches");
+
+        assert!(
+            patched.contains("# a hand-written comment nobody wants to lose"),
+            "the comment was dropped: {patched}"
+        );
+        assert!(
+            patched.contains("density = \"compact\""),
+            "an untouched section was rewritten: {patched}"
+        );
+        let read = Config::from_toml_str(&patched).expect("parses back");
+        assert_eq!(
+            read.compose.signature_on_reply,
+            SignaturePlacement::BelowQuote
+        );
+        assert_eq!(
+            read.compose.signature_on_forward,
+            SignaturePlacement::AboveQuote,
+            "the setting that did not change must not have moved"
+        );
+    }
+
+    #[test]
+    fn patching_compose_writes_the_table_into_a_file_that_had_none() {
+        let compose = ComposeConfig {
+            signature_on_forward: SignaturePlacement::BelowQuote,
+            ..ComposeConfig::default()
+        };
+
+        let patched = patch_compose("[ui]\ndensity = \"airy\"\n", &compose).expect("patches");
+
+        let read = Config::from_toml_str(&patched).expect("parses back");
+        assert_eq!(
+            read.compose.signature_on_forward,
+            SignaturePlacement::BelowQuote,
+            "a first write has no table to rewrite and must make one: {patched}"
+        );
+    }
 
     #[test]
     fn the_default_is_where_most_mail_puts_it() {

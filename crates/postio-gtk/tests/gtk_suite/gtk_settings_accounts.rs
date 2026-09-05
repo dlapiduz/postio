@@ -247,51 +247,63 @@ pub fn an_account_row_says_what_its_mail_weighs() {
 
 /// The row's own weight line, if it has one.
 fn weight_in(row: &gtk::ListBoxRow) -> Option<String> {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-weight",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .filter(|label| label.is_visible())
-    .map(|label| label.text().to_string())
+    // Everything between the badge and the facts that follow it. The
+    // weight shares one mono line with the badge, the token validity and
+    // any rebuild in progress (#1179) — four stacked labels read as four
+    // rows of one account rather than one row of four facts — and it is
+    // the one entry that carries a `·` of its own, so it cannot simply be
+    // picked out by splitting.
+    let line = metadata_in(row);
+    let after_badge = line.splitn(3, " · ").nth(2)?;
+    let weight: Vec<&str> = after_badge
+        .split(" · ")
+        .take_while(|fact| {
+            !fact.starts_with("token ") && !fact.starts_with("Rebuilding") && *fact != "disabled"
+        })
+        .collect();
+    (!weight.is_empty()).then(|| weight.join(" · "))
 }
 
-/// The row's connection-type and auth-method badge (#878).
-fn badge_in(row: &gtk::ListBoxRow) -> String {
+/// One `·`-separated fact off the row's metadata line, if it is there.
+fn fact_in(row: &gtk::ListBoxRow, wanted: impl Fn(&str) -> bool) -> Option<String> {
+    metadata_in(row)
+        .split(" · ")
+        .map(str::trim)
+        .find(|fact| wanted(fact))
+        .map(str::to_owned)
+}
+
+/// The whole metadata line.
+fn metadata_in(row: &gtk::ListBoxRow) -> String {
     collect(
         row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-badge",
+        "postio-settings-account-metadata",
     )
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .expect("every account row has a badge")
+    .expect("every account row has a metadata line")
     .text()
     .to_string()
 }
 
+/// The row's connection-type and auth-method badge (#878).
+fn badge_in(row: &gtk::ListBoxRow) -> String {
+    // Always first on the line: what kind of account, then how it signs in.
+    metadata_in(row)
+        .split(" · ")
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// The row's own token-validity line, if it has one (#878).
 fn validity_in(row: &gtk::ListBoxRow) -> Option<String> {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-validity",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .filter(|label| label.is_visible())
-    .map(|label| label.text().to_string())
+    fact_in(row, |fact| fact.starts_with("token "))
 }
 
 /// The row's own reindex-progress line, if a rebuild is running (#981).
 fn reindexing_in(row: &gtk::ListBoxRow) -> Option<String> {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-reindexing",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .filter(|label| label.is_visible())
-    .map(|label| label.text().to_string())
+    fact_in(row, |fact| fact.starts_with("Rebuilding"))
 }
 
 /// Issue #878: the badge names the connection Postio actually uses,
@@ -527,14 +539,23 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
 
 /// The row's own default-account line, if it carries the marker (#960).
 fn default_line_in(row: &gtk::ListBoxRow) -> Option<String> {
-    collect(
+    // `default`, beside the address, with what the marker does on its
+    // tooltip — the drawing's own shape (Design/screens/21). #960's
+    // requirement is that the words say what the marker *does* and never
+    // claim a status, which is what is asserted here.
+    let tag = collect(
         row.upcast_ref::<gtk::Widget>(),
         "postio-settings-account-default",
     )
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .filter(|label| label.is_visible())
-    .map(|label| label.text().to_string())
+    .filter(|label| label.is_visible())?;
+    let explanation = tag.tooltip_text().map(|text| text.to_string());
+    Some(format!(
+        "{} — {}",
+        tag.text(),
+        explanation.unwrap_or_default()
+    ))
 }
 
 /// Issue #960: the marked account says so, in words, and the others do not.
