@@ -521,7 +521,19 @@ impl postio_gtk::list::PageSource for Sample {
             .map(|index| sample_row(index as i64 + 1))
             .collect();
         let list = self.list.clone();
-        gtk::glib::idle_add_local_once(move || list.deliver(page, rows));
+        // Stamped with the generation the request was made under, the way
+        // `crate::feed`'s real source does. `deliver` is documented as
+        // *always* applying -- it exists for a source that answers
+        // synchronously and has no generation to compare -- so a deferred
+        // double using it would land a page requested under one source after
+        // `set_source` had replaced it with another.
+        //
+        // This is a contract fix, not a fix for #1015: nothing here was
+        // measured crossing that boundary (after six frames the main context
+        // had nothing pending, idle or under load), and #1015's crash is
+        // dispatched from *inside* the pumping rather than after it.
+        let generation = self.list.generation();
+        gtk::glib::idle_add_local_once(move || list.deliver_for(generation, page, rows));
     }
 }
 
