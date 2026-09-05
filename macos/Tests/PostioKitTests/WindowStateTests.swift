@@ -16,7 +16,8 @@ struct WindowStateTests {
         _ id: Int64,
         _ role: MailboxRoleFfi,
         _ name: String,
-        selectable: Bool = true
+        selectable: Bool = true,
+        special: Bool = true
     ) -> MailboxFfi {
         MailboxFfi(
             id: id,
@@ -26,7 +27,11 @@ struct WindowStateTests {
             role: role,
             unread: 0,
             total: 0,
-            selectable: selectable
+            selectable: selectable,
+            // Which sidebar section the boundary put it in (#1155). Not what
+            // this file is about — `folderToOpen` picks by role and by
+            // whether a folder still exists — but the type carries it now.
+            special: special
         )
     }
 
