@@ -73,6 +73,27 @@ fi
 # evidence at all -- the failure above was diagnosed from `--show-stats`
 # after the fact, and only because someone happened to mention it.
 #
+# **`SCCACHE_LOG` is the other half of that, and without it the first half
+# does nothing** (#1184). `SCCACHE_ERROR_LOG` says *where* log records go;
+# `SCCACHE_LOG` decides whether there are any. The daemon wedged twice with
+# the error log set the whole time and the file empty both times, which read
+# as "the instrument is broken" and was really "the instrument was never
+# switched on". Measured here with an isolated daemon on its own port and
+# cache directory:
+#
+#   SCCACHE_ERROR_LOG only                the file is created, 0 bytes
+#   SCCACHE_ERROR_LOG + SCCACHE_LOG=info  348 bytes of server lifecycle
+#
+# What made it look like it worked: a *client* that cannot start a second
+# server writes "Address in use" there regardless of level, so the live log
+# had 45 bytes in it and nothing from the server that mattered.
+#
+# `info` rather than `debug`: four lines per server start and **nothing per
+# compile** -- six compiles produced the same 348 bytes as one -- so it costs
+# nothing and records what a wedge investigation wants, which is when the
+# daemon started and how it was configured. `debug` is for a session that is
+# actively chasing one, and the `:-` below lets it say so.
+#
 # **These are read when the server STARTS, not per invocation.** A running
 # server keeps whatever it was born with, exactly like the TMPDIR hazard
 # below (#359). After changing them: `sccache --stop-server`, and the next
@@ -132,6 +153,7 @@ if command -v sccache >/dev/null 2>&1; then
     export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
     export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
     export SCCACHE_ERROR_LOG="${SCCACHE_ERROR_LOG:-${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/sccache.log}"
+    export SCCACHE_LOG="${SCCACHE_LOG:-info}"
     scratch="${SCCACHE_DIR:-${HOME:-}/.cache/sccache}/tmp"
     # Fail open, like everything else in this file: a temp directory that
     # cannot be created costs the pinning, never the build.

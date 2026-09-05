@@ -83,7 +83,19 @@ The machine:
 uptime; df -h /home; du -sh ~/src/postio-worktrees/*/target 2>/dev/null | tail
 pgrep -af 'rustc|cargo|target/debug/deps' | head
 scripts/jobserver.sh status
+scripts/sccache-restart.sh --check
 ```
+
+**The compile cache is the one that stops everything and says nothing.** It
+has wedged twice, and both times every build on the box hung for hours while
+the sessions simply waited — a wedge produces no output anywhere, so nobody
+finds it without looking at `ps`. `--check` is that look: it exits 3 when the
+daemon's `Compile requests executed` counter is frozen *and* compiles are
+sitting on it, which is the signature and not either half alone. Restart it
+with `scripts/sccache-restart.sh` and **not** by hand — a bare `sccache`
+command starts the next daemon with the default 10 GiB cap, which against
+this cache is instant permanent eviction and is the *other* failure (#1184,
+and `docs/notes/2026-09-03-the-compile-cache-was-full-and-had-been-for-a-long-time.md`).
 
 Compile jobs come from one machine-wide pool (`scripts/jobserver.sh`), so
 "four builds saturate the box" is no longer the shape to expect; a pool
