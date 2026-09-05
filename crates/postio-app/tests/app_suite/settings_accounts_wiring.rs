@@ -112,6 +112,46 @@ pub fn account_rows_persist_enable_and_mark_removal() {
         frames(&window, 2),
         "the compositor never painted the settings panel"
     );
+    // ── Set as default reaches the store, and moves rather than adds ────
+    // #960's whole point is that the answer to "which account does a new
+    // message come from" stops being insertion order the user cannot see.
+    // A command that resolved, drew a badge and never wrote the row would
+    // pass every assertion the panel's own tests make.
+    let target_y = row_y(&rows(&panel)[1]);
+    panel.test_open_account_menu(1.0, target_y);
+    assert!(
+        panel.activate_action("account.set-default", None).is_ok(),
+        "Set as default should exist on an account row"
+    );
+    panel.test_close_account_menu();
+    assert!(
+        settle_until(|| read_default(&database, second_id)),
+        "marking an account default has to reach the database, or the marker \
+         is a badge that means nothing"
+    );
+
+    let first_id = {
+        let connection = database.connection().expect("a connection");
+        AccountRepository::new(&connection)
+            .list()
+            .expect("list")
+            .first()
+            .expect("the seeded account")
+            .id
+    };
+    let target_y = row_y(&rows(&panel)[0]);
+    panel.test_open_account_menu(1.0, target_y);
+    assert!(
+        panel.activate_action("account.set-default", None).is_ok(),
+        "and on the other row too"
+    );
+    panel.test_close_account_menu();
+    assert!(
+        settle_until(|| read_default(&database, first_id) && !read_default(&database, second_id)),
+        "at most one account is the default: marking a second has to move \
+         the marker rather than leave two rows claiming it"
+    );
+
     let target_y = row_y(&rows(&panel)[1]);
     panel.test_open_account_menu(1.0, target_y);
     assert!(
@@ -141,6 +181,15 @@ fn read_enabled(database: &postio_storage::Database, id: postio_model::ids::Acco
         .expect("get")
         .expect("still there")
         .enabled
+}
+
+fn read_default(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> bool {
+    let connection = database.connection().expect("a connection");
+    AccountRepository::new(&connection)
+        .get(id)
+        .expect("get")
+        .expect("still there")
+        .is_default
 }
 
 fn read_pending(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> bool {
