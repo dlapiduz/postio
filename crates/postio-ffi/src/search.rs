@@ -70,3 +70,66 @@ pub fn snippet_of(marked: &str) -> SnippetFfi {
         text: highlighted.text,
     }
 }
+
+/// One operator in the query, drawn as a pill.
+///
+/// The parse, not a second one. `postio-search` says where each operator sits
+/// and what its source text is; both frontends draw the same reading of the
+/// same query, which matters more here than anywhere because **the chips are
+/// how somebody learns Postio's query language**. Two readings would be two
+/// languages on two platforms.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ChipFfi {
+    /// Position in the query's tokens, for popping this one out.
+    pub index: u32,
+    /// The exact source text, so what the chip says is what is in the field.
+    pub label: String,
+    /// Whether it was negated with a leading `-`.
+    pub negated: bool,
+    /// Whether the operator has a value yet.
+    ///
+    /// A half-typed `from:` is still worth drawing: it tells the user the
+    /// parser understood the keyword, which is the moment the language is
+    /// being learned.
+    pub complete: bool,
+    /// What a screen reader should say instead of the raw text.
+    ///
+    /// `postio_ui::search::spoken`'s wording — "from Ada", not "from colon
+    /// Ada" — carried rather than re-derived, for the same reason the label
+    /// is.
+    pub spoken: String,
+}
+
+/// The query's operators, in the order they were typed.
+///
+/// Free text is not a chip: it stays plain, because it is the part the user is
+/// usually still editing.
+///
+/// A free function, like `commands()`: it parses a string and reads no session
+/// state, so a bar can draw chips before any store is open.
+#[uniffi::export]
+pub fn query_chips(query: String) -> Vec<ChipFfi> {
+    let parsed = postio_search::parse(&query, chrono::Utc::now().date_naive());
+    postio_ui::search::chips(&parsed)
+        .into_iter()
+        .map(|chip| ChipFfi {
+            index: chip.index as u32,
+            label: chip.label.clone(),
+            negated: chip.negated,
+            complete: chip.complete,
+            spoken: postio_ui::search::spoken(&chip),
+        })
+        .collect()
+}
+
+/// What one search turned out to be, as the field's right-hand end says it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OutcomeFfi {
+    /// The line canvas 2b draws — "14 hits · 11 ms", plus any caveats.
+    pub readout: String,
+    /// The same facts in words, for a screen reader: "·" and "ms" are
+    /// punctuation and an abbreviation rather than something to read out.
+    pub spoken: String,
+    /// How many messages matched.
+    pub hits: u64,
+}

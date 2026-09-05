@@ -314,6 +314,11 @@ pub struct Session {
     /// paged in behind the table exactly as a folder's are; what is resident
     /// here is the ids and their excerpts.
     hits: Mutex<Option<Vec<crate::search::Hit>>>,
+    /// What the last search turned out to be, for the field's readout.
+    ///
+    /// Held rather than recomputed: the timing is a fact about the run that
+    /// happened, and a second search to measure the first would be absurd.
+    outcome: Mutex<Option<postio_ui::search::Outcome>>,
     /// The scope to come back to when a search is cleared.
     ///
     /// Held here rather than remembered by the frontend, because a frontend
@@ -517,6 +522,12 @@ impl Session {
     #[uniffi::method(name = "clearSearch")]
     pub fn clear_search_ffi(&self) -> u64 {
         self.clear_search()
+    }
+
+    /// What the last search turned out to be. See [`Session::search_outcome`].
+    #[uniffi::method(name = "searchOutcome")]
+    pub fn search_outcome_ffi(&self) -> Option<crate::OutcomeFfi> {
+        self.search_outcome()
     }
 
     /// Whether the list is showing search results rather than a folder.
@@ -799,6 +810,7 @@ impl Session {
                 cursor_row: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 hits: Mutex::new(None),
+                outcome: Mutex::new(None),
                 resting: Mutex::new(None),
                 anchor: Mutex::new(None),
                 scope: Mutex::new(None),
@@ -860,6 +872,7 @@ impl Session {
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
             hits: Mutex::new(None),
+            outcome: Mutex::new(None),
             resting: Mutex::new(None),
             anchor: Mutex::new(None),
             scope: Mutex::new(None),
@@ -1588,6 +1601,11 @@ impl Session {
 
         let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
         let account = *self.account_scope.lock().expect("account scope lock");
+        // Timed here because here is where the work happens. The field says
+        // "14 hits · 11 ms" (canvas 2b), which is the 100ms budget made
+        // visible — a claim the application should be willing to make on
+        // screen rather than only in a note.
+        let started = std::time::Instant::now();
         let found = runtime.block_on(async {
             let connection = database.connection().ok()?;
             postio_session::search::execute(
@@ -1598,6 +1616,20 @@ impl Session {
                 postio_search::ResultOrder::Relevance,
             )
         });
+
+        let elapsed = started.elapsed();
+        let outcome = postio_ui::search::Outcome {
+            hits: found.as_ref().map(|r| r.total_hits).unwrap_or(0),
+            capped: found.as_ref().is_some_and(|r| r.total_hits_capped),
+            elapsed,
+            // The corpus is complete when nothing is still backfilling. The
+            // session does not track that yet, so the honest default is the
+            // one that adds no caveat rather than one that cries wolf on
+            // every search; #352's wording is a state that *ends*, and
+            // claiming it while it is not true would make it furniture.
+            corpus_complete: true,
+            unreachable: Vec::new(),
+        };
 
         let hits: Vec<crate::search::Hit> = found
             .map(|results| {
@@ -1614,6 +1646,7 @@ impl Session {
 
         let total = hits.len() as u32;
         *self.hits.lock().expect("hits lock") = Some(hits);
+        *self.outcome.lock().expect("outcome lock") = Some(outcome);
         // No `ListScope` describes a ranking, so there is none while a search
         // is on screen. `aim` sees `None` and refuses a whole-view gesture,
         // which is the conservative answer: "select everything matching this
@@ -1633,6 +1666,7 @@ impl Session {
             return self.list.lock().expect("list lock").generation();
         }
         *self.hits.lock().expect("hits lock") = None;
+        *self.outcome.lock().expect("outcome lock") = None;
         let resting = self.resting.lock().expect("resting lock").take();
         match resting {
             Some(scope) => self.open_list_scope(scope),
@@ -1657,6 +1691,23 @@ impl Session {
             .iter()
             .find(|hit| hit.message == message)
             .map(|hit| hit.snippet.clone())
+    }
+
+    /// What the last search turned out to be, or `None` outside a search.
+    ///
+    /// The wording is `postio_ui::search::readout`'s, so the two frontends
+    /// say the same thing about the same result set — including the caveats,
+    /// which are the part most worth not re-deriving: "still syncing" is a
+    /// state that ends (#352) and an account named unreachable is ADR 0005
+    /// Q10's promise that a view says what it left out.
+    pub fn search_outcome(&self) -> Option<crate::OutcomeFfi> {
+        let held = self.outcome.lock().expect("outcome lock");
+        let outcome = held.as_ref()?;
+        Some(crate::OutcomeFfi {
+            readout: postio_ui::search::readout(outcome),
+            spoken: postio_ui::search::spoken_readout(outcome),
+            hits: outcome.hits,
+        })
     }
 
     /// Whether the list is showing search results rather than a folder.
