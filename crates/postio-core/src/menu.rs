@@ -126,7 +126,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ToggleAccountEnabled
         | C::RemoveAccount
         | C::UpdateCredential
-        | C::RebuildAccountIndex => None,
+        | C::RebuildAccountIndex
+        | C::SetDefaultAccount => None,
 
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
