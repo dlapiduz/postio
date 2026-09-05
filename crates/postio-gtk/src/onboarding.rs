@@ -39,6 +39,85 @@ use adw::subclass::prelude::*;
 use gtk::{glib, pango};
 use postio_model::TransportSecurity;
 
+/// Which of the three steps a status is in — `1 / 3`, the way the drawing
+/// writes it.
+///
+/// Three rather than the two this screen used to count, and the split is
+/// real rather than cosmetic: naming the account, proving you own it, and
+/// saying how much of it to fetch are three different questions, and the
+/// second one can fail and be retried without touching the other two.
+/// Pure, so the mapping is tested without a display.
+fn step_of(status: &Status) -> &'static str {
+    match status {
+        Status::Idle | Status::Probing | Status::Found(_) | Status::Manual { .. } => "1 / 3",
+        Status::Connecting
+        | Status::WaitingForBrowser
+        | Status::Failed(_)
+        | Status::Reauthenticate(_) => "2 / 3",
+        Status::SyncWindow | Status::Saved => "3 / 3",
+    }
+}
+
+/// What a browser sign-in is asking for, so the screen can say so.
+///
+/// **Postio never draws a provider's login form.** Consent happens in the
+/// real browser, against the real domain, where the address bar is the thing
+/// a person checks — an in-app web view is how credential phishing is
+/// normally taught, and there is no way for a user to tell one from the
+/// genuine article. So what this screen can offer instead is an honest
+/// account of what is happening while the browser is open, which is what
+/// this carries (ADR 0006 Q3, `Design/screens/23`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BrowserSignIn {
+    /// Whose consent screen the browser was sent to — `Microsoft`, `Google`.
+    pub provider: String,
+    /// The scopes the request asks for, in the provider's own spelling.
+    /// Rendered through [`plain_scope`], never raw, because a URL is not an
+    /// answer to "what is this about to be allowed to do".
+    pub scopes: Vec<String>,
+    /// Where the browser will be sent back to — `http://127.0.0.1:41337/`.
+    pub redirect_uri: String,
+    /// The consent URL itself, for `Copy URL` and for opening it again when
+    /// the browser swallowed the first one.
+    pub authorize_url: String,
+}
+
+/// What a scope lets Postio do, in words rather than in a URL.
+///
+/// A person deciding whether to consent is owed a sentence, not
+/// `https://outlook.office.com/IMAP.AccessAsUser.All`. Anything unrecognised
+/// falls through verbatim rather than being dropped: an unfamiliar scope is
+/// exactly the one worth showing, and silently hiding it would make this
+/// list a worse lie than no list at all.
+fn plain_scope(scope: &str) -> String {
+    let folded = scope.to_ascii_lowercase();
+    if folded.contains("imap") || folded == "https://mail.google.com/" {
+        return "Read and change your mail".to_owned();
+    }
+    if folded.contains("smtp") || folded.contains("gmail.send") {
+        return "Send mail as you".to_owned();
+    }
+    match folded.as_str() {
+        "offline_access" => "Stay signed in without asking again".to_owned(),
+        "openid" | "email" | "profile" => "Know which address you signed in as".to_owned(),
+        _ => scope.to_owned(),
+    }
+}
+
+/// One line of the scope list: a mark, and what it means in words.
+fn scope_line(icon: &str, text: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let mark = gtk::Image::from_icon_name(icon);
+    mark.add_css_class("postio-onboarding-scope-mark");
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.add_css_class("postio-onboarding-scope");
+    row.append(&mark);
+    row.append(&label);
+    row
+}
+
 /// One server, as the screen shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Server {
@@ -328,10 +407,24 @@ mod imp {
         pub(super) step: gtk::Label,
         /// The sync-window picker, its estimate, and its own Start sync
         /// button — shown only on [`Status::SyncWindow`].
+        /// The browser sign-in panel: what is happening, what is being
+        /// asked for, and what is not. Shown only while the browser is out.
+        /// The name and address fields, as one group — so the last step,
+        /// which is about an account that is already saved, can put the
+        /// whole credential form away rather than leaving a form nobody can
+        /// usefully type in above the picker.
+        pub(super) identity_rows: gtk::Box,
+        pub(super) browser_box: gtk::Box,
+        pub(super) browser_flow: gtk::Label,
+        pub(super) browser_scopes: gtk::Box,
+        pub(super) browser_copy: gtk::Button,
+        pub(super) browser_reopen: gtk::Button,
+        pub(super) browser_sign_in: RefCell<BrowserSignIn>,
         pub(super) sync_window_box: gtk::Box,
-        /// Built with `DropDown::from_strings`, which takes no default, so
+        /// The three windows, all on screen — see `build` for why this is
+        /// not a dropdown. Built lazily for the reason
         /// this fills in during `build()` the way `password_row` does.
-        pub(super) sync_window_dropdown: std::cell::OnceCell<gtk::DropDown>,
+        pub(super) sync_window_picker: std::cell::OnceCell<crate::widgets::SegmentedControl>,
         pub(super) sync_estimate: gtk::Label,
         pub(super) start_sync: gtk::Button,
         pub(super) on_start_sync: RefCell<Vec<StartSyncHandler>>,
@@ -419,6 +512,94 @@ impl Onboarding {
     }
 
     /// Move the screen on.
+    /// Tells the screen what the browser has been sent to consent to.
+    ///
+    /// Called just before [`set_status`](Self::set_status) moves to
+    /// [`Status::WaitingForBrowser`] — the facts come from the provider's
+    /// own preset and from the loopback listener that has just bound, so
+    /// there is nothing here the screen made up.
+    pub fn set_browser_sign_in(&self, details: BrowserSignIn) {
+        *self.imp().browser_sign_in.borrow_mut() = details;
+        self.render_browser_sign_in();
+    }
+
+    /// Draws the scope list and the flow line from the current details.
+    fn render_browser_sign_in(&self) {
+        let imp = self.imp();
+        let details = imp.browser_sign_in.borrow().clone();
+
+        // Three facts, in the order they matter: who is being signed in to,
+        // what is listening for the answer, and by which flow. The provider
+        // line is what the drawing puts in the dialog's own title bar; it
+        // sits here instead because this widget is hosted in dialogs and in
+        // the first-run screen alike, and only one of those has a title bar
+        // to put it in.
+        let mut lines = Vec::new();
+        if !details.provider.is_empty() {
+            lines.push(format!("signing in to {}", details.provider));
+        }
+        if !details.redirect_uri.is_empty() {
+            lines.push(format!("listening {}", details.redirect_uri));
+        }
+        lines.push("authorization_code + PKCE".to_owned());
+        imp.browser_flow.set_text(&lines.join("\n"));
+
+        while let Some(child) = imp.browser_scopes.first_child() {
+            imp.browser_scopes.remove(&child);
+        }
+        for scope in &details.scopes {
+            imp.browser_scopes
+                .append(&scope_line("object-select-symbolic", &plain_scope(scope)));
+        }
+        // Said out loud, because the absence is the point: every scope in
+        // the preset table is a mail scope, and a person consenting to a
+        // Microsoft or Google sign-in has every reason to assume otherwise.
+        imp.browser_scopes.append(&scope_line(
+            "window-close-symbolic",
+            "Not requested: contacts, calendar, files",
+        ));
+
+        let has_url = !details.authorize_url.is_empty();
+        imp.browser_copy.set_visible(has_url);
+        imp.browser_reopen.set_visible(has_url);
+    }
+
+    /// Opens the consent link again, for a browser that swallowed the
+    /// first one — a default-browser handoff that lands on a locked screen,
+    /// or a window that opened behind everything else.
+    fn reopen_sign_in_link(&self) {
+        let url = self.imp().browser_sign_in.borrow().authorize_url.clone();
+        if url.is_empty() {
+            return;
+        }
+        // POSTIO-CONSENT: opened only from the `Open link again` button on
+        // the browser sign-in step, which is only on screen because the
+        // user already asked for a browser sign-in and the browser is
+        // already out. One press, one open — never on render, never
+        // retried on its own, and the URL is the very one `authorize`
+        // handed the opener a moment ago rather than a second one built
+        // here. See ADR 0006 Q3 and CLAUDE.md, "Privacy is a feature".
+        gtk::UriLauncher::new(&url).launch(
+            self.root().and_downcast_ref::<gtk::Window>(),
+            gtk::gio::Cancellable::NONE,
+            |result| {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "could not reopen the sign-in link");
+                }
+            },
+        );
+    }
+
+    /// Puts the consent link on the clipboard, for finishing the sign-in in
+    /// a browser other than the desktop's default one.
+    fn copy_sign_in_link(&self) {
+        let url = self.imp().browser_sign_in.borrow().authorize_url.clone();
+        if url.is_empty() {
+            return;
+        }
+        self.clipboard().set_text(&url);
+    }
+
     pub fn set_status(&self, status: Status) {
         let imp = self.imp();
         // Filling the manual fields from a probe is the widget writing its
@@ -546,9 +727,10 @@ impl Onboarding {
         SyncWindow::ALL
             .get(
                 self.imp()
-                    .sync_window_dropdown
+                    .sync_window_picker
                     .get()
-                    .map_or(0, |dropdown| dropdown.selected() as usize),
+                    .and_then(|picker| picker.selected())
+                    .unwrap_or(0),
             )
             .copied()
             .unwrap_or_default()
@@ -723,13 +905,13 @@ impl Onboarding {
     /// synthesize a real interaction on.
     #[doc(hidden)]
     pub fn test_select_sync_window(&self, window: SyncWindow) {
-        if let (Some(dropdown), Some(index)) = (
-            self.imp().sync_window_dropdown.get(),
+        if let (Some(picker), Some(index)) = (
+            self.imp().sync_window_picker.get(),
             SyncWindow::ALL
                 .iter()
                 .position(|candidate| *candidate == window),
         ) {
-            dropdown.set_selected(index as u32);
+            picker.test_press(index);
         }
     }
 
@@ -858,14 +1040,25 @@ impl Onboarding {
         // password row for the OAuth client fields, and the primary button
         // says what it will actually do (#534).
         let oauth = self.oauth_mode();
+        // While the browser is out there is nothing in here to type into,
+        // and leaving the credential fields on screen invites somebody to
+        // try — which is the exact confusion this step exists to avoid.
+        let waiting = matches!(status, Status::WaitingForBrowser);
+        // Once the account is saved there is nothing in the credential form
+        // left to fill in, and leaving it above the sync-window picker made
+        // the last step look like the first one with an extra card on it.
+        let settled = matches!(status, Status::SyncWindow | Status::Saved);
+        let asking = !waiting && !settled;
+        imp.identity_rows.set_visible(asking);
         if let Some(row) = imp.password_row.get() {
-            row.set_visible(!oauth);
+            row.set_visible(!oauth && asking);
         }
         if let Some(rows) = imp.oauth_rows.get() {
-            rows.set_visible(oauth);
+            rows.set_visible(oauth && asking);
         }
-        imp.cancel_sign_in
-            .set_visible(matches!(status, Status::WaitingForBrowser));
+        imp.manual.set_visible(imp.manual.is_visible() && asking);
+        imp.cancel_sign_in.set_visible(waiting);
+        imp.browser_box.set_visible(waiting);
 
         // The provider's own sentence, and where to act on it. iCloud's is
         // the reason this exists: an Apple ID password simply will not work,
@@ -912,11 +1105,7 @@ impl Onboarding {
         imp.buttons.set_visible(!on_sync_window);
         imp.sync_window_box.set_visible(on_sync_window);
         imp.sync_estimate.set_text(&self.sync_window().estimate());
-        imp.step.set_text(if on_sync_window {
-            "step 2 of 2"
-        } else {
-            "step 1 of 2"
-        });
+        imp.step.set_text(step_of(&status));
 
         self.update_property(&[gtk::accessible::Property::Label(&heading)]);
     }
@@ -934,7 +1123,7 @@ impl Onboarding {
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
-        imp.step.set_text("step 1 of 2");
+        imp.step.set_text(step_of(&Status::Idle));
         imp.step.add_css_class("postio-onboarding-step");
         imp.step
             .set_accessible_role(gtk::AccessibleRole::Presentation);
@@ -1163,25 +1352,91 @@ impl Onboarding {
         imp.buttons.append(&imp.edit);
         imp.buttons.append(&hint);
 
+        // -- the browser sign-in panel (#1179, Design/screens/23) -----------
+        //
+        // Never a login form. What this shows is an account of what is
+        // happening in the browser that is now in front of the user, and
+        // what the request they are about to approve actually asks for.
+
+        let explanation = gtk::Label::new(Some(
+            "Consent happens in your real browser. Nothing is typed into this \
+             app — it listens on a loopback port for the redirect.",
+        ));
+        explanation.set_xalign(0.0);
+        explanation.set_wrap(true);
+        explanation.add_css_class("postio-onboarding-note");
+
+        imp.browser_flow.set_xalign(0.0);
+        imp.browser_flow.set_wrap(false);
+        imp.browser_flow
+            .add_css_class("postio-onboarding-browser-flow");
+
+        imp.browser_scopes
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.browser_scopes.set_spacing(5);
+
+        let keyring = gtk::Label::new(Some("refresh token → system keyring, never config.toml"));
+        keyring.set_xalign(0.0);
+        keyring.set_wrap(true);
+        keyring.add_css_class("postio-onboarding-browser-flow");
+
+        imp.browser_reopen.set_label("Open link again");
+        imp.browser_reopen
+            .add_css_class("postio-settings-small-button");
+        imp.browser_reopen.connect_clicked(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.reopen_sign_in_link()
+        ));
+        imp.browser_copy.set_label("Copy URL");
+        imp.browser_copy
+            .add_css_class("postio-settings-small-button");
+        imp.browser_copy.connect_clicked(glib::clone!(
+            #[weak(rename_to = screen)]
+            self,
+            move |_| screen.copy_sign_in_link()
+        ));
+        let browser_actions = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        browser_actions.append(&imp.browser_reopen);
+        browser_actions.append(&imp.browser_copy);
+
+        imp.browser_box.set_orientation(gtk::Orientation::Vertical);
+        imp.browser_box.set_spacing(10);
+        imp.browser_box.set_visible(false);
+        imp.browser_box.append(&explanation);
+        imp.browser_box.append(&imp.browser_flow);
+        imp.browser_box
+            .append(&crate::widgets::kicker("SCOPES REQUESTED"));
+        imp.browser_box.append(&imp.browser_scopes);
+        imp.browser_box.append(&keyring);
+        imp.browser_box.append(&browser_actions);
+        self.render_browser_sign_in();
+
         // -- the sync-window step (#876) ------------------------------------
 
+        // A closed set of three, all of them worth seeing at once — ADR
+        // 0029 Q1, and the same control the settings window's Appearance
+        // and Sync panes use for the same shape of choice. It was a
+        // `DropDown`, which hid two of the three answers behind the one it
+        // happened to be showing.
         let labels: Vec<&str> = SyncWindow::ALL
             .iter()
             .map(|window| window.label())
             .collect();
-        let dropdown = gtk::DropDown::from_strings(&labels);
-        dropdown.set_selected(
+        let picker = crate::widgets::SegmentedControl::new("How far back to sync", &labels);
+        picker.set_selected(
             SyncWindow::ALL
                 .iter()
                 .position(|window| *window == SyncWindow::default())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0),
         );
-        dropdown.connect_selected_notify(glib::clone!(
+        picker.connect_selected(glib::clone!(
             #[weak(rename_to = screen)]
             self,
             move |_| screen.render()
         ));
-        let _ = imp.sync_window_dropdown.set(dropdown.clone());
+        let picker_widget = picker.widget().clone();
+        let _ = imp.sync_window_picker.set(picker);
 
         imp.sync_estimate.add_css_class("postio-onboarding-note");
         imp.sync_estimate.set_xalign(0.0);
@@ -1200,7 +1455,7 @@ impl Onboarding {
         imp.sync_window_box.set_spacing(9);
         imp.sync_window_box.set_visible(false);
         imp.sync_window_box
-            .append(&field("How far back to sync", &dropdown));
+            .append(&field("How far back to sync", &picker_widget));
         imp.sync_window_box.append(&imp.sync_estimate);
         imp.sync_window_box.append(&imp.start_sync);
 
@@ -1215,8 +1470,13 @@ impl Onboarding {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 16);
         body.add_css_class("postio-onboarding-body");
-        body.append(&field("Your name", &imp.name));
-        body.append(&field("Email address", &imp.address));
+        imp.identity_rows
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.identity_rows.set_spacing(9);
+        imp.identity_rows.append(&field("Your name", &imp.name));
+        imp.identity_rows
+            .append(&field("Email address", &imp.address));
+        body.append(&imp.identity_rows);
         let password_row = field("Password", &imp.password);
         body.append(&password_row);
         let _ = imp.password_row.set(password_row);
@@ -1239,6 +1499,7 @@ impl Onboarding {
         let _ = imp.oauth_rows.set(oauth_rows);
         body.append(&imp.card);
         body.append(&imp.manual);
+        body.append(&imp.browser_box);
         body.append(&imp.sync_window_box);
         body.append(&imp.status_line);
         body.append(&imp.buttons);
@@ -1312,6 +1573,20 @@ pub fn looks_like_an_address(address: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_three_steps_are_the_three_questions_and_a_retry_stays_on_its_own() {
+        assert_eq!(step_of(&Status::Idle), "1 / 3");
+        assert_eq!(step_of(&Status::Probing), "1 / 3");
+        assert_eq!(step_of(&Status::WaitingForBrowser), "2 / 3");
+        assert_eq!(step_of(&Status::SyncWindow), "3 / 3");
+        // A sign-in that failed has not sent anybody back to step one: the
+        // address is still right, and only the credential is not.
+        assert_eq!(
+            step_of(&Status::Failed("AADSTS65005 · consent_required".into())),
+            "2 / 3"
+        );
+    }
 
     #[test]
     fn a_domain_comes_off_the_address_folded() {

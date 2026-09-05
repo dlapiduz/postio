@@ -51,24 +51,38 @@ pub fn activating_a_row_opens_the_detail_view_with_its_current_settings() {
     assert!(detail_visible(&panel));
     assert_eq!(display_name_entry(&panel).text(), "Ada");
     assert_eq!(imap_host_entry(&panel).text(), "imap.example.com");
-    assert_eq!(imap_port_spin(&panel).value() as u16, 993);
+    assert_eq!(imap_port_field(&panel).text(), "993");
     assert_eq!(smtp_host_entry(&panel).text(), "smtp.example.com");
-    assert_eq!(smtp_port_spin(&panel).value() as u16, 587);
+    assert_eq!(smtp_port_field(&panel).text(), "587");
 
     window.destroy();
 }
 
-pub fn the_back_button_returns_to_the_account_list() {
+pub fn the_form_appears_under_the_list_rather_than_in_place_of_it() {
     let Some((window, panel)) = panel_with_account() else {
         return;
     };
+    let list = panel.accounts_list();
+
     rows(&panel)[0].emit_activate();
     pump();
-    assert!(detail_visible(&panel));
+    assert!(detail_visible(&panel), "selecting a row reveals its form");
+    // The drill-in is gone (#1179, Design/screens/21): the account being
+    // edited stays on screen with the others, which is what makes moving
+    // between two accounts one click rather than back-then-in.
+    assert!(
+        list.is_visible(),
+        "the list must not be replaced by the form it reveals"
+    );
+    assert!(
+        list.selected_row().is_some(),
+        "and the row it belongs to stays marked"
+    );
 
-    back_button(&panel).emit_clicked();
+    // Clearing the selection is what closes it — there is nothing to come
+    // back from, so there is no back button to press.
+    list.unselect_all();
     pump();
-
     assert!(!detail_visible(&panel));
 
     window.destroy();
@@ -118,7 +132,9 @@ pub fn editing_the_imap_port_reports_the_account_and_the_new_value() {
         move |id, edit| seen.borrow_mut().push((id, edit))
     });
 
-    imap_port_spin(&panel).set_value(143.0);
+    let port = imap_port_field(&panel);
+    port.set_text("143");
+    port.emit_activate();
     pump();
 
     let seen = seen.borrow();
@@ -359,16 +375,6 @@ fn detail_visible(panel: &SettingsPanel) -> bool {
     .any(|w| w.is_visible())
 }
 
-fn back_button(panel: &SettingsPanel) -> gtk::Button {
-    collect(
-        panel.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-detail-back",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Button>().ok())
-    .expect("the detail view has a back button")
-}
-
 fn display_name_entry(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
@@ -389,14 +395,16 @@ fn imap_host_entry(panel: &SettingsPanel) -> gtk::Entry {
     .expect("the detail view has an IMAP host entry")
 }
 
-fn imap_port_spin(panel: &SettingsPanel) -> gtk::SpinButton {
+/// A port is typed, not stepped through 65,535 values (#1179, ADR 0029 Q3),
+/// so this is an `Entry` — there is no spin button left in this window.
+fn imap_port_field(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
         "postio-settings-account-detail-imap-port",
     )
     .into_iter()
-    .find_map(|w| w.downcast::<gtk::SpinButton>().ok())
-    .expect("the detail view has an IMAP port spin button")
+    .find_map(|w| w.downcast::<gtk::Entry>().ok())
+    .expect("the detail view has an IMAP port field")
 }
 
 fn smtp_host_entry(panel: &SettingsPanel) -> gtk::Entry {
@@ -409,14 +417,16 @@ fn smtp_host_entry(panel: &SettingsPanel) -> gtk::Entry {
     .expect("the detail view has an SMTP host entry")
 }
 
-fn smtp_port_spin(panel: &SettingsPanel) -> gtk::SpinButton {
+/// A port is typed, not stepped through 65,535 values (#1179, ADR 0029 Q3),
+/// so this is an `Entry` — there is no spin button left in this window.
+fn smtp_port_field(panel: &SettingsPanel) -> gtk::Entry {
     collect(
         panel.upcast_ref::<gtk::Widget>(),
         "postio-settings-account-detail-smtp-port",
     )
     .into_iter()
-    .find_map(|w| w.downcast::<gtk::SpinButton>().ok())
-    .expect("the detail view has an SMTP port spin button")
+    .find_map(|w| w.downcast::<gtk::Entry>().ok())
+    .expect("the detail view has an SMTP port field")
 }
 
 /// Every widget in the tree carrying `class` (or, when `class` is empty,

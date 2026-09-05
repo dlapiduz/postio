@@ -72,7 +72,7 @@ use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
 pub use change::ConfigChanged;
-pub use compose::{ComposeConfig, SignaturePlacement};
+pub use compose::{ComposeConfig, SignaturePlacement, patch_compose};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
 pub use keys::{KeyBindings, patch_keys};
