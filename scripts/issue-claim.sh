@@ -267,43 +267,59 @@ mkdir -p "$WORKTREES" "$CLAIMS"
 # (slower, still faster than a cold build); a `cp` without the flag at all
 # (macOS) fails, the partial copy is removed, and the tree starts cold,
 # which is what it did before. The sibling's `target/tmp` is never copied:
-# it is live scratch for whatever that session is running. Newest by the
-# mtime of `target/debug/deps`, which moves every time cargo finishes a
-# crate there. `--cold` and `POSTIO_CLAIM_SEED=0` opt out.
+# it is live scratch for whatever that session is running. Newest first by
+# the mtime of `target/debug/deps`, which moves every time cargo finishes a
+# crate there -- and, for the same reason, the likeliest to still have a
+# build actively writing into it (#1191). `--cold` and `POSTIO_CLAIM_SEED=0`
+# opt out.
 SEEDED=""
 # Set as soon as a candidate is found, whatever `cp` goes on to do -- the one
 # thing this needs to tell apart from "there was nothing to try" (#1190). A
 # `cp` that fails (permissions, disk full, a sibling deleted mid-copy, a
 # filesystem without reflinks and without a plain-copy fallback -- macOS)
-# left `SEEDED` empty exactly like the early-return case, so a real failure
-# and "nothing to seed from" printed the same line and looked the same as the
-# ordinary cold-start path this script already expects to take sometimes.
+# used to leave `SEEDED` empty exactly like the early-return case, so a real
+# failure and "nothing to seed from" printed the same line and looked the
+# same as the ordinary cold-start path this script already expects to take
+# sometimes.
 SEED_CANDIDATE=""
+# The first candidate's own failure, "<path>: <cp's stderr>" -- kept rather
+# than discarded (#1191). The newest candidate is also the one most likely
+# to be mid-write, so its error is the one worth reading; a later
+# candidate's failure in the same run is usually a symptom of the same
+# underlying problem (a full disk, a permissions issue) rather than a
+# second, independent thing to report.
+SEED_FAILURE=""
 seed_target() { # <tree>
     [ "$COLD" = 0 ] || return 0
     [ "${POSTIO_CLAIM_SEED:-1}" != 0 ] || return 0
-    local candidate deps_dirs="" src started
+    local candidate deps_dirs="" deps src started error
     for candidate in "$WORKTREES"/issue-*/target/debug "$REPO_ROOT/target/debug"; do
         [ -d "$candidate/deps" ] || continue
         [ "$candidate" != "$1/target/debug" ] || continue
         deps_dirs="$deps_dirs $candidate/deps"
     done
     [ -n "$deps_dirs" ] || return 0
+    # Try every candidate, newest first, rather than only the newest: a
+    # sibling with an active build in it (the newest is the likeliest to)
+    # fails a `cp -a` reading it mid-write, and giving up there paid a cold
+    # build for a problem the next-newest candidate did not have (#1191).
     # shellcheck disable=SC2086 -- worktree paths carry no spaces, by construction
-    src="$(ls -td $deps_dirs 2>/dev/null | head -1)"
-    src="${src%/deps}"
-    [ -n "$src" ] || return 0
-    SEED_CANDIDATE="$src"
-    mkdir -p "$1/target"
-    started=$(date +%s)
-    if cp -a --reflink=auto "$src" "$1/target/debug" 2>/dev/null; then
-        # The sibling's own crates have *its* path baked in; drop them so
-        # cargo rebuilds ours and keeps the dependencies (lib/ says why).
-        drop_workspace_artifacts "$1/target"
-        SEEDED="$src ($(( $(date +%s) - started ))s)"
-    else
+    for deps in $(ls -td $deps_dirs 2>/dev/null); do
+        src="${deps%/deps}"
+        [ -n "$src" ] || continue
+        SEED_CANDIDATE="$src"
+        mkdir -p "$1/target"
+        started=$(date +%s)
+        if error="$(cp -a --reflink=auto "$src" "$1/target/debug" 2>&1)"; then
+            # The sibling's own crates have *its* path baked in; drop them so
+            # cargo rebuilds ours and keeps the dependencies (lib/ says why).
+            drop_workspace_artifacts "$1/target"
+            SEEDED="$src ($(( $(date +%s) - started ))s)"
+            return 0
+        fi
         rm -rf "$1/target/debug"
-    fi
+        [ -n "$SEED_FAILURE" ] || SEED_FAILURE="$src: $error"
+    done
 }
 
 # The linker and C compiler `.cargo/config.toml` names are bare program
@@ -592,7 +608,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     elif [ -n "$SEEDED" ]; then
         echo "  target: seeded by copy from $SEEDED; only what differs rebuilds"
     elif [ -n "$SEED_CANDIDATE" ]; then
-        echo "  target: cold -- a seed candidate existed ($SEED_CANDIDATE) but the copy failed; falling back to a cold build (deps come from the machine-wide sccache)"
+        echo "  target: cold -- every seed candidate's copy failed ($SEED_FAILURE); falling back to a cold build (deps come from the machine-wide sccache)"
     else
         echo "  target: cold -- nothing to seed from (deps come from the machine-wide sccache)"
     fi
