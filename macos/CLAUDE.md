@@ -128,6 +128,24 @@ push *down* into the engine through a setter rather than being asked for by it.
 
 If you find yourself writing a rule here, it is on the wrong side.
 
+## Running it, and what a blank window means
+
+`scripts/macos-bundle.sh` then `open macos/build/Postio.app`. The application
+draws its window *before* it asks for the store's key, so a Keychain prompt
+arrives over a visible Postio — it did not before #1146, and the symptom was an
+icon in the Dock and nothing else, forever.
+
+**`POSTIO_LOG` works here**, the same `EnvFilter` the GTK build takes
+(`POSTIO_LOG=debug`, or `postio_sync=debug`), and `[logging]` in `config.toml`
+retunes a running instance. `PostioSession.startLogging()` installs it as the
+first thing `Engine.init` does — before opening the store, because opening the
+store is the call most worth tracing.
+
+To see what a stuck launch is stuck on, `sample Postio 2`. It is very good at
+this: one command named the blocked call, its caller and the SwiftUI entry
+point that made it happen. Anything under `NSApplication run` is the ordinary
+event loop; anything else on `com.apple.main-thread` is a bug.
+
 ## Things that will bite
 
 - **A nested `enum State` shadows SwiftUI's `@State`.** The error names
@@ -137,6 +155,10 @@ If you find yourself writing a rule here, it is on the wrong side.
   can work without a session — the command registry, for one — should.
 - **`swift test` needs the library on the linker path.** Use
   `scripts/macos-test.sh` rather than a bare `swift test`.
+- **`cargo` on a Mac needs two variables *unset*.** `RUSTUP_TOOLCHAIN` in the
+  environment beats `rust-toolchain.toml` — the caveat that file names — and
+  `MAKEFLAGS` points at the Linux workstation's jobserver fifo, which does not
+  exist here. Both have been observed set on a development Mac.
 - **The privacy check reads this directory.** `check-no-silent-tracking.py`
   scans `macos/Sources/**/*.swift` and refuses `URLSession`,
   `NSWorkspace.shared.open` and friends without a `POSTIO-CONSENT:` comment
