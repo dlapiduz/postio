@@ -341,16 +341,25 @@ fn show_search_panels(window: &Window, existing: Option<&'static postio_gtk::sea
 
 /// Canvas 3f's own sample file, so the shot can be held up against the
 /// drawing.
-fn show_settings(window: &Window) {
+fn show_settings(window: &Window, pane: Option<postio_gtk::settings::Section>) {
     let path =
         std::env::temp_dir().join(format!("postio-shot-settings-{}.toml", std::process::id()));
     std::fs::write(
         &path,
-        "# edits here and in the panel are the same file\n\
+        "# edits here and in the window are the same file\n\
          [ui]\n\
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
+         show_key_hints = true\n\
+         sender_avatars = false\n\
+         [sync]\n\
+         check_for_mail = \"idle\"\n\
+         poll_interval_secs = 300\n\
+         attachment_fetch = \"on_open\"\n\
+         notify = true\n\
+         [compose]\n\
+         signature_on_reply = \"above_quote\"\n\
          [keys]\n\
          archive = \"a\"\n\
          archive_thread = \"A\"\n\
@@ -359,6 +368,13 @@ fn show_settings(window: &Window) {
     .expect("a scratch config.toml for the shot");
     window.settings().load(&path);
     window.open_settings();
+    // Every pane wears the same frame, so a shot of one says nothing about
+    // the others — checking the rebuild against `22-settings-panes.png`
+    // means rendering each of them. `Accounts` is where the window opens,
+    // so no argument draws that one.
+    if let Some(pane) = pane {
+        window.settings().show_section(pane);
+    }
 }
 
 /// Three account rows, to look at what #411 put under the names.
@@ -405,7 +421,11 @@ fn show_account_detail(window: &Window, tested: bool, signature: bool) {
 
     let panel = window.settings();
     panel.set_accounts(vec![account]);
-    window.toggle_settings();
+    // Open, never toggle: `settings account` asks for the account form in
+    // the settings window, and a toggle after `show_settings` has already
+    // opened it closes the very window the shot is about — which then
+    // cannot be drawn at all (#1179).
+    window.open_settings();
     panel.open_account_detail(AccountId::new(1));
     if signature {
         // The editor, on the signature the account already has (#1086).
@@ -574,6 +594,13 @@ const KNOWN_FLAGS: &[&str] = &[
     "search",
     "syncing",
     "settings",
+    "filters",
+    "composing",
+    "appearance",
+    "keyboard",
+    "storage",
+    "privacy",
+    "configfile",
     "weights",
     "account",
     "tested",
@@ -884,7 +911,21 @@ fn main() -> glib::ExitCode {
         show_search_panels(&window, wired.and_then(|w| w.search));
     }
     if flag("settings") {
-        show_settings(&window);
+        // Which pane, from the mode words. `flag` is `main`'s own closure
+        // over the arguments, so the choice is made here and handed over.
+        let pane = [
+            ("filters", postio_gtk::settings::Section::Filters),
+            ("composing", postio_gtk::settings::Section::Composing),
+            ("appearance", postio_gtk::settings::Section::Appearance),
+            ("keyboard", postio_gtk::settings::Section::Keyboard),
+            ("storage", postio_gtk::settings::Section::Sync),
+            ("privacy", postio_gtk::settings::Section::Privacy),
+            ("configfile", postio_gtk::settings::Section::ConfigFile),
+        ]
+        .into_iter()
+        .find(|(word, _)| flag(word))
+        .map(|(_, section)| section);
+        show_settings(&window, pane);
     }
     if flag("weights") {
         show_account_weights(&window);
@@ -910,6 +951,18 @@ fn main() -> glib::ExitCode {
             let host = composer
                 .detached_window()
                 .expect("`detached` needs `compose`: there is nothing to pop out");
+            settle(&host);
+            host.upcast()
+        }
+        // Settings is its own window now (#1179), so a shot of the main one
+        // would show the workspace it is sitting in front of. Same shape as
+        // the detached composer directly above, and for the same reason:
+        // a surface nobody can render is a surface nobody checks against
+        // the drawing, and this one has chrome of its own.
+        None if flag("settings") => {
+            let host = window
+                .settings_window()
+                .expect("`settings` opens a window; there is nothing to shoot without one");
             settle(&host);
             host.upcast()
         }

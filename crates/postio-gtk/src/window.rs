@@ -35,6 +35,16 @@ use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
+
+/// How big the settings window opens.
+///
+/// Wide enough for a fixed 214px sidebar and a two-column pane beside it
+/// without either column collapsing, and tall enough that the accounts list
+/// and the form under it are both on screen at once — the two measurements
+/// the drawing actually constrains.
+const SETTINGS_WIDTH: i32 = 900;
+/// See [`SETTINGS_WIDTH`].
+const SETTINGS_HEIGHT: i32 = 620;
 use crate::shell::Shell;
 use crate::sidebar::Sidebar;
 use crate::state::WindowState;
@@ -185,6 +195,10 @@ mod imp {
         pub toast: OnceCell<crate::toast::Toast>,
 
         pub settings: OnceCell<SettingsPanel>,
+        /// The window the panel is shown in, built on first open (#1179).
+        /// A `RefCell` rather than a `OnceCell` only because it is filled
+        /// from `&self`, long after `constructed` has run.
+        pub settings_window: std::cell::RefCell<Option<adw::Window>>,
         /// What a message is made of. See [`crate::parts`].
         pub parts: OnceCell<crate::parts::PartsPanel>,
         /// The pane that had the keyboard when the box opened.
@@ -1489,6 +1503,13 @@ impl Window {
         finder.attach(&header.search);
         let cheatsheet = CheatSheet::new();
         cheatsheet.set_visible(false);
+        // Settings is a window of its own now, not an overlay (#1179). A
+        // panel with no frame around it could not say whether its panes
+        // were tabs, cards or a dialog; a real `AdwWindow` with a header
+        // bar, a fixed sidebar and one pane answers that before anything
+        // inside it is read. The host is built on first open, not here, so
+        // `Window::new` still constructs no settings sub-widget it does not
+        // have to (#873).
         let settings = SettingsPanel::new();
         settings.set_visible(false);
         // Canvas 3g. An overlay like the rest — a message's structure is
@@ -1501,7 +1522,6 @@ impl Window {
         overlay.set_child(Some(&shell));
         overlay.add_overlay(&finder);
         overlay.add_overlay(&cheatsheet);
-        overlay.add_overlay(&settings);
         overlay.add_overlay(&parts);
         let _ = self.imp().parts.set(parts);
 
@@ -1578,6 +1598,17 @@ impl Window {
             }
         ));
         settings.accounts_list().add_controller(accounts_focus);
+
+        // The settings window's own buttons raise `CommandId`s and run
+        // none of them: `run` below is the one dispatch every keystroke,
+        // menu item and palette entry already goes through, and a second
+        // path from a button straight to the runtime is how two surfaces
+        // come to disagree about what `Refresh` means (#1179).
+        settings.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |command| window.run(command)
+        ));
 
         let _ = self.imp().settings.set(settings);
         let _ = self.imp().overlay.set(overlay);
@@ -2511,7 +2542,85 @@ impl Window {
             .clone()
     }
 
-    /// Shows the settings panel over the workspace.
+    /// The window the settings panel lives in, once it has been opened.
+    ///
+    /// `None` before the first open: the host is built lazily, so a session
+    /// that never opens settings never builds one, and `Window::new` stays
+    /// clear of the panel's sub-widgets (#873).
+    pub fn settings_window(&self) -> Option<adw::Window> {
+        self.imp().settings_window.borrow().clone()
+    }
+
+    /// Builds the settings window around the panel, once.
+    ///
+    /// An `AdwWindow` with an `AdwToolbarView`: the panel supplies the
+    /// header bar (it owns the find-a-setting field that filters its own
+    /// sidebar) and the toolbar view supplies the real window chrome, which
+    /// is what gives the close button, the drag area, and the frame that
+    /// makes the whole thing legible as a window rather than a card.
+    fn ensure_settings_window(&self) -> adw::Window {
+        if let Some(host) = self.imp().settings_window.borrow().clone() {
+            return host;
+        }
+        let panel = self.settings();
+        let layout = adw::ToolbarView::new();
+        layout.add_top_bar(&panel.header_bar());
+        layout.set_content(Some(&panel));
+
+        let host = adw::Window::builder()
+            .title("Settings")
+            .modal(false)
+            .transient_for(self)
+            .destroy_with_parent(true)
+            .default_width(SETTINGS_WIDTH)
+            .default_height(SETTINGS_HEIGHT)
+            .content(&layout)
+            .build();
+        // Dark and high contrast are driven by classes on the window, never
+        // by a CSS media query — GTK evaluates those only for the theme
+        // provider (`style`'s own module doc). A second toplevel therefore
+        // needs its own tracker, or the settings window stays in the light
+        // palette while the workspace behind it goes dark.
+        crate::style::track(&host);
+
+        // A satellite window's keys never reach this window's controller,
+        // and it must not grow a keymap of its own either — or `a` would
+        // mean one thing in the workspace and another in settings, and
+        // `[keys]` would only reach one of them. So it forwards here, the
+        // same arrangement the detached composer has had since #341:
+        // same resolver, same user bindings, same registry. The context
+        // comes from this window because the settings panel's own focus
+        // controllers keep it in step as the keyboard moves between the
+        // account list, the keybinding list and everything else.
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[weak]
+            host,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, state| window.handle_key_in(key, state, &host, window.context())
+        ));
+        host.add_controller(keys);
+
+        // Closing the window is closing the panel, however it happens —
+        // the titlebar's button, the window manager, `Escape` inside.
+        host.connect_close_request(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_| {
+                window.close_settings();
+                glib::Propagation::Stop
+            }
+        ));
+        *self.imp().settings_window.borrow_mut() = Some(host.clone());
+        host
+    }
+
+    /// Shows the settings window.
     pub fn open_settings(&self) {
         self.ensure_keys_focus_controller();
         // Only one overlay at a time. Through `press_escape`, not
@@ -2529,13 +2638,24 @@ impl Window {
                 path,
             );
         }
+        // How many rows of each density fit on screen is a fact about the
+        // list in *this* window, which the panel cannot see from inside its
+        // own (#1179).
+        self.settings()
+            .set_list_viewport_height(self.list().height());
         self.settings().set_visible(true);
+        let host = self.ensure_settings_window();
+        host.present();
         self.settings().grab_focus();
     }
 
-    /// Hides the settings panel and gives the keyboard back to the workspace.
+    /// Hides the settings window and gives the keyboard back to the
+    /// workspace.
     pub fn close_settings(&self) {
         self.settings().set_visible(false);
+        if let Some(host) = self.imp().settings_window.borrow().as_ref() {
+            host.set_visible(false);
+        }
         self.shell().grab_focus();
     }
 

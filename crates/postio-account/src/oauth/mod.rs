@@ -35,9 +35,12 @@ pub mod pkce;
 pub mod redirect;
 pub mod token_source;
 
-use url::Url;
-
 use crate::cancel::CancelToken;
+
+/// The URL type [`BrowserOpener`] speaks, re-exported so anything
+/// implementing that trait names the same one this crate's API does rather
+/// than pinning `url` again on its own.
+pub use url::Url;
 
 pub use browser::BrowserOpener;
 pub use error::OAuthError;

@@ -47,7 +47,14 @@ pub fn focus_on_a_keys_row_enters_the_keys_context_and_leaving_restores_it() {
          a bare letter fires a command while the focus ring sits on a row"
     );
 
-    window.list().grab_focus();
+    // Focus is per window, and settings is a window of its own now
+    // (#1179): moving the keyboard in the workspace behind would leave the
+    // keybinding row still focused in here, which is not what leaving the
+    // list means.
+    gtk::prelude::GtkWindowExt::set_focus(
+        &window.settings_window().expect("settings is open"),
+        None::<&gtk::Widget>,
+    );
     pump();
     assert_eq!(
         window.context(),
