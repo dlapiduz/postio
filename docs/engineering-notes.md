@@ -3432,3 +3432,4 @@ Three things worth keeping:
   `SecretError::GrantExpired`, and pointedly not `Locked` or `NotFound`, which
   are fixed by unlocking and by adding a credential rather than by signing in
   again.
+- 2026-09-05 — [The WAL is not the startup cost, and measuring it took ten minutes (2026-09-05, #1175)](notes/2026-09-05-the-wal-is-not-the-startup-cost.md)
