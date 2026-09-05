@@ -11,7 +11,7 @@ use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
 use postio_storage::PooledConnection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
-use postio_sync::{Outcome, resync_mailbox, sync_mailbox};
+use postio_sync::{Outcome, resync_mailbox, sync_mailbox, sync_mailbox_with_batch_size};
 use rusqlite::Connection;
 
 fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
@@ -547,5 +547,64 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
         after, before,
         "the same local rows, not freshly inserted replacements: the \
          generation held, so nothing was wiped"
+    );
+}
+
+/// An interrupted first pass must be resumed, not started over (#1176).
+///
+/// `enumerate`'s own doc promises it: "Cancelling `cancel` between batches
+/// stops the pass without losing anything already committed — the next call
+/// resumes exactly where this one stopped", and `Coverage::Missing` exists to
+/// make that resume cheap. The resume never happens, because the state an
+/// interrupted pass leaves behind is exactly the state `resync_mailbox` wipes.
+///
+/// `complete_full_sync` runs at the *end* of an enumeration, so a pass that is
+/// cut short leaves rows on disk and `last_full_sync_at` still `None`. The
+/// next pass therefore plans `Full(NeverSynced)` — and `NeverSynced` is
+/// grouped with `GenerationChanged` for the wipe, even though nothing
+/// renumbered. Every pass throws away the last one's work and starts from
+/// zero, which for a mailbox too big to finish in one pass is forever: the
+/// sidebar says `never synced` because it never has.
+///
+/// The second pass here is cancelled before it can fetch anything, which is
+/// what makes this about the wipe and nothing else: whatever the pass would
+/// have gone on to do, it must not have already destroyed what was there.
+#[tokio::test]
+async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_stored() {
+    let backend = server_with_messages(6).await;
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (_account, inbox) = local(&connection);
+
+    // A first pass, cut short after its first committed batch.
+    let cancel = CancelToken::new();
+    let _ = sync_mailbox_with_batch_size(&connection, &backend, &inbox, 1, &cancel, |_| {
+        cancel.cancel();
+    })
+    .await;
+    let carried = known_uids(&connection, &inbox);
+    assert!(
+        !carried.is_empty() && carried.len() < 6,
+        "this case needs a pass that got part of the way: it stored {carried:?}"
+    );
+    assert!(
+        SyncStateRepository::new(&connection)
+            .get(inbox.id)
+            .expect("sync state")
+            .is_none_or(|state| !state.has_synced()),
+        "an interrupted pass must not have recorded a completed full sync"
+    );
+
+    // The next pass, cancelled before it can ask the server for anything.
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let _ = resync_mailbox(&connection, &backend, &inbox, &cancel, |_| {}).await;
+
+    assert_eq!(
+        known_uids(&connection, &inbox),
+        carried,
+        "the next pass wiped what the interrupted one had already stored, so \
+         nothing accumulates and a mailbox too big to finish in one pass \
+         never finishes"
     );
 }

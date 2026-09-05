@@ -177,37 +177,45 @@ pub async fn resync_mailbox(
                 "falling back to a full resync"
             );
             // Only a renumbering invalidates cached rows — the same line
-            // `rebuild` below draws (#564). A modseq-less backend plans
-            // this path on *every* pass, and wiping there would refetch
-            // the world each tick and lose local rows whose flags have
-            // not drained; the generation held, so the rows are refreshed
-            // in place instead.
-            let (wiped, coverage) = match reason {
-                FullResyncReason::GenerationChanged | FullResyncReason::NeverSynced => {
+            // `rebuild` below draws (#564). A modseq-less backend plans this
+            // path on *every* pass, and wiping there would refetch the world
+            // each tick and lose local rows whose flags have not drained; the
+            // generation held, so the rows are refreshed in place instead.
+            //
+            // `NeverSynced` used to be wiped alongside `GenerationChanged`,
+            // and that was #1176. `complete_full_sync` runs at the *end* of an
+            // enumeration, so a pass cut short leaves rows on disk and
+            // `last_full_sync_at` still `None` — which is `NeverSynced`. The
+            // wipe therefore fired on exactly the state an interrupted pass
+            // leaves, threw away what it had fetched, and started from zero;
+            // for a mailbox too big to finish in one pass, forever. Nothing
+            // renumbered, so the rows are as valid as any other pass's, and
+            // `Coverage::Missing` is documented as the thing that "makes a
+            // sync that was interrupted halfway cheap to resume". It could
+            // not, because there was never anything left to resume from.
+            let coverage = match reason {
+                FullResyncReason::GenerationChanged => {
                     if let Some(generation) = previous.generation {
                         wipe_mailbox(connection, mailbox.id, generation)?;
                     }
-                    (true, initial::Coverage::Missing)
+                    initial::Coverage::Missing
                 }
+                FullResyncReason::NeverSynced => initial::Coverage::Missing,
                 FullResyncReason::NoModSeq | FullResyncReason::ModSeqWentBackwards => {
-                    (false, initial::Coverage::Everything)
+                    initial::Coverage::Everything
                 }
             };
             sync_state.observe(mailbox.id, &reported, Utc::now())?;
-            let report = if wiped {
-                initial::sync_mailbox(connection, backend, mailbox, cancel, on_progress).await?
-            } else {
-                initial::enumerate(
-                    connection,
-                    backend,
-                    mailbox,
-                    initial::DEFAULT_BATCH_SIZE,
-                    coverage,
-                    cancel,
-                    on_progress,
-                )
-                .await?
-            };
+            let report = initial::enumerate(
+                connection,
+                backend,
+                mailbox,
+                initial::DEFAULT_BATCH_SIZE,
+                coverage,
+                cancel,
+                on_progress,
+            )
+            .await?;
             Ok(Outcome::Full { reason, report })
         }
         ResyncPlan::Incremental { since } => {
