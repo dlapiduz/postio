@@ -613,6 +613,7 @@ fn oauth_composition_data_round_trips_and_stays_optional() {
         token_url: "https://auth.example.com/token".to_string(),
         authorize_url: "https://auth.example.com/authorize".to_string(),
         scopes: "https://mail.example.com/".to_string(),
+        refresh_token_lifetime_days: None,
     });
     AccountRepository::new(&connection)
         .update(&mut account)
@@ -627,6 +628,59 @@ fn oauth_composition_data_round_trips_and_stays_optional() {
         read.oauth.expect("the client survived").token_url,
         "https://auth.example.com/token",
         "startup rebuilds the token source from this, offline included"
+    );
+}
+
+#[test]
+fn the_refresh_grant_lifetime_round_trips_and_stays_optional() {
+    // #954: the engine rebuilds the token source from this row at every
+    // launch, and the deadline it re-records on each refresh comes from
+    // here. A field that did not survive the round trip would leave every
+    // restarted account with no deadline at all -- silently, since "no
+    // stated lifetime" is a legitimate answer.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let mut account = test_support::account(&connection);
+
+    account.auth = postio_model::account::AuthMethod::XOAuth2;
+    account.oauth = Some(postio_model::account::OAuthConfig {
+        client_id: "postio-desktop.apps.example".to_string(),
+        token_url: "https://auth.example.com/token".to_string(),
+        authorize_url: "https://auth.example.com/authorize".to_string(),
+        scopes: "https://mail.example.com/".to_string(),
+        refresh_token_lifetime_days: Some(7),
+    });
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("update");
+
+    assert_eq!(
+        AccountRepository::new(&connection)
+            .get(account.id)
+            .expect("read")
+            .expect("the account")
+            .oauth
+            .expect("the client survived")
+            .refresh_token_lifetime_days,
+        Some(7),
+    );
+
+    // And absent stays absent, which is the ordinary case: most providers
+    // state nothing, and those accounts must behave exactly as before.
+    account.oauth.as_mut().unwrap().refresh_token_lifetime_days = None;
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("update");
+    assert_eq!(
+        AccountRepository::new(&connection)
+            .get(account.id)
+            .expect("read")
+            .expect("the account")
+            .oauth
+            .expect("the client survived")
+            .refresh_token_lifetime_days,
+        None,
+        "clearing it must clear it, not leave the old deadline standing"
     );
 }
 

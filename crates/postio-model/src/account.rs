@@ -150,6 +150,19 @@ pub struct OAuthConfig {
     /// The scopes the sign-in requested, space-joined as RFC 6749 §3.3
     /// carries them.
     pub scopes: String,
+    /// How many days the provider says the **refresh** grant lives, copied
+    /// from its preset row at sign-in.
+    ///
+    /// Here rather than looked up per refresh for the same reason
+    /// [`token_url`](Self::token_url) is: the engine rebuilds a token source
+    /// from this row at every launch and must not need the preset table, or
+    /// a network, to do it.
+    ///
+    /// `None` is the ordinary case — most providers state nothing — and must
+    /// behave exactly as Postio did before the field existed: no early
+    /// deadline, and a dead grant found the way it always was (#954).
+    #[serde(default)]
+    pub refresh_token_lifetime_days: Option<u32>,
 }
 
 /// A signature appended to outgoing mail.

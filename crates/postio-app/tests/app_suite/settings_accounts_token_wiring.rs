@@ -69,6 +69,7 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
         token_url: "https://example.com/token".to_owned(),
         authorize_url: "https://example.com/authorize".to_owned(),
         scopes: "mail".to_owned(),
+        refresh_token_lifetime_days: None,
     });
     AccountRepository::new(&connection)
         .create(&mut second)
@@ -83,6 +84,7 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
         secrets.clone(),
         "https://example.com/token".parse().unwrap(),
         "postio-test-client",
+        None,
         None,
     );
     let runtime = tokio::runtime::Runtime::new().expect("a runtime for the seed call");

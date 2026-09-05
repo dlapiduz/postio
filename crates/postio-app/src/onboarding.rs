@@ -143,6 +143,7 @@ pub fn install(
                 authorize: Some(oauth.authorize_url.clone()),
                 token: Some(oauth.token_url.clone()),
                 scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
+                refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
             })
     })));
     // A repair over a JMAP account proves over JMAP again.
@@ -601,6 +602,7 @@ pub(crate) fn submit_oauth(
     let (sender, receiver) = async_channel::bounded(1);
     let flow_cancel = cancel.clone();
     let scopes = offer.scopes.clone();
+    let refresh_lifetime = offer.refresh_token_lifetime_days;
     wiring.runtime.spawn(async move {
         let answer = run_sign_in(&settings, &client, &offer, opener.as_ref(), &flow_cancel).await;
         let _ = sender.send(answer).await;
@@ -637,8 +639,16 @@ pub(crate) fn submit_oauth(
             wiring.runtime.spawn(async move {
                 let _ = sender
                     .send(
-                        persist_oauth(&database, secrets, &written, &endpoints, &scopes, tokens)
-                            .await,
+                        persist_oauth(
+                            &database,
+                            secrets,
+                            &written,
+                            &endpoints,
+                            &scopes,
+                            refresh_lifetime,
+                            tokens,
+                        )
+                        .await,
                     )
                     .await;
             });
@@ -770,6 +780,7 @@ async fn persist_oauth(
     submission: &Submission,
     endpoints: &postio_account::oauth::Endpoints,
     scopes: &[String],
+    refresh_token_lifetime_days: Option<u32>,
     tokens: postio_account::oauth::TokenResponse,
 ) -> Result<(), String> {
     let Some(client) = submission.oauth_client.clone() else {
@@ -782,6 +793,9 @@ async fn persist_oauth(
         endpoints.token.clone(),
         client.client_id.clone(),
         client.client_secret.clone(),
+        // So the mint records the grant's deadline, not just its rotations.
+        refresh_token_lifetime_days
+            .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
     );
     source.seed(&key, tokens).await.map_err(|error| {
         format!(
@@ -798,7 +812,14 @@ async fn persist_oauth(
             })?;
     }
 
-    if let Err(reason) = save_oauth(database, submission, &client, endpoints, scopes) {
+    if let Err(reason) = save_oauth(
+        database,
+        submission,
+        &client,
+        endpoints,
+        scopes,
+        refresh_token_lifetime_days,
+    ) {
         // Roll the secrets back the same way `persist` does: nothing reads
         // a credential no account row names, but leaving one is untidy.
         let _ = secrets
@@ -816,6 +837,7 @@ fn save_oauth(
     client: &postio_gtk::onboarding::OAuthClientSubmission,
     endpoints: &postio_account::oauth::Endpoints,
     scopes: &[String],
+    refresh_token_lifetime_days: Option<u32>,
 ) -> Result<(), String> {
     // A browser sign-in is an IMAP account today; the Gmail REST backend
     // is #546, gated on its preset row flipping after #195.
@@ -843,6 +865,7 @@ fn save_oauth(
         token_url: endpoints.token.to_string(),
         authorize_url: endpoints.authorize.to_string(),
         scopes: scopes.join(" "),
+        refresh_token_lifetime_days,
     });
     repository
         .update(&mut account)

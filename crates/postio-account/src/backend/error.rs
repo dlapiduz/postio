@@ -212,7 +212,10 @@ impl BackendError {
 
     /// Whether the user has to supply a new password before anything will work.
     pub fn is_authentication_failure(&self) -> bool {
-        matches!(self, Self::Auth { .. })
+        matches!(
+            self,
+            Self::Auth { .. } | Self::Secret(SecretError::GrantExpired { .. })
+        )
     }
 
     /// Whether the mailbox's cached state must be thrown away and refetched.
@@ -229,5 +232,42 @@ impl BackendError {
             Self::RateLimited { retry_after, .. } => *retry_after,
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_expired_grant_is_an_authentication_failure() {
+        // What routes the account to "sign in again": the connection layer
+        // asks this question and nothing else, so a grant that has passed
+        // its provider's stated lifetime has to answer it the same way a
+        // server's refusal does (#954).
+        let expired = BackendError::Secret(SecretError::GrantExpired {
+            account: "ada@example.com".to_owned(),
+        });
+        assert!(expired.is_authentication_failure());
+    }
+
+    #[test]
+    fn a_locked_keyring_is_not_an_authentication_failure() {
+        // The distinction the variant exists for. A locked keyring is fixed
+        // by unlocking it, and telling the user to sign in again would send
+        // them to re-do a sign-in that is perfectly good.
+        let locked = BackendError::Secret(SecretError::Locked {
+            keyring: "login".to_owned(),
+            account: "ada@example.com".to_owned(),
+        });
+        assert!(!locked.is_authentication_failure());
+    }
+
+    #[test]
+    fn a_missing_credential_is_not_one_either() {
+        let missing = BackendError::Secret(SecretError::NotFound {
+            account: "ada@example.com".to_owned(),
+        });
+        assert!(!missing.is_authentication_failure());
     }
 }
