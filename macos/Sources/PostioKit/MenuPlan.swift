@@ -77,7 +77,7 @@ public enum MenuPlan {
     /// A sequence answers `nil`. `⌘` glyphs cannot express "press g, then g",
     /// and an item showing `G` for a command that `G` does not run is worse
     /// than one showing nothing.
-    static func accelerator(from binding: String) -> String? {
+    public static func accelerator(from binding: String) -> String? {
         guard !binding.contains(" ") else { return nil }
         var parts = binding.split(separator: "+").map(String.init)
         guard let key = parts.popLast(), !key.isEmpty else { return nil }

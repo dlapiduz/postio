@@ -67,6 +67,33 @@ struct Shell: View {
                 .onTapGesture { engine.context = .reader }
         }
         .navigationTitle("Postio")
+        // The palette, over everything, with the keyboard in it. `context`
+        // follows so the resolver answers for the surface that actually has
+        // focus -- a palette that still resolved keys as the list would
+        // archive mail while somebody typed a command's name.
+        .overlay {
+            if engine.showingPalette, let session = engine.session {
+                Color.black.opacity(0.12)
+                    .ignoresSafeArea()
+                    .onTapGesture { engine.dismissOverlays() }
+                Palette(
+                    session: session,
+                    context: .list,
+                    run: { engine.run($0) },
+                    dismiss: { engine.dismissOverlays() }
+                )
+                .onAppear { engine.context = .palette }
+            }
+        }
+        .sheet(isPresented: $engine.showingCheatSheet) {
+            if let session = engine.session {
+                CheatSheet(
+                    session: session,
+                    context: .list,
+                    dismiss: { engine.dismissOverlays() }
+                )
+            }
+        }
         // A half-typed sequence, shown while it waits. `g` on its own is a
         // second of the application looking like it ignored a key, and the
         // resolver reports the pending chords precisely so it does not have

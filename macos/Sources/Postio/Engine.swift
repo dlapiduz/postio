@@ -93,7 +93,7 @@ final class Engine {
             // dispatch is the monitor's, above.
             MenuBar.install(
                 binding: { [weak self] command in self?.session?.binding(for: command) },
-                run: { [weak self] id in self?.session?.invoke(id) }
+                run: { [weak self] id in self?.run(id) }
             )
             // The platform observes and the engine is told. Callbacks arrive
             // on a background queue and may repeat the same answer; the
@@ -153,6 +153,17 @@ final class Engine {
     /// keystroke can change, and a stale count is a claim about what an
     /// action is going to hit.
     var selectionSummary: String? { session?.selectionSummary }
+
+    /// Whether the command palette is open.
+    ///
+    /// A *surface*, which is why the boundary does not handle
+    /// `command_palette` the way it handles `next_message`: a session cannot
+    /// present a sheet. `postio-gtk`'s `run_action` makes the same call for
+    /// the same reason — a frontend has to know which commands it draws
+    /// something for, and only those.
+    var showingPalette = false
+    /// Whether the cheat sheet is open.
+    var showingCheatSheet = false
 
     /// The chords of a half-typed sequence, for the shell to show.
     ///
@@ -259,12 +270,44 @@ final class Engine {
             resolve: { [weak self] reduced, context, typing in
                 self?.session?.key(reduced, in: context, typing: typing) ?? .unhandled
             },
-            run: { [weak self] id in self?.session?.invoke(id) },
+            run: { [weak self] id in self?.run(id) },
             pending: { [weak self] description in self?.pendingChord = description },
             context: { [weak self] in self?.context ?? .list }
         )
         monitor.start()
         keys = monitor
+    }
+
+    /// Run a command, presenting it here if it is a surface this frontend owns.
+    ///
+    /// The two exceptions are the two that *are* windows. Everything else —
+    /// including the cursor and the selection, which are frontend state —
+    /// goes to `invoke`, where the boundary decides whether it is its own or
+    /// the engine's. Keeping the list to two is what stops this becoming the
+    /// hand-maintained command table #657 exists to prevent.
+    func run(_ id: String) {
+        switch id {
+        case "command_palette":
+            showingCheatSheet = false
+            showingPalette = true
+        case "cheat_sheet":
+            showingPalette = false
+            showingCheatSheet = true
+        case "back" where showingPalette || showingCheatSheet:
+            // Escape means "get me out of here", and the innermost "here" is
+            // whichever of these is open.
+            showingPalette = false
+            showingCheatSheet = false
+        default:
+            session?.invoke(id)
+        }
+    }
+
+    /// Close whatever overlay is open, and put the keyboard back in the list.
+    func dismissOverlays() {
+        showingPalette = false
+        showingCheatSheet = false
+        context = .list
     }
 
     /// Say where the keyboard is, so a verb with nothing marked knows which

@@ -20,6 +20,7 @@ mod aiming;
 mod config;
 mod keys;
 mod list;
+mod palette;
 mod reader;
 mod registry;
 mod selection;

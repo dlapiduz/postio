@@ -153,6 +153,23 @@ public final class PostioSession {
     /// separate, and moving down the list must not build a selection.
     public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
 
+    /// The palette's rows for `query`, best first.
+    ///
+    /// Already ranked and already filtered to what `context` can run.
+    /// **Do not sort or filter these again**: the ranking is
+    /// `postio_ui::palette`'s, and a second one means the same query offers
+    /// different things on each platform.
+    public func paletteEntries(_ query: String, in context: UiContext) -> [PaletteEntryFfi] {
+        inner.paletteEntries(query: query, context: context)
+    }
+
+    /// Every command reachable in `context`, with the binding in force.
+    ///
+    /// The same list the palette reads, unfiltered — one list read two ways.
+    public func cheatSheet(in context: UiContext) -> [PaletteEntryFfi] {
+        inner.cheatSheet(context: context)
+    }
+
     /// Whether `message` is *marked*.
     ///
     /// Not whether it is under the cursor: `PRODUCT.md` §9 keeps those apart,

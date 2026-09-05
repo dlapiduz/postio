@@ -303,6 +303,15 @@ pub struct Session {
     /// position means scanning the window, `j` happens on every keypress, and
     /// a row whose page has not arrived has no id to be found by at all.
     cursor_row: Mutex<Option<u32>>,
+    /// How many accounts the open view is about: one, or all of them.
+    ///
+    /// Resolved when the scope changes rather than on every palette keystroke:
+    /// a mailbox belongs to one account and the store is what knows which, and
+    /// the palette asks this on every character typed. It decides only whether
+    /// a command with `Requirement::SingleAccount` is offered — `Move` needs
+    /// somewhere in *that* account to put something, and a unified view has
+    /// no such somewhere (#182).
+    account_scope: Mutex<postio_core::Scope>,
     /// Where a shift-extension started.
     ///
     /// The anchor is what makes shift *extend* rather than accumulate: the
@@ -474,6 +483,25 @@ impl Session {
     #[uniffi::method(name = "cursorMessage")]
     pub fn cursor_message_ffi(&self) -> Option<i64> {
         self.cursor_message()
+    }
+
+    /// The palette's rows for `query`. See [`Session::palette_entries`].
+    #[uniffi::method(name = "paletteEntries")]
+    pub fn palette_entries_ffi(
+        &self,
+        query: String,
+        context: crate::UiContext,
+    ) -> Vec<crate::PaletteEntryFfi> {
+        self.palette_entries(&query, context)
+    }
+
+    /// Every command reachable here, with the binding in force.
+    ///
+    /// The same list the palette reads, unfiltered — see
+    /// [`Session::cheat_sheet`].
+    #[uniffi::method(name = "cheatSheet")]
+    pub fn cheat_sheet_ffi(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
+        self.cheat_sheet(context)
     }
 
     /// Whether `message` is marked, for a row deciding how to draw itself.
@@ -720,6 +748,7 @@ impl Session {
                 reachable: Mutex::new(Vec::new()),
                 cursor: Mutex::new(None),
                 cursor_row: Mutex::new(None),
+                account_scope: Mutex::new(postio_core::Scope::default()),
                 anchor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
@@ -778,6 +807,7 @@ impl Session {
             reachable: Mutex::new(Vec::new()),
             cursor: Mutex::new(None),
             cursor_row: Mutex::new(None),
+            account_scope: Mutex::new(postio_core::Scope::default()),
             anchor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
@@ -813,6 +843,8 @@ impl Session {
         *self.cursor.lock().expect("cursor lock") = None;
         *self.cursor_row.lock().expect("cursor row lock") = None;
         *self.anchor.lock().expect("anchor lock") = None;
+        *self.account_scope.lock().expect("account scope lock") =
+            self.resolve_account_scope(listed);
         self.list.lock().expect("list lock").reset(total)
     }
 
@@ -997,6 +1029,81 @@ impl Session {
             _ => return false,
         }
         true
+    }
+
+    /// How many accounts `scope` is about.
+    ///
+    /// A mailbox is one account's, and the store is what knows whose — so
+    /// this reads it, once, when the scope changes. Anything it cannot
+    /// resolve is `Unified`, which is the conservative answer: it withholds
+    /// the commands that need a single account rather than offering one that
+    /// would have nowhere to act.
+    fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
+        use postio_runtime::store::ListScope;
+        match scope {
+            ListScope::Account(account) | ListScope::Flagged(account) => {
+                postio_core::Scope::Account(account)
+            }
+            ListScope::Mailbox(mailbox) => {
+                let Some((database, _)) = self.store_and_blobs() else {
+                    return postio_core::Scope::Unified;
+                };
+                let Ok(connection) = database.connection() else {
+                    return postio_core::Scope::Unified;
+                };
+                postio_storage::repository::MailboxRepository::new(&connection)
+                    .get(mailbox)
+                    .ok()
+                    .flatten()
+                    .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
+                    .unwrap_or(postio_core::Scope::Unified)
+            }
+            ListScope::Unified | ListScope::Snoozed(_) | ListScope::Thread(_) => {
+                postio_core::Scope::Unified
+            }
+        }
+    }
+
+    /// The palette's rows for `query`, best first.
+    ///
+    /// **The matcher is `postio_ui::palette`'s.** Swift must not write its
+    /// own: the ranking is a product decision, and two rankings mean the same
+    /// query offers different things on each platform.
+    ///
+    /// Filtered to what `context` can actually run and to what the open scope
+    /// satisfies. Offering a command the focused surface will ignore is worse
+    /// than omitting it — the user presses Return, nothing happens, and that
+    /// reads as a broken application rather than an unavailable command.
+    pub fn palette_entries(
+        &self,
+        query: &str,
+        context: crate::UiContext,
+    ) -> Vec<crate::PaletteEntryFfi> {
+        let keymap = self.keymap();
+        postio_ui::palette::entries(
+            &keymap,
+            postio_core::Context::from(context),
+            *self.account_scope.lock().expect("account scope lock"),
+            query,
+        )
+        .into_iter()
+        .map(crate::PaletteEntryFfi::from)
+        .collect()
+    }
+
+    /// Every command with the binding actually in force, in cheat-sheet order.
+    ///
+    /// The same list the palette reads, unfiltered by a query — *"they are the
+    /// same list read two ways"* (#658). Building them separately would mean
+    /// two places deciding what "available here" means, and they would
+    /// disagree.
+    pub fn cheat_sheet(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
+        self.palette_entries("", context)
+    }
+
+    /// The bindings in force, resolved for this platform.
+    fn keymap(&self) -> postio_core::Keymap {
+        postio_core::Keymap::resolve(&self.keys)
     }
 
     /// Whether nothing is marked.
