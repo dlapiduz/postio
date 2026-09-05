@@ -54,7 +54,7 @@ pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use palette::PaletteEntryFfi;
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use search::{MatchRangeFfi, SnippetFfi};
+pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
 
 /// Every command the registry knows, in cheat-sheet order.

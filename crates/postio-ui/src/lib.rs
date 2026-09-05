@@ -17,6 +17,7 @@ pub mod keymap;
 pub mod list;
 pub mod palette;
 pub mod reader;
+pub mod search;
 pub mod selection;
 pub mod sidebar;
 pub mod tokens;
