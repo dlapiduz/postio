@@ -506,7 +506,10 @@ mod tests {
         );
         assert_eq!(
             names.get(&MailboxRole::Archive).map(String::as_str),
-            Some("Archives")
+            // "Archive", not "Archives": #1178. The plural is what somebody
+            // calls a folder they file years under, and pointing the role at
+            // it sends every archive into a folder with four messages in it.
+            Some("Archive")
         );
     }
 
