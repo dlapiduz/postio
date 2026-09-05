@@ -53,6 +53,15 @@ use crate::migrations;
 /// page cache per connection.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 
+/// What the write-ahead log may keep, in bytes.
+///
+/// The same number [`PRAGMAS`] gives to `journal_size_limit`, in a form Rust
+/// can compare a file size against — [`Database::open`] needs it to decide
+/// whether a log left behind is worth reclaiming. `the_ceiling_and_the_pragma_agree`
+/// keeps the two in step, because a `const` beside a string literal is exactly
+/// the pair that drifts.
+pub const WAL_SIZE_LIMIT: u64 = 16 * 1024 * 1024;
+
 /// The pragmas applied to every connection, in order.
 ///
 /// * `journal_mode = WAL` — readers do not block the writer and the writer does
@@ -90,6 +99,31 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// connection, before anything reads a page, so [`configure`] issues it ahead
 /// of this batch — see there.
 ///
+/// # The two that bound the write-ahead log
+///
+/// `wal_autocheckpoint` is SQLite's default of 1000 pages, said out loud
+/// because the number it means depends on a setting in another file: the page
+/// size is 8192 (#381), so this is an 8 MB log rather than the 4 MB the
+/// default implies at SQLite's own default page size. A page-size change
+/// would otherwise move this silently.
+///
+/// `journal_size_limit` is the one that was missing, and it is not a tuning
+/// knob — it is the difference between a log that recovers and one that does
+/// not. A checkpoint *resets* the log: SQLite starts writing again from the
+/// top of the same file. It does not give the file back. Without a limit the
+/// high-water mark is permanent, so one burst is enough — and a burst is
+/// ordinary, because a checkpoint cannot pass the oldest open reader and a
+/// running Postio always has readers. The live install reached **676 MB of
+/// log against an 868 MB database**, and paid for it on every launch:
+/// `Phase::Store` blocks the first frame while SQLCipher decrypts pages and
+/// SQLite rebuilds the log index (#1175).
+///
+/// 16 MiB, which is twice what an autocheckpoint retains — enough that an
+/// ordinary sync never touches the ceiling, small enough that a bad afternoon
+/// costs sixteen megabytes rather than most of a gigabyte. `wal_ceiling.rs`
+/// asserts the recovery from outside, against a budget rather than against
+/// this number.
+///
 /// **`mmap_size` is gone.** It used to be 256 MiB. Memory-mapping is
 /// meaningless over encrypted pages: SQLCipher has to decrypt each page into
 /// the page cache, so there is no version of "the file is the buffer". ADR
@@ -97,6 +131,8 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// re-measured rather than adjusted.
 pub const PRAGMAS: &str = "\
 PRAGMA journal_mode = WAL;
+PRAGMA wal_autocheckpoint = 1000;
+PRAGMA journal_size_limit = 16777216;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
@@ -953,7 +989,53 @@ impl Database {
         // (SQLite opens it lazily, on the pool's first checkout), so there is
         // nothing to tighten before it exists.
         crate::perm::tighten_file(path)?;
+        database.reclaim_oversized_log(path);
         Ok(database)
+    }
+
+    /// Give back a write-ahead log the last run left too big.
+    ///
+    /// `journal_size_limit` bounds what a *completed checkpoint* retains, and
+    /// a checkpoint cannot pass the oldest open reader. A store that never
+    /// gets a quiet moment therefore keeps whatever it grew to, and a process
+    /// that does not close cleanly leaves it there — which this one does not:
+    /// the exit path calls `exit()` deliberately, because tearing the store
+    /// down eagerly was its own crash (#794, #699). On a clean close SQLite
+    /// checkpoints and deletes the log; on `exit()` nothing runs.
+    ///
+    /// So the reliable moment to reclaim it is here, before anything else has
+    /// a connection: a `TRUNCATE` checkpoint cannot be blocked by a reader
+    /// that does not exist yet. The live install had **676 MB** of log to read
+    /// before its first frame (#1175).
+    ///
+    /// Gated on the size, so a healthy store pays a `stat` and nothing else,
+    /// and best-effort: a log that will not truncate is worth a line on
+    /// stderr and not a store that refuses to open.
+    fn reclaim_oversized_log(&self, path: &Path) {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            return;
+        };
+        let log = path.with_file_name(format!("{name}-wal"));
+        let Ok(size) = std::fs::metadata(&log).map(|meta| meta.len()) else {
+            return; // no log, which is the ordinary case after a clean close
+        };
+        if size <= WAL_SIZE_LIMIT {
+            return;
+        }
+        tracing::info!(bytes = size, "reclaiming an oversized write-ahead log");
+        let reclaimed = self.connection().and_then(|connection| {
+            connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+            Ok(())
+        });
+        match reclaimed {
+            Ok(()) => {
+                let after = std::fs::metadata(&log).map(|meta| meta.len()).unwrap_or(0);
+                tracing::info!(before = size, after, "write-ahead log reclaimed");
+            }
+            // Ids, counts and outcomes only: no path, because a store path is
+            // not this log's business.
+            Err(error) => tracing::warn!(%error, "cannot reclaim the write-ahead log"),
+        }
     }
 
     /// Opens a private in-memory database, migrated to head.
@@ -1138,4 +1220,25 @@ const AUTO_VACUUM_INCREMENTAL: i64 = 2;
 fn free_pages(connection: &Connection) -> Result<u64> {
     let count: i64 = connection.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
     Ok(count.max(0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PRAGMAS, WAL_SIZE_LIMIT};
+
+    /// A `const` beside a string literal is exactly the pair that drifts.
+    ///
+    /// [`WAL_SIZE_LIMIT`] exists so [`Database::open`] can compare a file size
+    /// against the limit [`PRAGMAS`] sets, and the two are only the same
+    /// number because somebody typed it twice. If they part company, the
+    /// reclaim either never fires or fires on every launch of a healthy store.
+    #[test]
+    fn the_ceiling_and_the_pragma_agree() {
+        assert!(
+            PRAGMAS.contains(&format!("journal_size_limit = {WAL_SIZE_LIMIT};")),
+            "PRAGMAS does not set journal_size_limit to {WAL_SIZE_LIMIT}, so \
+             the size Database::open reclaims against is not the size the \
+             connections are told to keep:\n{PRAGMAS}"
+        );
+    }
 }
