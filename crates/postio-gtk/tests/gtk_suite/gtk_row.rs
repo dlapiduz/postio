@@ -386,8 +386,41 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
             total: count,
             list: pane.model(),
         }));
-        let _ = frames(&list_window, 6);
         assert_eq!(pane.model().n_items(), count);
+        // Not "six frames later": the rows arrive through an idle and bind on
+        // the layout pass after it, and both of those are the machine's
+        // business rather than this test's. Waiting is also what stops the
+        // comparison below going vacuous -- nought widgets equals nought
+        // widgets, and a wait that expired would have read as a pass.
+        //
+        // The condition is every realised row *carrying mail*, not merely
+        // existing. A widget appears holding a placeholder while its page is
+        // still in flight, and a list stopped at that point is not settled:
+        // `grab_focus` below has nothing it can hand the keyboard to, and no
+        // amount of waiting afterwards puts that right. "A row exists" was
+        // tried and flaked twice in sixteen runs on exactly that.
+        let census = || {
+            let seen = std::cell::Cell::new(0usize);
+            let loaded = std::cell::Cell::new(0usize);
+            pane.each_row(|row| {
+                seen.set(seen.get() + 1);
+                if row.row().is_some() {
+                    loaded.set(loaded.get() + 1);
+                }
+            });
+            (seen.get(), loaded.get())
+        };
+        assert!(
+            frames_until(&list_window, || {
+                let (seen, loaded) = census();
+                seen > 0 && loaded == seen
+            }),
+            "the list never filled its rows with mail: {:?} rows realised and \
+             loaded, {} resident, {} in the model",
+            census(),
+            pane.model().resident_rows(),
+            pane.model().n_items()
+        );
         let widgets = std::cell::Cell::new(0usize);
         pane.each_row(|_| widgets.set(widgets.get() + 1));
         (widgets.get(), pane.model().resident_rows())
@@ -410,14 +443,20 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     // Focusing the list puts the keyboard on a row, and exactly one row
     // reveals its hints.
     pane.grab_focus();
-    let _ = frames(&list_window, 2);
-    let hinting = std::cell::Cell::new(0);
-    pane.each_row(|row| {
-        if row.shows_hints() {
-            hinting.set(hinting.get() + 1);
-        }
-    });
-    assert_eq!(hinting.get(), 1, "the key hints belong to exactly one row");
+    let hints_on = || {
+        let hinting = std::cell::Cell::new(0);
+        pane.each_row(|row| {
+            if row.shows_hints() {
+                hinting.set(hinting.get() + 1);
+            }
+        });
+        hinting.get()
+    };
+    assert!(
+        frames_until(&list_window, || hints_on() == 1),
+        "the key hints belong to exactly one row, and {} rows show them",
+        hints_on()
+    );
 
     // A source that answers inside `request` used to take the process down
     // with it: the delivery emitted `items_changed` while the view was
@@ -429,22 +468,48 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     style::track(&hasty_window);
     hasty_window.set_child(Some(&hasty));
     hasty_window.set_default_size(404, 600);
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0u32));
     hasty.model().set_source(std::rc::Rc::new(Impatient {
         total: 300,
         list: hasty.model(),
+        asked: asked.clone(),
     }));
     hasty_window.present();
-    let _ = frames(&hasty_window, 6);
     assert_eq!(hasty.model().n_items(), 300);
-    let drawn = std::cell::Cell::new(0);
-    hasty.each_row(|row| {
-        if row.row().is_some() {
-            drawn.set(drawn.get() + 1);
-        }
-    });
+    // The delivery is *held* -- an impatient source answers inside `item()`,
+    // so the model defers it to the next turn of the main loop -- and the row
+    // binds on the layout pass after that. This is the wait #1015 watched
+    // expire under load: what it is waiting for is a row with mail in it, not
+    // a number of frames.
+    let drawn = || {
+        let drawn = std::cell::Cell::new(0);
+        hasty.each_row(|row| {
+            if row.row().is_some() {
+                drawn.set(drawn.get() + 1);
+            }
+        });
+        drawn.get()
+    };
     assert!(
-        drawn.get() > 0,
-        "an impatient source's rows never reached a row widget"
+        frames_until(&hasty_window, || drawn() > 0),
+        "an impatient source's rows never reached a row widget: {} rows drawn, \
+         {} in the model, {} resident, {} pages asked for, pane {}x{}, \
+         mapped={}, painting={}",
+        drawn(),
+        hasty.model().n_items(),
+        hasty.model().resident_rows(),
+        asked.get(),
+        hasty.width(),
+        hasty.height(),
+        hasty_window.is_mapped(),
+        // Asked last, because asking costs a frame deadline of its own -- and
+        // it is the answer that decides where to look. A window a loaded
+        // shared compositor never presented gets no frame callbacks, so its
+        // frame clock never runs a layout phase, so nothing ever asks the
+        // model for an item. That is not the same bug as a delivery going
+        // astray, and `render` already declines to read pixels for the same
+        // reason.
+        frames(&hasty_window, 1)
     );
     hasty_window.destroy();
 
@@ -452,11 +517,15 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     // than rebuilding it.
     let before: Vec<f32> = heights(&pane);
     pane.set_density(Density::Compact);
-    let _ = frames(&list_window, 2);
     assert_eq!(pane.density(), Density::Compact);
+    let tightened = || {
+        let after = heights(&pane);
+        after.len() == before.len() && after.iter().zip(&before).all(|(tight, airy)| tight < airy)
+    };
+    let settled = frames_until(&list_window, tightened);
     let after = heights(&pane);
     assert!(
-        after.iter().zip(&before).all(|(tight, airy)| tight < airy),
+        settled && tightened(),
         "compact rows are not tighter than airy ones: {after:?} vs {before:?}"
     );
 }
@@ -480,6 +549,14 @@ fn sample_row(id: i64) -> Row {
 struct Impatient {
     total: u32,
     list: postio_gtk::list::MessageList,
+    /// How many pages have been asked for.
+    ///
+    /// "No rows arrived" has two very different causes and the count is what
+    /// separates them: nought means the view never asked the model for an
+    /// item, which is a layout that did not happen, and anything else means
+    /// the delivery went astray. #1015 spent a soak round on the first of
+    /// those while assuming the second.
+    asked: std::rc::Rc<std::cell::Cell<u32>>,
 }
 
 impl postio_gtk::list::PageSource for Impatient {
@@ -488,6 +565,7 @@ impl postio_gtk::list::PageSource for Impatient {
     }
 
     fn request(&self, page: u32) {
+        self.asked.set(self.asked.get() + 1);
         let start = page * postio_gtk::list::PAGE_SIZE;
         let end = (start + postio_gtk::list::PAGE_SIZE).min(self.total);
         let rows = (start..end)
@@ -566,6 +644,58 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     }
     heartbeat.remove();
     left.get() == 0
+}
+
+/// Run the main loop until `done` holds, painting frames while it waits.
+///
+/// [`frames`] counts frames, and a count is a duration wearing a disguise:
+/// six frames is however long six frames take, which on a loaded machine is
+/// over before a deferred delivery has landed and the rows it brought have
+/// bound. #1015 caught this case doing exactly that -- two runs in a
+/// hundred, under four-way load on this workstation, failed "an impatient
+/// source's rows never reached a row widget" because the wait had run out,
+/// not because anything was unwired. The suite's own `wait_until` already
+/// says so in its doc, citing #851; this is the same rule for a wait that
+/// has to keep painting while it waits.
+///
+/// So an assertion about work that *arrives* waits for the work. `frames`
+/// stays for the one question that really is about frames -- has this window
+/// painted at all -- which is what [`render`] asks it.
+///
+/// The tick callback is what keeps the frame clock running: a window with
+/// nothing invalidated stops asking for frames, and then layout never runs
+/// again to bind the rows this is waiting for.
+///
+/// Returns whether it happened, the way the suite's `wait_until` does, so a
+/// call site can report *what it saw* and not only what it wanted. On a
+/// shared compositor "the rows never bound" and "this window was never
+/// painted, so nothing ever laid out" are different failures, and a message
+/// that cannot tell them apart sends the next reader down the wrong one.
+#[must_use]
+fn frames_until(window: &gtk::Window, done: impl Fn() -> bool) -> bool {
+    let waiting = std::rc::Rc::new(std::cell::Cell::new(true));
+    window.add_tick_callback({
+        let waiting = waiting.clone();
+        move |_, _| {
+            if waiting.get() {
+                gtk::glib::ControlFlow::Continue
+            } else {
+                gtk::glib::ControlFlow::Break
+            }
+        }
+    });
+    let context = gtk::glib::MainContext::default();
+    let heartbeat = gtk::glib::timeout_add_local(std::time::Duration::from_millis(10), || {
+        gtk::glib::ControlFlow::Continue
+    });
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(5));
+    while !done() && std::time::Instant::now() < deadline {
+        context.iteration(true);
+    }
+    waiting.set(false);
+    heartbeat.remove();
+    done()
 }
 
 /// The window's pixels, or `None` if the compositor is not painting it.
