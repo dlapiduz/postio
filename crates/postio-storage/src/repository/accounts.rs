@@ -25,7 +25,7 @@ id, display_name, address, address_name, incoming_host, incoming_port, incoming_
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
 auth_method, enabled, created_at, default_signature_id, pending_deletion,
 oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes, backend,
-jmap_session_url, oauth_refresh_lifetime_days";
+jmap_session_url, oauth_refresh_lifetime_days, is_default";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -284,6 +284,42 @@ impl<'a> AccountRepository<'a> {
             params![id.get(), enabled],
         )?;
         Ok(changed > 0)
+    }
+
+    /// Makes one account the default, clearing any other (#960).
+    ///
+    /// The account new messages come from when the message itself does not
+    /// say — and nothing else. It does not order the sidebar, prioritise
+    /// sync, or decide a reply's from address, which
+    /// [`postio_model::reply`] settles from the message being replied to.
+    ///
+    /// Both statements are in one transaction, and a caller naming a row that
+    /// is gone rolls the whole thing back rather than leaving the store with
+    /// no default at all: "clear every marker" landing without "set this one"
+    /// is the failure this shape exists to prevent.
+    ///
+    /// The same shape as [`IdentityRepository::set_default`] one level down.
+    /// There is deliberately no `clear_default`: the reversal of marking an
+    /// account is marking another, which is why the command carries no undo.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotFound`] if no account has that id.
+    pub fn set_default(&self, id: AccountId) -> Result<()> {
+        let transaction = super::Scope::open(self.connection)?;
+        transaction.execute("UPDATE accounts SET is_default = 0", [])?;
+        let changed = transaction.execute(
+            "UPDATE accounts SET is_default = 1 WHERE id = ?1",
+            [id.get()],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "account",
+                id: id.get(),
+            });
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Marks the account for removal without deleting anything yet (#464,
@@ -599,6 +635,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         default_signature_id: row.get::<_, Option<i64>>(15)?.map(SignatureId::new),
         created_at: from_millis(row.get(14)?),
         pending_deletion: row.get(16)?,
+        is_default: row.get(24)?,
         oauth: match (
             row.get::<_, Option<String>>(17)?,
             row.get::<_, Option<String>>(18)?,
