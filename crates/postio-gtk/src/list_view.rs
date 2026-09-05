@@ -64,21 +64,11 @@ type CommandHandler = Box<dyn Fn(Command)>;
 /// been read. See [`DWELL_TO_READ`].
 type DwellHandler = Box<dyn Fn(MessageId)>;
 
-/// How long the cursor rests on a message before it counts as read (#71).
-///
-/// Marking on arrival is what this number exists to avoid: scrolling from one
-/// end of a mailbox to the other passes over every message in between, and
-/// marking all of them destroys the unread state as a signal — the one thing
-/// it is for. A dwell means "the cursor stayed here long enough that a person
-/// could have read it".
-///
-/// A second is about the shortest value that cleanly separates the two
-/// gestures. A held `j` repeats roughly every 30ms, so a sweep of fifty
-/// messages rests nowhere and marks nothing; reading deliberately, even
-/// quickly, leaves the cursor still for longer than this on anything worth
-/// looking at. Much shorter starts catching the sweep, and much longer leaves
-/// mail you plainly read still bold, which reads as the app not keeping up.
-pub const DWELL_TO_READ: std::time::Duration = std::time::Duration::from_millis(1_000);
+// Moved to `postio-ui` in #1159 so the macOS frontend reads the same number
+// and the same arming rule rather than choosing its own -- on the one rule
+// where being wrong deletes something. Re-exported so every reference in this
+// crate, and `gtk_dwell.rs`, still reads.
+pub use postio_ui::dwell::DWELL_TO_READ;
 
 /// The verbs the bulk bar carries, in the order they appear.
 ///
