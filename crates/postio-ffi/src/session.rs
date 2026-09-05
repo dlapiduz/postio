@@ -1051,12 +1051,29 @@ impl Session {
             return crate::KeyOutcomeFfi::Unhandled;
         };
 
-        let context = postio_ui::keymap::KeyContext::from(postio_core::Context::from(context));
-        self.resolver
-            .lock()
-            .expect("resolver lock")
-            .press(&chord, context, in_text_entry, std::time::Instant::now())
-            .into()
+        let key_context = postio_ui::keymap::KeyContext::from(postio_core::Context::from(context));
+        let outcome = self.resolver.lock().expect("resolver lock").press(
+            &chord,
+            key_context,
+            in_text_entry,
+            std::time::Instant::now(),
+        );
+
+        // The silent path, and the one that is impossible to diagnose without
+        // it: a key that does nothing, with nothing said about why.
+        // `postio-gtk`'s `resolve_key` logs the same three inputs for the same
+        // reason -- "it randomly stopped working" becomes one line naming
+        // which of them it was. No message content: a chord, a context and a
+        // flag are not mail.
+        if matches!(outcome, postio_ui::keymap::Outcome::Unhandled) {
+            tracing::debug!(
+                chord = %chord,
+                ?context,
+                in_text_entry,
+                "key resolved to nothing"
+            );
+        }
+        outcome.into()
     }
 
     /// Run `id` here if it is this frontend's own state, and say whether it

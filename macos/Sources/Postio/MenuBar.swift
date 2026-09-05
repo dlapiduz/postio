@@ -90,6 +90,13 @@ enum MenuBar {
         item.representedObject = planned.command
         if let shortcut = planned.shortcut {
             item.attributedTitle = attributed(planned.title, shortcut: shortcut)
+            // An attributed title *becomes* the accessibility name, tab
+            // character and glyph included -- VoiceOver read "Command palette
+            // tab ⌘K". The drawn accelerator is a hint for people who can see
+            // it; the name is what gets spoken, and it is the command.
+            // `PRODUCT.md` §20, found by reading the menu out of the running
+            // application rather than by looking at it.
+            item.setAccessibilityTitle(planned.title)
         }
         return item
     }
