@@ -209,6 +209,7 @@ scripts/issue-land.sh --status                      # what it did, or is doing
 scripts/issue-land.sh --detach -m "feat(gtk): ..."  # with uncommitted work
 scripts/issue-land.sh --detach --gates-only         # check without committing
 scripts/issue-land.sh --detach --wip                # push a branch, no PR yet
+scripts/issue-land.sh --detach --refs-only          # Refs, not Closes: this PR does not finish the issue
 ```
 
 `--detach` runs the landing in a process no tool call can kill and returns
@@ -300,6 +301,16 @@ which `check-parallel-main-context.py` enforces.
 
 **A closed issue claims finished work.** If a PR auto-closes an issue whose
 acceptance is not met, reopen it and say what landed and what remains.
+
+**Say it before the PR merges, not after.** `scripts/issue-land.sh
+--refs-only` writes `Refs: #<n>` instead of `Closes #<n>`, with the body
+itself saying the omission was deliberate — for a measurement that changed
+the question, a fix for one of several acceptance criteria, or any other PR
+that does not finish its issue. With auto-merge (#1107) the PR merges itself
+minutes after the script returns, so the reopen-and-explain path above is
+the worse half of a trade you can avoid: the issue never goes to `CLOSED` in
+the first place, and the session that knows the work is partial is the one
+that says so, in the PR a reviewer actually reads.
 
 ## 4. Is it actually reachable?
 
