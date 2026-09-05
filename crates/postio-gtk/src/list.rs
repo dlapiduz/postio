@@ -313,10 +313,37 @@ impl MessageList {
 
     /// Re-run `action` on the next turn of the main loop. See [`reading`].
     ///
+    /// Above GDK's redraw band, deliberately, and that is not a detail.
+    /// `idle_add_local_once` runs at `G_PRIORITY_DEFAULT_IDLE` — 200 — and
+    /// GDK paints at `GDK_PRIORITY_REDRAW`, which is `G_PRIORITY_HIGH_IDLE`
+    /// plus 20, so 120. A window with something to paint every time the loop
+    /// looks therefore outranks the held change for as long as the painting
+    /// lasts, and "the next turn of the main loop" quietly becomes "some turn
+    /// after the window stops being busy".
+    ///
+    /// Under load that is not a frame or two. #1015 caught a 300-message list
+    /// sitting at nought resident rows for a full five seconds, mapped and
+    /// painting the whole time — a list that stays blank while its window is
+    /// busy, which is exactly the shape of bug the hold exists to avoid
+    /// causing. A deferral a repaint can postpone indefinitely is not a
+    /// deferral.
+    ///
+    /// `HIGH_IDLE` is also the right side of the line for what this is *for*:
+    /// the change has to land before the frame that would otherwise draw the
+    /// state it corrects.
+    ///
     /// [`reading`]: Self::reading
     fn hold(&self, action: impl FnOnce(&MessageList) + 'static) {
         let list = self.clone();
-        glib::idle_add_local_once(move || action(&list));
+        // `_full` rather than `_once` because only the former takes a
+        // priority; the `Option` is what makes an `FnOnce` fit its `FnMut`.
+        let mut action = Some(action);
+        glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || {
+            if let Some(action) = action.take() {
+                action(&list);
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     /// The generation currently in force.
