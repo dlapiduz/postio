@@ -131,14 +131,27 @@ final class Engine {
     private let reachability = Reachability()
     private var keys: KeyMonitor?
 
-    /// Which surface has focus, as the resolver understands it.
+    /// Which pane has the keyboard.
     ///
     /// Reported by the views as they take focus rather than inferred from the
-    /// responder chain: `UiContext` is Postio's vocabulary of surfaces and
-    /// AppKit knows nothing about it, so a mapping from view classes would be
-    /// this application guessing at its own state. The list is where the
-    /// keyboard starts.
+    /// responder chain: `Pane` is Postio's vocabulary of surfaces and AppKit
+    /// knows nothing about it, so a mapping from view classes would be this
+    /// application guessing at its own state. The list is where the keyboard
+    /// starts.
+    private(set) var pane: Pane = .list
+
+    /// Which surface the resolver should answer for.
+    ///
+    /// Follows the focused pane, except while an overlay is up — a key
+    /// pressed in the palette must not resolve as the list, or typing a
+    /// command's name would archive mail.
     var context: UiContext = .list
+
+    /// Move the keyboard to `pane`.
+    func focus(_ pane: Pane) {
+        self.pane = pane
+        context = pane.context
+    }
 
     /// The message the cursor is on, for the reading pane.
     ///
@@ -293,6 +306,15 @@ final class Engine {
         case "cheat_sheet":
             showingPalette = false
             showingCheatSheet = true
+        case "cycle_pane":
+            // The visual order — sidebar, list, reader — and it wraps. A
+            // focus order that disagrees with the layout is how a
+            // keyboard-first application becomes unusable without a mouse.
+            focus(pane.next())
+        case "cycle_pane_back":
+            focus(pane.next(false))
+        case "focus_sidebar":
+            focus(.sidebar)
         case "back" where showingPalette || showingCheatSheet:
             // Escape means "get me out of here", and the innermost "here" is
             // whichever of these is open.

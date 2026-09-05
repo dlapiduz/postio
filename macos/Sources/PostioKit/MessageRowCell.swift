@@ -132,5 +132,16 @@ public final class MessageRowCell: NSTableCellView {
         // neither, and a user who cannot tell which cannot tell what an
         // action is about to hit.
         marked.isHidden = !presentation.selected
+
+        // One utterance, not four. `Announcements.row` decides what it says;
+        // this is only where it is hung. The children are hidden from the
+        // accessibility tree so VoiceOver reads the row rather than walking
+        // the six labels it is drawn from.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.row)
+        setAccessibilityLabel(Announcements.row(presentation))
+        for child in [unreadDot, sender, subject, preview, badge, flag] as [NSView] {
+            child.setAccessibilityElement(false)
+        }
     }
 }

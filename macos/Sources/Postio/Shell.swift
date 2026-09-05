@@ -49,6 +49,8 @@ struct Shell: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+            .accessibilityLabel(Pane.sidebar.label)
+            .onTapGesture { engine.focus(.sidebar) }
             .onChange(of: selectedFolder) { _, folder in
                 guard let folder else { return }
                 engine.open(mailbox: folder)
@@ -64,7 +66,7 @@ struct Shell: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
         } detail: {
             reader
-                .onTapGesture { engine.context = .reader }
+                .onTapGesture { engine.focus(.reader) }
         }
         .navigationTitle("Postio")
         // The palette, over everything, with the keyboard in it. `context`
@@ -98,6 +100,12 @@ struct Shell: View {
         // second of the application looking like it ignored a key, and the
         // resolver reports the pending chords precisely so it does not have
         // to be.
+        // `PRODUCT.md` §18: ≤100 ms or absent, and Reduce Motion is honoured.
+        // `Motion.current` is read here rather than cached, because the
+        // preference can change while Postio is running and a cached copy
+        // would keep animating for somebody who had just asked it to stop.
+        .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
+        .animation(.easeOut(duration: Motion.current), value: engine.showingPalette)
         .overlay(alignment: .bottomTrailing) {
             if let pending = engine.pendingChord {
                 Text(pending)
@@ -182,6 +190,8 @@ struct Shell: View {
                     }
                     MessageListView(controller: controller)
                 }
+                .accessibilityLabel(Pane.list.label)
+                .onTapGesture { engine.focus(.list) }
                 .onAppear {
                     controller.onCursorChanged = { message in
                         showing = message

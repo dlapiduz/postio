@@ -107,8 +107,17 @@ pub fn absent_html(state: Absent) -> String {
                 .to_owned(),
         ),
     };
+    // `role="status"` with a polite live region, because this is the one
+    // state change a screen reader has no other way to notice: the reader's
+    // content is *replaced* rather than focused, so nothing moves and there
+    // is nothing to announce unless the plate asks to be announced. Polite
+    // rather than assertive -- "the body has not arrived yet" is worth
+    // saying and not worth interrupting a sentence for.
+    //
+    // Both frontends render this string, so the announcement is one
+    // implementation rather than two that agree (ADR 0019 Q6).
     format!(
-        "<div class=\"postio-absent\">\
+        "<div class=\"postio-absent\" role=\"status\" aria-live=\"polite\">\
          <p class=\"postio-absent-heading\">{heading}</p>\
          <p class=\"postio-absent-detail\">{detail}</p>\
          </div>"
@@ -1320,6 +1329,37 @@ mod tests {
         assert!(absent_html(Absent::Offline).contains("<kbd>R</kbd>"));
         assert!(absent_html(Absent::Missing).contains("<kbd>R</kbd>"));
         assert!(!absent_html(Absent::ForeignDraft).contains("<kbd>R</kbd>"));
+    }
+
+    #[test]
+    fn an_absence_plate_announces_itself() {
+        // `PRODUCT.md` §20 makes accessibility first-class, and a state plate
+        // is exactly the thing that goes unannounced: the reader's content is
+        // *replaced* rather than focused, so nothing moves and a screen reader
+        // has no reason to say anything. `role="status"` with a polite live
+        // region is what turns "the pane changed" into a sentence.
+        //
+        // Here rather than in either frontend, because it is the same
+        // document on both -- the GTK reader and the macOS one render this
+        // string, and an announcement added to one would be missing from the
+        // other (ADR 0019 Q6).
+        for state in [
+            Absent::Partial,
+            Absent::Offline,
+            Absent::Missing,
+            Absent::Empty,
+            Absent::ForeignDraft,
+        ] {
+            let html = absent_html(state);
+            assert!(
+                html.contains("role=\"status\""),
+                "{state:?} draws a plate a screen reader will not announce"
+            );
+            assert!(
+                html.contains("aria-live=\"polite\""),
+                "{state:?} would interrupt rather than wait its turn"
+            );
+        }
     }
 
     #[test]

@@ -40,6 +40,17 @@ public struct ReaderView: NSViewRepresentable {
         // the document, and no back-forward gestures into a history that does
         // not exist.
         view.allowsBackForwardNavigationGestures = false
+        // The pane is an article, not an unlabelled group. The GTK reader sets
+        // `AccessibleRole::Article` for the same reason: VoiceOver's
+        // rotor and its "read from here" both key off the role, and a web view
+        // that does not claim one is a region a screen-reader user has no way
+        // to enter deliberately. The document's own markup does the rest --
+        // headings, paragraphs, and the absence plates' `role="status"`, which
+        // is what makes "not downloaded yet" a sentence rather than invisible
+        // decoration.
+        view.setAccessibilityRole(.group)
+        view.setAccessibilityRoleDescription("article")
+        view.setAccessibilityLabel(Pane.reader.label)
         coordinator.load(into: view, message: message, remote: remoteImages)
         return view
     }

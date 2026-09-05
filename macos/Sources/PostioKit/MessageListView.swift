@@ -34,6 +34,10 @@ public struct MessageListView: NSViewRepresentable {
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
 
+        // Named, so the keyboard can be moved here on purpose and a screen
+        // reader says which of the three panes it is in.
+        table.setAccessibilityLabel(Pane.list.label)
+
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
