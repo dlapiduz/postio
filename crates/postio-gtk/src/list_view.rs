@@ -1270,6 +1270,36 @@ impl MessageListView {
                         }
                     });
                 }
+                // The cursor is on a *message*, not on a row number (#1177).
+                //
+                // A full replace is `MessageList::invalidate`, which is what
+                // `MessageListChanged` means: the order moved. GTK keeps a
+                // `SingleSelection`'s *position* across it, so the cursor is
+                // left pointing at whichever message has landed on that index
+                // -- and the reading pane follows it there. On launch that is
+                // the first screen showing one message and then jumping to
+                // another nobody chose.
+                //
+                // Discriminated from a page delivery by length: `invalidate`
+                // re-announces the whole model, a delivered page announces
+                // `PAGE_SIZE` of it. `select_message` does the rest, which is
+                // to wait for the page carrying that id and suppress the
+                // reading pane until it lands, so nothing flashes on the way.
+                //
+                // Only once the cursor is somewhere the *user* put it.
+                // `SingleSelection` autoselects row 0 the moment the model has
+                // rows, and that cursor means "the top of the list" rather
+                // than a message -- pinning it by identity would keep new mail
+                // arriving at the top from ever being shown (#750).
+                if position == 0
+                    && removed == added
+                    && added > 0
+                    && added == pane.imp().model.n_items()
+                    && pane.imp().landed.get()
+                    && let Some(reading) = pane.imp().reported.get()
+                {
+                    pane.select_message(reading);
+                }
                 pane.report_cursor()
             }
         ));

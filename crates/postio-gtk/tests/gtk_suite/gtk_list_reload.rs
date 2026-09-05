@@ -212,3 +212,139 @@ fn pump_until(done: impl Fn() -> bool) {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
+
+/// A mailbox whose *order* moves, which is what `invalidate` is for.
+///
+/// `Filling` above only ever appends, so every row keeps its position and a
+/// cursor addressed by position lands on the same message by luck. That is
+/// the assumption this file's own module doc names — "because the page that
+/// comes back carries the same ids in the same order" — and #1177 is what
+/// happens when it does not hold.
+struct Reordering {
+    order: std::cell::RefCell<Vec<i64>>,
+}
+
+impl Reordering {
+    fn new(count: i64) -> Rc<Self> {
+        Rc::new(Reordering {
+            order: std::cell::RefCell::new((1..=count).collect()),
+        })
+    }
+
+    /// The newest message is now the oldest, and everything shifted by one.
+    ///
+    /// A rotation rather than a shuffle because it moves every row without
+    /// changing the length, so nothing else about the list can explain a
+    /// cursor that ends up somewhere new.
+    fn rotate(&self) {
+        self.order.borrow_mut().rotate_left(1);
+    }
+}
+
+impl MailboxSource for Reordering {
+    fn mailboxes(&self, _account: AccountId) -> MailboxFuture {
+        let account = AccountId::new(ACCOUNT);
+        let mut inbox = Mailbox::new(account, "INBOX", Some('/'));
+        inbox.id = MailboxId::new(INBOX);
+        inbox.role = MailboxRole::Inbox;
+        let total = self.order.borrow().len() as u32;
+        inbox.counts = MailboxCounts {
+            total,
+            unread: total,
+            flagged: 0,
+            snoozed: 0,
+        };
+        Box::pin(async move { Ok(vec![inbox]) })
+    }
+}
+
+impl MessageSource for Reordering {
+    fn fetch(&self, request: PageRequest) -> PageFuture {
+        let order = self.order.borrow().clone();
+        Box::pin(async move {
+            let total = order.len() as u32;
+            let end = ((request.offset + request.limit) as usize).min(order.len());
+            let rows = order[request.offset as usize..end]
+                .iter()
+                .enumerate()
+                .map(|(index, id)| Row {
+                    id: MessageId::new(*id),
+                    thread: None,
+                    from: None,
+                    subject: Some(format!("message {id}")),
+                    preview: None,
+                    received_at: Utc.timestamp_opt(1_700_000_000 - index as i64, 0).unwrap(),
+                    seen: false,
+                    flagged: false,
+                    answered: false,
+                    draft: false,
+                    has_attachments: false,
+                    thread_count: 1,
+                    participants: Vec::new(),
+                })
+                .collect();
+            Ok(Page { total, rows })
+        })
+    }
+}
+
+/// The cursor is on a *message*, not on a row number (#1177).
+///
+/// `MessageListChanged` means the order moved — that is what the event is for
+/// — and `MessageList::invalidate` answers it by telling GTK every row was
+/// removed and re-added. `GtkSingleSelection` keeps its *position* across
+/// that, so when the rows underneath have moved, the cursor is left pointing
+/// at whichever message now happens to be at that index and the reading pane
+/// follows it there.
+///
+/// On launch that is the reported symptom: the first screen shows one message
+/// and then jumps to another one nobody chose.
+pub fn a_reordering_sync_leaves_the_cursor_on_the_same_message() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Reordering::new(120);
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+
+    let list = window.list();
+    pump_until(|| list.model().n_items() == 120);
+
+    // Where the user is: a few rows down, reading something.
+    for _ in 0..6 {
+        list.next_row();
+    }
+    pump();
+    let reading = list.cursor_id().expect("the cursor is on a row");
+
+    // A sync pass reorders the folder and says so the only way it can.
+    store.rotate();
+    feeds.apply(&Event::MessageListChanged {
+        account: postio_model::AccountId::new(1),
+        mailbox: MailboxId::new(INBOX),
+    });
+    pump_until(|| list.cursor_id() != Some(reading));
+
+    assert_eq!(
+        list.cursor_id(),
+        Some(reading),
+        "the order moved and the cursor stayed on the row number, so the \
+         reading pane is now showing message {:?} instead of the one it was \
+         opened on",
+        list.cursor_id()
+    );
+}
