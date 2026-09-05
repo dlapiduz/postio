@@ -15,9 +15,9 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use postio_model::{Flag, MailboxId, Message, MessageId, Operation};
-use postio_storage::actions::{Relocation, relocate, set_flag};
-use postio_storage::repository::{MessageRepository, OperationQueueRepository};
+use postio_model::{AccountId, Flag, Label, MailboxId, Message, MessageId, Operation};
+use postio_storage::actions::{Relocation, relocate, set_flag, set_label};
+use postio_storage::repository::{LabelRepository, MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
 
 fn at(hour: u32) -> DateTime<Utc> {
@@ -330,4 +330,144 @@ fn read(connection: &rusqlite::Connection, ids: &[MessageId]) -> Vec<Message> {
                 .expect("the message exists")
         })
         .collect()
+}
+
+/// A label is three writes, and this verb owes all three.
+///
+/// `postio_session::actions::set_label` has always written the join row, the
+/// keyword and the queue row together, and the reason is in its own doc
+/// comment: the join is what the list and the reader draw, the keyword is
+/// what reaches the server, and half of either is a label that is invisible
+/// to every other client or one with no name and no colour to draw. Lifting
+/// it whole is the point of #1141 -- a rule that wrote only the join would
+/// satisfy a test that looks only at `message_labels`.
+#[test]
+fn set_label_writes_the_join_the_keyword_and_the_queue() {
+    let database = test_support::memory();
+    let mut connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let label = a_label(&connection, account.id, "Invoices");
+    let message = a_message(&connection, inbox, "uid-9");
+
+    let transaction = connection.transaction().expect("open a transaction");
+    let rows = read(&transaction, &[message]);
+    set_label(&transaction, account.id, &[&rows[0]], &label, true, at(9)).expect("set the label");
+    transaction.commit().expect("commit");
+
+    assert_eq!(
+        LabelRepository::new(&connection)
+            .for_message(message)
+            .expect("read the labels"),
+        vec![label.id],
+        "the join row is what the list and the reader draw the label from"
+    );
+    let row = MessageRepository::new(&connection)
+        .get(message)
+        .expect("read back")
+        .expect("still there");
+    assert!(
+        row.flags.contains(&Flag::Keyword("Invoices".to_owned())),
+        "the label travels to the server as a keyword, so the flag set has \
+         to carry it too -- got {:?}",
+        row.flags
+    );
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(23))
+        .expect("read the queue");
+    assert_eq!(queued.len(), 1, "one operation for one label");
+    assert!(
+        matches!(
+            &queued[0].operation,
+            Operation::SetFlags { flags } if flags.contains(&Flag::Keyword("Invoices".to_owned()))
+        ),
+        "local-first means the queue row as well, carrying the keyword: \
+         got {:?}",
+        queued[0].operation
+    );
+}
+
+/// Taking a label off undoes all three, and tells the server so.
+#[test]
+fn clearing_a_label_detaches_it_and_enqueues_clear_flags() {
+    let database = test_support::memory();
+    let mut connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let label = a_label(&connection, account.id, "Invoices");
+    let message = a_message(&connection, inbox, "uid-9");
+
+    let transaction = connection.transaction().expect("open a transaction");
+    let rows = read(&transaction, &[message]);
+    set_label(&transaction, account.id, &[&rows[0]], &label, true, at(9)).expect("set");
+    let rows = read(&transaction, &[message]);
+    set_label(&transaction, account.id, &[&rows[0]], &label, false, at(10)).expect("clear");
+    transaction.commit().expect("commit");
+
+    assert!(
+        LabelRepository::new(&connection)
+            .for_message(message)
+            .expect("read the labels")
+            .is_empty(),
+        "clearing has to detach the join row, not only the keyword"
+    );
+    let row = MessageRepository::new(&connection)
+        .get(message)
+        .expect("read back")
+        .expect("still there");
+    assert!(
+        !row.flags.contains(&Flag::Keyword("Invoices".to_owned())),
+        "and take the keyword back off the row, got {:?}",
+        row.flags
+    );
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(23))
+        .expect("read the queue");
+    assert!(
+        matches!(&queued[1].operation, Operation::ClearFlags { .. }),
+        "the server is told to clear the keyword, got {:?}",
+        queued[1].operation
+    );
+}
+
+/// Nothing lands if the caller rolls back -- the join row included.
+///
+/// The same argument as `a_rolled_back_transaction_relocates_nothing`, and
+/// worth making separately because this verb writes through three
+/// repositories: one of them opening a connection of its own would leave a
+/// label behind on a message the pass rolled back.
+#[test]
+fn a_rolled_back_transaction_labels_nothing() {
+    let database = test_support::memory();
+    let mut connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let label = a_label(&connection, account.id, "Invoices");
+    let message = a_message(&connection, inbox, "uid-9");
+
+    let transaction = connection.transaction().expect("open a transaction");
+    let rows = read(&transaction, &[message]);
+    set_label(&transaction, account.id, &[&rows[0]], &label, true, at(9)).expect("set the label");
+    drop(transaction);
+
+    assert!(
+        LabelRepository::new(&connection)
+            .for_message(message)
+            .expect("read the labels")
+            .is_empty(),
+        "a rolled-back transaction must leave no label on the message"
+    );
+    assert!(
+        OperationQueueRepository::new(&connection)
+            .pending(account.id, at(23))
+            .expect("read the queue")
+            .is_empty(),
+        "and must enqueue nothing"
+    );
+}
+
+/// A label the account owns, created the way the picker creates one.
+fn a_label(connection: &rusqlite::Connection, account: AccountId, name: &str) -> Label {
+    let mut label = Label::new(account, name);
+    LabelRepository::new(connection)
+        .create(&mut label)
+        .expect("create a label");
+    label
 }

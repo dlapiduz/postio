@@ -44,11 +44,11 @@ use postio_model::ids::DraftId;
 use postio_model::mailbox::MailboxRole;
 use postio_model::{
     AccountId, DraftState, Flag, FlagSet, LabelId, MailboxId, Message, MessageId, Operation,
-    OperationTarget, ThreadId,
+    ThreadId,
 };
 use postio_storage::repository::{
-    ColumnFlag, DraftRepository, FlagSource, LabelRepository, MailboxRepository, MessageRepository,
-    MessageSet, OperationQueueRepository, ThreadOrder, ThreadRepository,
+    ColumnFlag, DraftRepository, LabelRepository, MailboxRepository, MessageRepository, MessageSet,
+    OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
 use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
 
@@ -1018,15 +1018,13 @@ impl Actions {
         };
         let account = rows[0].account_id;
 
-        let name = {
+        let row = {
             let repository = LabelRepository::new(&connection);
             repository
                 .get(label)
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That label no longer exists"))?
-                .name
         };
-        let keyword = Flag::Keyword(name);
 
         let carried: Vec<bool> = {
             let repository = LabelRepository::new(&connection);
@@ -1051,43 +1049,15 @@ impl Actions {
             return Err(CommandError::rejected("Already set"));
         }
 
-        let one: FlagSet = std::iter::once(keyword.clone()).collect();
         let at = Utc::now();
+        // The join row, the keyword and the queue entry are one write and
+        // `postio-storage`'s half of it (ADR 0028), so the rules pass runs
+        // the same three statements this keystroke does. This side owns the
+        // transaction; the rules pass hands over the one it is already
+        // inside.
         let transaction = connection.transaction().map_err(store_failure)?;
-        {
-            let labels = LabelRepository::new(&transaction);
-            let messages = MessageRepository::new(&transaction);
-            let queue = OperationQueueRepository::new(&transaction);
-            for message in &touched {
-                if wanted {
-                    labels.attach(message.id, label).map_err(store_failure)?;
-                } else {
-                    labels.detach(message.id, label).map_err(store_failure)?;
-                }
-                let mut flags = message.flags.clone();
-                if wanted {
-                    flags.insert(keyword.clone());
-                } else {
-                    flags.remove(&keyword);
-                }
-                messages
-                    .set_flags(message.id, &flags, FlagSource::Local)
-                    .map_err(store_failure)?;
-                let operation = if wanted {
-                    Operation::SetFlags { flags: one.clone() }
-                } else {
-                    Operation::ClearFlags { flags: one.clone() }
-                };
-                queue
-                    .enqueue(
-                        account,
-                        OperationTarget::Message(message.id),
-                        &operation,
-                        at,
-                    )
-                    .map_err(store_failure)?;
-            }
-        }
+        postio_storage::actions::set_label(&transaction, account, &touched, &row, wanted, at)
+            .map_err(store_failure)?;
         transaction.commit().map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
@@ -1949,8 +1919,8 @@ mod tests {
     use postio_model::mailbox::MailboxRole;
     use postio_model::{Account, Flag, MailboxId, Message, MessageId, Operation, OperationTarget};
     use postio_storage::repository::{
-        AccountRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
-        ThreadRepository,
+        AccountRepository, FlagSource, MailboxRepository, MessageRepository,
+        OperationQueueRepository, ThreadRepository,
     };
     use postio_storage::test_support;
 

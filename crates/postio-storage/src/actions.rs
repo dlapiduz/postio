@@ -40,12 +40,14 @@ use chrono::{DateTime, Utc};
 use rusqlite::Transaction;
 
 use postio_model::{
-    AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
+    AccountId, Flag, FlagSet, Label, MailboxId, Message, MessageId, Operation, OperationTarget,
+    ThreadId,
 };
 
 use crate::Result;
 use crate::repository::{
-    FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
+    FlagSource, LabelRepository, MessageRepository, OperationQueueRepository, ThreadOrder,
+    ThreadRepository,
 };
 
 /// Which server operation a relocation is.
@@ -170,4 +172,65 @@ pub fn set_flag(
         }
     }
     Ok(siblings)
+}
+
+/// Put `label` on `rows`, or take it off, and tell the server either way.
+///
+/// A label is two representations of one thing and this writes both: the
+/// `message_labels` join the list and the reader draw from, and the
+/// [`Flag::Keyword`] that carries it to a server which has no idea what a
+/// Postio label is. Writing only the join shows a label no other client ever
+/// sees; writing only the keyword leaves the label with no name or colour to
+/// draw. That is why the verb moved down whole rather than as three calls a
+/// caller composes — a rules pass composing them itself would be free to get
+/// two of the three right (#1141).
+///
+/// The verb takes the [`Label`] rather than its id because it needs the name
+/// to build the keyword, and taking both an id and a name invites a caller to
+/// pass a pair that disagree.
+///
+/// `rows` must already have been read, for the same reason [`set_flag`] needs
+/// them: the new flag set is computed from the row's current one. Rows
+/// already in the wanted state are the caller's to filter — this writes what
+/// it is given, and a caller that does not filter queues a redundant keyword
+/// write per message.
+pub fn set_label(
+    transaction: &Transaction<'_>,
+    account: AccountId,
+    rows: &[&Message],
+    label: &Label,
+    wanted: bool,
+    at: DateTime<Utc>,
+) -> Result<()> {
+    let keyword = Flag::Keyword(label.name.clone());
+    let one: FlagSet = std::iter::once(keyword.clone()).collect();
+    let labels = LabelRepository::new(transaction);
+    let messages = MessageRepository::new(transaction);
+    let queue = OperationQueueRepository::new(transaction);
+    for message in rows {
+        if wanted {
+            labels.attach(message.id, label.id)?;
+        } else {
+            labels.detach(message.id, label.id)?;
+        }
+        let mut flags = message.flags.clone();
+        if wanted {
+            flags.insert(keyword.clone());
+        } else {
+            flags.remove(&keyword);
+        }
+        messages.set_flags(message.id, &flags, FlagSource::Local)?;
+        let operation = if wanted {
+            Operation::SetFlags { flags: one.clone() }
+        } else {
+            Operation::ClearFlags { flags: one.clone() }
+        };
+        queue.enqueue(
+            account,
+            OperationTarget::Message(message.id),
+            &operation,
+            at,
+        )?;
+    }
+    Ok(())
 }
