@@ -51,6 +51,14 @@ final class Engine {
             // keys to answer nothing would make the unavailable screen
             // unusable as well as empty.
             installKeyboard(session)
+            // The menu bar, rendered from the same registry the palette and
+            // the cheat sheet read (#657). Its accelerators come from the
+            // bindings in force, and none of its items has a key equivalent:
+            // dispatch is the monitor's, above.
+            MenuBar.install(
+                binding: { [weak self] command in self?.session?.binding(for: command) },
+                run: { [weak self] id in self?.session?.invoke(id) }
+            )
             // The platform observes and the engine is told. Callbacks arrive
             // on a background queue and may repeat the same answer; the
             // boundary absorbs that, nudging a reconnect only on a real

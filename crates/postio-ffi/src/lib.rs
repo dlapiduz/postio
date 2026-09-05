@@ -48,7 +48,7 @@ pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};
-pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
+pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use session::{Session, SessionError, SessionOptions};
 
 /// Every command the registry knows, in cheat-sheet order.
