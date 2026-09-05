@@ -551,6 +551,12 @@ pub fn commit_batch(
     messages: &mut [Message],
 ) -> Result<Report> {
     let mut report = Report::default();
+    // One clock for the batch, read before the first unit rather than per
+    // action: it stamps the queue rows a rule's actions enqueue, and rows
+    // written by one pass having one timestamp is what makes the queue's
+    // "enqueue order is the order the user acted in" ordering hold for a
+    // rule as well.
+    let now = Utc::now();
 
     for slice in messages.chunks_mut(WRITE_UNIT) {
         // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what stands
@@ -585,7 +591,7 @@ pub fn commit_batch(
         // sharper reason, so the predicate is computed once and shared: a
         // rule that fired again on every re-enumeration would move mail the
         // user had since moved back (#482).
-        for message in &written {
+        for message in &mut written {
             let is_new = message
                 .server
                 .uid
@@ -606,12 +612,23 @@ pub fn commit_batch(
             // No body is read to answer these, deliberately: reading one
             // would be a fetch per arriving message, which is ADR 0016's
             // lazy backfill undone.
-            for rule in rules.matching(Stage::OnArrival, &Subject::new(message)) {
-                report.fired.push(RuleHit {
-                    message: message.id,
-                    rule: rule.name.clone(),
-                });
-            }
+            //
+            // `matching` stops at the first match carrying `stop`, so the
+            // actions below are exactly the ones ADR 0008 Q4 says run.
+            let matched = rules.matching(Stage::OnArrival, &Subject::new(message));
+            let actions: Vec<_> = matched
+                .iter()
+                .inspect(|rule| {
+                    report.fired.push(RuleHit {
+                        message: message.id,
+                        rule: rule.name.clone(),
+                    });
+                })
+                .flat_map(|rule| rule.actions.iter().cloned())
+                .collect();
+            // The same transaction, and the same storage verbs a keystroke
+            // runs -- there is no rules-only mutation path (ADR 0008 Q5).
+            crate::rules::apply(&unit, mailbox.account_id, message, &actions, now)?;
         }
 
         unit.commit().map_err(postio_storage::Error::from)?;

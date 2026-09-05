@@ -119,13 +119,31 @@ impl RuleSet {
         &self.staged
     }
 
-    /// The rules that run at `stage` and match `subject`, in file order.
+    /// The rules that run at `stage` and match `subject`, in file order, up
+    /// to and including the first match carrying `stop`.
+    ///
+    /// `stop` is ADR 0008 Q4 and #481: a match carrying it halts the rules
+    /// *below* it for this message. Its own actions still run — it is the
+    /// rules after it that do not — so the stopping rule is included in what
+    /// this answers rather than replacing it.
+    ///
+    /// Scoped to this `stage`, and to this call, which is to say to this
+    /// message. The two evaluation points are separate passes at separate
+    /// times (ADR 0008 Q3), so a `stop` among the header rules says nothing
+    /// about the body rules that run when a backfill later completes; and
+    /// nothing is remembered between calls, so a `stop` cannot leak onto the
+    /// next message of a sync and disable the rule set for the rest of it.
     pub fn matching<'a>(&'a self, stage: Stage, subject: &Subject<'_>) -> Vec<&'a Rule> {
-        self.staged
-            .iter()
-            .filter(|staged| staged.stage == stage)
-            .filter(|staged| matches(&staged.query, subject))
-            .map(|staged| &staged.rule)
-            .collect()
+        let mut matched = Vec::new();
+        for staged in self.staged.iter().filter(|staged| staged.stage == stage) {
+            if !matches(&staged.query, subject) {
+                continue;
+            }
+            matched.push(&staged.rule);
+            if staged.rule.stop {
+                break;
+            }
+        }
+        matched
     }
 }
