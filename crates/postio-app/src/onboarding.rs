@@ -42,7 +42,7 @@ use gtk::glib;
 use postio_account::cancel::CancelToken;
 use postio_account::discovery::{
     AccountSettings, DiscoveryOutcome, DiscoveryReport, DiscoveryTransport, Encryption, Probe,
-    ProbeOptions,
+    ProbeOptions, SettingsSource,
 };
 use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
 use postio_account::secret::{AccountKey, Password, SecretStore};
@@ -1034,7 +1034,21 @@ fn shown(settings: &AccountSettings) -> Settings {
         // The provider's preferred door (#534): a preset row that leads
         // with oauth2 opens the browser sign-in.
         oauth_sign_in: settings.oauth.is_some(),
-        source: settings.source.label().to_owned(),
+        // #1115: a preset row names itself -- its own display name says
+        // more than the mechanism that found it ("known provider").
+        // Gated on `Builtin` specifically rather than on `display_name`
+        // being `Some`: an autoconfig or ISPDB document can carry its own
+        // `<displayName>` too (`discovery::mod.rs`'s shared XML-shaped
+        // builder), and #877 decided those keep naming the *source* --
+        // the wizard has verified far less about a scraped document than
+        // about a provider Postio ships settings for by hand.
+        source: match settings.source {
+            SettingsSource::Builtin => settings
+                .display_name
+                .clone()
+                .unwrap_or_else(|| settings.source.label().to_owned()),
+            _ => settings.source.label().to_owned(),
+        },
     }
 }
 
@@ -1185,6 +1199,17 @@ mod tests {
             oauth: None,
             jmap: None,
             backends: vec!["imap".to_owned()],
+        }
+    }
+
+    /// [`guessed`], but resolved by `source` and carrying `display_name` --
+    /// the shape a preset row or an autoconfig/ISPDB document actually
+    /// produces (#1115).
+    fn resolved(source: SettingsSource, display_name: Option<&str>) -> AccountSettings {
+        AccountSettings {
+            display_name: display_name.map(str::to_owned),
+            source,
+            ..guessed()
         }
     }
 
@@ -1544,5 +1569,61 @@ mod tests {
             status_for(&nothing_published(None)),
             Status::Manual { suggestion: None }
         ));
+    }
+
+    /// A discovered account, from `settings` -- the `Status::Found` half of
+    /// [`status_for`], which is the only path [`shown`] is reached through.
+    fn found(settings: AccountSettings) -> Settings {
+        let report = DiscoveryReport {
+            email: "lena@example.com".to_owned(),
+            domain: "example.com".to_owned(),
+            outcome: DiscoveryOutcome::Discovered(settings),
+            attempts: Vec::new(),
+        };
+        match status_for(&report) {
+            Status::Found(settings) => settings,
+            other => panic!("expected Status::Found, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_preset_row_names_itself_rather_than_the_mechanism_that_found_it() {
+        // #1115: providers.toml's own row, not `SettingsSource::label()`'s
+        // generic "known provider" -- a fixture row, not a shipped
+        // provider, so this test does not name a real vendor.
+        let settings = resolved(SettingsSource::Builtin, Some("My Own Provider"));
+        assert_eq!(found(settings).source, "My Own Provider");
+    }
+
+    #[test]
+    fn a_preset_row_with_no_display_name_falls_back_to_the_source_label() {
+        // Nothing to name it with -- `settings_for` always sets one, but
+        // the fallback exists for exactly the case that guarantee slips.
+        let settings = resolved(SettingsSource::Builtin, None);
+        assert_eq!(found(settings).source, SettingsSource::Builtin.label());
+    }
+
+    #[test]
+    fn an_autoconfig_documents_own_display_name_does_not_override_the_source_label() {
+        // The trap this fix has to avoid: autoconfig and ISPDB documents can
+        // carry their own `<displayName>` (`discovery::mod.rs`'s shared
+        // XML-shaped builder), so `display_name.is_some()` alone cannot be
+        // the test -- #877 decided a scraped document still names its
+        // *mechanism*, only a preset row Postio ships by hand names itself.
+        for source in [
+            SettingsSource::WellKnown,
+            SettingsSource::Autoconfig,
+            SettingsSource::Ispdb,
+            SettingsSource::Srv,
+            SettingsSource::Mx,
+            SettingsSource::Guess,
+        ] {
+            let settings = resolved(source, Some("A Document's Own Name"));
+            assert_eq!(
+                found(settings).source,
+                source.label(),
+                "{source:?} must still show its own label, not the document's display name"
+            );
+        }
     }
 }
