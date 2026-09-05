@@ -178,14 +178,13 @@ fn title_in(row: &gtk::ListBoxRow) -> String {
 }
 
 fn binding_in(row: &gtk::ListBoxRow) -> String {
-    collect(
-        row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-keys-binding",
-    )
-    .into_iter()
-    .find_map(|w| w.downcast::<gtk::Label>().ok())
-    .map(|label| label.text().to_string())
-    .expect("every keys row has a binding label")
+    // The cap is the control now (#1179, Design/screens/22): pressing the
+    // key a command is bound to is what changes it, so the key is a button
+    // rather than a label with a separate `Rebind` beside it.
+    rebind_button_in(row)
+        .label()
+        .map(|label| label.to_string())
+        .expect("every keys row has a keycap")
 }
 
 fn conflict_message_in(row: &gtk::ListBoxRow) -> Option<String> {
@@ -202,11 +201,11 @@ fn conflict_message_in(row: &gtk::ListBoxRow) -> Option<String> {
 fn rebind_button_in(row: &gtk::ListBoxRow) -> gtk::Button {
     collect(
         row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-keys-rebind",
+        "postio-settings-keys-binding",
     )
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Button>().ok())
-    .expect("every keys row has a rebind button")
+    .expect("every keys row has a keycap to press")
 }
 
 /// Every widget in the tree carrying `class` (or, when `class` is empty,

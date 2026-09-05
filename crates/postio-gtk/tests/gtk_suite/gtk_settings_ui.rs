@@ -1,13 +1,17 @@
-//! The settings panel's structured `[ui]` pane (#873).
+//! The Appearance pane's controls (#1179, over #873's structured pane).
 //!
-//! `Section::Ui` used to be raw-TOML-textview-jump only; this is the
-//! structured row list next to it, the same shape `redraw_filters`
-//! established for `[filters]` (#869, `gtk_settings_filters.rs`). Skips
-//! without a display. Nothing here touches the network.
+//! The pane used to be built from a `gtk::DropDown` per closed choice and a
+//! `gtk::Switch` per boolean. Both were the wrong control — a dropdown hides
+//! the vocabulary it is choosing from, and a switch says "this takes effect
+//! somewhere else" about a value that is simply a key in `config.toml`. This
+//! asserts the pane is built from the ones that mean what they say, and that
+//! they still write through the same format-preserving patch.
+//!
+//! Skips without a display. Nothing here touches the network.
 
 use gtk::gdk;
 use gtk::prelude::*;
-use postio_gtk::settings::SettingsPanel;
+use postio_gtk::settings::{Section, SettingsPanel};
 use postio_gtk::{fonts, style};
 
 const SAMPLE: &str = "\
@@ -25,56 +29,73 @@ show_key_hints = true
 sender_avatars = false
 ";
 
-pub fn the_five_rows_render_from_a_given_config() {
+pub fn the_pane_shows_the_files_values_on_segments_and_checkboxes() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
     };
 
-    assert_eq!(
-        dropdown_in("Message-list row height", &panel).selected(),
-        2,
-        "compact"
+    assert!(
+        segment(&panel, "Dark").is_active(),
+        "theme = \"dark\" must show as the chosen segment"
     );
-    assert_eq!(dropdown_in("Theme", &panel).selected(), 2, "dark");
-    assert!(!switch_in("Show hover actions", &panel).is_active());
-    assert!(switch_in("Show key hints", &panel).is_active());
-    assert!(!switch_in("Show sender avatars", &panel).is_active());
+    assert!(!segment(&panel, "System").is_active());
+    assert!(
+        segment(&panel, "Compact").is_active(),
+        "density = \"compact\" must show as the chosen segment"
+    );
+
+    assert!(!checkbox(&panel, "Hover action icons").is_active());
+    assert!(checkbox(&panel, "Key hints on the focused row").is_active());
+    assert!(!checkbox(&panel, "Sender avatars").is_active());
 
     window.destroy();
 }
 
-pub fn the_default_config_renders_the_default_row_values() {
-    let Some((window, panel)) = panel_with_text("") else {
-        return;
-    };
-
-    assert_eq!(
-        dropdown_in("Message-list row height", &panel).selected(),
-        0,
-        "airy"
-    );
-    assert_eq!(dropdown_in("Theme", &panel).selected(), 0, "system");
-    assert!(switch_in("Show hover actions", &panel).is_active());
-    assert!(switch_in("Show sender avatars", &panel).is_active());
-
-    window.destroy();
-}
-
-pub fn toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_else_alone() {
+pub fn every_option_is_on_screen_without_opening_anything() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
     };
 
-    let switch = switch_in("Show sender avatars", &panel);
-    assert!(!switch.is_active());
-    switch.set_active(true);
+    // The whole reason a segmented control replaced a dropdown: a person
+    // reading this pane can see that there are three answers, and what they
+    // are, without pressing anything.
+    for label in ["System", "Light", "Dark", "Airy", "Snug", "Compact"] {
+        assert!(
+            segment(&panel, label).is_visible(),
+            "{label:?} must be on screen, not behind a dropdown"
+        );
+    }
+    // Scoped to the pane on screen, not to the whole window: the accounts
+    // pane's per-account enable toggle is a legitimate switch (it acts when
+    // flipped — ADR 0029 Q2) and lives in the same widget tree.
+    let pane = collect(panel.upcast_ref::<gtk::Widget>(), "")
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk::Stack>().ok())
+        .and_then(|stack| stack.visible_child())
+        .expect("a pane on screen");
+    assert!(
+        !collect(&pane, "")
+            .into_iter()
+            .any(|widget| widget.is::<gtk::DropDown>() || widget.is::<gtk::Switch>()),
+        "no dropdown and no switch belongs on this pane"
+    );
+
+    window.destroy();
+}
+
+pub fn pressing_a_segment_writes_the_new_value_and_nothing_else() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+
+    segment(&panel, "Light").set_active(true);
     pump();
 
     let text = panel.text();
     let after_ui = text.split("[ui]").nth(1).expect("[ui] header");
     assert!(
-        after_ui.contains("sender_avatars = true"),
-        "toggling the switch must flip the value in the buffer: {text}"
+        after_ui.contains("theme = \"light\""),
+        "pressing Light must write theme = \"light\": {text}"
     );
     assert!(
         text.contains("# a hand-written comment nobody wants to lose"),
@@ -88,25 +109,59 @@ pub fn toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_els
     window.destroy();
 }
 
-pub fn picking_a_theme_writes_the_new_value() {
+pub fn ticking_a_checkbox_writes_straight_to_the_buffer() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;
     };
 
-    let dropdown = dropdown_in("Theme", &panel);
-    dropdown.set_selected(1); // Light
+    let box_ = checkbox(&panel, "Sender avatars");
+    assert!(!box_.is_active());
+    box_.set_active(true);
     pump();
 
     let text = panel.text();
     let after_ui = text.split("[ui]").nth(1).expect("[ui] header");
     assert!(
-        after_ui.contains("theme = \"light\""),
-        "picking Light must write theme = \"light\": {text}"
+        after_ui.contains("sender_avatars = true"),
+        "ticking the box must flip the value in the buffer: {text}"
     );
 
     window.destroy();
 }
 
+pub fn the_density_line_says_what_the_choice_costs() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+
+    let line = collect(panel.upcast_ref::<gtk::Widget>(), "postio-stat-line")
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Label>().ok())
+        .find(|label| label.text().contains("px rows"))
+        .expect("the density line");
+    let compact = line.text().to_string();
+
+    segment(&panel, "Airy").set_active(true);
+    pump();
+    let airy = line.text().to_string();
+
+    assert_ne!(
+        compact, airy,
+        "the line must be measured from the density, not printed once: {compact:?}"
+    );
+    assert!(
+        airy.contains("px rows"),
+        "and it must still say what it is: {airy:?}"
+    );
+
+    window.destroy();
+}
+
+/// A panel showing `text`, with the Appearance pane on screen.
+///
+/// The pane has to be *shown* before it has controls: every pane here
+/// builds its own on first display rather than during `Window::new`, which
+/// is #873's rule and the reason `show_section` exists.
 fn panel_with_text(text: &str) -> Option<(gtk::Window, SettingsPanel)> {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -122,6 +177,7 @@ fn panel_with_text(text: &str) -> Option<(gtk::Window, SettingsPanel)> {
     window.set_child(Some(&panel));
     window.present();
     panel.set_text(text);
+    panel.show_section(Section::Appearance);
     pump();
     Some((window, panel))
 }
@@ -131,35 +187,22 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-/// The row whose title label reads `title`, if the ui pane has one.
-fn row_named(panel: &SettingsPanel, title: &str) -> gtk::Box {
-    collect(panel.upcast_ref::<gtk::Widget>(), "postio-settings-ui-row")
+/// The segment labelled `label`.
+fn segment(panel: &SettingsPanel, label: &str) -> gtk::ToggleButton {
+    collect(panel.upcast_ref::<gtk::Widget>(), "postio-segment")
         .into_iter()
-        .find(|row| {
-            collect(row, "postio-settings-ui-title")
-                .into_iter()
-                .find_map(|w| w.downcast::<gtk::Label>().ok())
-                .is_some_and(|label| label.text() == title)
-        })
-        .unwrap_or_else(|| panic!("no [ui] row titled {title:?}"))
-        .downcast()
-        .expect("a Box row")
+        .filter_map(|widget| widget.downcast::<gtk::ToggleButton>().ok())
+        .find(|button| button.label().is_some_and(|text| text == label))
+        .unwrap_or_else(|| panic!("no segment labelled {label:?}"))
 }
 
-fn dropdown_in(title: &str, panel: &SettingsPanel) -> gtk::DropDown {
-    let row = row_named(panel, title);
-    collect(row.upcast_ref::<gtk::Widget>(), "")
+/// The checkbox labelled `label`.
+fn checkbox(panel: &SettingsPanel, label: &str) -> gtk::CheckButton {
+    collect(panel.upcast_ref::<gtk::Widget>(), "postio-check")
         .into_iter()
-        .find_map(|w| w.downcast::<gtk::DropDown>().ok())
-        .unwrap_or_else(|| panic!("row {title:?} has no dropdown"))
-}
-
-fn switch_in(title: &str, panel: &SettingsPanel) -> gtk::Switch {
-    let row = row_named(panel, title);
-    collect(row.upcast_ref::<gtk::Widget>(), "")
-        .into_iter()
-        .find_map(|w| w.downcast::<gtk::Switch>().ok())
-        .unwrap_or_else(|| panic!("row {title:?} has no switch"))
+        .filter_map(|widget| widget.downcast::<gtk::CheckButton>().ok())
+        .find(|button| button.label().is_some_and(|text| text == label))
+        .unwrap_or_else(|| panic!("no checkbox labelled {label:?}"))
 }
 
 /// Every widget in the tree carrying `class` (or, when `class` is empty,

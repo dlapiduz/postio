@@ -41,6 +41,7 @@ mod feed_results;
 mod gtk_accelerators;
 mod gtk_capture;
 mod gtk_cheatsheet;
+mod gtk_checkrow;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
 mod gtk_composer_autosave;
@@ -110,12 +111,14 @@ mod gtk_saved_searches_live;
 mod gtk_search_live;
 mod gtk_search_panel;
 mod gtk_search_preview;
+mod gtk_segmented;
 mod gtk_selection;
 mod gtk_settings;
 mod gtk_settings_account_detail;
 mod gtk_settings_accounts;
 mod gtk_settings_accounts_keys;
 mod gtk_settings_filters;
+mod gtk_settings_frame;
 mod gtk_settings_keys;
 mod gtk_settings_keys_context;
 mod gtk_settings_privacy;
@@ -151,6 +154,90 @@ mod no_stray_prints;
 const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "gtk_settings_sync::the_pane_shows_the_files_values",
+        gtk_settings_sync::the_pane_shows_the_files_values as fn(),
+    ),
+    (
+        "gtk_settings_sync::the_interval_the_file_actually_holds_is_still_stated",
+        gtk_settings_sync::the_interval_the_file_actually_holds_is_still_stated as fn(),
+    ),
+    (
+        "gtk_settings_sync::pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone",
+        gtk_settings_sync::pressing_manual_writes_straight_to_the_buffer_and_leaves_the_rest_alone as fn(),
+    ),
+    (
+        "gtk_settings_sync::an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on",
+        gtk_settings_sync::an_interval_somebody_set_by_hand_survives_pressing_the_segment_it_is_on as fn(),
+    ),
+    (
+        "gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list",
+        gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
+    ),
+    (
+        "gtk_settings_frame::exactly_one_pane_is_ever_on_screen",
+        gtk_settings_frame::exactly_one_pane_is_ever_on_screen as fn(),
+    ),
+    (
+        "gtk_settings_frame::the_sidebar_selection_is_what_chooses_the_pane",
+        gtk_settings_frame::the_sidebar_selection_is_what_chooses_the_pane as fn(),
+    ),
+    (
+        "gtk_settings_frame::the_frame_is_identical_on_every_pane",
+        gtk_settings_frame::the_frame_is_identical_on_every_pane as fn(),
+    ),
+    (
+        "gtk_settings_frame::the_footer_names_the_table_the_pane_writes",
+        gtk_settings_frame::the_footer_names_the_table_the_pane_writes as fn(),
+    ),
+    (
+        "gtk_settings_frame::the_sidebar_groups_its_sections_under_two_headings",
+        gtk_settings_frame::the_sidebar_groups_its_sections_under_two_headings as fn(),
+    ),
+    (
+        "gtk_settings_frame::finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it",
+        gtk_settings_frame::finding_a_setting_narrows_the_sidebar_to_the_panes_that_have_it as fn(),
+    ),
+    (
+        "gtk_settings_ui::the_pane_shows_the_files_values_on_segments_and_checkboxes",
+        gtk_settings_ui::the_pane_shows_the_files_values_on_segments_and_checkboxes as fn(),
+    ),
+    (
+        "gtk_settings_ui::every_option_is_on_screen_without_opening_anything",
+        gtk_settings_ui::every_option_is_on_screen_without_opening_anything as fn(),
+    ),
+    (
+        "gtk_settings_ui::pressing_a_segment_writes_the_new_value_and_nothing_else",
+        gtk_settings_ui::pressing_a_segment_writes_the_new_value_and_nothing_else as fn(),
+    ),
+    (
+        "gtk_settings_ui::ticking_a_checkbox_writes_straight_to_the_buffer",
+        gtk_settings_ui::ticking_a_checkbox_writes_straight_to_the_buffer as fn(),
+    ),
+    (
+        "gtk_settings_ui::the_density_line_says_what_the_choice_costs",
+        gtk_settings_ui::the_density_line_says_what_the_choice_costs as fn(),
+    ),
+    (
+        "gtk_checkrow::showing_the_files_value_is_not_changing_it",
+        gtk_checkrow::showing_the_files_value_is_not_changing_it as fn(),
+    ),
+    (
+        "gtk_checkrow::a_person_toggling_it_is_reported_once",
+        gtk_checkrow::a_person_toggling_it_is_reported_once as fn(),
+    ),
+    (
+        "gtk_segmented::setting_the_value_moves_the_group_without_reporting_a_change",
+        gtk_segmented::setting_the_value_moves_the_group_without_reporting_a_change as fn(),
+    ),
+    (
+        "gtk_segmented::pressing_a_segment_reports_it_exactly_once",
+        gtk_segmented::pressing_a_segment_reports_it_exactly_once as fn(),
+    ),
+    (
+        "gtk_segmented::pressing_the_active_segment_changes_nothing",
+        gtk_segmented::pressing_the_active_segment_changes_nothing as fn(),
+    ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
@@ -505,8 +592,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "gtk_settings_account_detail::the_back_button_returns_to_the_account_list",
-        gtk_settings_account_detail::the_back_button_returns_to_the_account_list as fn(),
+        "gtk_settings_account_detail::the_form_appears_under_the_list_rather_than_in_place_of_it",
+        gtk_settings_account_detail::the_form_appears_under_the_list_rather_than_in_place_of_it as fn(),
     ),
     (
         "gtk_settings_account_detail::editing_the_display_name_reports_the_account_and_the_new_value",
@@ -605,40 +692,6 @@ const CASES: &[(&str, fn())] = &[
         "gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent",
         gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent
             as fn(),
-    ),
-    (
-        "gtk_settings_sync::the_rows_render_from_a_given_config",
-        gtk_settings_sync::the_rows_render_from_a_given_config as fn(),
-    ),
-    (
-        "gtk_settings_sync::the_default_config_renders_the_default_row_values",
-        gtk_settings_sync::the_default_config_renders_the_default_row_values as fn(),
-    ),
-    (
-        "gtk_settings_sync::picking_manual_writes_straight_to_the_buffer_and_leaves_everything_else_alone",
-        gtk_settings_sync::picking_manual_writes_straight_to_the_buffer_and_leaves_everything_else_alone
-            as fn(),
-    ),
-    (
-        "gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list",
-        gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
-    ),
-    (
-        "gtk_settings_ui::the_five_rows_render_from_a_given_config",
-        gtk_settings_ui::the_five_rows_render_from_a_given_config as fn(),
-    ),
-    (
-        "gtk_settings_ui::the_default_config_renders_the_default_row_values",
-        gtk_settings_ui::the_default_config_renders_the_default_row_values as fn(),
-    ),
-    (
-        "gtk_settings_ui::toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_else_alone",
-        gtk_settings_ui::toggling_a_switch_writes_straight_to_the_buffer_and_leaves_everything_else_alone
-            as fn(),
-    ),
-    (
-        "gtk_settings_ui::picking_a_theme_writes_the_new_value",
-        gtk_settings_ui::picking_a_theme_writes_the_new_value as fn(),
     ),
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
