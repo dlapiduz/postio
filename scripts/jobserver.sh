@@ -26,7 +26,7 @@
 #
 #   * **A holder.** A fifo keeps its buffered bytes only while something has
 #     it open. Between two cargo runs nothing does, and the tokens would
-#     vanish. `ensure` starts one `sleep infinity` with the fifo open and
+#     vanish. `ensure` starts one long-lived `sleep` with the fifo open and
 #     records its pid.
 #   * **A refill.** A cargo killed mid-build -- 79 tool timeouts in the
 #     transcripts -- never returns the tokens it held, so the pool would
@@ -113,7 +113,17 @@ start() {
     # The holder: opens the fifo read+write (so the open never blocks and
     # the buffer outlives every client), writes its pid, then becomes a
     # sleep. nohup + disown rather than setsid, which macOS does not have.
-    nohup bash -c 'exec 3<>"$1"; printf "%s\n" "$$" > "$2"; exec sleep infinity' \
+    #
+    # `sleep 2147483647`, not `sleep infinity`. The word is a GNU extension
+    # and BSD sleep rejects it outright -- so on macOS the holder exited
+    # instantly, `ensure` reported "the holder did not start", no pool ever
+    # existed, and every cargo on the machine silently fell back to
+    # `jobs = 2` in `.cargo/config.toml` (#1144). A cold build took most of
+    # an hour on a box with cores to spare, and nothing said why.
+    #
+    # INT_MAX seconds is 68 years, which outlives any machine this runs on,
+    # and both sleeps accept it.
+    nohup bash -c 'exec 3<>"$1"; printf "%s\n" "$$" > "$2"; exec sleep 2147483647' \
         _ "$FIFO" "$PID_FILE" >/dev/null 2>&1 &
     disown 2>/dev/null || true
     local waited=0

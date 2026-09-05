@@ -3390,6 +3390,7 @@ note that is not listed, and a listing that names no file.
 - 2026-09-04 — [`Window::reader()` is not the reader on screen (2026-09-04, #1030)](notes/2026-09-04-window-reader-is-not-the-reader-on-screen.md)
 - 2026-09-04 — [Where the waiting went, and three things that were not what they seemed (2026-09-04, #1101/#1102/#1104)](notes/2026-09-04-where-the-waiting-went-and-three-things-that-were-not-what-t.md)
 - 2026-09-05 — [The gate that runs cannot see the platform that does not (2026-09-05, #656/#1146)](notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md)
+- 2026-09-05 — [The last worktree path was inside an rlib, not on a command line (2026-09-05, #1106)](notes/2026-09-05-the-last-worktree-path-was-inside-an-rlib-not-on-a-command-l.md)
 
 ## Two OAuth expiries, and only one of them is a failure (2026-09-04, #954)
 
