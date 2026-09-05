@@ -110,8 +110,9 @@ const ACCOUNTS_MAX_HEIGHT: i32 = 160;
 ///
 /// Not itself a `CommandId`: both need a specific account as their payload,
 /// which a keystroke carries no default for. `CommandId::RemoveAccount`,
-/// `CommandId::UpdateCredential` (#471) and `CommandId::RebuildAccountIndex`
-/// (#981) reach the keyboard path by resolving
+/// `CommandId::UpdateCredential` (#471), `CommandId::RebuildAccountIndex`
+/// (#981) and `CommandId::SetDefaultAccount` (#960) reach the keyboard path
+/// by resolving
 /// [`SettingsPanel::focused_account`] and calling
 /// [`SettingsPanel::request_account_action`] with the same variant the
 /// context menu would have -- one payload type either entry point ends in,
@@ -125,6 +126,8 @@ pub enum AccountAction {
     Remove,
     /// Rebuild this account's local search index (#981).
     RebuildIndex,
+    /// Make this the account new messages come from (#960).
+    SetDefault,
 }
 
 /// What to call when an account row's context menu picks an action.
@@ -1405,6 +1408,23 @@ impl SettingsPanel {
         badge.set_ellipsize(gtk::pango::EllipsizeMode::End);
         lines.append(&badge);
 
+        // Words, never colour alone -- ADR 0005's own rule for per-account
+        // identification, and the reason this is a line rather than a tint.
+        // It says what the marker *does*: "primary" would assert a status,
+        // and #960's fence is that this account is not more the user's than
+        // any other. Shown only when the marker is set, whatever the account
+        // count: with one account it is simply usually unset.
+        let default_line = account
+            .is_default
+            .then(|| "Default · new messages come from this account".to_owned());
+        if let Some(text) = &default_line {
+            let line = gtk::Label::new(Some(text));
+            line.add_css_class("postio-settings-account-default");
+            line.set_xalign(0.0);
+            line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&line);
+        }
+
         let validity = self.token_validity(account.id);
         if let Some(text) = &validity {
             let line = gtk::Label::new(Some(text));
@@ -1455,6 +1475,9 @@ impl SettingsPanel {
             announcement.push_str(&format!(", {weight}"));
         }
         announcement.push_str(&format!(", {badge_text}"));
+        if let Some(default_line) = &default_line {
+            announcement.push_str(&format!(", {default_line}"));
+        }
         if let Some(validity) = &validity {
             announcement.push_str(&format!(", {validity}"));
         }
@@ -2285,6 +2308,9 @@ impl SettingsPanel {
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Update credential"), Some("account.update-credential"));
         menu.append(Some("Rebuild search index"), Some("account.rebuild-index"));
+        // The registry's own title, so the menu, the palette and the cheat
+        // sheet say the same words (#960).
+        menu.append(Some("Set as default account"), Some("account.set-default"));
         menu.append(Some("Remove"), Some("account.remove"));
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -2297,6 +2323,7 @@ impl SettingsPanel {
         for (name, action) in [
             ("update-credential", AccountAction::UpdateCredential),
             ("rebuild-index", AccountAction::RebuildIndex),
+            ("set-default", AccountAction::SetDefault),
             ("remove", AccountAction::Remove),
         ] {
             let simple = gtk::gio::SimpleAction::new(name, None);

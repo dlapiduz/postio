@@ -416,6 +416,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts_keys::update_credential_acts_on_the_row_the_keyboard_is_on as fn(),
     ),
     (
+        "gtk_settings_accounts_keys::set_default_account_acts_on_the_row_the_keyboard_is_on",
+        gtk_settings_accounts_keys::set_default_account_acts_on_the_row_the_keyboard_is_on as fn(),
+    ),
+    (
         "gtk_settings_accounts_keys::toggling_enabled_flips_the_focused_rows_switch_and_reports_it",
         gtk_settings_accounts_keys::toggling_enabled_flips_the_focused_rows_switch_and_reports_it as fn(),
     ),
@@ -463,6 +467,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_accounts::an_account_row_says_how_it_connects",
         gtk_settings_accounts::an_account_row_says_how_it_connects as fn(),
+    ),
+    (
+        "gtk_settings_accounts::the_default_account_says_so_and_the_others_do_not",
+        gtk_settings_accounts::the_default_account_says_so_and_the_others_do_not as fn(),
     ),
     (
         "gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good",

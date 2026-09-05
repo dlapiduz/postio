@@ -90,6 +90,7 @@ pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
                     crate::settings_credential::install(&window, &wiring, id)
                 }
                 AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
+                AccountAction::SetDefault => set_default(&window, &wiring, id),
             }
         }
     });
@@ -529,6 +530,27 @@ fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::AccountId) {
 /// moment the channel says it is over -- what [`crate::search`] reads to
 /// raise a search outcome's own corpus caveat while this account's index is
 /// mid-rebuild (#981's own "the search surface should say so too").
+/// Make `id` the account new messages come from (#960).
+///
+/// A single local write and then a redraw, the shape
+/// `connect_account_enabled_changed` already uses — not the async shape
+/// `rebuild_index` needs, because there is no long-running work here and
+/// nothing to report progress about.
+///
+/// The repository clears the previous holder in the same transaction, so
+/// there is no "unset the other one" step for this to get wrong, and no
+/// window in which two rows both claim the marker. Nothing here reaches the
+/// network: which account a new message comes from is local state, before
+/// and after.
+fn set_default(window: &Window, wiring: &Wiring, id: AccountId) {
+    if let Ok(connection) = wiring.database.connection()
+        && let Err(error) = AccountRepository::new(&connection).set_default(id)
+    {
+        tracing::warn!(%error, "could not set the default account");
+    }
+    refresh(window, wiring);
+}
+
 fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: AccountId) {
     reindexing.borrow_mut().insert(id);
 
