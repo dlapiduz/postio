@@ -38,6 +38,13 @@ fi
 
 TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 
+# `.cargo/config.toml` names `postio-cc` and `postio-linker` as bare programs
+# (#1101), and nothing on a Mac has necessarily put them on PATH: the claim,
+# land and test scripts do it, and a session that only ever runs this one
+# never meets any of them. Without it the first C build script dies with
+# `failed to find tool "postio-cc"`, several minutes into a cold build.
+scripts/install-shims.sh
+
 echo "--- cargo: postio-ffi ---"
 # shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
 cargo build -p postio-ffi $CARGO_PROFILE_ARGS
