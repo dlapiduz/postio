@@ -524,3 +524,86 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
     }
     found
 }
+
+/// The row's own default-account line, if it carries the marker (#960).
+fn default_line_in(row: &gtk::ListBoxRow) -> Option<String> {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-default",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .filter(|label| label.is_visible())
+    .map(|label| label.text().to_string())
+}
+
+/// Issue #960: the marked account says so, in words, and the others do not.
+///
+/// Words rather than colour alone, which is ADR 0005's own rule for
+/// per-account identification and the reason this is a line and not a tint.
+/// And the line says what the marker *does* — "new messages come from this
+/// account" — rather than asserting a status: "primary" would invite the
+/// reading #960's fence rules out, that this account is somehow more the
+/// user's than the other one.
+pub fn the_default_account_says_so_and_the_others_do_not() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+    pump();
+
+    // Neither marked, which is what every store had before #960 and stays a
+    // normal state forever. The page must not nag or pick one.
+    panel.set_accounts(vec![
+        an_account(1, "Ada", "ada@example.com"),
+        an_account(2, "Grace", "grace@example.com"),
+    ]);
+    pump();
+    let drawn = rows(&panel);
+    assert!(
+        drawn.iter().all(|row| default_line_in(row).is_none()),
+        "with no default set, no row may claim to be one: choosing on the \
+         user's behalf is what this issue exists to stop"
+    );
+
+    let mut ada = an_account(1, "Ada", "ada@example.com");
+    ada.is_default = true;
+    panel.set_accounts(vec![ada, an_account(2, "Grace", "grace@example.com")]);
+    pump();
+    let drawn = rows(&panel);
+    let marked = default_line_in(&drawn[0]).expect("the marked account says so");
+    assert!(
+        marked.to_lowercase().contains("new messages"),
+        "the line has to say what the marker does, not assert a status -- \
+         got {marked:?}"
+    );
+    assert!(
+        !marked.to_lowercase().contains("primary"),
+        "the word is \"default\", never \"primary\": #960 recorded that as a \
+         deliberate vocabulary decision. Got {marked:?}"
+    );
+    assert_eq!(
+        default_line_in(&drawn[1]),
+        None,
+        "and exactly one row carries it"
+    );
+
+    // The row is announced as a unit, so `account_row` folds this line into
+    // the row's accessible label the way it folds the weight and the
+    // validity line in. That is not asserted here: GTK exposes no reader for
+    // an accessible property, so the only honest test of it is the one this
+    // file already relies on for the other four lines -- the code that
+    // builds the announcement from the same values it builds the labels
+    // from.
+
+    window.destroy();
+}

@@ -1,0 +1,18 @@
+-- Which account a new message comes from when the message itself does not
+-- say (#960).
+--
+-- At most one row carries this, enforced by `AccountRepository::set_default`
+-- rather than by an index: what a caller asks for is "make this one the
+-- default", and a constraint that merely refused the second write would
+-- leave the caller to clear the first.
+--
+-- `0` on every existing row, which is a normal and permanent state rather
+-- than something to migrate away from. Picking one on the user's behalf is
+-- exactly what #960 exists to stop: with several accounts and no marker,
+-- compose falls back to the behaviour Postio had before this column, and the
+-- settings page does not nag.
+--
+-- It governs one thing. Not sidebar order, not sync priority, not what
+-- Unified contains, and never a reply's from address -- that is decided by
+-- the message being replied to.
+ALTER TABLE accounts ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;

@@ -290,6 +290,28 @@ pub struct Account {
     pub default_signature_id: Option<SignatureId>,
     /// When the account was added.
     pub created_at: DateTime<Utc>,
+    /// The account new messages come from when the message itself does not
+    /// say (#960).
+    ///
+    /// Exactly one thing, and the fence around it is the point: it does not
+    /// order the sidebar, prioritise sync, decide what Unified contains, or
+    /// mean an account is more the user's than another. **Reply, reply-all
+    /// and forward never read it** — which address a reply comes from is
+    /// decided by the message being replied to ([`crate::reply`]), and a
+    /// default that overrode that would send replies from the wrong address
+    /// to people who wrote to a different one.
+    ///
+    /// At most one account carries it, enforced by
+    /// `AccountRepository::set_default`. `false` on every account is the
+    /// ordinary state — it is what every store had before this existed — and
+    /// resolves to the behaviour Postio had without it rather than to an
+    /// error or a choice made on the user's behalf.
+    ///
+    /// The same shape as [`Identity::is_default`] one level down, so the
+    /// resolution reads the way the naming does: default account, then that
+    /// account's default identity.
+    #[serde(default)]
+    pub is_default: bool,
     /// Marked for removal, but not yet reaped (#464).
     ///
     /// Setting this is what "Remove" in the settings panel does: instant,
@@ -328,6 +350,7 @@ impl Account {
             identities: Vec::new(),
             signatures: Vec::new(),
             default_signature_id: None,
+            is_default: false,
             created_at: Utc::now(),
             pending_deletion: false,
         }

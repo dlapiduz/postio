@@ -1910,6 +1910,16 @@ impl Window {
                         .request_account_action(id, crate::settings::AccountAction::RebuildIndex);
                 }
             }
+            // Same shape and the same reason as the three above: the target
+            // is the row the keyboard is on, and `focused_account` answering
+            // `None` is a real answer. Falling back to "the first account"
+            // would be the implicit specialness #960 exists to replace.
+            CommandId::SetDefaultAccount => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings()
+                        .request_account_action(id, crate::settings::AccountAction::SetDefault);
+                }
+            }
             // `u` here means the removal toast, never the global stack: the
             // stack never held this removal (#464 wired it straight to
             // AccountRepository::restore), so nothing else could answer it.

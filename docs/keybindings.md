@@ -107,6 +107,7 @@ command from inside a text field.
 | `d` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
 | `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
+| `m` | Set as default account | Account list |  | `set_default_account` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` or `R` | Refresh | List, conversation, reader |  | `refresh` |
 | `p` | Show message parts | Reader |  | `open_parts` |

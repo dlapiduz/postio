@@ -250,3 +250,36 @@ pub fn undo_outside_the_account_list_leaves_the_removal_toast_alone() {
          would quietly do two things"
     );
 }
+
+/// The fifth account row answers `m`, on the row the keyboard is on (#960).
+///
+/// The same seam the context menu drives, so the two paths cannot drift: a
+/// keyboard binding that reached a different callback would be a second
+/// implementation of "which account is the default", which is what the
+/// registry exists to prevent.
+pub fn set_default_account_acts_on_the_row_the_keyboard_is_on() {
+    let Some((window, second)) = ready() else {
+        return;
+    };
+
+    let seen: Rc<RefCell<Vec<(AccountId, AccountAction)>>> = Rc::default();
+    window.settings().connect_account_action({
+        let seen = Rc::clone(&seen);
+        move |id, action| seen.borrow_mut().push((id, action))
+    });
+
+    let list = window.settings().accounts_list();
+    list.row_at_index(1)
+        .expect("a second account row")
+        .grab_focus();
+    pump();
+
+    window.act(Command::SetDefaultAccount);
+    pump();
+
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [(second, AccountAction::SetDefault)],
+        "`m` marks the focused row, not the first one and not all of them"
+    );
+}

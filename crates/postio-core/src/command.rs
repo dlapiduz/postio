@@ -187,6 +187,8 @@ command_ids! {
     UpdateCredential => "update_credential",
     /// Rebuild the focused account's local search index.
     RebuildAccountIndex => "rebuild_account_index",
+    /// Make the focused account the one new messages come from.
+    SetDefaultAccount => "set_default_account",
     /// Move to the next account scope: unified, then each account in turn.
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
@@ -630,6 +632,14 @@ pub enum Command {
     /// with focus. Local mail only -- nothing here reaches the network; see
     /// `postio_session::reindex_account`'s own doc for why (#981).
     RebuildAccountIndex,
+    /// Make the focused account the default (#960).
+    ///
+    /// No payload, the same reason as the three above: the target is the row
+    /// with focus. It settles exactly one question — which account a new
+    /// message comes from when the message itself does not say — and in
+    /// particular not a reply's from address, which
+    /// [`postio_model::reply`] decides from the message being replied to.
+    SetDefaultAccount,
     /// Move to the next account scope: unified, then each account in turn.
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
@@ -785,6 +795,7 @@ impl Command {
             Command::RemoveAccount => CommandId::RemoveAccount,
             Command::UpdateCredential => CommandId::UpdateCredential,
             Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
+            Command::SetDefaultAccount => CommandId::SetDefaultAccount,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
             Command::OpenParts => CommandId::OpenParts,
@@ -894,6 +905,7 @@ impl Command {
             CommandId::RemoveAccount => Command::RemoveAccount,
             CommandId::UpdateCredential => Command::UpdateCredential,
             CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
+            CommandId::SetDefaultAccount => Command::SetDefaultAccount,
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
             CommandId::OpenParts => Command::OpenParts,
