@@ -81,6 +81,53 @@ fi
 #
 # Set with `:-` like everything else here, so an explicit value in the
 # environment still wins.
+# # Why a --remap-path-prefix goes in here (#1106)
+#
+# With the linker and CC path-free (#1101), a second cold worktree still
+# missed two thirds of its compiles, and the residual had one cause: a build
+# script that *generates Rust source the crate `include!`s* leaves the
+# generated file's absolute path inside the compiled artifact.
+#
+#   $ strings target/debug/deps/libserde_core-*.rmeta | grep out/private.rs
+#   /home/.../issue-1141/target/debug/build/serde_core-<hash>/out/private.rs
+#
+# That path names the worktree, so `libserde_core.rmeta` differs byte for byte
+# between two trees at the same commit -- and sccache hashes `--extern` inputs
+# by *content*, so every crate downstream of serde misses too. In this
+# workspace that is nearly all of them. Measured on a two-tree harness,
+# serde_core and serde were the only artifacts embedding a path and everything
+# else that differed was downstream of them.
+#
+# Remapping the prefix makes those two artifacts identical, which stops the
+# cascade. What it cannot do is make the two crates themselves hit: the flag
+# necessarily *contains* the per-worktree path, and sccache does not normalise
+# `--remap-path-prefix` out of its key -- measured, by passing one
+# unconditionally through RUSTFLAGS, which took a second tree from 10 cache
+# hits to zero. Nor can it be injected below sccache: a rustc shim named by
+# `build.rustc` sees the `-vV` probes and the build scripts, and never the
+# cacheable compiles, which sccache runs against the real rustc.
+#
+# So it is conditional, and the condition is the one that decides whether a
+# path can reach the artifact at all: did this crate's build script generate
+# Rust source. A build script that only prints `cargo:rustc-cfg`
+# (proc-macro2, num_traits) leaves no path behind, already hits across
+# worktrees, and must not be handed a flag that would cost that.
+#
+# The replacement is a constant, so it is the same in every tree; it shows up
+# in panic messages and backtraces for those crates instead of a path that
+# names somebody's worktree, which is no worse and arguably clearer.
+#
+# `scripts/tests/test-rustc-wrapper-remap.py` is what holds all of this.
+if [ -n "${OUT_DIR:-}" ]; then
+    # `compgen -G` rather than a glob test, so an OUT_DIR that does not exist
+    # or holds no Rust source simply answers no. Fail open, like the rest of
+    # this file: a shell without `compgen` costs the remapping, never the
+    # build.
+    if compgen -G "${OUT_DIR}/*.rs" >/dev/null 2>&1; then
+        set -- "$@" --remap-path-prefix="${OUT_DIR}=/postio-out"
+    fi
+fi
+
 if command -v sccache >/dev/null 2>&1; then
     export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
     export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
