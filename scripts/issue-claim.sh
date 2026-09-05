@@ -271,6 +271,14 @@ mkdir -p "$WORKTREES" "$CLAIMS"
 # mtime of `target/debug/deps`, which moves every time cargo finishes a
 # crate there. `--cold` and `POSTIO_CLAIM_SEED=0` opt out.
 SEEDED=""
+# Set as soon as a candidate is found, whatever `cp` goes on to do -- the one
+# thing this needs to tell apart from "there was nothing to try" (#1190). A
+# `cp` that fails (permissions, disk full, a sibling deleted mid-copy, a
+# filesystem without reflinks and without a plain-copy fallback -- macOS)
+# left `SEEDED` empty exactly like the early-return case, so a real failure
+# and "nothing to seed from" printed the same line and looked the same as the
+# ordinary cold-start path this script already expects to take sometimes.
+SEED_CANDIDATE=""
 seed_target() { # <tree>
     [ "$COLD" = 0 ] || return 0
     [ "${POSTIO_CLAIM_SEED:-1}" != 0 ] || return 0
@@ -285,6 +293,7 @@ seed_target() { # <tree>
     src="$(ls -td $deps_dirs 2>/dev/null | head -1)"
     src="${src%/deps}"
     [ -n "$src" ] || return 0
+    SEED_CANDIDATE="$src"
     mkdir -p "$1/target"
     started=$(date +%s)
     if cp -a --reflink=auto "$src" "$1/target/debug" 2>/dev/null; then
@@ -582,6 +591,8 @@ while IFS=$'\t' read -r NUM TITLE; do
         echo "  target: reused, already warm (moved from $REUSE_TREE; Postio's own crates rebuild, the deps do not)"
     elif [ -n "$SEEDED" ]; then
         echo "  target: seeded by copy from $SEEDED; only what differs rebuilds"
+    elif [ -n "$SEED_CANDIDATE" ]; then
+        echo "  target: cold -- a seed candidate existed ($SEED_CANDIDATE) but the copy failed; falling back to a cold build (deps come from the machine-wide sccache)"
     else
         echo "  target: cold -- nothing to seed from (deps come from the machine-wide sccache)"
     fi
