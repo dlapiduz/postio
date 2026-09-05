@@ -275,11 +275,57 @@ mod tests {
         );
     }
 
+    /// iCloud's archive folder is `Archive`, and the preset naming it
+    /// `Archives` points the role at a folder the user made (#1178).
+    ///
+    /// Measured on the live account #959 and #501 were both reported from:
+    /// `Archive` holds 60,898 messages and has no children; `Archives` holds
+    /// 4, with `2024`, `2025` and `2026` under it holding 42 between them.
+    /// The second is somebody's filing scheme, and #959's own criterion for
+    /// telling the twins apart — "which twin has mail in it" — picks the
+    /// first by a factor of 1,300.
+    ///
+    /// This is the one row of the iCloud preset that inverted a default that
+    /// was already right: `Sent`/`Sent Messages` and `Trash`/`Deleted
+    /// Messages` need the preset, because the alphabet picks the wrong twin
+    /// there. `Archive` sorts before `Archives`, so the alphabet was correct
+    /// and the preset overrode it.
+    #[test]
+    fn icloud_archive_is_the_folder_the_account_archives_into() {
+        // The shape of the real account: no SPECIAL-USE anywhere, the
+        // provider's own archive beside a user-made container of years.
+        let mut mailboxes = vec![
+            summary("Archive", &[]),
+            summary("Archives", &[]),
+            summary("Archives/2024", &[]),
+            summary("Archives/2025", &[]),
+            summary("Archives/2026", &[]),
+            summary("INBOX", &[]),
+        ];
+        let known_names = crate::discovery::preset_for_domain("icloud.com")
+            .expect("iCloud is a shipped preset")
+            .role_names();
+
+        resolve_roles_with_known_names(&mut mailboxes, &known_names);
+
+        assert_eq!(
+            roles(&mailboxes)
+                .into_iter()
+                .filter(|(_, role)| *role == MailboxRole::Archive)
+                .collect::<Vec<_>>(),
+            [("Archive", MailboxRole::Archive)],
+            "the role has to land on the folder the account's archived mail \
+             is actually in -- pointing it at `Archives` files every `a` into \
+             a folder holding 4 messages while 60,898 sit next to it"
+        );
+    }
+
     #[test]
     fn a_known_name_absent_from_the_listing_falls_back_to_todays_behaviour() {
-        // The preset expects "Archives" and the server never lists one --
-        // nothing here should suppress the role, only decline to help
-        // settle it. #959's third acceptance criterion.
+        // A preset name the server never lists -- nothing here should
+        // suppress the role, only decline to help settle it. #959's third
+        // acceptance criterion. The name is deliberately not iCloud's own
+        // (which is "Archive", #1178): this case is about a *missing* one.
         let mut with_hint = vec![summary("Archive", &[]), summary("Nested/Archive", &[])];
         let mut without_hint = with_hint.clone();
         let known_names = BTreeMap::from([(MailboxRole::Archive, "Archives".to_owned())]);

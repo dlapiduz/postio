@@ -42,16 +42,30 @@ requires_app_password = true
 password_help_url = "https://appleid.apple.com/account/manage"
 auth = ["app-password"]
 # iCloud advertises no RFC 6154 SPECIAL-USE, so a role is guessed from the
-# name -- and iCloud's own webmail has, over the years, left a look-alike
-# folder next to each of these that another client created (#959, #501,
-# #943): a plain "Sent"/"Trash"/"Archive" beside the ones below, which is
-# where the account's mail actually lives. A name below wins the tie only
-# when the server declares nothing; the user's own [mailboxes] mapping
-# still outranks this.
+# name, and the alphabet decides ties -- which is wrong for two of these and
+# right for the third (#959, #501, #943, #1178).
+#
+# iCloud's own folders are "Sent Messages" and "Deleted Messages", and an
+# account that has been through another client has a plain "Sent" and "Trash"
+# beside them. The alphabet picks the plain ones; these names are what put the
+# role back on the folder iCloud actually files into.
+#
+# `archive` is deliberately NOT one of those cases, and was listed as
+# "Archives" until #1178. iCloud's archive folder is "Archive"; "Archives" is
+# a name people give a container they file years under, and on the account all
+# three of those issues were reported from it held 4 messages with 42 more in
+# `2024`/`2025`/`2026`, against 60,898 in `Archive`. The alphabet already
+# picked correctly here, and naming the plural inverted it -- so every `a`
+# filed into the wrong folder and the sidebar's Archive showed a nearly empty
+# one. A row here has to earn its place by fixing a tie the alphabet gets
+# wrong; it must never override one the alphabet gets right.
+#
+# A name below wins the tie only when the server declares nothing; the user's
+# own [mailboxes] mapping still outranks this.
 [provider.icloud.mailboxes]
 sent = "Sent Messages"
 trash = "Deleted Messages"
-archive = "Archives"
+archive = "Archive"
 
 [provider.gmail]
 # IMAP first until #195 clears Google's CASA review for Postio's own
