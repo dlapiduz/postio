@@ -13,6 +13,7 @@
 #   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
+#   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
@@ -154,7 +155,7 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0; REFS_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
@@ -163,6 +164,7 @@ while [ $# -gt 0 ]; do
         --no-merge)   MERGE=0;      shift ;;
         --full)       FULL=1;       shift ;;
         --wait)       WAIT=1;       shift ;;
+        --refs-only)  REFS_ONLY=1;  shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -752,10 +754,25 @@ else
         echo "the previous PR for $BRANCH is $PR_STATE; opening a new one."
     fi
     TITLE=$(git log -1 --format=%s)
+    # `Closes` auto-closes the issue the moment this merges -- right, for
+    # the ordinary case of a PR that meets its issue's acceptance in full.
+    # `--refs-only` is for the other case: a measurement that changed the
+    # question, a fix for one of several acceptance criteria, anything this
+    # PR does not finish. Auto-merge (#1107) shrank the window to catch a
+    # `Closes` that should have been a `Refs` to the minutes before the PR
+    # merges itself, so the session that knows the work is partial is the
+    # one that has to say so -- here, not by editing the PR after the fact
+    # (#1189). Written out as "deliberately not `Closes`" rather than left
+    # for a reader to guess whether it was an omission.
+    if [ "$REFS_ONLY" = 1 ]; then
+        CLOSES_LINE="Refs: #$ISSUE — deliberately not \`Closes\`: this PR does not meet #$ISSUE's acceptance criteria in full."
+    else
+        CLOSES_LINE="Closes #$ISSUE"
+    fi
     gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$(cat <<BODY
 $(git log "origin/$BASE..HEAD" --format='- %s')
 
-Closes #$ISSUE
+$CLOSES_LINE
 ${VERIFY_NOTE:+
 > [!WARNING]
 > $VERIFY_NOTE}
