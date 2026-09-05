@@ -1830,6 +1830,30 @@ button.postio-compose-more {
   padding: var(--postio-space-2) var(--postio-space-4);
 }
 
+/* #1174: outlined rectangles, not libadwaita's default pill. One rule
+   because `ActionBar::new` puts this class on every bar it builds — the
+   conversation footer's own verbs and the per-message reply/reply-all/
+   forward row alike, both drawn the same shape in
+   `Design/screens/17-conversation-view.png` ("both bars" in that mockup).
+   A `.conversation-footer` or `.conversation-actions` rule of its own would
+   only ever repeat this one. */
+.postio-action-bar button {
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+  background-image: none;
+  box-shadow: none;
+}
+
+/* The one verb a bar exists for: a subtle accent tint, not libadwaita's
+   saturated `.suggested-action` capsule. Still outlined, like its
+   neighbours — only the fill and the label colour say "this is the one". */
+.postio-action-bar button.suggested-action {
+  background-color: var(--postio-selected-bg);
+  border-color: var(--postio-hairline);
+  color: var(--postio-accent-text);
+}
+
 /* ── One-line notices ────────────────────────────────────────────────
    Icon, ellipsised text, one action, an overflow. It never wraps: a notice
    that grows vertically pushes the mail down the pane, which is the
