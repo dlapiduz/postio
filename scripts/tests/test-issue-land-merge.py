@@ -18,6 +18,14 @@ a demonstration. `git` is real throughout, including the final
 `push origin --delete`, so the branch's actual removal from a real (bare,
 local) remote is what this checks, not a stubbed opinion about it.
 
+Also covers #1145: `delete_branch_on_merge` means GitHub itself removes the
+head branch as part of the merge, so by the time issue-land.sh runs its own
+`git push origin --delete` the ref is already gone and git prints
+"remote ref does not exist" -- two error-shaped lines after a landing that
+actually succeeded. The GH_STUB can be told (`GH_STUB_DELETE_ON_MERGE=1`) to
+delete the branch itself during `pr merge`, the same way GitHub does, and the
+test asserts the script notices before trying to delete it again.
+
 Usage: scripts/tests/test-issue-land-merge.py
 Exit status: 0 all cases behaved, 1 otherwise.
 """
@@ -99,6 +107,12 @@ if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     # merging fails the very check that exists to catch a merge which did
     # not happen.
     git push -q "$ORIGIN" "HEAD:refs/heads/main" || exit 1
+    # #1145: with delete_branch_on_merge on, GitHub removes the head branch
+    # itself as part of the merge -- before issue-land.sh ever gets to its
+    # own `git push origin --delete`.
+    if [ "$GH_STUB_DELETE_ON_MERGE" = "1" ]; then
+        git push -q "$ORIGIN" --delete "$BRANCH_NAME" || exit 1
+    fi
     echo "Merged"
     exit 0
 fi
@@ -170,7 +184,12 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 
 
 def land(
-    root: Path, target: Path, stub_dir: Path, origin: Path
+    root: Path,
+    target: Path,
+    stub_dir: Path,
+    origin: Path,
+    branch_name: str,
+    delete_on_merge: bool,
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
@@ -181,6 +200,10 @@ def land(
     environment["STUB_DIR"] = str(stub_dir)
     # The bare remote the `pr merge` stub pushes into; see GH_STUB.
     environment["ORIGIN"] = str(origin)
+    # Which head branch the stub should treat as merged, and whether it
+    # should delete it itself -- see #1145.
+    environment["BRANCH_NAME"] = branch_name
+    environment["GH_STUB_DELETE_ON_MERGE"] = "1" if delete_on_merge else "0"
     # A real merge, watched briefly: the fixture schedules no workflow, so
     # this settles in POSTIO_CHECKS_GRACE seconds rather than the real
     # default's 30.
@@ -196,13 +219,9 @@ def land(
     )
 
 
-def main() -> int:
-    if shutil.which("cargo") is None:
-        print("skip: no cargo on PATH", file=sys.stderr)
-        return 0
-
-    channel = pinned_channel()
-
+def run_case(channel: str, branch_name: str, delete_on_merge: bool) -> None:
+    """One landing, in its own sandbox and bare remote."""
+    prefix = f"[{branch_name}, delete_on_merge={delete_on_merge}] "
     with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
         base = Path(directory)
         target = base / "target"
@@ -225,45 +244,75 @@ def main() -> int:
         git("commit", "-q", "-m", "init", cwd=root)
         git("remote", "add", "origin", str(origin), cwd=root)
         git("push", "-q", "origin", "main", cwd=root)
-        git("checkout", "-q", "-b", "issue-1-x", cwd=root)
+        git("checkout", "-q", "-b", branch_name, cwd=root)
         (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
 
-        result = land(root, target, stub_dir, origin)
+        result = land(root, target, stub_dir, origin, branch_name, delete_on_merge)
         calls = (stub_dir / "calls").read_text(encoding="utf-8")
 
         if result.returncode != 0:
             FAILURES.append(
-                "the merge step failed on a fix that should have avoided the "
-                f"worktree conflict entirely:\n--- stdout ---\n{result.stdout}\n"
+                f"{prefix}the merge step failed on a fix that should have avoided "
+                f"the worktree conflict entirely:\n--- stdout ---\n{result.stdout}\n"
                 f"--- stderr ---\n{result.stderr}\n--- gh calls ---\n{calls}"
             )
         elif DELETE_BRANCH_ERROR in result.stderr or "STUB_DELETE_BRANCH_ERROR" in result.stderr:
             FAILURES.append(
-                f"the merge step still hit the worktree-conflict error:\n{result.stderr}"
+                f"{prefix}the merge step still hit the worktree-conflict error:\n"
+                f"{result.stderr}"
             )
 
         if "pr merge --rebase --delete-branch" in calls or " -d" in calls:
             FAILURES.append(
-                f"gh pr merge was called with --delete-branch, which reintroduces "
-                f"#167:\n{calls}"
+                f"{prefix}gh pr merge was called with --delete-branch, which "
+                f"reintroduces #167:\n{calls}"
             )
 
         remote_branches = git(
             "ls-remote", "--heads", "origin", cwd=root
         ).stdout.decode()
-        if "issue-1-x" in remote_branches:
+        if branch_name in remote_branches:
             FAILURES.append(
-                "the remote branch was not deleted after a successful merge: "
-                f"{remote_branches!r}"
+                f"{prefix}the remote branch was not deleted after a successful "
+                f"merge: {remote_branches!r}"
             )
 
         if "merged." not in result.stdout:
-            FAILURES.append(f"the script did not say it merged: {result.stdout!r}")
-        if "remote branch deleted." not in result.stdout:
-            FAILURES.append(
-                f"the script did not confirm the remote branch was cleaned up: "
-                f"{result.stdout!r}"
-            )
+            FAILURES.append(f"{prefix}the script did not say it merged: {result.stdout!r}")
+
+        if delete_on_merge:
+            # #1145: GitHub already removed the branch as part of the merge, so
+            # issue-land.sh's own delete attempt must not print git's
+            # "error:" lines for a ref it correctly expects to already be
+            # gone. The failing delete's own stderr is merged into the
+            # script's stdout by its `2>&1`, so that is where to look.
+            if "error:" in result.stdout:
+                FAILURES.append(
+                    f"{prefix}a successful landing printed a git error after "
+                    f"GitHub deleted the branch on merge:\n{result.stdout!r}"
+                )
+            if "remote branch deleted." in result.stdout:
+                FAILURES.append(
+                    f"{prefix}the script claimed to delete a branch GitHub had "
+                    f"already deleted: {result.stdout!r}"
+                )
+        else:
+            if "remote branch deleted." not in result.stdout:
+                FAILURES.append(
+                    f"{prefix}the script did not confirm the remote branch was "
+                    f"cleaned up: {result.stdout!r}"
+                )
+
+
+def main() -> int:
+    if shutil.which("cargo") is None:
+        print("skip: no cargo on PATH", file=sys.stderr)
+        return 0
+
+    channel = pinned_channel()
+
+    run_case(channel, "issue-1-x", delete_on_merge=False)
+    run_case(channel, "issue-2-y", delete_on_merge=True)
 
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed:\n", file=sys.stderr)

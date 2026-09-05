@@ -1000,7 +1000,15 @@ fi
 
 echo
 echo "merged."
-if git push origin --delete "$BRANCH" 2>&1; then
+# `delete_branch_on_merge` (#1107) means GitHub usually deletes $BRANCH
+# itself as part of the merge, before this runs -- so check first rather
+# than let a routine "nothing to delete" surface as two red `error:` lines
+# after a landing that already succeeded (#1145). The warning path below is
+# for the case this check misses: the branch was still there a moment ago
+# and the delete itself failed.
+if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+    echo "GitHub already deleted $BRANCH on merge."
+elif git push origin --delete "$BRANCH" 2>&1; then
     echo "remote branch deleted."
 else
     echo "warning: could not delete the remote branch $BRANCH -- it may" >&2
