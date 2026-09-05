@@ -490,22 +490,6 @@ fn surfaces() -> Vec<Surface> {
             close: |window| window.close_parts(),
         },
         Surface {
-            name: "a thread drilled into",
-            open: |window| {
-                // The cursor is what `t` drills into, so put it somewhere
-                // first — reaching past it into the model would test a path
-                // no keystroke takes.
-                window.list().first_row();
-                let row = window
-                    .list()
-                    .cursor_row()
-                    .expect("the list has rows, so it has a cursor row");
-                window.open_thread(&row);
-            },
-            shown: |window| window.thread_open(),
-            close: |window| window.close_thread(),
-        },
-        Surface {
             name: "the composer",
             open: |window| {
                 window

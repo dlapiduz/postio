@@ -440,7 +440,8 @@ fn pump_until(done: impl Fn() -> bool) {
     let heartbeat = glib::timeout_add_local(std::time::Duration::from_millis(5), || {
         glib::ControlFlow::Continue
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
+    let deadline = std::time::Instant::now()
+        + postio_test_support::scaled(std::time::Duration::from_millis(3000));
     while !done() && std::time::Instant::now() < deadline {
         context.iteration(true);
     }

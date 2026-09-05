@@ -15,35 +15,19 @@ name: CI
 # equivalent fallback is a `container: fedora:44` running the exact dnf line
 # from CLAUDE.md, rather than downgrading the feature floor.
 
-# Prose does not need a compiler. A docs-only change used to spend ~4 minutes
-# of runner time proving that Rust it did not touch still builds.
-#
-# Listed explicitly rather than ignoring `docs/**`, and that is deliberate:
-# `docs/keybindings.md` is GENERATED from the command registry and
-# `postio-core/tests/keybindings_doc.rs` fails when the two drift. Ignoring the
-# whole directory would let a hand-edit of it through unverified, which is
-# exactly the drift that test exists to catch.
-#
-# Naming each prose file beats a `docs/**` glob with a `!` exception, because
-# it fails in the safe direction: a doc nobody has listed here runs CI, which
-# costs four minutes. A generated file nobody remembered to exclude would skip
-# it, which costs a silent regression.
+# Every push and every pull request runs this workflow; what the diff
+# obliges it to *build* is decided inside it, by the `changes` job, and the
+# compile jobs are gated on that. It used to be a workflow-level
+# `paths-ignore` for prose, and that cannot stay one: a workflow that does
+# not run reports no check, and a required status check that never reports
+# is a pull request that never merges (#1107). A gated job that is skipped
+# still reports, as skipped, which the ruleset counts as passed -- so
+# docs-only and tooling-only changes (39% of a fortnight's commits, #1127)
+# pay for the classification and the cheap jobs, not for a workspace build.
 on:
   push:
     branches: [main]
-    paths-ignore: &prose
-      - '*.md'
-      - '.claude/**'
-      - 'Design/**'
-      - 'docs/decisions/**'
-      - 'docs/images/**'
-      - 'docs/PRODUCT.md'
-      - 'docs/ARCHITECTURE.md'
-      - 'docs/engineering-notes.md'
-      - 'docs/session-prompts.md'
-      - 'docs/architecture-review-2026-08.md'
   pull_request:
-    paths-ignore: *prose
   workflow_dispatch:
 
 # Least-privilege default: no job here pushes a commit, opens a PR, or
@@ -80,6 +64,39 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      docs: ${{ steps.classify.outputs.docs }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The diff comes from the API rather than from a deep clone: a pull
+      # request's base..head and a push's before..after are both one
+      # compare call. A range GitHub cannot answer (a first push, a force
+      # push whose `before` is gone) leaves the list empty, and an empty
+      # list builds everything -- scripts/ci-changes.sh fails in that
+      # direction on purpose, and its self-test holds it there.
+      - name: Classify the diff
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" ;;
+            push)         range="${{ github.event.before }}...${{ github.sha }}" ;;
+            *)            range="" ;;
+          esac
+          files=""
+          if [ -n "$range" ]; then
+            files=$(gh api --paginate "repos/${{ github.repository }}/compare/$range" \
+                      --jq '.files[].filename' 2>/dev/null || true)
+          fi
+          printf '%s\n' "$files" | scripts/ci-changes.sh "${{ github.event_name }}" | tee -a "$GITHUB_OUTPUT"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -110,6 +127,12 @@ jobs:
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Cache cargo registry
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -196,39 +219,29 @@ jobs:
       # reads, and a comment there was a second copy free to disagree.
       # The step below is eight of this job's nine minutes, and what it tests
       # is `scripts/`, not the workspace: each self-test builds its own
-      # sandbox repository and never reads `crates/`. A pull request that
-      # touches only Rust cannot change its outcome, so it should not pay for
+      # sandbox repository and reads only the copy of the tooling it put
+      # there. A pull request that cannot affect `scripts/` should not pay for
       # it. #996 lists this as the cheapest thing to fix here.
       #
-      # It fails safe in all three directions that matter: a push to `main`
-      # runs them, an API call that does not answer runs them, and anything at
-      # all outside `crates/` runs them. Skipping needs a definite answer that
-      # only `crates/` changed.
+      # The rule itself is `scripts/ci-tooling-needed.sh`, and it is a script
+      # rather than fifteen lines of `bash` here because inline workflow steps
+      # cannot be tested -- which was its own small joke, since what it gates
+      # is the suite that keeps the tooling honest.
+      # `scripts/tests/test-ci-tooling-needed.py` is what tests it, including
+      # every direction it has to fail safe in.
       - name: Decide whether the tooling self-tests need to run
         id: tooling
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "not a pull request -- running them"
-            exit 0
-          fi
           files=$(gh api --paginate \
             "repos/${{ github.repository }}/compare/${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
             --jq '.files[].filename' 2>/dev/null) || files=""
-          if [ -z "$files" ]; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "could not read the diff -- running them"
-            exit 0
-          fi
-          if printf '%s\n' "$files" | grep -qvE '^crates/'; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-            echo "changes outside crates/ -- running them"
-          else
-            echo "run=no" >> "$GITHUB_OUTPUT"
-            echo "only crates/ changed -- the tooling cannot be affected, skipping"
-          fi
+          answer=$(printf '%s\n' "$files" \
+            | scripts/ci-tooling-needed.sh "${{ github.event_name }}")
+          echo "run=$answer" >> "$GITHUB_OUTPUT"
+          echo "tooling self-tests: $answer"
+          printf '%s\n' "$files" | sed 's/^/  changed: /'
 
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
@@ -273,12 +286,20 @@ jobs:
   docs:
     name: Docs site build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The pin decides; see the note in the `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-linker` and `postio-cc` (#1101), and
+      # anything here that compiles -- the tooling self-tests build a dummy
+      # crate under this config -- needs them on PATH.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
 
       - name: Cache the mdbook binary
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -323,6 +344,8 @@ jobs:
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -370,6 +393,8 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -393,6 +418,8 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -402,6 +429,22 @@ jobs:
         with:
           save-cache: "true"
           cache-name: "build"
+
+      # #1126: cargo's freshness check compares a source file's mtime
+      # against the fingerprint it was last built against, and a fresh
+      # checkout gives every file the same "now" mtime regardless of which
+      # commit last touched it -- so a cached `target/` looked entirely
+      # stale and this job rebuilt from nothing every run, even when a PR
+      # changed one crate. Restoring each file's mtime to the date of the
+      # commit that actually touched it makes the comparison mean something
+      # again: an unchanged file gets back exactly the mtime the cached
+      # build was fingerprinted against, and a changed one gets a date newer
+      # than that build, so cargo rebuilds precisely what the PR touched
+      # plus its dependants. Must run before the first cargo invocation
+      # below, and after the checkout and cache restore above -- both of
+      # which is what sets the mtimes this is undoing.
+      - name: Restore mtimes from commit history
+        run: scripts/restore-mtimes.py
 
       # Sixty test files in this workspace open with "no display? skip and
       # return", which is right on a contributor's headless shell and wrong
@@ -437,43 +480,24 @@ jobs:
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # The published binary, not `cargo install`, and the difference is
-      # minutes. `cargo install cargo-nextest` builds the tool's own
-      # dependency tree -- clap, serde, regex and ~200 others -- in its own
-      # target directory, so every crate it shares with this workspace is
-      # compiled twice per run and neither copy is usable by the other. The
-      # release tarball is one file and ~2 seconds.
+      # The version, the checksum and the reasoning all live in
+      # `scripts/install-nextest.sh`, which a workstation runs too. They used
+      # to live here, and only here, which is why the tool CI requires was
+      # absent from the machine every landing runs on -- `issue-land.sh` falls
+      # open to `cargo test` and says nothing (#1092).
       #
-      # Pinned by **checksum**, which is a stronger guarantee than the SHA
-      # pinning applied to actions here and than `--locked` gives: it fixes
-      # the exact bytes rather than a dependency graph that resolves at build
-      # time. The asset is immutable, so a changed digest means the artifact
-      # changed and the job should stop -- `sha256sum -c` makes that a failure
-      # rather than a surprise.
-      #
-      # To bump: change the version in all three places below, download the
-      # tarball, and put its `sha256sum` here.
+      # Keyed on the script rather than on a version repeated here: the key
+      # then changes exactly when the pin does, and cannot go stale against
+      # it. A wrong-version restore is harmless anyway -- the script checks
+      # `cargo nextest --version`, not the cache, and reinstalls.
       - name: Cache cargo-nextest
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: ${{ runner.os }}-cargo-nextest-0.9.143
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
 
-      # The binary is asked, not the cache: `cache-hit` is false on a
-      # restore-keys prefix hit even when the files are there, so a
-      # cache-hit guard is wrong wherever restore-keys are in play.
       - name: Install cargo-nextest
-        run: |
-          if cargo nextest --version 2>/dev/null | grep -qw "0.9.143"; then
-            echo "cargo-nextest 0.9.143 restored from the cache"
-            exit 0
-          fi
-          curl -fsSL --retry 3 -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.143/linux
-          echo "66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e  /tmp/nextest.tar.gz" \
-            | sha256sum -c -
-          mkdir -p "$HOME/.cargo/bin"
-          tar -xzf /tmp/nextest.tar.gz -C "$HOME/.cargo/bin" cargo-nextest
-          cargo nextest --version
+        run: scripts/install-nextest.sh
 
       # The default test suite never touches the network: live iCloud tests are
       # #[ignore]d, and nothing here opts back into them.
@@ -538,22 +562,14 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
-      # Keep the ~400 third-party crates; drop our own, which every commit
-      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
-      # is housekeeping rather than a speed-up -- the win is that a restored
-      # cache never carries a stale artifact of ours for cargo to reason
-      # about. Deliberately conservative: it names only files this workspace
-      # produces, because deleting a third-party rlib by accident would make
-      # every later build slower, not faster.
-      #
-      # Runs as a normal step, which is what makes it take effect: post steps
-      # run after all normal ones, so actions/cache saves what is left here.
-      #
-      # It belongs in whichever job SAVES the cache, which is this one -- see
-      # the `save-cache: "true"` above. #818 split the old `build` job into
-      # three and left this step behind with it, so `main` spent a day caching
-      # stale workspace artifacts under a comment describing a step that was
-      # no longer there.
-      - name: Drop workspace artifacts before caching
-        if: always()
-        run: scripts/ci-drop-workspace-artifacts.sh
+      # #1126: this job used to drop its own ~20 crates' artifacts here and
+      # keep only the ~400 third-party ones, because a fresh checkout's
+      # mtimes invalidated ours anyway and caching them bought nothing but
+      # upload/download bytes. "Restore mtimes from commit history" above is
+      # what removed that reason -- an unchanged crate's artifacts are
+      # genuinely reusable now, so the cache keeps them, and the reused
+      # `.fingerprint`/`deps` entries are what turns an 11-12 minute rebuild
+      # into a one-crate one. See `scripts/restore-mtimes.py`'s own doc for
+      # the property this depends on (`actions/cache` preserving mtimes
+      # through extraction) and what silently breaks if that ever stops
+      # being true.

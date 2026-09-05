@@ -1,10 +1,10 @@
 //! Render one view-layer surface straight out of GSK to a PNG.
 //!
 //! ```sh
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread dark
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread dark hc
-//! cargo run -p postio-gtk --example surface -- /tmp/thread.png thread 900x700
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation dark
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation dark hc
+//! cargo run -p postio-gtk --example surface -- /tmp/conversation.png conversation 900x700
 //! cargo run -p postio-gtk --example surface -- /tmp/parts.png parts
 //! ```
 //!
@@ -16,7 +16,7 @@
 //! may not link at any depth, dev-dependencies included.
 //!
 //! This is the other half of that trade. Some surfaces are reached by a
-//! keystroke rather than by data — thread drill-in, the parts panel — and GTK4
+//! keystroke rather than by data — the conversation pane, the parts panel — and GTK4
 //! offers no supported way to synthesize one, so `shot` cannot get to them
 //! without knowing about them. These are also the surfaces that need no store
 //! at all: every row here is a `crate::list::Row`, a type `postio-gtk` owns
@@ -119,16 +119,14 @@ fn conversation() -> Vec<Row> {
     ]
 }
 
-/// Canvas 3a: the list column, drilled in.
+/// Canvas turn 8a: the conversation, stacked in the reading pane.
 ///
-/// Through `ThreadView::open`, which is what `Window::open_thread` calls when
-/// `t` resolves — so this renders the surface the application renders, minus
-/// the keystroke that GTK will not let an example send.
-fn show_thread(window: &Window) {
-    let rows = conversation();
-    let subject = "maildir index rebuild is O(n²)";
+/// Through `Window::show_conversation`, which is what landing on a thread row
+/// calls — so this renders the surface the application renders, minus the
+/// keystroke that GTK will not let an example send.
+fn show_conversation(window: &Window) {
     window.list().set_mailbox("Inbox", 12);
-    window.show_thread(ThreadId::new(1), Some(subject), rows, 6);
+    window.show_conversation(conversation());
 }
 
 /// Canvas 3g's own message: four parts, one of them held back.
@@ -303,6 +301,55 @@ fn settle(window: &Window) {
     heartbeat.remove();
 }
 
+/// What to say when the size a `WxH` argument asked for and the size the
+/// compositor actually gave the window disagree (#933).
+///
+/// `set_default_size` is a hint: a toplevel larger than the monitor is
+/// clamped, and the height is clamped further by whatever the session
+/// reserves. `capture::png` reports the size it actually got, so this is the
+/// one place that can compare it against what was asked for and say so --
+/// silently handing over a smaller picture under a size that looks honoured
+/// is the same shape as #599, an argument that looks applied and was not.
+///
+/// `None` when nothing was requested, or when the compositor gave back
+/// exactly what was asked for -- the ordinary case, which must stay silent.
+fn size_mismatch(requested: Option<(i32, i32)>, got: (i32, i32)) -> Option<String> {
+    let requested = requested?;
+    if requested == got {
+        return None;
+    }
+    let (want_w, want_h) = requested;
+    let (got_w, got_h) = got;
+    Some(format!(
+        "asked for {want_w}x{want_h} but the compositor gave {got_w}x{got_h} -- \
+         the picture below is at the size it actually got, not the size named \
+         on the command line"
+    ))
+}
+
+#[cfg(test)]
+mod size_mismatch_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_requested_is_silent() {
+        assert_eq!(size_mismatch(None, (1280, 800)), None);
+    }
+
+    #[test]
+    fn the_size_asked_for_is_silent() {
+        assert_eq!(size_mismatch(Some((1280, 800)), (1280, 800)), None);
+    }
+
+    #[test]
+    fn a_clamped_size_is_reported() {
+        let message = size_mismatch(Some((1600, 900)), (1280, 800))
+            .expect("a clamped size should be reported");
+        assert!(message.contains("1600x900"), "{message}");
+        assert!(message.contains("1280x800"), "{message}");
+    }
+}
+
 fn main() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args
@@ -347,8 +394,8 @@ fn main() -> glib::ExitCode {
             window.list().set_density(density);
         }
     }
-    if flag("thread") {
-        show_thread(&window);
+    if flag("conversation") {
+        show_conversation(&window);
     }
     if flag("parts") {
         show_parts(&window);
@@ -372,12 +419,6 @@ fn main() -> glib::ExitCode {
     }
     window.present();
     settle(&window);
-    // The thread column asks for the keyboard on the way in, and the focus
-    // only actually lands once there is a surface to land on.
-    if flag("thread") {
-        window.thread().focus_rows();
-        settle(&window);
-    }
     // Same reason, and the point of the shot: the folder list's focus ring is
     // what says the keyboard is in this pane, and it cannot be looked at
     // without putting it there. `folders` on its own renders the pane at
@@ -399,6 +440,9 @@ fn main() -> glib::ExitCode {
         Ok(written) => {
             let (width, height) = (written.width, written.height);
             println!("surface: {width}x{height} -> {path}");
+            if let Some(message) = size_mismatch(size, (width, height)) {
+                eprintln!("surface: {message}");
+            }
             if written.stalled {
                 // Said out loud because the picture is misleading in one
                 // specific way, and silently handing it over is how a

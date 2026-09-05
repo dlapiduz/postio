@@ -128,6 +128,10 @@ pub fn the_context_menu_reaches_the_action_handler_with_the_right_account() {
     panel.test_close_account_menu();
 
     panel.test_open_account_menu(1.0, row_y(&all_rows[1]));
+    assert!(panel.activate_action("account.rebuild-index", None).is_ok());
+    panel.test_close_account_menu();
+
+    panel.test_open_account_menu(1.0, row_y(&all_rows[1]));
     assert!(panel.activate_action("account.remove", None).is_ok());
     panel.test_close_account_menu();
 
@@ -135,9 +139,10 @@ pub fn the_context_menu_reaches_the_action_handler_with_the_right_account() {
         *heard.borrow(),
         vec![
             (AccountId::new(2), AccountAction::UpdateCredential),
+            (AccountId::new(2), AccountAction::RebuildIndex),
             (AccountId::new(2), AccountAction::Remove),
         ],
-        "both should have fired for the second row, not the first"
+        "all three should have fired for the second row, not the first"
     );
 
     window.destroy();
@@ -277,6 +282,18 @@ fn validity_in(row: &gtk::ListBoxRow) -> Option<String> {
     .map(|label| label.text().to_string())
 }
 
+/// The row's own reindex-progress line, if a rebuild is running (#981).
+fn reindexing_in(row: &gtk::ListBoxRow) -> Option<String> {
+    collect(
+        row.upcast_ref::<gtk::Widget>(),
+        "postio-settings-account-reindexing",
+    )
+    .into_iter()
+    .find_map(|w| w.downcast::<gtk::Label>().ok())
+    .filter(|label| label.is_visible())
+    .map(|label| label.text().to_string())
+}
+
 /// Issue #878: the badge names the connection Postio actually uses,
 /// straight off the account, with no round trip through the composition
 /// root the way the weight and the validity line need.
@@ -369,6 +386,66 @@ pub fn an_account_row_says_whether_its_token_is_still_good() {
     window.destroy();
 }
 
+/// #981: a rebuild in progress is said out loud on the row, not run
+/// silently, and clears the moment nothing is reported for that account any
+/// more.
+pub fn an_account_row_says_when_its_search_index_is_being_rebuilt() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let panel = SettingsPanel::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&panel));
+    window.present();
+
+    panel.set_accounts(vec![
+        an_account(1, "Ada", "ada@example.com"),
+        an_account(2, "Grace", "grace@example.com"),
+    ]);
+    pump();
+
+    assert_eq!(
+        reindexing_in(&rows(&panel)[0]),
+        None,
+        "nothing is rebuilding either account's index yet"
+    );
+
+    panel.set_reindex_progress(AccountId::new(2), Some((0, 40)));
+    pump();
+    assert_eq!(
+        reindexing_in(&rows(&panel)[0]),
+        None,
+        "the first account's row must not report the second account's rebuild"
+    );
+    assert_eq!(
+        reindexing_in(&rows(&panel)[1]).as_deref(),
+        Some("Rebuilding search index — 0 of 40")
+    );
+
+    panel.set_reindex_progress(AccountId::new(2), Some((17, 40)));
+    pump();
+    assert_eq!(
+        reindexing_in(&rows(&panel)[1]).as_deref(),
+        Some("Rebuilding search index — 17 of 40")
+    );
+
+    panel.set_reindex_progress(AccountId::new(2), None);
+    pump();
+    assert_eq!(
+        reindexing_in(&rows(&panel)[1]),
+        None,
+        "the line clears once the rebuild is over"
+    );
+
+    window.destroy();
+}
+
 /// Run the main loop until `window` has actually painted `count` frames.
 ///
 /// `is_mapped()` becoming true is not enough -- a row can be mapped with its
@@ -391,7 +468,7 @@ fn frames(window: &gtk::Window, count: u32) -> bool {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     while left.get() > 0 && Instant::now() < deadline {
         context.iteration(true);
     }

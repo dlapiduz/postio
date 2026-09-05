@@ -22,20 +22,24 @@ scripts/issue-claim.sh --milestone MVP      # scoped to a milestone
 scripts/issue-claim.sh 42                   # a specific issue
 scripts/issue-claim.sh --dry-run            # look before taking
 scripts/issue-claim.sh --base feature/x 42  # cut from an initiative branch
-scripts/issue-claim.sh --reuse             # here, with target/ still warm
+scripts/issue-claim.sh --fresh              # a new worktree even from inside one
+scripts/issue-claim.sh --cold               # ...and do not seed its target/
+scripts/issue-claim.sh --reuse              # strict: refuse rather than fall back
 ```
 
-**Reach for `--reuse` first.** A new worktree is a cold `target/`, and that is
-Postio's own ~20 crates rebuilt before the first gate result — nearly fifteen
-minutes on #1012's landing, for a change with no Rust in it. `--reuse` moves
-the tree you are standing in to the new issue's name and checks out its
-branch, so the build stays warm. It is *not* the sharing #76 forbids: that is
-two worktrees writing one target, and this is one worktree.
+**Run it from inside the worktree you just landed.** A plain claim there
+moves that tree to the new issue's name and checks out its branch, so the
+build stays warm — and when reuse would strand something (a dirty tree,
+commits not on the base) it says why and claims a fresh tree instead,
+leaving this one exactly as it was (#1102). A fresh tree is not cold either:
+its `target/debug` is reflink-copied from the newest sibling, one second for
+11 GB. In both cases Postio's own crates are dropped and rebuilt — about a
+minute — because they carry the tree's absolute path and cargo does not
+notice a move; the dependencies stay. Neither is the sharing #76 forbids:
+that is two worktrees writing one target.
 
-Claim fresh when you need the old tree kept — an unlanded branch you are
-coming back to. Otherwise try `--reuse`: it refuses if the tree is dirty, if
-it holds commits that are not on `main`, or if you are in the shared
-checkout, and a refusal changes nothing, so the wrong guess is free.
+`--fresh` when you want the old tree kept on purpose; `--reuse` when you
+want to be told rather than helped.
 
 ## Several small issues on one branch
 
@@ -124,12 +128,11 @@ work in the backlog; an unlabelled issue has not been triaged as agent-ready.
 `cd` into the worktree and stay there. It is a real checkout on its own branch,
 cut from `origin/main`.
 
-Cargo builds into this worktree's own `target/`, and the 400-odd third-party
-crates (GTK, WebKit — the expensive ones) come warm from the machine-wide
-sccache, which `.cargo/config.toml` wires in automatically — nothing to
-export, and a box without sccache still builds. (Never share a target
-directory between worktrees — it compiles one worktree's crate against
-another's; see #178 and `docs/engineering-notes.md`.)
+Cargo builds into this worktree's own `target/`. A reused tree is already
+warm; a fresh one was seeded from a sibling's (#1102), and whatever is still
+missing comes from the machine-wide sccache, wired in by `.cargo/config.toml`.
+Copying a target is fine; *sharing* one compiles a worktree's crate against
+another's (#178) — never point two trees at one.
 
 **The parallel-work hazard table in CLAUDE.md does not apply in here.** That
 table exists because sessions shared one tree and one index. This tree is
@@ -164,10 +167,9 @@ ps -eo pid,etime,args | grep -E "cargo|rustc" | grep -v grep
 ```
 
 An idle load average with two cargo processes minutes old is not a slow build,
-it is one waiting on the other's lock. Kill the stale one. (`jobs = 2` in
-`.cargo/config.toml` is per-session politeness for a shared box — when
-`/proc/loadavg` says you are actually alone, `cargo build -j8` is both allowed
-and much faster.)
+it is one waiting on the other's lock. Kill the stale one. Compile jobs come
+from one machine-wide pool (`scripts/jobserver.sh`, #1104): alone you get the
+whole box, so `-j` is never the lever.
 
 Tests are headless by default — `.cargo/config.toml` puts every test binary on
 a compositor of its own, so plain `cargo test` does not throw windows at
@@ -185,8 +187,9 @@ someone decided something while you worked.
 
 **Iterate cheaply; confirm expensively.** `scripts/test-fast.sh` runs the unit
 tests of the crates you changed and links nothing else — seconds. One
-`cargo test -p postio-app --test app_suite` is eleven minutes, nearly all of it
-linking, and TDD pays it twice per fix. Use the fast loop between edits and the
+`cargo nextest run -p postio-app --test app_suite` is ~20 s of running on a
+warm tree (200 s under plain `cargo test`, which runs its binaries one at a
+time), and TDD pays it twice per fix. Use the fast loop between edits and the
 integration suites to confirm at the end. If a rule is hard to prove without
 linking the application, that is usually a sign it wants to be a function in a
 leaf crate rather than something buried in a widget.
@@ -201,43 +204,49 @@ Also non-negotiable:
 ## 3. Land
 
 ```bash
-scripts/issue-land.sh -m "feat(gtk): teach the list to do the thing"
-scripts/issue-land.sh --gates-only    # check without committing
-scripts/issue-land.sh -m "..." --wip  # push a branch, no PR yet
+scripts/issue-land.sh --detach                      # the ordinary landing
+scripts/issue-land.sh --status                      # what it did, or is doing
+scripts/issue-land.sh --detach -m "feat(gtk): ..."  # with uncommitted work
+scripts/issue-land.sh --detach --gates-only         # check without committing
+scripts/issue-land.sh --detach --wip                # push a branch, no PR yet
 ```
+
+`--detach` runs the landing in a process no tool call can kill and returns
+at once; the hook refuses a foreground run. Read the log with `--status`.
 
 It formats, runs clippy **for the crates you actually changed** and the
 **sanity tier** — the whole workspace's unit tests, 1,313 of them in about
 five seconds — runs every repository invariant via `scripts/check.sh`,
-commits, pushes the branch, opens a PR whose body says `Closes #<n>`,
-**waits for CI, and merges it**.
+commits, pushes the branch, opens a PR whose body says `Closes #<n>`, and
+**arms GitHub's auto-merge**: the ruleset requires CI's checks, so it merges
+the moment they are green and nobody waits (#1107). `--wait` watches and
+merges the old way, for a landing you want to see through.
 
 `--full` adds the per-crate integration suites, which is what this used to
 always do. **Land on the default; `--full` needs a specific reason, and "my
 change is about wiring" is not one** — that was this file's own advice until
 #901 spent three ~25-minute runs on it and failed all three on other
 people's bugs. Run the suites your diff touches directly instead
-(`cargo test -p <crate> --test <suite>`) and let CI run the rest, which it
-does on every pull request. CLAUDE.md's "Build & test" section has the
-worked example.
+(`cargo nextest run -p <crate> --test <suite>`; doctests need `cargo test
+-p <crate> --doc`) and let CI run the rest, which it does on every pull
+request. `docs/engineering-notes.md` has the worked example.
 
-The default is fast because a `postio-app` integration binary is an
-~11-minute compile and link and several sessions share this machine — not
-because integration tests stopped mattering. They are how this project
+The default is fast because several sessions share this machine and the
+per-crate suites are minutes each — not because integration tests stopped
+mattering. They are how this project
 catches the bug it actually ships: layers that each pass and are not joined
 up. Which is an argument for *writing* them, and for running the ones your
 change is about; it is not an argument for running all of them twice.
 
-That last part is not optional and not someone else's job. A PR nobody merges
-is work that looks finished and is not: the branch goes stale, it conflicts
-with whatever lands next, and the issue it claims to close stays open. You are
-the session that knows what the change was for, so you are the session that
-waits for the checks and deals with them.
+A PR nobody merges is work that looks finished and is not, so a red one is
+still yours:
 
-- **Checks pass** → it rebases onto `main` and deletes the branch. Then
-  `scripts/issue-release.sh <n>` and claim the next issue.
-- **Checks fail** → yours to fix, on the same branch, then run the script
-  again. Do not open a second PR, and do not leave it sitting.
+- **Checks pass** → GitHub merges and deletes the branch. You have already
+  claimed the next issue from inside this worktree.
+- **Checks fail** → your next claim says so (`note: PR #N has failing
+  checks`), and so does `/steward`. `scripts/issue-claim.sh --resume <n>`
+  cuts a worktree from the branch, tracking it; fix, then land again onto
+  the same PR. Do not open a second PR.
 - `--no-merge` opens the PR and stops, for a change that genuinely needs a
   human to look first. Say in the PR why.
 
@@ -251,9 +260,10 @@ again from the top on the new copy — gates included. That is not a fault:
 this script rebases the tree it lives in, so without the handover the run
 that pulls a landing fix in is the one run that fix cannot protect. See #160.
 
-GitHub's own `--auto` merge is deliberately **not** used. It waits for
-*required* checks, branch protection is what makes a check required, and this
-repository cannot set any — so `--auto` would merge before CI had started.
+GitHub's `--auto` merge waits only for *required* checks, which is why the
+ruleset requires every `ci.yml` job: a job that skips itself for a docs-only
+diff still reports, and counts as passed. On a repository without auto-merge
+allowed the script watches and merges itself, as it always did.
 
 The commit message rules are unchanged — conventional subject, a body that
 explains **why**, wrapped at 72 columns. The footer becomes `Refs: #<n>`
@@ -271,6 +281,25 @@ there is no non-forcing spelling of it. The leased form refuses if the remote
 has moved; `--force` cannot tell your own rebase from a commit somebody else
 landed. The guard hook enforces that split in every tree, private worktree
 included, because the remote is shared even when the checkout is not.
+
+## Tests that survive a loaded runner
+
+**Wait for conditions, never for durations or turn counts.** Every
+intermittent CI failure this project has had was a sleep or a fixed pump that
+was long enough on an idle workstation and not on a loaded runner. Use the
+shared `settle_until`, which says what it was waiting for when it times out.
+A genuinely slow machine raises `POSTIO_TEST_PATIENCE` — that is the dial,
+so nobody edits a constant and slows the suite for everyone.
+
+**Tests live in suites, one binary per crate.** A new test file belongs in
+the suite directory and must be named by a `mod` line in its `main.rs`: an
+undeclared file is not an error, it is silence, and `check-suite-modules.py`
+exists because silence is indistinguishable from passing. A test that
+acquires the default GLib main context belongs in a `harness = false` suite,
+which `check-parallel-main-context.py` enforces.
+
+**A closed issue claims finished work.** If a PR auto-closes an issue whose
+acceptance is not met, reopen it and say what landed and what remains.
 
 ## 4. Is it actually reachable?
 
@@ -299,7 +328,15 @@ application does.
 
 ## 5. Finish
 
-When the PR merges:
+When the PR merges, **claim the next issue from right here, without asking**:
+
+```bash
+scripts/issue-claim.sh                    # reuses this worktree, build and all
+```
+
+It moves the tree to the new issue's name; if that would strand something it
+says why and claims a fresh, seeded tree instead. The worktree is released
+only when you stop:
 
 ```bash
 scripts/issue-release.sh <n>              # remove the worktree, release the claim
@@ -309,8 +346,7 @@ scripts/issue-release.sh --stale          # sweep claims whose worktree is gone
 
 It refuses to remove a worktree with uncommitted changes. A pushed branch is
 recoverable; a deleted worktree is not.
-
-Then **claim the next issue, without asking.** Finishing an issue is not
+ Finishing an issue is not
 finishing a session, and "shall I pick up another?" is not a question — the
 answer is written down and it is yes. A session that stops to ask has thrown
 away the rest of its context waiting for a reply that may be hours away.
@@ -327,9 +363,13 @@ first in every case.
 - **The issue is wrong, or bigger than it says.** Comment on it with what you
   found and open a new issue for the part that does not belong. Then keep going
   on the part that does.
-- **It needs a decision only the maintainer can make.** Add
-  `needs-architecture`, comment with the specific question and the options,
-  release with `--abandon`, and take something else.
-- **CI fails on your PR.** That is yours to fix, on the same branch. Check
-  `rustc --version` against CI's first: CI runs `rustup default stable`, and a
-  newer compiler there produces lints that cannot fire here.
+- **It needs a design or architecture call an agent can make.** Add
+  `needs-architecture` — that is `/ux-architect`'s queue — comment with the
+  question and the options, release with `--abandon`, and take something else.
+- **It needs a decision only the maintainer can make** — scope, product
+  direction, a trade-off with no defensible default. `needs-maintainer`, the
+  same comment, the same release.
+- **CI fails on your PR.** That is yours to fix, on the same branch. The
+  compiler is pinned by `rust-toolchain.toml` on both sides, so a lint that
+  fires only there means a `RUSTUP_TOOLCHAIN` in your shell is overriding the
+  pin; `rustc --version` says which you have.

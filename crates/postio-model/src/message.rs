@@ -155,6 +155,17 @@ pub struct Message {
     /// message belongs to a mailing list. What lets a list be detected
     /// without the user naming it anywhere.
     pub list_id: Option<String>,
+    // POSTIO-CONSENT: detection only. Postio never sends a read receipt —
+    // neither automatically nor on request — so there is no "how the user
+    // asks for it" here: the answer is that they cannot, yet. This flag only
+    // counts how often one was asked, for the privacy pane (#970); whether
+    // to ever honor the request is a separate, unbuilt decision.
+    /// Whether the sender asked for a read receipt (`Disposition-Notification-To`
+    /// or the older `Return-Receipt-To`), denormalized at ingest the same way
+    /// `list_id` is (#970). Postio never sends one automatically — CLAUDE.md's
+    /// privacy section is explicit that this is fixed policy, not a setting —
+    /// so this exists only to let the privacy pane count how often it was asked.
+    pub read_receipt_requested: bool,
 
     /// `From`. A list because RFC 5322 permits more than one author.
     pub from: Vec<EmailAddress>,
@@ -263,6 +274,7 @@ impl Message {
             in_reply_to: None,
             references: Vec::new(),
             list_id: None,
+            read_receipt_requested: false,
             from: Vec::new(),
             sender: None,
             reply_to: Vec::new(),

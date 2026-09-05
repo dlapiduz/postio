@@ -9,10 +9,13 @@ history and reasoning behind every rule here lives in
 ## The loop
 
 ```bash
-scripts/issue-claim.sh                  # next ready issue → private worktree
+scripts/issue-claim.sh                  # next ready issue → your worktree, reused or seeded
 cd ~/src/postio-worktrees/issue-<n>     # work there, not in ~/src/postio
-scripts/issue-land.sh                   # gates, commit, push, PR, merge
-scripts/issue-release.sh <n>            # remove the worktree
+scripts/issue-land.sh --detach          # gates, commit, push, PR; GitHub merges when CI is green
+scripts/issue-land.sh --status          # what the detached landing did
+scripts/issue-claim.sh                  # from inside the worktree: reuses it for the next issue
+scripts/issue-claim.sh --resume <n>     # back to a branch whose PR went red
+scripts/issue-release.sh <n>            # only when you stop; the next claim is the release otherwise
 ```
 
 An issue is yours when it is open, labelled `ready`, unassigned, and blocked
@@ -70,7 +73,8 @@ corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
 ```bash
 scripts/test-fast.sh                                 # between edits: changed crates, --lib
 scripts/test-sanity.sh                               # before landing: whole workspace, --lib
-cargo test   -p <crate>                              # that crate, integration included
+cargo nextest run -p <crate> --test <suite>          # one integration suite, tests in parallel
+cargo nextest run -p <crate>                         # that crate's suites; doctests: cargo test -p <crate> --doc
 cargo clippy -p <crate> --all-targets -- -D warnings # before landing
 scripts/check.sh                                     # every repository invariant
 ```
@@ -86,26 +90,21 @@ cheap.** Measured, warm, on this workstation:
 
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
-share this machine with `jobs = 2`, so landing had become something you
-queued for.
+share this machine, so landing had become something you queued for.
 
 **Land on the default. `--full` needs a specific reason, and "this change is
 about wiring" is not one** (maintainer, 2026-09-03: *"dont run the full gate
 if you dont need to"*). Before landing, run the suites your diff actually
-touches — `cargo test -p <crate> --test <suite>` — which is seconds, aimed at
+touches — `cargo nextest run -p <crate> --test <suite>` — which is seconds, aimed at
 what changed, and re-runnable; then let CI run the rest. `--full` re-runs what
 you already ran, inside a ~25-minute chain where any unrelated flake restarts
 the whole thing.
 
-#901 is the worked example: three consecutive `--full` runs failed, none of
-them on a defect in the change — a `gtk_suite` segfault (#988), an `e2e`
-timeout at 121s that passed in 12s alone, and four SQLCipher `PRAGMA key`
-failures (the documented #710/#699). The fourth attempt, on the default,
-found a **real** compile error in two minutes: another session had landed a
-second construction site for a struct the branch had added a field to. Note
-what that means — `--full` could not have caught it and the default did not
-need to. **The rebase is what finds a shared type's new callers**, and
-`issue-land.sh` rebases on every attempt whatever the tier.
+#901 is the worked example (`docs/engineering-notes.md`): three `--full`
+runs failed on other people's bugs, and the default found the branch's one
+real defect in two minutes, through the rebase. **The rebase is what finds a
+shared type's new callers**, and `issue-land.sh` rebases on every attempt
+whatever the tier.
 
 **A gate failure in code your diff does not touch is probably not yours.**
 Check before re-running: reproduce it alone, read the backtrace
@@ -121,29 +120,33 @@ pass and are not joined up, like the Reader that was built, tested and never
 mounted. Do not read the fast default as permission to skip integration
 tests: write them, and let CI be the thing that runs them.
 
-**Iterate at the cheapest layer that can fail.** On this workstation
-`postio-body`'s 49 unit tests run in 0.00s and `postio-gtk`'s 330 in 0.42s,
-while `cargo test -p postio-app --test app_suite` takes ~200s. TDD pays that
-twice — once for red, once for green — so a cycle through an integration
-binary costs minutes for two minutes of thinking.
+**Iterate at the cheapest layer that can fail.** `postio-body`'s 49 unit
+tests run in 0.00s and `postio-gtk`'s 330 in 0.42s, while `app_suite` takes
+~200s under `cargo test` (~20s under nextest). TDD pays that twice — once
+for red, once for green. `scripts/test-fast.sh` runs `--lib` for the crates
+you changed and links nothing else; use it between edits, and run the
+integration suites to *confirm*, at the end. This is also an argument about
+where logic lives: a rule expressed as a function in `postio-core`,
+`postio-ui` or `postio-body` can be proven red in a second, and the same
+rule buried in a widget cannot. It does not license asserting on what a
+layer was handed instead of what a person would see — that is what the
+integration suites and `issue-land.sh` are still for.
 
-This used to say the suite was "eleven and a half minutes, nearly all of it
-link". Both halves were wrong, and the correction matters because the number
-was load-bearing (#973 cites it). Measured: cargo's own `--timings` puts the
-`app_suite` test target at **3.9s**, a warm rebuild-and-relink at **2s**, and
-the suite's *execution* at **200s**. Linking is ~1.2s — 0.3% of the cycle.
-What costs eleven minutes is a **cold worktree**, where ~470 third-party
-crates are compiled before anything of ours is: 95% of unit time, with
-`openssl-sys`'s build script the single largest item. That is an argument for
-`--reuse` (#1012), not against integration tests.
+Linking is not the cost — ~1.2 s of an `app_suite` cycle. What used to cost
+eleven minutes was a **cold worktree**, and a claim now reuses the tree you
+are in or seeds a new one (#1102): the sanity tier in a reused or seeded
+tree is **about a minute** — Postio's own crates rebuild, the ~470
+dependencies do not — against 19 minutes cold. The measurements, and the sccache finding
+behind them, are in `docs/notes/` ("Where the waiting went", 2026-09-04).
 
-`scripts/test-fast.sh` runs `--lib` for the crates you changed and links
-nothing else; use it between edits. Run the integration suites to *confirm*, at
-the end, not to iterate. This is also an argument about where logic lives: a
-rule expressed as a function in `postio-core`, `postio-ui` or `postio-body` can
-be proven red in a second, and the same rule buried in a widget cannot. It does
-not license asserting on what a layer was handed instead of what a person would
-see — that is what the integration suites and `issue-land.sh` are still for.
+**Integration suites run under nextest.** `cargo nextest run -p <crate>
+--test <suite>` runs one binary's tests as separate processes, in parallel;
+`issue-land.sh` and CI already do (`scripts/install-nextest.sh` installs the
+pinned version). Measured on this workspace: `app_suite`
+200 s → 20 s, the whole workspace ~500 s → 119 s. Keep `cargo test` for
+`--lib` — a process per unit test is 2.2x *slower* there, which is why the
+two tiers above use it — and for doctests, which nextest does not run and
+does not say so: `cargo test -p <crate> --doc`.
 
 **Test the crates you changed; the reconcile pass proves the rest.**
 `issue-land.sh` runs the gate chain (fmt, clippy, the sanity tier,
@@ -153,19 +156,20 @@ list describes (#419) — and the steward loop periodically runs the
 whole workspace against `main` — so a workspace build or test from an
 ordinary session is almost always waste, and a red crate you didn't touch is
 usually someone's in-flight TDD: note it on your issue and move on. Don't
-re-run gates ritually either — a third of all tool calls ever made in this
-repository were re-running a gate that `issue-land.sh` was going to run
-anyway. `cargo fmt` is a formatter, not verification: inside your worktree
+re-run gates ritually either; `issue-land.sh` runs them. `cargo fmt` is a
+formatter, not verification: inside your worktree
 `cargo fmt --all` is fine (the land script runs it); in the shared checkout
 format only files you changed, by name: `rustfmt --edition 2024 <paths>`.
 
-**Run `issue-land.sh` in the background, always** — a full gate chain can
-outlive a foreground tool call's 10-minute cap, and a run killed mid-gates
-commits nothing and leaks every live test's `/dev/shm` scratch. Launch it
-backgrounded, do something else or nothing, and act on the completion
-notification; never poll for it and never re-run it because it is quiet. A
-run that *was* killed is cheap to retry: green gates are recorded against
-the exact tree, so an unchanged retry skips straight to the landing.
+**Land with `--detach`, always.** A gate chain can outlive a tool call's
+cap, and a killed run commits nothing; `--detach` runs it in a process of
+its own and returns, `--status` reads its log, and the hook refuses a
+foreground landing. The script pushes, opens the PR and arms GitHub's
+auto-merge: CI decides, nobody waits, and you claim the next issue at once.
+A check that fails afterwards shows up at your next claim and in
+`/steward`; `scripts/issue-claim.sh --resume <n>` returns to that branch so
+the fix lands on the same PR. `--wait` is the old watching behaviour, for a
+landing you want to see through.
 
 - **Tests are headless automatically.** The cargo runner puts test binaries on
   a private mutter compositor; `cargo run -p postio-app` and examples reach
@@ -173,13 +177,9 @@ the exact tree, so an unchanged retry skips straight to the landing.
   `scripts/test-headless.sh --stop` to stop the compositor. Headless is ~3.5x
   faster than a live display — a test that passes on the desktop and fails
   headless usually has a real race (see `docs/engineering-notes.md`).
-- **The reconcile pass**, when you are the one doing it: `cargo check
-  --workspace --all-targets` first — it is what catches a *test* target that
-  stopped compiling, which is how `main` went red twice in one day (#419),
-  and it answers before the test run has finished linking — then `cargo test
-  --workspace --no-fail-fast`, always `--no-fail-fast`, because plain cargo
-  aborts remaining targets on the first failure and one red crate hides a
-  thousand passing tests. `cargo bench` checks the perf budgets.
+- **The whole-workspace reconcile pass is `/steward`'s job**, not an
+  ordinary session's; the skill says how to run it so one red crate cannot
+  hide a thousand passing tests.
 - **To see the app**: `scripts/run-isolated.sh [commit] [--inspect|--shot]`
   builds a pinned commit with its own target dir and throwaway store. It
   links `--release` — never run it while other sessions are building.
@@ -206,6 +206,10 @@ the exact tree, so an unchanged retry skips straight to the landing.
 - A test that needs a display goes in `tests/`, never in `src/` — a second
   `adw::init()` in a unit-test binary kills the whole process
   (`scripts/checks/check-no-gtk-init-in-unit-tests.py` enforces this).
+- **The hook refuses the two habits the transcripts show most**: a
+  whole-workspace test run (`cargo test --workspace` without `--lib`; use
+  the tiers, or `POSTIO_WORKSPACE_TESTS=1` when you are the steward) and a
+  foreground `issue-land.sh` (use `--detach`). Each refusal says what to run.
 
 System deps (Fedora 40+): see README. Rust is pinned by
 `rust-toolchain.toml`; sccache is wired in via `.cargo/config.toml`, nothing
@@ -301,27 +305,32 @@ rebase, push again.
 Parallel sessions are the normal state. Worktrees isolate the files; three
 things stay shared:
 
-- **CPU**: `.cargo/config.toml` pins `jobs = 2`. Raise per-command
-  (`cargo build -j8`) only when you're alone.
+- **CPU**: one machine-wide jobserver (`scripts/jobserver.sh`, #1104) hands
+  compile jobs to every cargo on the box — alone you get the whole machine,
+  four sessions share one ceiling. It reaches cargo through `MAKEFLAGS` in
+  `.claude/settings.json`, and the PreToolUse hook keeps the pool up before
+  any command that mentions cargo. `jobs = 2` in `.cargo/config.toml` is
+  only the fallback for a cargo with no fifo to join. Never pass `-j`: it is
+  ignored while the pool is up and wrong when it is not.
 - **The compile cache**: sccache, wired in automatically, one cache
-  machine-wide. Each worktree keeps its own `target/` (sharing one compiled
-  crates against a sibling's — #76).
+  machine-wide — true on paper only until #1101: the linker and `CC` were
+  per-worktree paths in every rustc argument list and every build script's
+  environment, so the cache hit 1% of the time. They are bare names now
+  (`postio-linker`, `postio-cc`; `scripts/install-shims.sh` puts them on
+  PATH and the claim, land and test scripts run it). **Never put a worktree
+  path into anything rustc or a build script sees.** Each worktree keeps
+  its own `target/` (sharing one compiled crates against a sibling's — #76).
 
-  **So claim with `--reuse` by default.** A *fresh* worktree is a cold
-  `target/`: Postio's own ~20 crates rebuilt before the first gate result —
-  595s of sanity tier plus 289s of workspace check on #1012's own landing,
-  and that was a change with no Rust in it at all. `scripts/issue-claim.sh
-  --reuse` takes the next issue in the worktree you are already in and keeps
-  that build. It is **not** the sharing #76 forbids: that is two worktrees
-  writing one target, and this is one worktree with a different branch
-  checked out.
-
-  Claim fresh only when you need the old tree kept — an unlanded branch you
-  mean to come back to, or work you have not finished with. You do not have
-  to decide carefully: `--reuse` refuses on its own if the tree is dirty,
-  holds commits that are not on `main`, or is the shared checkout, and each
-  refusal names its reason and changes nothing. Trying it first costs
-  nothing when it does not apply.
+  **A plain claim reuses or seeds.** Run `scripts/issue-claim.sh` from
+  inside your landed worktree and it moves that tree to the next issue,
+  build and all; if that would strand something — a dirty tree, unlanded
+  commits — it says so and claims a fresh tree instead, leaving this one
+  alone. A fresh tree's `target/debug` is copied from the newest sibling by
+  reflink (#1102): one second for 11 GB on btrfs. Either way Postio's own
+  crates are dropped and rebuilt — they carry the tree's absolute path, and
+  cargo does not notice a move — so the sanity tier is about a minute, not
+  the 19 of a cold tree. It is a copy, not the sharing #76 forbids. `--fresh` forces a new tree, `--cold` an unseeded one, and
+  `--reuse` is the strict form that refuses instead of falling back.
 - **The main checkout** `~/src/postio` is for coordination, not work. A hook
   refuses the destructive commands there (`git add -A`, `reset --hard`,
   `stash`, `cargo fmt --all`, editing the root `Cargo.toml`, …) because other
@@ -346,7 +355,7 @@ for a stranger who can't ask follow-ups:
 | Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
-| A constraint future sessions must respect | `docs/engineering-notes.md` |
+| A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
 
 **File through the script, because you will not think to search.** One bug
@@ -365,12 +374,15 @@ is genuinely different, and `--search-only` just looks.
 targets nightly. Both were `workflow_dispatch`-only while this repository was
 private and paying for its own minutes — that ended when it went public.
 
-**`issue-land.sh` waits for the checks and merges when they pass.** Do not add
-a wait of your own, and do not merge around a red one: a check that fails on
-your PR is your work to fix, on the same branch, however green the crates you
-touched were locally. The gate chain proves the crates a branch changed; CI is
-the only thing that proves the *combination*, which is the failure two branches
-that are each green alone can produce together.
+**The ruleset requires CI's checks, and `issue-land.sh` arms auto-merge.**
+Every pull request runs `ci.yml`; its `changes` job decides what the diff
+obliges it to build, and the compile jobs skip themselves for docs and
+tooling (a skipped job counts as passed). Do not merge around a red check:
+a check that fails on your PR is your work to fix, on the same branch,
+however green the crates you touched were locally. The gate chain proves
+the crates a branch changed; CI is the only thing that proves the
+*combination*, which is the failure two branches that are each green alone
+can produce together.
 
 The steward loop's periodic `cargo check --workspace --all-targets` and
 `cargo test --workspace --no-fail-fast` against `main` are now a backstop
@@ -380,9 +392,12 @@ local full-suite run first — `release.yml` ships without testing.
 
 ## Skills and design authorities
 
-`/issue` (the loop), `/lanes` (who else is here), `/preflight` (true state of
-the tree), `/add-fixture`, `/ux-architect` (designing any surface),
-`/gtk-design` (building it).
+`/issue` (the loop), `/initiative` (several issues on one feature branch),
+`/lanes` (who else is here), `/preflight` (true state of the tree),
+`/add-fixture`, `/ux-architect` (designing any surface, and the
+`needs-architecture` queue), `/gtk-design` (building it), `/product-manager`
+and `/steward` (the two loops that watch the backlog and the execution).
+`docs/session-prompts.md` says which to run when.
 
 Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
 (`Design/Mail Client.dc.html`, direction PLATE 1b) — spacing, color,

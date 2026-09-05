@@ -44,7 +44,7 @@ use std::rc::Rc;
 use gtk::glib;
 use gtk::prelude::WidgetExt;
 use postio_core::{Command, Event};
-use postio_gtk::feed::Feeds;
+use postio_gtk::feed::{Feeds, Folders};
 use postio_gtk::finder::Finder;
 use postio_gtk::search::{Outcome, View};
 use postio_gtk::window::Window;
@@ -57,6 +57,7 @@ use postio_storage::repository::{ContactRepository, LabelRepository};
 use postio_storage::{Database, PooledConnection};
 
 use crate::Wiring;
+use crate::settings_accounts::Reindexing;
 
 /// How many hits one run brings back.
 ///
@@ -76,7 +77,12 @@ const HIT_LIMIT: u32 = 200;
 /// optional in the running application — `feed_the_window` builds both — and
 /// is taken by reference here rather than found, because which `Feeds` a
 /// window has is the composition root's business, the same as the source.
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> {
+pub fn install(
+    window: &Window,
+    wiring: &Wiring,
+    feeds: &Feeds,
+    reindexing: Reindexing,
+) -> Option<View> {
     let account = crate::first_account(&wiring.database)?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
@@ -105,11 +111,14 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
     install_run(
         &view,
         &finder,
-        account.id,
+        window,
+        feeds,
         wiring,
         held.clone(),
         order.clone(),
+        reindexing,
     );
+    install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone());
     install_order_toggle(window, &finder, feeds, order);
     load_contacts(&finder, account.id, wiring);
@@ -128,17 +137,128 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) -> Option<View> 
 /// registration order and stop at the first one that claims the keyboard, so
 /// a refine chip still wins when there is one to move to.
 fn install_leave_to_list(window: &Window, finder: &Finder) {
+    // Weak, for the reason `install_run` states below and this function did
+    // not follow: the window owns the finder that owns these handlers, so a
+    // strong clone is a cycle and the window never frees (#1072, and the
+    // three #794 catalogued).
+    //
+    // A window that has gone is not a focus destination, so an upgrade that
+    // fails means there is nothing left to do rather than something to
+    // report. `connect_tab` answers `false` in that case — it did not claim
+    // the keyboard — which is the honest answer and lets any later handler
+    // try, exactly as if this one had never been registered.
+    let weak = glib::object::ObjectExt::downgrade(window);
     finder.connect_search({
-        let window = window.clone();
+        let weak = weak.clone();
         move |_parsed| {
-            window.list().grab_focus();
+            if let Some(window) = weak.upgrade() {
+                window.list().grab_focus();
+            }
         }
     });
     finder.connect_tab({
-        let window = window.clone();
-        move || {
-            window.list().grab_focus();
-            true
+        move || match weak.upgrade() {
+            Some(window) => {
+                window.list().grab_focus();
+                true
+            }
+            None => false,
+        }
+    });
+}
+
+/// Which accounts a search under `scope` could not reach, by the name the
+/// sidebar shows, in the sidebar's order.
+///
+/// ADR 0005 Q10: *a view that cannot include an account says so, names the
+/// account, and stays usable.* The list obeys that rule through
+/// `list_state::derive_aggregate`; a search is the other surface that can
+/// answer for less mail than the user thinks they asked about, and its answer
+/// is a number, which looks just as complete either way.
+///
+/// # Why the composition root and not the executor
+///
+/// Which accounts answered is a fact about *connections*. `postio-index` only
+/// ever sees the store, and a search of a store whose account is offline
+/// reads exactly like one whose account is fine — the rows are all local.
+/// This is the one layer holding both halves.
+///
+/// # One rule, two populations
+///
+/// `list_state::is_current` is the rule, and it is shared with
+/// `Window::set_folders`' own reach calculation rather than re-stated here
+/// (#811: the banner and the selection came to disagree about which account
+/// was which precisely by deriving separately). What differs is the
+/// population, legitimately: the list vouches for the accounts it is
+/// *drawing*, and a unified search covers every enabled account whether or
+/// not the list is currently showing one.
+///
+/// A single-account search names nothing: it leaves nothing out, whatever the
+/// other accounts are doing. A **disabled** account names nothing either, and
+/// for free — the sidebar's list is built from the enabled accounts, so one
+/// that is switched off is never in it to be named.
+pub(crate) fn unreachable_accounts(
+    window: &Window,
+    folders: &Folders,
+    scope: AccountScope,
+) -> Vec<String> {
+    if scope.is_single_account() {
+        return Vec::new();
+    }
+    let statuses = folders.statuses();
+    window
+        .sidebar()
+        .account_names()
+        .into_iter()
+        .filter(|(id, _)| {
+            statuses
+                .iter()
+                .find(|(candidate, _)| candidate == id)
+                // Silence is not a claim that a server is reachable: an
+                // account nothing has reported on has not answered either.
+                .is_none_or(|(_, status)| !postio_gtk::list_state::is_current(status))
+        })
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Whether an account this search's `scope` covers is rebuilding its local
+/// search index right now (#981).
+///
+/// A single account asks about itself; a unified search asks whether *any*
+/// enabled account is mid-rebuild — a coarser answer than `unreachable_accounts`
+/// gives, deliberately: `corpus_complete` is already a single boolean over
+/// the whole scope rather than a per-account list (unlike `unreachable`,
+/// which Q10 asks to name accounts individually), so there is no finer
+/// answer to compose it from without growing a second caveat shape.
+fn reindexing_covers(reindexing: &Reindexing, scope: AccountScope) -> bool {
+    match scope.account() {
+        Some(id) => reindexing.borrow().contains(&id),
+        None => !reindexing.borrow().is_empty(),
+    }
+}
+
+/// Ask the query again when the account scope changes.
+///
+/// The scope is read per run, so a *new* query already follows it — but the
+/// query on screen when somebody clicks another account is the one they are
+/// looking at, and leaving it is worse than making them retype it: a result
+/// list that says "14 hits" for a scope the window is no longer in is an
+/// answer to a question nobody is asking (#961).
+///
+/// Registered alongside the composition root's own scope handler rather than
+/// inside it: `Sidebar::connect_scope_selected` pushes, so both run, and the
+/// search's reaction stays in the module that owns searching.
+///
+/// [`Live::rerun`] is a no-op when nothing has been asked, so this costs
+/// nothing while the box is closed.
+fn install_scope_rerun(window: &Window, finder: &Finder) {
+    window.sidebar().connect_scope_selected({
+        let finder = finder.clone();
+        move |_scope| {
+            if let Some(live) = finder.live() {
+                live.rerun();
+            }
         }
     });
 }
@@ -154,8 +274,11 @@ type Order = Rc<std::cell::Cell<postio_search::ResultOrder>>;
 /// while the list is showing results: over a mailbox there is no other order
 /// to offer, and the control is inert.
 fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: Order) {
+    // Weak, for the reason `install_run` states: this handler is stored on
+    // the window itself, so a strong clone is a cycle with no third party in
+    // it at all -- the window holding a closure holding the window (#1072).
+    let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
-        let window = window.clone();
         let finder = finder.clone();
         let feeds = feeds.clone();
         move |id| {
@@ -163,6 +286,9 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
             {
                 return;
             }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
             let next = order.get().toggled();
             order.set(next);
             window.list().set_result_order(Some(next));
@@ -207,13 +333,16 @@ where
 type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
+#[allow(clippy::too_many_arguments)]
 fn install_run(
     view: &View,
     finder: &Finder,
-    account: AccountId,
+    window: &Window,
+    feeds: &Feeds,
     wiring: &Wiring,
     held: Held,
     order: Order,
+    reindexing: Reindexing,
 ) {
     let Some(live) = finder.live() else {
         // The readout is built by `Finder::attach`, which the window does
@@ -228,6 +357,11 @@ fn install_run(
     let runtime = wiring.runtime.clone();
     let events = wiring.events.clone();
     let view = view.clone();
+    let folders = feeds.folders.clone();
+    // Weak, because the window owns the finder that owns this handler; a
+    // strong clone here is a cycle that keeps the window alive for the life
+    // of the process.
+    let window = glib::object::ObjectExt::downgrade(window);
 
     live.connect_run({
         let live = live.clone();
@@ -236,6 +370,14 @@ fn install_run(
             // is free to keep typing while it does.
             let query = parsed.clone();
             let scope = view.scope();
+            // The account scope, read fresh on this side of the thread hop
+            // exactly as the role scope above is. A window that has gone
+            // away answers nothing rather than searching every account: a
+            // teardown is not a widening.
+            let Some(account) = window.upgrade().map(|window| window.scope()) else {
+                live.settled(sequence);
+                return;
+            };
             // Read on this side of the thread hop: the cell lives with the
             // GTK loop, and the value — `Copy` — travels with the work.
             let order = order.get();
@@ -251,6 +393,9 @@ fn install_run(
                 let runtime = runtime.clone();
                 let events = events.clone();
                 let held = held.clone();
+                let folders = folders.clone();
+                let window = window.clone();
+                let reindexing = reindexing.clone();
                 async move {
                     let Ok(Some(results)) = hits.recv().await else {
                         // The store could not be read, so there is no answer
@@ -274,9 +419,28 @@ fn install_run(
                         elapsed_ms = results.elapsed.as_millis() as u64,
                         "search answered"
                     );
+                    // Which accounts this answer could not include. Read
+                    // here, on the GTK side, and against the scope the search
+                    // actually ran under -- the user is free to switch scope
+                    // while the store is answering, and a caveat about the
+                    // scope they moved to would be about a different question.
+                    let unreachable = window
+                        .upgrade()
+                        .map(|window| unreachable_accounts(&window, &folders, account))
+                        .unwrap_or_default();
+                    // Whether an account this answer covers is rebuilding
+                    // its local index right now (#981) -- read against the
+                    // same scope the search ran under, for the reason
+                    // `unreachable` above is.
+                    let reindexing_now = reindexing_covers(&reindexing, account);
                     // The readout first: it is what the field is showing and
                     // what the user is waiting for.
-                    if !live.deliver(sequence, Outcome::of(&results)) {
+                    if !live.deliver(
+                        sequence,
+                        Outcome::of(&results)
+                            .with_unreachable(unreachable)
+                            .with_reindexing(reindexing_now),
+                    ) {
                         // Superseded. Everything downstream of these results
                         // is about a question nobody is asking.
                         return;
@@ -315,7 +479,7 @@ const SNIPPET_HITS: usize = 50;
 /// One search against the index, with an excerpt cut for each hit.
 fn run(
     connection: &PooledConnection,
-    account: AccountId,
+    account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
     order: postio_search::ResultOrder,
@@ -323,14 +487,14 @@ fn run(
     let mut results = search(
         connection,
         &SearchRequest {
-            // `Account`, not `Unified`, and deliberately: the composition
-            // root still opens exactly one account (`first_account`), so
-            // searching every account and searching this one are the same
-            // set. #186 gave the executor the capability; #183 is what gives
-            // the application more than one account to point it at, and
-            // switching this to follow `AppState.scope` belongs there — where
-            // there is something to observe the difference.
-            account: AccountScope::Account(account),
+            // The window's own scope, read fresh on every run — the same way
+            // the role scope beside it is (`view.scope()`). It was hardcoded
+            // to `Account` while the composition root opened exactly one
+            // account and there was nothing to observe the difference with;
+            // #185 gave the sidebar a section per account and a Unified row,
+            // and the hardcode outlived its reason by long enough that the
+            // executor's unified path had a benchmark and no caller (#961).
+            account,
             query,
             scope,
             limit: HIT_LIMIT,
@@ -390,7 +554,7 @@ fn facets(
     view: &View,
     live: &postio_gtk::search::Live,
     sequence: u64,
-    account: AccountId,
+    account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
     database: &Database,
@@ -402,8 +566,11 @@ fn facets(
             postio_index::executor::facets(
                 connection,
                 &SearchRequest {
-                    // See `run` for why this is not `Unified` yet.
-                    account: AccountScope::Account(account),
+                    // The scope the hits were counted under, carried rather
+                    // than re-read: the columns have to describe *this*
+                    // result set, and the user is free to switch scope while
+                    // this second round trip is in flight.
+                    account,
                     query: &query,
                     scope,
                     limit: HIT_LIMIT,
@@ -807,7 +974,7 @@ mod tests {
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
         run(
             &connection,
-            account,
+            AccountScope::Account(account),
             &query,
             Scope::AllMail,
             postio_search::ResultOrder::Relevance,
@@ -899,6 +1066,43 @@ mod tests {
 
         assert_eq!(results.hits.len(), 1, "the subject still matched");
         assert!(results.hits[0].snippet.is_empty());
+    }
+
+    // -- reindexing_covers (#981) -------------------------------------------
+
+    #[test]
+    fn a_single_account_search_asks_only_about_itself() {
+        let reindexing: Reindexing = Default::default();
+        let watched = AccountId::new(1);
+        let other = AccountId::new(2);
+        reindexing.borrow_mut().insert(other);
+
+        assert!(
+            !reindexing_covers(&reindexing, AccountScope::Account(watched)),
+            "the account this search ran under is not the one rebuilding"
+        );
+
+        reindexing.borrow_mut().insert(watched);
+        assert!(
+            reindexing_covers(&reindexing, AccountScope::Account(watched)),
+            "now it is"
+        );
+    }
+
+    #[test]
+    fn a_unified_search_asks_whether_anything_is_rebuilding_at_all() {
+        let reindexing: Reindexing = Default::default();
+        assert!(
+            !reindexing_covers(&reindexing, AccountScope::Unified),
+            "nothing is rebuilding yet"
+        );
+
+        reindexing.borrow_mut().insert(AccountId::new(7));
+        assert!(
+            reindexing_covers(&reindexing, AccountScope::Unified),
+            "a unified view covers every account, so one of them rebuilding \
+             is enough to raise the caveat"
+        );
     }
 }
 

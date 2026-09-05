@@ -38,7 +38,6 @@ pub enum Theme {
 /// density = "airy"          # airy | comfortable | compact
 /// theme = "system"          # system | light | dark
 /// show_hover_actions = true # mouse parity: reveal row actions on hover
-/// thread_drill = true       # `t` turns the list column into the thread
 /// show_key_hints = true     # the focused row's own keyboard hints
 /// sender_avatars = true     # initials chip per row, from canvas 1b
 /// ```
@@ -53,10 +52,7 @@ pub struct UiConfig {
     /// Show per-row actions when the pointer is over a row.
     #[serde(default = "crate::yes")]
     pub show_hover_actions: bool,
-    /// Let `t` drill the list column into the focused thread.
-    #[serde(default = "crate::yes")]
-    pub thread_drill: bool,
-    /// Show the focused row's key hints (`e reply`, `a archive`, `t thread`).
+    /// Show the focused row's key hints (`e reply`, `a archive`).
     /// Off leaves every binding in force -- this only stops the row from
     /// naming them, for someone who already knows the keyboard (#422).
     #[serde(default = "crate::yes")]
@@ -75,7 +71,6 @@ impl Default for UiConfig {
             density: Density::default(),
             theme: Theme::default(),
             show_hover_actions: true,
-            thread_drill: true,
             show_key_hints: true,
             sender_avatars: true,
             extra: Extras::new(),

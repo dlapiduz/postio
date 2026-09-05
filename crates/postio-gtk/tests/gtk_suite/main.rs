@@ -59,7 +59,6 @@ mod gtk_composer_signature_default;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_conversation;
-mod gtk_conversation_index;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
 mod gtk_display_required;
@@ -133,13 +132,11 @@ mod gtk_sidebar_sections;
 mod gtk_sidebar_tree;
 mod gtk_signature_placement;
 mod gtk_style;
-mod gtk_thread;
-mod gtk_thread_dwell_cancel;
-mod gtk_thread_scope;
 mod gtk_toast;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
+mod gtk_widgets;
 mod gtk_window;
 mod gtk_window_open_message;
 mod gtk_window_run_search;
@@ -253,16 +250,21 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
     ),
     (
+        "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
+        gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
+            as fn(),
+    ),
+    (
+        "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
+        gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
+    ),
+    (
         "gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader",
         gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
     ),
     (
         "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
         gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
-    ),
-    (
-        "gtk_conversation_index::the_column_and_the_conversation_share_one_current_message",
-        gtk_conversation_index::the_column_and_the_conversation_share_one_current_message as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
@@ -430,6 +432,23 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts_keys::undo_outside_the_account_list_leaves_the_removal_toast_alone as fn(),
     ),
     (
+        "gtk_settings_account_detail::the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default",
+        gtk_settings_account_detail::the_detail_view_offers_the_accounts_signatures_and_starts_on_its_default
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all",
+        gtk_settings_account_detail::an_account_with_no_signatures_gets_no_picker_at_all as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::opening_an_account_reports_no_edit_of_its_own",
+        gtk_settings_account_detail::opening_an_account_reports_no_edit_of_its_own as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::choosing_a_signature_reports_the_account_and_the_choice",
+        gtk_settings_account_detail::choosing_a_signature_reports_the_account_and_the_choice as fn(),
+    ),
+    (
         "gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none",
         gtk_settings_accounts::accounts_render_as_rows_and_hide_when_there_are_none as fn(),
     ),
@@ -450,6 +469,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_accounts::an_account_row_says_whether_its_token_is_still_good as fn(),
     ),
     (
+        "gtk_settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt",
+        gtk_settings_accounts::an_account_row_says_when_its_search_index_is_being_rebuilt as fn(),
+    ),
+    (
         "gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account",
         gtk_settings_accounts::the_context_menu_reaches_the_action_handler_with_the_right_account
             as fn(),
@@ -462,6 +485,16 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings",
         gtk_settings_account_detail::activating_a_row_opens_the_detail_view_with_its_current_settings
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::test_connection_reports_the_account_and_then_shows_what_happened",
+        gtk_settings_account_detail::test_connection_reports_the_account_and_then_shows_what_happened
+            as fn(),
+    ),
+    (
+        "gtk_settings_account_detail::signatures_can_be_added_edited_and_deleted_from_the_detail_view",
+        gtk_settings_account_detail::signatures_can_be_added_edited_and_deleted_from_the_detail_view
             as fn(),
     ),
     (
@@ -558,6 +591,15 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_privacy::every_activation_gets_its_own_row_newest_first as fn(),
     ),
     (
+        "gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank",
+        gtk_settings_privacy::the_read_receipt_count_states_zero_rather_than_going_blank as fn(),
+    ),
+    (
+        "gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent",
+        gtk_settings_privacy::the_read_receipt_count_states_the_number_and_says_none_are_sent
+            as fn(),
+    ),
+    (
         "gtk_settings_sync::the_rows_render_from_a_given_config",
         gtk_settings_sync::the_rows_render_from_a_given_config as fn(),
     ),
@@ -575,8 +617,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_settings_sync::typing_new_roles_and_pressing_enter_writes_the_new_list as fn(),
     ),
     (
-        "gtk_settings_ui::the_six_rows_render_from_a_given_config",
-        gtk_settings_ui::the_six_rows_render_from_a_given_config as fn(),
+        "gtk_settings_ui::the_five_rows_render_from_a_given_config",
+        gtk_settings_ui::the_five_rows_render_from_a_given_config as fn(),
     ),
     (
         "gtk_settings_ui::the_default_config_renders_the_default_row_values",
@@ -644,22 +686,33 @@ const CASES: &[(&str, fn())] = &[
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
     ),
     (
-        "gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock",
-        gtk_thread_dwell_cancel::opening_a_conversation_stops_the_lists_clock as fn(),
-    ),
-    (
-        "gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly",
-        gtk_thread::t_drills_into_a_thread_and_esc_puts_the_list_back_exactly as fn(),
-    ),
-    (
-        "gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it",
-        gtk_thread_scope::drilling_in_shows_the_thread_and_not_just_this_folders_part_of_it
-            as fn(),
-    ),
-    (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
+    ),
+    (
+        "gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all",
+        gtk_widgets::a_keycap_shows_the_key_or_nothing_at_all as fn(),
+    ),
+    (
+        "gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises",
+        gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_never_wraps_however_long_the_sentence",
+        gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
+    ),
+    (
+        "gtk_widgets::the_blocked_images_notice_counts_and_elides",
+        gtk_widgets::the_blocked_images_notice_counts_and_elides as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_overflow_replaces_rather_than_appends",
+        gtk_widgets::a_notice_overflow_replaces_rather_than_appends as fn(),
+    ),
+    (
+        "gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu",
+        gtk_widgets::a_notice_survives_an_overflow_entry_that_rebuilds_the_menu as fn(),
     ),
     (
         "gtk_window::the_window_opens_and_wears_the_design",
@@ -828,6 +881,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_live_config::editing_config_toml_rebinds_the_running_window",
         gtk_live_config::editing_config_toml_rebinds_the_running_window as fn(),
+    ),
+    (
+        "gtk_live_config::editing_storage_max_bytes_notifies_the_window",
+        gtk_live_config::editing_storage_max_bytes_notifies_the_window as fn(),
     ),
     (
         "gtk_onboarding::a_repair_arrives_with_the_address_and_the_servers_already_filled_in",

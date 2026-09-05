@@ -84,7 +84,22 @@ sudo dnf install perl-FindBin perl-IPC-Cmd perl-Pod-Html perl-Digest-SHA \
 # every fresh target directory rebuilds that OpenSSL from C source (~4 min),
 # and ccache is what lets the second one cost seconds. Wired in automatically
 # via scripts/cc-wrapper.sh; without ccache the build is unchanged. #736.
-sudo dnf install ccache
+#
+# mold is the linker, selected by scripts/linker.sh whenever it is present.
+# Not for speed -- there is only ~1.2s of link to contest either way -- but
+# for memory: it peaks ~265 MB below lld, and this workstation runs several
+# sessions that link at once, which is what the jobserver's token count
+# defends (scripts/jobserver.sh, #1104). Without it lld
+# links the binary and nothing says so; `readelf -p .comment <binary>` is the
+# only thing that tells you which one ran. #1092.
+sudo dnf install ccache mold
+
+# The linker and C compiler .cargo/config.toml names are bare program names
+# (postio-linker, postio-cc), so one compile cache serves every worktree.
+# The claim, land and test scripts run this themselves; a plain `cargo build`
+# in a fresh clone needs it once, or fails with "linker `postio-linker` not
+# found". #1101
+scripts/install-shims.sh
 ```
 
 Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
@@ -93,6 +108,12 @@ Ubuntu 26.04 (earlier releases ship a GTK older than the 4.20 floor):
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
                  libwebkitgtk-6.0-dev libsqlite3-dev libsecret-1-dev \
                  libglib2.0-dev libpango1.0-dev
+```
+
+The same two optional tools, for the same reasons as the Fedora block above:
+
+```bash
+sudo apt install ccache mold
 ```
 
 Debian and Ubuntu ship the perl modules OpenSSL needs in `perl-base` and
@@ -110,6 +131,23 @@ nothing said which Python. It is optional: `mise install` once if you use
 you do not. It deliberately does not pin Rust (`rust-toolchain.toml` owns
 that, and a second place to say it is the bug that pin exists to prevent) or
 the system libraries above, which are distro packages rather than tooling.
+
+`cargo-nextest` runs the integration tiers, and is the one piece of tooling
+`mise.toml` cannot pin — it has no entry in mise's registry. Install it with
+the script that holds the pin, which is also what `ci.yml` runs:
+
+```bash
+scripts/install-nextest.sh
+```
+
+It fails open the way `mold` and `ccache` do: `scripts/issue-land.sh` runs
+`cargo test` when nextest is absent and reaches the same verdict, slower. On
+this workspace "slower" is most of a landing — `app_suite` takes 200s against
+20.4s, and the whole workspace ~500s against 118.6s, because nextest runs test
+*binaries* concurrently and there are 140 of them. The `--lib` tiers
+(`scripts/test-fast.sh`, `scripts/test-sanity.sh`) stay on `cargo test` on
+purpose: a process per test is 2.2x *slower* for ~1,459 small tests in ~19
+binaries.
 
 `gh` needs to be **2.94.0 or newer**: `scripts/issue-claim.sh` reads
 `--json blockedBy`, which that release added (cli/cli#13057). An older `gh`

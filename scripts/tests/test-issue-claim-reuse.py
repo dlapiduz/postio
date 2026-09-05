@@ -36,11 +36,14 @@ ISSUE_RELEASE = HERE / "issue-release.sh"
 
 FIXTURE_ISSUES = [
     {
-        "number": 4242,
+        "number": number,
         "title": "A second issue to work",
         "labels": [{"name": "ready"}, {"name": "p2"}],
         "assignees": [],
     }
+    # One per reuse the cases below perform: a claim moves the tree to the
+    # *next* issue's name, so each step needs an issue to move to.
+    for number in (4242, 4243, 4245, 4247)
 ]
 
 GH_STUB = """#!/bin/bash
@@ -187,10 +190,101 @@ def main() -> int:
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=moved)
         if result.returncode == 0:
             fail("unlanded", "reused a tree holding commits nobody merged", result)
-        elif "ahead of origin/main" not in result.stderr:
+        elif "not on main" not in result.stderr:
             fail("unlanded", "refused without naming the unlanded commits", result)
         elif git("rev-parse", "HEAD", cwd=moved).stdout.strip() != head:
             fail("unlanded", "the refusal moved HEAD", result)
+
+        # ── a rebase-merge is not unlanded work (#1054) ──────────────────
+        #
+        # `issue-land.sh` merges by rebase, so the commit that lands on the
+        # base has a different sha from the local one even though the patch
+        # is identical. A sha-based ahead-count therefore calls the tree
+        # unlanded the moment its work lands -- which is exactly when
+        # `/issue` says to reuse it.
+        landed = git("rev-parse", "HEAD", cwd=moved).stdout.strip()
+        git("checkout", "-q", "main", cwd=repo)
+        (repo / "work.txt").write_text("landed nowhere\n", encoding="utf-8")
+        git("add", "-A", cwd=repo)
+        # A different sha for the same patch, which is what a rebase leaves.
+        git("commit", "-q", "-m", "feat: the same patch, rebased", cwd=repo)
+        git("push", "-q", "origin", "main", cwd=repo)
+        result = claim(repo, base, stub_dir, "--reuse", "4243", cwd=moved)
+        rebased = worktrees / "issue-4243"
+        if result.returncode != 0:
+            fail(
+                "rebase-merge",
+                "refused a tree whose patch is already on the base -- `git cherry` "
+                "says it landed, only the sha differs",
+                result,
+            )
+        elif not rebased.is_dir():
+            fail("rebase-merge", f"the tree is not at {rebased}", result)
+        elif not (rebased / "target" / "warm").is_file():
+            fail("rebase-merge", "target/ did not come along", result)
+        else:
+            moved = rebased
+        assert landed  # the sha the local branch carried, kept for the message
+
+        if FAILURES:
+            for failure in FAILURES:
+                print(failure, file=sys.stderr)
+            return 1
+
+        # ── an initiative worktree compares against *its* base (#1054) ────
+        #
+        # `--base feature/x` is recorded in the worktree and read back by
+        # `issue-land.sh`. `--reuse` compared against `main` regardless, so
+        # every initiative tree read as holding unlanded work -- for ever,
+        # since its commits are on the initiative branch by construction.
+        git("checkout", "-q", "-b", "feature/rules", "main", cwd=repo)
+        (repo / "initiative.txt").write_text("on the feature branch\n", encoding="utf-8")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", "feat: initiative work", cwd=repo)
+        git("push", "-q", "origin", "feature/rules", cwd=repo)
+        git("checkout", "-q", "main", cwd=repo)
+
+        initiative = worktrees / "issue-4244"
+        git(
+            "worktree", "add", "--quiet", "-b", "issue-4244-x",
+            str(initiative), "feature/rules", cwd=repo,
+        )
+        (initiative / "target").mkdir()
+        (initiative / "target" / "warm").write_text("warm\n", encoding="utf-8")
+        git_dir = git("rev-parse", "--git-dir", cwd=initiative).stdout.strip()
+        (Path(git_dir) if Path(git_dir).is_absolute() else initiative / git_dir).joinpath(
+            "postio-base"
+        ).write_text("feature/rules\n", encoding="utf-8")
+
+        result = claim(repo, base, stub_dir, "--reuse", "4245", cwd=initiative)
+        if result.returncode != 0:
+            fail(
+                "initiative",
+                "refused a tree whose commits are all on the base it was cut "
+                "from -- the base is recorded, and this is the one place that "
+                "did not read it",
+                result,
+            )
+        elif not (worktrees / "issue-4245" / "target" / "warm").is_file():
+            fail("initiative", "target/ did not come along", result)
+
+        # ── a base that has gone from origin refuses rather than guessing ─
+        gone = worktrees / "issue-4246"
+        git("worktree", "add", "--quiet", "-b", "issue-4246-x", str(gone), "main", cwd=repo)
+        git_dir = git("rev-parse", "--git-dir", cwd=gone).stdout.strip()
+        (Path(git_dir) if Path(git_dir).is_absolute() else gone / git_dir).joinpath(
+            "postio-base"
+        ).write_text("feature/merged-and-deleted\n", encoding="utf-8")
+        result = claim(repo, base, stub_dir, "--reuse", "4247", cwd=gone)
+        if result.returncode == 0:
+            fail(
+                "missing base",
+                "reused a tree whose recorded base is not on origin -- there is "
+                "nothing to compare against, so nothing can be proven landed",
+                result,
+            )
+        elif "feature/merged-and-deleted" not in result.stderr:
+            fail("missing base", "refused without naming the base it looked for", result)
 
         # ── the shared checkout is never reused ──────────────────────────
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=repo)

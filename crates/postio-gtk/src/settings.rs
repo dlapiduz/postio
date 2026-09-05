@@ -76,6 +76,7 @@ use postio_config::{
     Config, Density, SyncConfig, Theme, patch_filters, patch_keys, patch_sync, patch_ui,
 };
 use postio_core::CommandId;
+use postio_model::ids::SignatureId;
 use postio_model::{Account, AccountId, UnsubscribeActivation};
 
 use crate::keymap::{Chord, ChordFromGdk};
@@ -108,8 +109,9 @@ const ACCOUNTS_MAX_HEIGHT: i32 = 160;
 /// What an account row's context menu asked for (#464, ADR 0005 Q6a).
 ///
 /// Not itself a `CommandId`: both need a specific account as their payload,
-/// which a keystroke carries no default for. `CommandId::RemoveAccount` and
-/// `CommandId::UpdateCredential` (#471) reach the keyboard path by resolving
+/// which a keystroke carries no default for. `CommandId::RemoveAccount`,
+/// `CommandId::UpdateCredential` (#471) and `CommandId::RebuildAccountIndex`
+/// (#981) reach the keyboard path by resolving
 /// [`SettingsPanel::focused_account`] and calling
 /// [`SettingsPanel::request_account_action`] with the same variant the
 /// context menu would have -- one payload type either entry point ends in,
@@ -121,6 +123,8 @@ pub enum AccountAction {
     UpdateCredential,
     /// Mark the account for removal.
     Remove,
+    /// Rebuild this account's local search index (#981).
+    RebuildIndex,
 }
 
 /// What to call when an account row's context menu picks an action.
@@ -149,10 +153,99 @@ pub enum AccountEdit {
     SmtpHost(String),
     /// The SMTP server's port.
     SmtpPort(u16),
+    /// Which of the account's signatures the composer starts on (#979).
+    ///
+    /// `Option` because "none of them" is a real answer the model already
+    /// holds — `Account::default_signature_id` is an `Option<SignatureId>`,
+    /// and an account can have signatures without preferring one.
+    DefaultSignature(Option<SignatureId>),
 }
 
 /// What to call when a field in the account detail view is committed.
 type AccountEditHandler = Box<dyn Fn(AccountId, AccountEdit)>;
+
+/// Who to tell when somebody asks whether an account's settings work (#980).
+type TestConnectionHandler = Box<dyn Fn(AccountId)>;
+
+/// Who to tell when a signature is written or removed (#1086).
+type SignatureSavedHandler = Box<dyn Fn(AccountId, &SignatureDraft)>;
+type SignatureDeletedHandler = Box<dyn Fn(AccountId, SignatureId)>;
+
+/// A signature as the editor has it: what was typed, and which one it is.
+///
+/// `id` is `None` for one that does not exist yet — the store assigns it, the
+/// same way `AccountRepository::create` assigns an account's. Reporting a new
+/// signature with an id would make saving an edit create a second one, which
+/// is the bug this distinction exists to prevent.
+///
+/// No `html`. `Signature` carries an optional rich variant and the composer
+/// uses it when there is one, but a rich editor is the composer's formatting
+/// toolbar's problem (#339) rather than this form's — so this creates
+/// text-only signatures and leaves `html` exactly as it is today, `None`
+/// everywhere and correctly handled, rather than shipping a second half of an
+/// editor (#1086).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureDraft {
+    /// Which signature this is, or `None` for one being created.
+    pub id: Option<SignatureId>,
+    /// What the picker will show.
+    pub name: String,
+    /// The signature itself.
+    pub text: String,
+}
+
+/// What the detail view has to say about the last connection test.
+///
+/// Three states and no fourth: #980's acceptance is "a visible result:
+/// success, or a real error message, not a spinner that silently stops", and
+/// a type that can only be these cannot express the spinner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    /// Nothing has been asked yet, so there is nothing to say.
+    Idle,
+    /// A test is running.
+    Testing,
+    /// It finished. Each server answered for itself — `Err` carries what that
+    /// server or its transport said, because "it does not work" sends
+    /// somebody to two screens of settings with nothing to go on.
+    Answered {
+        /// The incoming (IMAP) server.
+        incoming: Result<(), String>,
+        /// The outgoing (SMTP) server.
+        outgoing: Result<(), String>,
+    },
+}
+
+impl ConnectionStatus {
+    /// The sentence the detail view shows, and the one a screen reader is
+    /// given. Empty only for [`Idle`](ConnectionStatus::Idle), which draws
+    /// nothing at all rather than an empty row.
+    pub fn message(&self) -> String {
+        match self {
+            ConnectionStatus::Idle => String::new(),
+            ConnectionStatus::Testing => "Testing…".to_owned(),
+            ConnectionStatus::Answered { incoming, outgoing } => match (incoming, outgoing) {
+                (Ok(()), Ok(())) => "Both servers answered.".to_owned(),
+                (Err(reason), Ok(())) => format!("Incoming: {reason}"),
+                (Ok(()), Err(reason)) => format!("Outgoing: {reason}"),
+                (Err(incoming), Err(outgoing)) => {
+                    format!("Incoming: {incoming}\nOutgoing: {outgoing}")
+                }
+            },
+        }
+    }
+
+    /// Whether this is a state the user should read as a problem, so the row
+    /// can carry the failure styling rather than the widget guessing from the
+    /// text.
+    fn failed(&self) -> bool {
+        matches!(
+            self,
+            ConnectionStatus::Answered { incoming, outgoing }
+                if incoming.is_err() || outgoing.is_err()
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Sections — pure, no GTK
@@ -444,6 +537,11 @@ mod imp {
         /// an expiry at all), so the row shows no validity line rather
         /// than a wrong one.
         pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
+        /// A reindex in progress, per account (#981) — `(done, total)`. An
+        /// id absent means nothing is rebuilding that account's index right
+        /// now, the same "absent means nothing to say" shape
+        /// `token_expiries` uses.
+        pub reindex_progress: RefCell<Vec<(AccountId, (u32, u32))>>,
         /// The account row context menu currently open, if one is — tracked
         /// so a second right click closes the first, the same reason
         /// `Sidebar` tracks `saved_search_menu`.
@@ -466,12 +564,42 @@ mod imp {
         pub account_detail_imap_port: OnceCell<gtk::SpinButton>,
         pub account_detail_smtp_host: OnceCell<gtk::Entry>,
         pub account_detail_smtp_port: OnceCell<gtk::SpinButton>,
+        /// #979's picker, and the ids behind its rows — the widget carries
+        /// names because that is what a person picks by, and the handler
+        /// needs the id the row stands for.
+        pub account_detail_signature: OnceCell<gtk::DropDown>,
+        /// The whole row, label included: hiding only the control would
+        /// leave a "Default signature" label with nothing beside it.
+        pub account_detail_signature_row: OnceCell<gtk::Box>,
+        pub account_detail_signature_ids: RefCell<Vec<SignatureId>>,
         /// Set while [`super::SettingsPanel::open_account_detail`] is
         /// populating the fields above, so setting an `Entry`'s text does
         /// not itself fire an edit — the same guard [`SettingsPanel::load`]
         /// uses on the raw buffer, for the same reason.
         pub account_detail_loading: Cell<bool>,
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
+        /// Who to tell when "Test connection" is pressed (#980). The panel
+        /// never dials anything itself, exactly as it never writes an edit
+        /// itself: `postio-app` owns the store and the network.
+        pub test_connection: RefCell<Vec<TestConnectionHandler>>,
+        /// The control and the line under it, built with the rest of the
+        /// detail fields and then only ever relabelled.
+        pub account_detail_test_button: OnceCell<gtk::Button>,
+        /// The signature list on the detail view, and the editor it drills
+        /// into (#1086). A second level of the same show/hide the account
+        /// list and its detail already use.
+        pub signature_saved: RefCell<Vec<SignatureSavedHandler>>,
+        pub signature_deleted: RefCell<Vec<SignatureDeletedHandler>>,
+        pub account_detail_signature_list: OnceCell<gtk::ListBox>,
+        pub account_detail_signature_ids_listed: RefCell<Vec<SignatureId>>,
+        pub signature_editor: gtk::Box,
+        pub signature_editor_name: OnceCell<gtk::Entry>,
+        pub signature_editor_text: OnceCell<gtk::TextView>,
+        pub signature_editor_error: OnceCell<gtk::Label>,
+        pub signature_editor_delete: OnceCell<gtk::Button>,
+        /// Which signature the editor is open on, and for which account.
+        pub signature_editor_on: RefCell<Option<(AccountId, Option<SignatureId>)>>,
+        pub account_detail_test_status: OnceCell<gtk::Label>,
         /// One row per saved search, pinned or not (#869) — the structured
         /// pane [`Section::Filters`] now shows instead of only jumping the
         /// raw text view to `[filters]`.
@@ -515,6 +643,12 @@ mod imp {
         /// `window.rs`, the same reason `remote_image_allowlist` is handed
         /// in rather than read here: `postio-gtk` has no SQL of its own.
         pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
+        /// How many messages have asked for a read receipt (#970) — a count,
+        /// not a toggle: Postio never sends one automatically (CLAUDE.md's
+        /// privacy section), so there is nothing here to switch, only a fact
+        /// to state. Always visible, never hidden the way an empty list is:
+        /// zero is itself the answer, not the absence of one.
+        pub read_receipt_count: gtk::Label,
         /// One row per registered command (#881), always present — the same
         /// no-empty-state shape `sync_box`/`ui_box` use, since the registry
         /// is never empty. Scrolled rather than a bare list, unlike those
@@ -556,6 +690,7 @@ mod imp {
                 accounts_scroller: gtk::ScrolledWindow::new(),
                 accounts: RefCell::new(Vec::new()),
                 token_expiries: RefCell::new(Vec::new()),
+                reindex_progress: RefCell::new(Vec::new()),
                 weights: RefCell::new(Vec::new()),
                 attachments_included: Cell::new(false),
                 account_menu: RefCell::new(None),
@@ -568,8 +703,24 @@ mod imp {
                 account_detail_imap_port: OnceCell::new(),
                 account_detail_smtp_host: OnceCell::new(),
                 account_detail_smtp_port: OnceCell::new(),
+                account_detail_signature: OnceCell::new(),
+                account_detail_signature_row: OnceCell::new(),
+                account_detail_signature_ids: RefCell::new(Vec::new()),
                 account_detail_loading: Cell::new(false),
                 account_edited: RefCell::new(Vec::new()),
+                test_connection: RefCell::new(Vec::new()),
+                account_detail_test_button: OnceCell::new(),
+                signature_saved: RefCell::new(Vec::new()),
+                signature_deleted: RefCell::new(Vec::new()),
+                account_detail_signature_list: OnceCell::new(),
+                account_detail_signature_ids_listed: RefCell::new(Vec::new()),
+                signature_editor: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                signature_editor_name: OnceCell::new(),
+                signature_editor_text: OnceCell::new(),
+                signature_editor_error: OnceCell::new(),
+                signature_editor_delete: OnceCell::new(),
+                signature_editor_on: RefCell::new(None),
+                account_detail_test_status: OnceCell::new(),
                 filters_list: gtk::ListBox::new(),
                 filters_scroller: gtk::ScrolledWindow::new(),
                 filters_empty: gtk::Label::new(Some(
@@ -587,6 +738,7 @@ mod imp {
                 unsubscribe_scroller: gtk::ScrolledWindow::new(),
                 unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
                 unsubscribe_activations: RefCell::new(Vec::new()),
+                read_receipt_count: gtk::Label::new(None),
                 keys_list: gtk::ListBox::new(),
                 keys_scroller: gtk::ScrolledWindow::new(),
                 capturing: RefCell::new(None),
@@ -866,6 +1018,23 @@ impl SettingsPanel {
         self.redraw_accounts();
     }
 
+    /// `account`'s reindex progress right now (#981) — `Some((done, total))`
+    /// while `postio_session::reindex_account` is running for it, `None`
+    /// once it has finished or nothing is running.
+    ///
+    /// Replaces any earlier reading for the same account rather than
+    /// accumulating one: what a caller reports here is "where the rebuild
+    /// is right now", not a log of every step it passed through.
+    pub fn set_reindex_progress(&self, account: AccountId, progress: Option<(u32, u32)>) {
+        let mut readings = self.imp().reindex_progress.borrow_mut();
+        readings.retain(|(id, _)| *id != account);
+        if let Some(progress) = progress {
+            readings.push((account, progress));
+        }
+        drop(readings);
+        self.redraw_accounts();
+    }
+
     /// The validity line this account's row carries under its badge, if it
     /// has one to carry — `None` for a password account, an OAuth account
     /// fed by an external broker, or one [`set_token_expiries`](Self::set_token_expiries)
@@ -890,6 +1059,29 @@ impl SettingsPanel {
             }
             Err(_) => Some("token expired — re-authorization needed".to_owned()),
         }
+    }
+
+    /// The reindex line this account's row shows while a rebuild is running
+    /// (#981), or `None` when nothing is.
+    ///
+    /// Said out loud on purpose, not a silent background action: a rebuild
+    /// makes search *worse* while it runs — messages drop out of results
+    /// until they are reindexed — and a user who pressed the button and saw
+    /// nothing on the row would read the silence as the button having done
+    /// nothing.
+    fn reindex_status(&self, account: AccountId) -> Option<String> {
+        let (done, total) = self
+            .imp()
+            .reindex_progress
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, progress)| *progress)?;
+        Some(if total == 0 {
+            "Rebuilding search index…".to_owned()
+        } else {
+            format!("Rebuilding search index — {done} of {total}")
+        })
     }
 
     /// Shows one row per sender with a standing remote-image exception,
@@ -997,6 +1189,36 @@ impl SettingsPanel {
     pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
         *self.imp().unsubscribe_activations.borrow_mut() = activations;
         self.redraw_unsubscribe_activations();
+    }
+
+    /// Hands the panel how many messages have asked for a read receipt
+    /// (#970) — `window.rs` reads the count fresh from
+    /// [`postio_storage::repository::MessageRepository::read_receipt_requested_count`]
+    /// every time the pane opens, the same reason the two lists above are
+    /// handed their state rather than reading it themselves.
+    ///
+    /// A count, not a switch: Postio never sends a receipt automatically
+    /// (CLAUDE.md's privacy section calls that fixed policy), so a
+    /// "configurable" default here would already have lost the argument a
+    /// toggle exists to make.
+    pub fn set_read_receipt_count(&self, count: u64) {
+        let text = match count {
+            0 => "No messages have requested a read receipt.".to_owned(),
+            1 => "1 message has requested a read receipt; none have been sent \
+                  automatically."
+                .to_owned(),
+            n => format!(
+                "{n} messages have requested a read receipt; none have been \
+                 sent automatically."
+            ),
+        };
+        self.imp().read_receipt_count.set_label(&text);
+    }
+
+    /// The read-receipt count line's current text. For tests.
+    #[doc(hidden)]
+    pub fn read_receipt_count_label(&self) -> String {
+        self.imp().read_receipt_count.label().to_string()
     }
 
     /// Rebuilds the unsubscribe-log rows from whatever was last handed in.
@@ -1192,6 +1414,15 @@ impl SettingsPanel {
             lines.append(&line);
         }
 
+        let reindexing = self.reindex_status(account.id);
+        if let Some(text) = &reindexing {
+            let line = gtk::Label::new(Some(text));
+            line.add_css_class("postio-settings-account-reindexing");
+            line.set_xalign(0.0);
+            line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lines.append(&line);
+        }
+
         let enabled = gtk::Switch::new();
         enabled.set_active(account.enabled);
         enabled.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -1226,6 +1457,9 @@ impl SettingsPanel {
         announcement.push_str(&format!(", {badge_text}"));
         if let Some(validity) = &validity {
             announcement.push_str(&format!(", {validity}"));
+        }
+        if let Some(reindexing) = &reindexing {
+            announcement.push_str(&format!(", {reindexing}"));
         }
         row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
         row
@@ -1368,13 +1602,74 @@ impl SettingsPanel {
             .get()
             .expect("built above")
             .set_text(&account.outgoing.host);
+        // #979: the account's own signatures, and the one it already
+        // prefers. Hidden entirely when it has none — the rule
+        // `composer.rs::set_signatures` states and `set_accounts` cites: a
+        // picker with nothing to choose between can only ever say what is
+        // already true. Nothing in Postio creates a signature yet, so a
+        // prompt to make one would point at a flow that does not exist.
+        {
+            let picker = imp.account_detail_signature.get().expect("built above");
+            let names: Vec<&str> = account
+                .signatures
+                .iter()
+                .map(|signature| signature.name.as_str())
+                .collect();
+            picker.set_model(Some(&gtk::StringList::new(&names)));
+            *imp.account_detail_signature_ids.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            let selected = account
+                .default_signature_id
+                .and_then(|id| account.signatures.iter().position(|s| s.id == id))
+                .unwrap_or(0);
+            picker.set_selected(selected as u32);
+            imp.account_detail_signature_row
+                .get()
+                .expect("built above")
+                .set_visible(!account.signatures.is_empty());
+        }
+
         imp.account_detail_smtp_port
             .get()
             .expect("built above")
             .set_value(f64::from(account.outgoing.port));
         imp.account_detail_loading.set(false);
         *imp.account_detail_id.borrow_mut() = Some(id);
+
+        // The account's signatures, rebuilt from what it carries (#1086).
+        // Rebuilt rather than patched for the reason `redraw_filters` is:
+        // the list is small, and a diff is a second description of the same
+        // state free to disagree with the first.
+        if let Some(list) = imp.account_detail_signature_list.get() {
+            while let Some(row) = list.row_at_index(0) {
+                list.remove(&row);
+            }
+            for signature in &account.signatures {
+                let row = gtk::ListBoxRow::new();
+                let label = gtk::Label::new(Some(&signature.name));
+                label.set_xalign(0.0);
+                label.add_css_class("postio-settings-signature-row");
+                row.set_child(Some(&label));
+                row.set_activatable(true);
+                row.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Edit the signature {}",
+                    signature.name
+                ))]);
+                list.append(&row);
+            }
+            *imp.account_detail_signature_ids_listed.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            // "Empty is never blank" -- but the Add button below says what to
+            // do about it, so the list simply goes away rather than drawing a
+            // frame around nothing.
+            list.set_visible(!account.signatures.is_empty());
+        }
+
         imp.account_detail.set_visible(true);
+        // Reopening the account is how the app returns from a save, so the
+        // editor must not be left over it.
+        imp.signature_editor.set_visible(false);
+        *imp.signature_editor_on.borrow_mut() = None;
         imp.accounts_scroller.set_visible(false);
     }
 
@@ -1467,6 +1762,184 @@ impl SettingsPanel {
         imp.account_detail
             .append(&detail_row("SMTP port", &smtp_port));
         let _ = imp.account_detail_smtp_port.set(smtp_port);
+
+        // #979. A dropdown over the account's own signatures, not the
+        // "signature path" field #880's mockup drew: `Account` carries
+        // `signatures: Vec<Signature>` and `default_signature_id`, and there
+        // has never been a filesystem path for that field to have edited.
+        //
+        // The row is built here and *hidden* per account in
+        // `open_account_detail`, because whether it has anything to offer is
+        // a fact about the account rather than about the panel.
+        let signature = gtk::DropDown::from_strings(&[]);
+        signature.add_css_class("postio-settings-account-detail-signature");
+        signature.update_property(&[gtk::accessible::Property::Label("Default signature")]);
+        signature.connect_selected_item_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |picker| {
+                let chosen = panel
+                    .imp()
+                    .account_detail_signature_ids
+                    .borrow()
+                    .get(picker.selected() as usize)
+                    .copied();
+                panel.commit_account_edit(AccountEdit::DefaultSignature(chosen));
+            }
+        ));
+        let signature_row = detail_row("Default signature", &signature);
+        imp.account_detail.append(&signature_row);
+        let _ = imp.account_detail_signature_row.set(signature_row);
+        let _ = imp.account_detail_signature.set(signature);
+
+        // The account's signatures, and the way to make one (#1086). Every
+        // layer under this existed and worked; nothing could feed it, so
+        // both this list and the composer's picker showed nothing for ever.
+        let signatures = gtk::ListBox::new();
+        signatures.add_css_class("postio-settings-signature-list");
+        signatures.set_selection_mode(gtk::SelectionMode::None);
+        signatures.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let index = row.index();
+                let id = panel
+                    .imp()
+                    .account_detail_signature_ids_listed
+                    .borrow()
+                    .get(index as usize)
+                    .copied();
+                if let Some(id) = id {
+                    panel.open_signature_editor(Some(id));
+                }
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Signatures", &signatures));
+        let _ = imp.account_detail_signature_list.set(signatures);
+
+        let add = gtk::Button::with_label("Add signature");
+        add.add_css_class("postio-settings-signature-add");
+        add.set_halign(gtk::Align::Start);
+        add.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.open_signature_editor(None)
+        ));
+        imp.account_detail.append(&add);
+
+        // "Test connection" (#980), under the servers it is about. The
+        // status line lives beside it rather than in a toast: the result is
+        // something a person reads, compares against the fields above, and
+        // then edits, so it has to stay on screen next to them.
+        let test = gtk::Button::with_label("Test connection");
+        test.add_css_class("postio-settings-account-detail-test");
+        // Its own width, not the row's. Every other control here is a field
+        // the value fills; a full-bleed button reads as the primary action of
+        // the whole screen, which this is not.
+        test.set_halign(gtk::Align::Start);
+        test.update_property(&[gtk::accessible::Property::Label(
+            "Test connection to this account's servers",
+        )]);
+        test.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.ask_test_connection()
+        ));
+        imp.account_detail.append(&detail_row("Connection", &test));
+        let _ = imp.account_detail_test_button.set(test);
+
+        let status = gtk::Label::new(None);
+        status.add_css_class("postio-settings-account-detail-test-status");
+        status.set_xalign(0.0);
+        status.set_wrap(true);
+        // A live region: the result arrives a round trip after the press, so
+        // a screen reader has to be told rather than having to be looking.
+        status.update_property(&[gtk::accessible::Property::Label("")]);
+        status.set_visible(false);
+        imp.account_detail.append(&status);
+        let _ = imp.account_detail_test_status.set(status);
+
+        self.build_signature_editor();
+    }
+
+    /// The signature editor: a name, a body, and the two verbs that need
+    /// somewhere to live (#1086).
+    ///
+    /// A second drill-in rather than more rows on the detail view. A
+    /// signature is a name *and* a body — a two-field form — and the detail
+    /// view is deliberately one control per line; folding a multi-line text
+    /// box into that row rhythm would make both harder to read. The panel
+    /// already drills in once, so this is the same show/hide one level down.
+    fn build_signature_editor(&self) {
+        let imp = self.imp();
+        if imp.signature_editor_name.get().is_some() {
+            return;
+        }
+
+        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.add_css_class("postio-settings-account-detail-back");
+        back.add_css_class("flat");
+        back.set_halign(gtk::Align::Start);
+        back.set_tooltip_text(Some("Back to the account"));
+        back.update_property(&[gtk::accessible::Property::Label("Back to the account")]);
+        back.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.close_signature_editor()
+        ));
+        imp.signature_editor.append(&back);
+
+        let name = gtk::Entry::new();
+        name.add_css_class("postio-settings-signature-name");
+        name.update_property(&[gtk::accessible::Property::Label("Signature name")]);
+        imp.signature_editor.append(&detail_row("Name", &name));
+        let _ = imp.signature_editor_name.set(name);
+
+        let text = gtk::TextView::new();
+        text.add_css_class("postio-settings-signature-text");
+        text.set_wrap_mode(gtk::WrapMode::WordChar);
+        text.update_property(&[gtk::accessible::Property::Label("Signature text")]);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&text));
+        scroller.set_min_content_height(120);
+        imp.signature_editor
+            .append(&detail_row("Signature", &scroller));
+        let _ = imp.signature_editor_text.set(text);
+
+        // Why a save was refused -- a name already taken, so far. Hidden
+        // until there is something to say, and never a raw store error:
+        // "UNIQUE constraint failed" is not an answer anybody can act on.
+        let error = gtk::Label::new(None);
+        error.add_css_class("postio-settings-signature-error");
+        error.set_xalign(0.0);
+        error.set_wrap(true);
+        error.set_visible(false);
+        imp.signature_editor.append(&error);
+        let _ = imp.signature_editor_error.set(error);
+
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        verbs.set_halign(gtk::Align::Start);
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("postio-settings-signature-save");
+        save.add_css_class("suggested-action");
+        save.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.save_signature()
+        ));
+        verbs.append(&save);
+
+        let delete = gtk::Button::with_label("Delete");
+        delete.add_css_class("postio-settings-signature-delete");
+        delete.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.delete_signature()
+        ));
+        verbs.append(&delete);
+        let _ = imp.signature_editor_delete.set(delete);
+        imp.signature_editor.append(&verbs);
     }
 
     /// Closes the detail view and shows the account list again, as the
@@ -1481,6 +1954,270 @@ impl SettingsPanel {
 
     /// Called when a field in the account detail view is committed —
     /// `Enter` in an `Entry`, or any change to a `SpinButton`.
+    /// Called when a signature is saved, with the account and what was typed
+    /// (#1086).
+    ///
+    /// The panel writes nothing, the same split every other edit here uses:
+    /// this layer may not link SQLite. `postio-app` persists it and hands
+    /// back either a refreshed account list or, when the store refused,
+    /// [`set_signature_error`](Self::set_signature_error).
+    pub fn connect_signature_saved(&self, handler: impl Fn(AccountId, &SignatureDraft) + 'static) {
+        self.imp()
+            .signature_saved
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called when a signature is deleted.
+    pub fn connect_signature_deleted(&self, handler: impl Fn(AccountId, SignatureId) + 'static) {
+        self.imp()
+            .signature_deleted
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Open the signature editor on `id`, or on a new signature.
+    pub fn open_signature_editor(&self, id: Option<SignatureId>) {
+        let imp = self.imp();
+        let Some(account) = *imp.account_detail_id.borrow() else {
+            return;
+        };
+        self.build_signature_editor();
+        let signature = id.and_then(|id| {
+            imp.accounts
+                .borrow()
+                .iter()
+                .find(|candidate| candidate.id == account)
+                .and_then(|candidate| {
+                    candidate
+                        .signatures
+                        .iter()
+                        .find(|signature| signature.id == id)
+                        .cloned()
+                })
+        });
+        let name = imp.signature_editor_name.get().expect("built above");
+        let text = imp.signature_editor_text.get().expect("built above");
+        name.set_text(signature.as_ref().map_or("", |s| s.name.as_str()));
+        text.buffer()
+            .set_text(signature.as_ref().map_or("", |s| s.text.as_str()));
+        // Nothing to delete on one that does not exist yet.
+        imp.signature_editor_delete
+            .get()
+            .expect("built above")
+            .set_visible(id.is_some());
+        self.set_signature_error(None);
+        *imp.signature_editor_on.borrow_mut() = Some((account, id));
+        imp.account_detail.set_visible(false);
+        imp.signature_editor.set_visible(true);
+    }
+
+    /// Close the editor and show the account again.
+    pub fn close_signature_editor(&self) {
+        let imp = self.imp();
+        *imp.signature_editor_on.borrow_mut() = None;
+        imp.signature_editor.set_visible(false);
+        imp.account_detail.set_visible(true);
+    }
+
+    /// Say why a save was refused, or clear it.
+    ///
+    /// The editor stays open on what was typed: a duplicate name is fixed by
+    /// changing one word, and throwing the body away to say so would make the
+    /// fix cost more than the mistake.
+    pub fn set_signature_error(&self, reason: Option<String>) {
+        let Some(label) = self.imp().signature_editor_error.get() else {
+            return;
+        };
+        let reason = reason.unwrap_or_default();
+        label.set_visible(!reason.is_empty());
+        label.set_text(&reason);
+        label.update_property(&[gtk::accessible::Property::Label(&reason)]);
+    }
+
+    fn save_signature(&self) {
+        let Some((account, id)) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        let imp = self.imp();
+        let name = imp.signature_editor_name.get().expect("built").text();
+        let buffer = imp.signature_editor_text.get().expect("built").buffer();
+        let text = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        // An unnamed signature is one the picker cannot offer, so it is
+        // refused here rather than by the store: the picker shows the name.
+        if name.trim().is_empty() {
+            self.set_signature_error(Some("A signature needs a name".to_owned()));
+            return;
+        }
+        let draft = SignatureDraft {
+            id,
+            name: name.to_string(),
+            text,
+        };
+        for handler in imp.signature_saved.borrow().iter() {
+            handler(account, &draft);
+        }
+    }
+
+    fn delete_signature(&self) {
+        let Some((account, Some(id))) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        for handler in self.imp().signature_deleted.borrow().iter() {
+            handler(account, id);
+        }
+    }
+
+    /// Press "Add signature". For tests.
+    #[doc(hidden)]
+    pub fn test_press_add_signature(&self) -> bool {
+        if self.imp().account_detail_id.borrow().is_none() {
+            return false;
+        }
+        self.open_signature_editor(None);
+        true
+    }
+
+    /// Open the editor on a listed signature, as activating its row does.
+    #[doc(hidden)]
+    pub fn test_open_signature(&self, id: SignatureId) -> bool {
+        if !self
+            .imp()
+            .account_detail_signature_ids_listed
+            .borrow()
+            .contains(&id)
+        {
+            return false;
+        }
+        self.open_signature_editor(Some(id));
+        true
+    }
+
+    /// Type into the editor. For tests.
+    #[doc(hidden)]
+    pub fn test_type_signature(&self, name: &str, text: &str) {
+        let imp = self.imp();
+        if let Some(entry) = imp.signature_editor_name.get() {
+            entry.set_text(name);
+        }
+        if let Some(view) = imp.signature_editor_text.get() {
+            view.buffer().set_text(text);
+        }
+    }
+
+    /// What the editor's name field holds. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_name(&self) -> String {
+        self.imp()
+            .signature_editor_name
+            .get()
+            .map(|entry| entry.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// What the editor is refusing to save, if anything. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_error_text(&self) -> String {
+        self.imp()
+            .signature_editor_error
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Press Save. For tests.
+    #[doc(hidden)]
+    pub fn test_press_save_signature(&self) -> bool {
+        let open = self.imp().signature_editor_on.borrow().is_some();
+        if open {
+            self.save_signature();
+        }
+        open
+    }
+
+    /// Press Delete. For tests.
+    #[doc(hidden)]
+    pub fn test_press_delete_signature(&self) -> bool {
+        let deletable = matches!(*self.imp().signature_editor_on.borrow(), Some((_, Some(_))));
+        if deletable {
+            self.delete_signature();
+        }
+        deletable
+    }
+
+    /// Called when somebody asks whether an account's stored settings work,
+    /// with the account the detail view is open on (#980).
+    ///
+    /// The panel never connects to anything. Same split as
+    /// [`connect_account_edited`](Self::connect_account_edited): this layer
+    /// may not link SQLite or open a socket, so it reports the gesture and
+    /// `postio-app` runs `postio_session::reachability::test_connection` and
+    /// hands the answer back through
+    /// [`set_connection_status`](Self::set_connection_status).
+    pub fn connect_test_connection(&self, handler: impl Fn(AccountId) + 'static) {
+        self.imp()
+            .test_connection
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires every `test_connection` handler for whichever account the detail
+    /// view is open on, and puts the row into its running state so the press
+    /// is acknowledged even if the answer takes a round trip.
+    fn ask_test_connection(&self) {
+        let Some(id) = *self.imp().account_detail_id.borrow() else {
+            return;
+        };
+        self.set_connection_status(ConnectionStatus::Testing);
+        for handler in self.imp().test_connection.borrow().iter() {
+            handler(id);
+        }
+    }
+
+    /// Show what the last connection test found.
+    pub fn set_connection_status(&self, status: ConnectionStatus) {
+        let Some(label) = self.imp().account_detail_test_status.get() else {
+            return;
+        };
+        let message = status.message();
+        label.set_visible(!message.is_empty());
+        label.set_text(&message);
+        // The same string to the screen reader: a status that is only a
+        // colour is a status somebody cannot read.
+        label.update_property(&[gtk::accessible::Property::Label(&message)]);
+        // Failure is carried as a class rather than inferred from the text,
+        // so the styling cannot disagree with the answer.
+        if status.failed() {
+            label.add_css_class("postio-settings-account-detail-test-failed");
+        } else {
+            label.remove_css_class("postio-settings-account-detail-test-failed");
+        }
+    }
+
+    /// Press the test-connection button, as a pointer would. For tests.
+    #[doc(hidden)]
+    pub fn test_press_test_connection(&self) -> bool {
+        match self.imp().account_detail_test_button.get() {
+            Some(button) => {
+                button.emit_clicked();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the connection status line currently says. For tests.
+    #[doc(hidden)]
+    pub fn test_connection_status_text(&self) -> String {
+        self.imp()
+            .account_detail_test_status
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
     pub fn connect_account_edited(&self, handler: impl Fn(AccountId, AccountEdit) + 'static) {
         self.imp()
             .account_edited
@@ -1547,6 +2284,7 @@ impl SettingsPanel {
 
         let menu = gtk::gio::Menu::new();
         menu.append(Some("Update credential"), Some("account.update-credential"));
+        menu.append(Some("Rebuild search index"), Some("account.rebuild-index"));
         menu.append(Some("Remove"), Some("account.remove"));
 
         let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -1558,6 +2296,7 @@ impl SettingsPanel {
         let actions = gtk::gio::SimpleActionGroup::new();
         for (name, action) in [
             ("update-credential", AccountAction::UpdateCredential),
+            ("rebuild-index", AccountAction::RebuildIndex),
             ("remove", AccountAction::Remove),
         ] {
             let simple = gtk::gio::SimpleAction::new(name, None);
@@ -2112,12 +2851,6 @@ impl SettingsPanel {
             |ui, value| ui.show_hover_actions = value,
         ));
         imp.ui_box.append(&self.ui_switch_row(
-            "Drill into threads with t",
-            "Let t turn the list column into the focused thread",
-            config.ui.thread_drill,
-            |ui, value| ui.thread_drill = value,
-        ));
-        imp.ui_box.append(&self.ui_switch_row(
             "Show key hints",
             "The focused row's own keyboard hints",
             config.ui.show_key_hints,
@@ -2566,6 +3299,9 @@ impl SettingsPanel {
         imp.account_detail
             .add_css_class("postio-settings-account-detail");
         imp.account_detail.set_visible(false);
+        imp.signature_editor
+            .add_css_class("postio-settings-signature-editor");
+        imp.signature_editor.set_visible(false);
 
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
         back.add_css_class("postio-settings-account-detail-back");
@@ -2676,6 +3412,14 @@ impl SettingsPanel {
         imp.unsubscribe_empty.set_xalign(0.0);
         imp.unsubscribe_empty.set_wrap(true);
         imp.unsubscribe_empty.set_visible(false);
+
+        // ── privacy: the read-receipt count, a fact rather than a toggle
+        // (#970) ───────────────────────────────────────────────────────
+        imp.read_receipt_count
+            .add_css_class("postio-settings-read-receipt-count");
+        imp.read_receipt_count.set_xalign(0.0);
+        imp.read_receipt_count.set_wrap(true);
+        self.set_read_receipt_count(0);
 
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
@@ -2795,6 +3539,7 @@ impl SettingsPanel {
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         column.append(&imp.accounts_scroller);
         column.append(&imp.account_detail);
+        column.append(&imp.signature_editor);
         column.append(&imp.egress_scroller);
         column.append(&imp.filters_scroller);
         column.append(&imp.filters_empty);
@@ -2805,6 +3550,7 @@ impl SettingsPanel {
         column.append(&unsubscribe_title);
         column.append(&imp.unsubscribe_scroller);
         column.append(&imp.unsubscribe_empty);
+        column.append(&imp.read_receipt_count);
         column.append(&imp.keys_scroller);
         column.append(&body);
         column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));

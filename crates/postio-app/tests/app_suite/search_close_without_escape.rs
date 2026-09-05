@@ -39,6 +39,7 @@ use crate::settle_until;
 use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window};
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
+use postio_core::state::SharedState;
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -109,8 +110,9 @@ pub fn closing_the_finder_without_pressing_escape_still_restores_the_folder() {
         wiring.runtime.clone(),
         Default::default(),
     );
+    let state = SharedState::default();
     for stream in [events, replies] {
-        commands::drain(&window, &feeds, stream, notifier.clone());
+        commands::drain(&window, &feeds, stream, notifier.clone(), state.clone());
     }
 
     // ── the list starts on the folder ───────────────────────────────────

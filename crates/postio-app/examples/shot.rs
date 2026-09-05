@@ -14,6 +14,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/plate.png demo
 //! cargo run -p postio-app --example shot -- /tmp/settings.png demo settings
 //! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
+//! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
@@ -200,7 +201,7 @@ fn stamp_as_just_synced(database: &postio_storage::Database, report: &SeedReport
 /// Block until the list actually holds its first page of mail.
 ///
 /// Every mode after `populate` reads the list back: `selected` picks rows out
-/// of it, `thread` drills into the first one, `open` clicks it. The
+/// of it, `conversation` opens the first one, `open` clicks it. The
 /// hand-rolled source this replaced answered out of a `Vec` and was ready the
 /// instant it was installed; a real `Wiring` crosses to the runtime and
 /// answers on a later turn of the main loop, so without this a mode found an
@@ -350,7 +351,6 @@ fn show_settings(window: &Window) {
          density = \"compact\"\n\
          theme = \"system\"\n\
          show_hover_actions = true\n\
-         thread_drill = true\n\n\
          [keys]\n\
          archive = \"a\"\n\
          archive_thread = \"A\"\n\
@@ -373,6 +373,52 @@ fn show_settings(window: &Window) {
 ///
 /// The three are the states that look different: payloads not being fetched,
 /// payloads being fetched, and totals still being counted.
+/// The account detail view (#880), on an account that has signatures.
+///
+/// Its own flag because the view is reached by activating a row, so no
+/// existing mode renders it — and #979's signature picker is *hidden* for an
+/// account with none, which is correct and also means the ordinary demo
+/// store cannot show it. Two signatures here, so the row is on screen and
+/// can be looked at.
+/// `tested` also shows what a connection test found (#980) -- set by hand
+/// rather than by pressing the button, and that is the point: pressing it
+/// would dial a real server, and a shot must not. What there is to look at is
+/// the row's *shape*, which has to read as the server having said no rather
+/// than as Postio being broken, in dark and high contrast too.
+fn show_account_detail(window: &Window, tested: bool, signature: bool) {
+    let mut account = postio_model::Account::new(
+        "Ada Lovelace",
+        postio_model::EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
+    );
+    account.id = AccountId::new(1);
+    account.enabled = true;
+    account.incoming.host = "imap.example.com".to_owned();
+    account.incoming.port = 993;
+    account.outgoing.host = "smtp.example.com".to_owned();
+    account.outgoing.port = 587;
+    let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
+    work.id = postio_model::ids::SignatureId::new(1);
+    let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
+    brief.id = postio_model::ids::SignatureId::new(2);
+    account.default_signature_id = Some(work.id);
+    account.signatures = vec![work, brief];
+
+    let panel = window.settings();
+    panel.set_accounts(vec![account]);
+    window.toggle_settings();
+    panel.open_account_detail(AccountId::new(1));
+    if signature {
+        // The editor, on the signature the account already has (#1086).
+        panel.open_signature_editor(Some(postio_model::ids::SignatureId::new(1)));
+    }
+    if tested {
+        panel.set_connection_status(postio_gtk::settings::ConnectionStatus::Answered {
+            incoming: Ok(()),
+            outgoing: Err("could not reach smtp.example.com:587: connection refused".to_owned()),
+        });
+    }
+}
+
 fn show_account_weights(window: &Window) {
     let footprint = |total: u64, attachments: u64, local: u64, complete: bool| {
         postio_core::event::MailFootprint {
@@ -529,12 +575,16 @@ const KNOWN_FLAGS: &[&str] = &[
     "syncing",
     "settings",
     "weights",
+    "account",
+    "tested",
+    "signature",
     "compose",
     "detached",
     "selected",
     "thread",
     "orientation",
     "open",
+    "shipping",
 ];
 
 /// Every argument (after the output path) that matches none of
@@ -640,6 +690,55 @@ mod unrecognized_argument_tests {
             unrecognized_arguments(&args(&["demo", "thread", "1400x800"])),
             Vec::<&str>::new()
         );
+    }
+}
+
+/// What to say when the size a `WxH` argument asked for and the size the
+/// compositor actually gave the window disagree (#933).
+///
+/// `set_default_size` is a hint: a toplevel larger than the monitor is
+/// clamped, and the height is clamped further by whatever the session
+/// reserves. `capture::png` reports the size it actually got, so this is the
+/// one place that can compare it against what was asked for and say so --
+/// silently handing over a smaller picture under a size that looks honoured
+/// is the same shape as #599, an argument that looks applied and was not.
+///
+/// `None` when nothing was requested, or when the compositor gave back
+/// exactly what was asked for -- the ordinary case, which must stay silent.
+fn size_mismatch(requested: Option<(i32, i32)>, got: (i32, i32)) -> Option<String> {
+    let requested = requested?;
+    if requested == got {
+        return None;
+    }
+    let (want_w, want_h) = requested;
+    let (got_w, got_h) = got;
+    Some(format!(
+        "asked for {want_w}x{want_h} but the compositor gave {got_w}x{got_h} -- \
+         the picture below is at the size it actually got, not the size named \
+         on the command line"
+    ))
+}
+
+#[cfg(test)]
+mod size_mismatch_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_requested_is_silent() {
+        assert_eq!(size_mismatch(None, (1280, 800)), None);
+    }
+
+    #[test]
+    fn the_size_asked_for_is_silent() {
+        assert_eq!(size_mismatch(Some((1280, 800)), (1280, 800)), None);
+    }
+
+    #[test]
+    fn a_clamped_size_is_reported() {
+        let message = size_mismatch(Some((1600, 900)), (1280, 800))
+            .expect("a clamped size should be reported");
+        assert!(message.contains("1600x900"), "{message}");
+        assert!(message.contains("1280x800"), "{message}");
     }
 }
 
@@ -771,6 +870,14 @@ fn main() -> glib::ExitCode {
                     // settled account, which is where every account ends up
                     // under ADR 0016 and so is the honest default for a shot.
                     corpus_complete: !flag("syncing"),
+                    // `unreachable` shows ADR 0005 Q10's caveat (#812), so a
+                    // shot can be taken of the state a reviewer would
+                    // otherwise have to unplug a server to see. Empty is the
+                    // ordinary case: every account answering.
+                    unreachable: match flag("unreachable") {
+                        true => vec!["Work".to_owned()],
+                        false => Vec::new(),
+                    },
                 },
             );
         }
@@ -781,6 +888,9 @@ fn main() -> glib::ExitCode {
     }
     if flag("weights") {
         show_account_weights(&window);
+    }
+    if flag("account") {
+        show_account_detail(&window, flag("tested"), flag("signature"));
     }
     if flag("compose") {
         show_composer(&window);
@@ -844,16 +954,16 @@ fn main() -> glib::ExitCode {
         settle(&window);
     }
 
-    // The conversation pane (ADR 0015 Q4): a thread opened into the reading
-    // pane, with the drill-in column indexing it. Driven through
-    // `Window::show_thread`, the same call `t` makes, so the shot is the
-    // arrangement the application actually puts up rather than one staged
-    // for the picture.
-    if flag("thread") {
+    // The conversation pane (ADR 0015 Q4, canvas turn 8a): a thread stacked
+    // in the reading pane, beside a list that is only ever the list. Driven
+    // through `Window::show_conversation`, the same call landing on a thread
+    // row makes, so the shot is the arrangement the application actually
+    // puts up rather than one staged for the picture.
+    if flag("conversation") {
         let list = window.list();
         list.first_row();
-        // The demo's rows are conversations now, so the first one has a
-        // thread to drill into; its own rows stand in for the members.
+        // The demo's rows are conversations, and the first one's own rows
+        // stand in for its members.
         let rows = list.model();
         let mut members = Vec::new();
         for index in 0..rows.n_items().min(6) {
@@ -889,13 +999,11 @@ fn main() -> glib::ExitCode {
                     None,
                 );
                 reader.widget().set_size_request(-1, 120);
-                reader
+                Some(reader)
             }
         });
-        if let Some(first) = members.first().cloned() {
-            let thread = first.thread.unwrap_or(postio_model::ids::ThreadId::new(1));
-            let total = members.len() as u32;
-            window.show_thread(thread, first.subject.as_deref(), members, total);
+        if !members.is_empty() {
+            window.show_conversation(members);
         }
         // The stack's readers load on WebKit's own clock, which the
         // frame-counting `settle` does not wait on.
@@ -969,6 +1077,37 @@ fn main() -> glib::ExitCode {
     }
     settle(&window);
 
+    // #1030: the facts block a transactional message gets above its body
+    // copy. The corpus fixture is handed straight to the reader rather than
+    // clicked out of the list, because the demo seed re-dates the corpus and
+    // there is no way to name a row from here.
+    //
+    // That makes this a *design* shot and nothing more -- it is for looking
+    // at spacing, weight and the two columns. It deliberately does not prove
+    // the block reaches the pane from a real message, which is what #596 says
+    // a shot handed its own body cannot do; `gtk_reader.rs` proves that,
+    // through `render`, on the same fixture.
+    if flag("shipping") {
+        let fixture = postio_model::test_corpus::load("transactional-shipping-notice");
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        // The reader that is *on screen*, which in a conversation is the
+        // focused message's and not the single-message one behind it --
+        // rendering into `window.reader()` paints a hidden widget, and the
+        // picture comes back showing whatever the demo had already drawn.
+        let reader = window
+            .conversation()
+            .focused()
+            .and_then(|message| window.conversation().reader_for(message))
+            .unwrap_or_else(|| window.reader());
+        reader.render(&parsed.body, Some("orders@shop.example.test"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let context = glib::MainContext::default();
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     // The picture, and the wait for it, both belong to `postio_gtk::capture`
     // -- which turns the main loop until the window is actually drawable
     // rather than until a fixed number of frames has gone past, and writes no
@@ -978,6 +1117,9 @@ fn main() -> glib::ExitCode {
         Ok(written) => {
             let (width, height) = (written.width, written.height);
             println!("shot: {width}x{height} -> {path}");
+            if let Some(message) = size_mismatch(size, (width, height)) {
+                eprintln!("shot: {message}");
+            }
             if written.stalled {
                 // Said out loud because the picture is misleading in one
                 // specific way, and silently handing it over is how a

@@ -30,6 +30,7 @@ use gtk::{gdk, glib};
 use postio_app::{commands, feed_the_window, notifications};
 use postio_core::Event;
 use postio_core::bridge::{Bridge, EventHub, handler_fn};
+use postio_core::state::SharedState;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_session::Wiring;
@@ -91,7 +92,13 @@ pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
     );
     // The one line `open_account` runs, over the one subscription it now
     // takes instead of a stream per producer.
-    commands::drain(&window, &feeds, hub.subscribe("window"), notifier);
+    commands::drain(
+        &window,
+        &feeds,
+        hub.subscribe("window"),
+        notifier,
+        SharedState::default(),
+    );
 
     let list = window.list();
     assert!(

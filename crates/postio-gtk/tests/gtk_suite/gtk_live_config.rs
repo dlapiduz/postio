@@ -31,6 +31,9 @@ use postio_gtk::{app, fonts, style};
 /// this is deliberately much shorter than [`PATIENCE`] so one of them does not
 /// dominate the suite. Comfortably longer than the watcher's 120ms debounce.
 fn settle_for(grace: Duration) {
+    // POSTIO-FIXED-DEADLINE: the doc above is the reason -- a negative
+    // assertion is spent in full, so this is deliberately kept well under
+    // `PATIENCE` rather than tied to it.
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         settle();
@@ -220,6 +223,83 @@ pub fn editing_config_toml_rebinds_the_running_window() {
     assert!(
         wait_until(|| window.list().keymap().binding(CommandId::Archive) == Some("z")),
         "the rebind never reached the list's keymap, so a row's hint would lie"
+    );
+
+    window.close();
+    settle();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `[storage]` applied live, from a file on disk to `connect_storage_changed`
+/// (#929).
+///
+/// `postio-gtk` has no store to enforce a ceiling against, so this stops at
+/// the signal firing with the right value -- re-running the eviction pass
+/// off the new number is the composition root's own wiring, proved in
+/// `postio-app`.
+pub fn editing_storage_max_bytes_notifies_the_window() {
+    let root = std::env::temp_dir().join(format!("postio-live-storage-{}", std::process::id()));
+    let state_dir = root.join("state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join("config.toml");
+    std::fs::write(&path, "").unwrap();
+
+    let window = Window::default();
+    postio_gtk::config::install_at(&window, &path);
+    window.present();
+    settle();
+
+    let seen: std::rc::Rc<std::cell::RefCell<Vec<Option<u64>>>> = Default::default();
+    window.connect_storage_changed({
+        let seen = std::rc::Rc::clone(&seen);
+        move |max_bytes| seen.borrow_mut().push(max_bytes)
+    });
+
+    // ── lowering it ─────────────────────────────────────────────────────
+    std::fs::write(&path, "[storage]\nmax_bytes = 1000000\n").unwrap();
+    assert!(
+        wait_until(|| *seen.borrow() == vec![Some(1_000_000)]),
+        "the new ceiling never reached the window: {:?}",
+        seen.borrow()
+    );
+
+    // ── raising it ──────────────────────────────────────────────────────
+    std::fs::write(&path, "[storage]\nmax_bytes = 2000000\n").unwrap();
+    assert!(
+        wait_until(|| *seen.borrow() == vec![Some(1_000_000), Some(2_000_000)]),
+        "a second edit never reached the window: {:?}",
+        seen.borrow()
+    );
+
+    // ── an unrelated section must not fire this signal again ───────────
+    std::fs::write(
+        &path,
+        "[storage]\nmax_bytes = 2000000\n\n[ui]\ndensity = \"compact\"\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(|| window.list().density() == Density::Compact),
+        "the density edit that should have reached the list in the same \
+         save never did, so the negative assertion below proves nothing"
+    );
+    assert_eq!(
+        *seen.borrow(),
+        vec![Some(1_000_000), Some(2_000_000)],
+        "[storage] did not change on this save, so the signal must not fire again"
     );
 
     window.close();

@@ -164,6 +164,34 @@ def main() -> int:
         expect_text="sweep",
     )
 
+    # ── a char literal is not a string, and reading it as one loses the
+    #    rest of the file ────────────────────────────────────────────────
+    #
+    # `'"'` holds one double quote. Scanned as the start of a string literal
+    # it inverts the quote parity of everything after it, so real code is
+    # blanked as "string" and string contents are read as code. The caller
+    # below then disappears and a wired-up function is reported as dead --
+    # silently, in whichever file happened to contain the char literal.
+    case(
+        "a char literal holding a quote does not swallow the caller after it",
+        lib="pub fn index_body() {}\n",
+        caller="fn escape(c: char) -> &'static str {\n"
+        "    match c {\n"
+        "        '\"' => \"&quot;\",\n"
+        "        _ => \"\",\n"
+        "    }\n"
+        "}\n"
+        "fn run() { postio_thing::index_body(); }\n",
+        should_fail=False,
+    )
+    case(
+        "a lifetime is still not a char literal",
+        lib="pub fn index_body() {}\n",
+        caller="fn borrow<'a>(text: &'a str) -> &'a str { text }\n"
+        "fn run() { postio_thing::index_body(); }\n",
+        should_fail=False,
+    )
+
     # ── and the thing that does ──────────────────────────────────────────
     case(
         "one production caller is enough",

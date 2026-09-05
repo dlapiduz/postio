@@ -23,7 +23,7 @@
 //! the adapter in full: nothing here decides anything.
 
 use postio_core::aim::{self, Aim};
-use postio_core::bridge::{CommandSender, EventStream, event_channel};
+use postio_core::bridge::{CommandSender, EventSink, EventStream, event_channel};
 use postio_core::state::SharedState;
 use postio_core::{CommandId, Event};
 use postio_gtk::feed::Feeds;
@@ -97,13 +97,50 @@ pub fn install(
 }
 
 /// Apply one event to everything on screen.
+///
+/// `state`/`quiet` are `AppState`'s side of it: [`postio_core::state::AppState::set_connection`]
+/// had no production caller (#974), so `AppState::accounts()` always answered
+/// empty and `g a` could never cycle scopes however many accounts existed.
+/// `feeds.apply` above already folded the same event into `Trackers`, which
+/// is why `set_connection`'s own diff goes to `quiet` rather than back onto
+/// the real sink — nothing downstream needs a second `ConnectionChanged` for
+/// news this call already delivered, the same reason `install`'s
+/// `aim::mirror` call discards its receiver.
 pub fn apply(
     window: &Window,
     feeds: &Feeds,
     event: &Event,
     notifier: &crate::notifications::Notifier,
+    state: &SharedState,
+    quiet: &EventSink,
 ) {
     feeds.apply(event);
+    if let Event::ConnectionChanged {
+        account,
+        state: connection,
+    } = event
+    {
+        state.update(quiet, |app_state| {
+            app_state.set_connection(*account, *connection)
+        });
+        // A unified search's caveat is fixed at the moment its answer comes
+        // back (ADR 0005 Q10, #812) -- so without this, an account dropping
+        // out or coming back while the result sits on screen left the
+        // readout saying something that had stopped being true, until the
+        // query was asked again (#1060). `feeds.apply` above has already
+        // folded this event into `Trackers`, so `unreachable_accounts` reads
+        // the connection state this event caused rather than the one before
+        // it. A no-op when nothing is on screen, or when the caveat has not
+        // changed -- see `Live::set_unreachable`.
+        if let Some(live) = window.finder().live() {
+            let scope = window.scope();
+            live.set_unreachable(crate::search::unreachable_accounts(
+                window,
+                &feeds.folders,
+                scope,
+            ));
+        }
+    }
     match event {
         Event::ActionCompleted {
             description,
@@ -141,15 +178,18 @@ pub fn drain(
     feeds: &Feeds,
     stream: EventStream,
     notifier: crate::notifications::Notifier,
+    state: SharedState,
 ) {
     let window = window.downgrade();
     let feeds = feeds.clone();
+    // No reader, same reason `install`'s does not: see `apply`'s own doc.
+    let (quiet, _) = event_channel();
     glib::spawn_future_local(async move {
         while let Some(event) = stream.next().await {
             let Some(window) = window.upgrade() else {
                 return;
             };
-            apply(&window, &feeds, &event, &notifier);
+            apply(&window, &feeds, &event, &notifier, &state, &quiet);
         }
     });
 }

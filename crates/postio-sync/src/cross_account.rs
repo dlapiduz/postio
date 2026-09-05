@@ -160,6 +160,7 @@ pub(crate) async fn remove(
     backend: &dyn MailBackend,
     connection: &Connection,
     saga_id: CrossAccountMoveId,
+    snapshot: &[postio_model::RemoteId],
 ) -> Outcome {
     let sagas = CrossAccountMoveRepository::new(connection);
     let saga = match sagas.get(saga_id) {
@@ -196,14 +197,38 @@ pub(crate) async fn remove(
         .and_then(|mailbox| MailboxRepository::new(connection).get(mailbox).ok())
         .flatten()
         .map(|mailbox| mailbox.path);
-    let remote_id = saga
-        .source_message
-        .and_then(|message| MessageRepository::new(connection).get(message).ok())
-        .flatten()
-        .and_then(|message| message.server.remote_id);
+    // The queue row's snapshot first, the live row second (ADR 0026, #531).
+    //
+    // `enqueue` took the snapshot before the local write that hid the source
+    // row, so it names where the message was when the user asked. The live
+    // row is the fallback for operations enqueued before the column existed
+    // — and, on the forward path, is usually the same answer.
+    //
+    // It matters most where the two differ: an inverse saga's source is the
+    // provisional copy, which is born with no identity at all (#940) and
+    // gains one only when phase 2 confirms. Re-deriving from that row is how
+    // a removal reaches no server and reports success.
+    let remote_id = snapshot.first().cloned().or_else(|| {
+        saga.source_message
+            .and_then(|message| MessageRepository::new(connection).get(message).ok())
+            .flatten()
+            .and_then(|message| message.server.remote_id)
+    });
     let (Some(path), Some(remote_id)) = (path, remote_id) else {
-        // The source copy is already gone — another client removed it, or a
-        // resync did. The move is complete either way.
+        // Nothing names a server copy: it is already gone — another client
+        // removed it, or a resync did — or it never had a coordinate at all.
+        //
+        // Settled either way, because retrying cannot produce a coordinate
+        // that does not exist, but **said out loud**: the two cases are
+        // indistinguishable from here and only one of them is healthy, so a
+        // silent `done` is how a removal that should have happened stops
+        // being noticeable. Ids only; the mail is not named.
+        tracing::info!(
+            saga = saga_id.get(),
+            source_message = ?saga.source_message.map(postio_model::MessageId::get),
+            had_snapshot = !snapshot.is_empty(),
+            "settling a cross-account removal that names no server copy"
+        );
         return match sagas.transition(saga_id, MovePhase::Done) {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not settle the move: {error}")),

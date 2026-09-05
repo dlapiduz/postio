@@ -491,9 +491,31 @@ impl Plan {
         // can supply its ordering once this conjunct is gone (ADR 0005 Q5a).
         let mut conditions = vec!["m.deleted_locally = 0".to_string()];
         let mut params: Vec<Value> = Vec::new();
-        if let Some(id) = request.account.account() {
-            conditions.push("m.account_id = ?".to_string());
-            params.push(Value::Integer(id.get()));
+        match request.account.account() {
+            Some(id) => {
+                conditions.push("m.account_id = ?".to_string());
+                params.push(Value::Integer(id.get()));
+            }
+            // `Unified` is "every **enabled** account", not "every account",
+            // and the difference only became observable when #961 gave the
+            // application a way to construct this scope. Dropping the account
+            // conjunct and stopping there reaches mail from an account the
+            // user has switched off, and from one that is midway through
+            // being deleted -- which shows up as somebody else's mail in a
+            // result list with no row saying where it came from (ADR 0005
+            // Q10).
+            //
+            // The same predicate `AccountRepository::list_enabled` uses, and
+            // deliberately a subquery rather than a join: `accounts` holds a
+            // handful of rows, the outer query is already driven by the index
+            // or by `hits`, and a join would give the planner a second table
+            // to choose an order for on the path the 100 ms budget is
+            // measured against.
+            None => conditions.push(
+                "m.account_id IN (SELECT id FROM accounts \
+                  WHERE enabled = 1 AND pending_deletion = 0)"
+                    .to_string(),
+            ),
         }
         let account = request.account;
         let mut has_match = false;

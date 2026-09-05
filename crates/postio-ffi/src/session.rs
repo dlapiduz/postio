@@ -214,6 +214,29 @@ fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
     }
 }
 
+/// This installation's `[sync]`, or the built-in defaults.
+///
+/// The same shape as [`load_key_bindings`], and for the same reason: a
+/// config that will not parse is a reason to use the defaults, not a reason
+/// the session cannot open. `postio-app::open_with` reads `[sync]` this way
+/// for the GTK frontend (`notifications::config_at`); this is the
+/// counterpart for every `Wiring` this crate builds, which used to read
+/// nothing at all and so started every engine on `BackfillPolicy::default()`
+/// and `WatchPolicy::default()` regardless of what was on disk (#1014).
+fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
+    let config = match text {
+        Some(text) => postio_config::Config::from_toml_str(text).ok(),
+        None => postio_config::Config::load().ok(),
+    };
+    match config {
+        Some(config) => config.sync,
+        None => {
+            tracing::warn!("using the built-in sync policy: config.toml is absent or unreadable");
+            Default::default()
+        }
+    }
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -552,7 +575,10 @@ impl Session {
             // in-memory session still needs no Secret Service, no Keychain and
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
-            let wiring = Wiring::new(database, blobs, runtime, sink, commands);
+            let sync_config = load_sync_config(options.config_text.as_deref());
+            let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+                .with_backfill(postio_session::backfill_policy(&sync_config))
+                .with_watch(postio_session::watch_policy(&sync_config));
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keys: load_key_bindings(options.config_text.as_deref()),
@@ -597,7 +623,15 @@ impl Session {
         #[cfg(not(feature = "testing"))]
         let keys = load_key_bindings(None);
 
-        let wiring = Wiring::new(database, blobs, runtime, sink, commands).with_secrets(secrets);
+        #[cfg(feature = "testing")]
+        let sync_config = load_sync_config(options.config_text.as_deref());
+        #[cfg(not(feature = "testing"))]
+        let sync_config = load_sync_config(None);
+
+        let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+            .with_secrets(secrets)
+            .with_backfill(postio_session::backfill_policy(&sync_config))
+            .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             keys,
@@ -903,7 +937,10 @@ impl Session {
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
     pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        use postio_ui::reader::document::{absent_html, body_html, document_for, wrap_document};
+        use postio_ui::reader::document::{
+            Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
+            wrap_document,
+        };
 
         let remote = postio_body::RemoteImages::from(remote);
         // The blob store is not consulted: a body is a compressed column on
@@ -913,12 +950,14 @@ impl Session {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let Ok(connection) = database.connection() else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
@@ -932,15 +971,33 @@ impl Session {
                 body,
                 encoding_problems: _,
             } => {
-                let (content, _held_back) = body_html(&body, remote);
-                document_for(&content, remote)
+                // Reader view is decided per message from the message, the
+                // same rule the GTK reader uses (#1009). This frontend has no
+                // notice surface to offer `View original` through yet — the
+                // same gap `encoding_problems` above names — so what it draws
+                // is what the rule chooses, and nothing can leave it.
+                let bulk = suits_reader_view(&body);
+                let rendering = if bulk {
+                    Rendering::Reader
+                } else {
+                    Rendering::Original
+                };
+                let drawn = body_html(&body, remote, rendering);
+                // The same rule the GTK reader applies, from the same
+                // function. Nothing here can reach `Sheet::Senders` while
+                // this frontend has no way to leave reader view -- which is
+                // the point of asking rather than assuming: the day it grows
+                // one, the sheet comes with it.
+                document_for(&drawn.html, remote, sheet_for(drawn.rendering, bulk))
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing
             // in it a sender wrote, and nothing for them to reach through.
-            postio_session::reading::Body::Absent(state) => {
-                wrap_document(&absent_html(state), postio_body::RemoteImages::Blocked)
-            }
+            postio_session::reading::Body::Absent(state) => wrap_document(
+                &absent_html(state),
+                postio_body::RemoteImages::Blocked,
+                Sheet::Theme,
+            ),
         }
     }
 
@@ -1197,5 +1254,27 @@ impl Session {
         {
             wiring.events.emit(event);
         }
+    }
+
+    /// Whether this session's `Wiring` was actually built with the backfill
+    /// and watch policy `[sync]` (as `expected` parses it) implies (#1014).
+    ///
+    /// Test-only, the same reason `emit_for_test` is: the wiring is private
+    /// so that nothing outside this crate can reach in, and a test proving
+    /// `open` read `[sync]` rather than merely compiling has to reach in
+    /// anyway. A comparison rather than a raw accessor so this crate need
+    /// not name `postio_sync`/`postio_runtime`'s policy types at its own
+    /// boundary — `postio-app` reaches `with_backfill`/`with_watch` the same
+    /// way, through `postio_session`'s functions, and never names them
+    /// either.
+    #[cfg(feature = "testing")]
+    pub fn honors_sync_config_for_test(&self, expected: &postio_config::SyncConfig) -> bool {
+        let expected_backfill = postio_session::backfill_policy(expected);
+        let expected_watch = postio_session::watch_policy(expected);
+        self.wiring.lock().ok().is_some_and(|guard| {
+            guard.as_ref().is_some_and(|wiring| {
+                wiring.backfill == expected_backfill && wiring.watch == expected_watch
+            })
+        })
     }
 }

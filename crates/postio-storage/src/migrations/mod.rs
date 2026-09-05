@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 8] = [
+static MIGRATIONS: [Migration; 11] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -125,6 +125,21 @@ static MIGRATIONS: [Migration; 8] = [
         version: 8,
         name: "unsubscribe_activations",
         sql: include_str!("0008_unsubscribe_activations.sql"),
+    },
+    Migration {
+        version: 9,
+        name: "read_receipt_requested",
+        sql: include_str!("0009_read_receipt_requested.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "attachment_draft_index_is_partial",
+        sql: include_str!("0010_attachment_draft_index_is_partial.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "contacts_rank_index_matches_the_ordering",
+        sql: include_str!("0011_contacts_rank_index_matches_the_ordering.sql"),
     },
 ];
 

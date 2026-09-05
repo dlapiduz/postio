@@ -177,6 +177,33 @@ def blank_comments_and_strings(text: str) -> str:
                     depth, end = depth - 1, end + 2
                 else:
                     end += 1
+        elif char == "'":
+            # A char literal, or a lifetime -- and telling them apart matters
+            # more than it looks. `'"'` holds one double quote, so reading it
+            # as the start of a string inverts the quote parity of the whole
+            # rest of the file: real code gets blanked as "string", string
+            # contents get scanned as code, and every caller after that point
+            # silently disappears. A `pub fn` that is wired up is then
+            # reported as dead, in whichever file happened to contain the
+            # literal.
+            #
+            # A lifetime (`&'a str`, `'static`, a loop label) must fall
+            # through untouched: blanking from there to the next `'` would
+            # eat the code in between.
+            end = index + 1
+            if end < length and text[end] == "\\":
+                # An escape: `'\n'`, `'\''`, `'\u{1f600}'`. Step over the
+                # escaped character, then run to the closing quote.
+                end += 2
+                while end < length and text[end] != "'":
+                    end += 1
+                end += 1
+            elif end + 1 < length and text[end + 1] == "'":
+                # One character between two quotes.
+                end += 2
+            else:
+                index += 1
+                continue
         elif char == '"':
             end = index + 1
             while end < length:

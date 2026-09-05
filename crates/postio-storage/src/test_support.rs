@@ -221,6 +221,45 @@ pub fn temp() -> TempDatabase {
     }
 }
 
+/// A store written the way one was before `auto_vacuum` was chosen (#381).
+///
+/// Keyed and migrated with SQLite's own `auto_vacuum = NONE`, which is what
+/// every store created before that decision is carrying. The conversion is a
+/// one-time rewrite, so the only way to test that it happens — and that it
+/// happens *once* — is against a store that genuinely needs it.
+///
+/// Here rather than hand-rolled in each suite because the two callers are in
+/// different crates and only this one may link `rusqlite`: `postio-app`'s
+/// integration tests drive the composition root, and reaching for a raw
+/// connection there would put SQL in the crate whose whole boundary rule is
+/// that the view layer above it has none.
+///
+/// # Panics
+///
+/// If the database cannot be created, keyed or migrated.
+pub fn unconverted_store(path: &Path) -> Database {
+    {
+        let mut connection = rusqlite::Connection::open(path).expect("a connection");
+        connection
+            .execute_batch("PRAGMA cipher_memory_security = OFF;")
+            .expect("memory security off, before the key");
+        let hex = key().to_hex();
+        connection
+            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))
+            .expect("the store key");
+        drop(hex);
+        // Every pragma the pool applies. What makes this store the old
+        // shape is what is *missing*: `Database::from_location_with_guard`
+        // asks for `auto_vacuum = INCREMENTAL` before it migrates, and this
+        // migrates without ever asking.
+        connection
+            .execute_batch(crate::db::PRAGMAS)
+            .expect("the pragmas the pool applies");
+        crate::migrate(&mut connection).expect("migrate");
+    }
+    Database::open(path, &key()).expect("the store reopens")
+}
+
 /// A file-backed [`Database`] plus the temporary directory holding it.
 ///
 /// Derefs to [`Database`], so it is used exactly like one; the directory is

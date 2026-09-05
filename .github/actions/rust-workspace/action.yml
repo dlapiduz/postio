@@ -107,6 +107,13 @@ runs:
         rustup show active-toolchain
         rustc --version && cargo clippy --version
 
+    # `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than
+    # paths, so sccache and copied target dirs work across worktrees on the
+    # development box (#1101). The names have to resolve here too.
+    - name: Install the linker and cc shims
+      shell: bash
+      run: scripts/install-shims.sh
+
     # The cache key has to name the compiler. It no longer moves on its own
     # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
     # a commit, and the cache must not survive it: a key of Cargo.lock alone

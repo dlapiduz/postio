@@ -75,6 +75,17 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 4;
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
 ///
+/// **`auto_vacuum` is deliberately not here, though it was.** It belongs to
+/// the database rather than to a connection, and setting it is a *write*: on
+/// an existing store `PRAGMA auto_vacuum = INCREMENTAL` is a no-op that
+/// still takes the write lock to decide so. In this batch, every reader
+/// checked out during an open write transaction blocked on it for the whole
+/// `busy_timeout` — the one property this list exists to provide, inverted,
+/// deterministically, five seconds at a time.
+/// `a_read_proceeds_while_a_write_transaction_is_open` is what caught it.
+/// [`configure`] sets it instead, on a database whose schema is still empty,
+/// which the probe it already runs answers for free. #381.
+///
 /// **`PRAGMA key` is not here.** It has to be the first statement on the
 /// connection, before anything reads a page, so [`configure`] issues it ahead
 /// of this batch — see there.
@@ -225,11 +236,32 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
     // that proves the key: one page, already in cache for everything after it.
     // A brand-new database has no page 1 yet and answers 0 rows, which is a
     // successful read and not a wrong key.
-    connection
+    let objects = connection
         .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
             row.get::<_, i64>(0)
         })
         .map_err(|_| Error::WrongStoreKey)?;
+
+    // `auto_vacuum` on a database that has nothing in it yet, which is the
+    // only moment SQLite will take it: it is a header field, and after the
+    // first table exists the only way to change it is a full `VACUUM`
+    // (`Database::adopt_incremental_vacuum`). The probe above has just told
+    // us which case this is, for free.
+    //
+    // **Only when the answer is zero**, and that is the whole point. Setting
+    // this pragma is a *write*: on a populated store it is a documented
+    // no-op that still takes the write lock to decide so, and issued
+    // unconditionally in `PRAGMAS` it made every reader checked out during
+    // an open write transaction block for the full `busy_timeout` — the one
+    // property that batch exists to provide, inverted, deterministically,
+    // five seconds at a time. A database with no schema in it has no writer
+    // to contend with, so here it is free. #381.
+    //
+    // Before `PRAGMAS`, because `journal_mode = WAL` writes the header and
+    // SQLite will not move `auto_vacuum` afterwards.
+    if objects == 0 {
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
+    }
 
     // `execute_batch` rather than `pragma_update`: several of these return the
     // value they were set to, which `pragma_update` treats as an error.
@@ -260,6 +292,12 @@ pub struct AppliedPragmas {
     pub cache_size: i64,
     /// `busy_timeout`, in milliseconds.
     pub busy_timeout: i64,
+    /// `auto_vacuum`: `0` NONE, `1` FULL, `2` INCREMENTAL.
+    ///
+    /// A property of the database rather than of the connection — every
+    /// connection to one store reads the same value — and here anyway,
+    /// because this is where a caller looks to find out what is in force.
+    pub auto_vacuum: i64,
 }
 
 /// Reads back the pragmas in force on `connection`.
@@ -273,6 +311,7 @@ pub fn read_pragmas(connection: &Connection) -> Result<AppliedPragmas> {
         mmap_size: scalar(connection, "PRAGMA mmap_size")?,
         cache_size: scalar(connection, "PRAGMA cache_size")?,
         busy_timeout: scalar(connection, "PRAGMA busy_timeout")?,
+        auto_vacuum: scalar(connection, "PRAGMA auto_vacuum")?,
     })
 }
 
@@ -1020,4 +1059,57 @@ impl Database {
         self.connection()?.execute_batch("PRAGMA optimize")?;
         Ok(())
     }
+
+    /// Hand pages the store no longer needs back to the filesystem. Answers
+    /// how many went.
+    ///
+    /// Cheap and interruptible — `PRAGMA incremental_vacuum` moves free
+    /// pages off the end of the file and stops when the freelist is empty —
+    /// so unlike `VACUUM` it does not rewrite the database and does not need
+    /// room for a second copy of it. On a store with nothing to give back it
+    /// is a single query answering zero.
+    ///
+    /// Answers `0` on a store that has never been converted, because the
+    /// pragma has nothing to work with there. See
+    /// [`adopt_incremental_vacuum`](Self::adopt_incremental_vacuum).
+    pub fn reclaim_free_pages(&self) -> Result<u64> {
+        let connection = self.connection()?;
+        let before = free_pages(&connection)?;
+        connection.execute_batch("PRAGMA incremental_vacuum")?;
+        let after = free_pages(&connection)?;
+        Ok(before.saturating_sub(after))
+    }
+
+    /// Convert a store written before `auto_vacuum` was chosen. Answers
+    /// whether it had to.
+    ///
+    /// `auto_vacuum` lives in the database header and SQLite will only
+    /// change it on a database with no tables in it — or through a `VACUUM`,
+    /// which rewrites every page and is therefore minutes on a mailbox and
+    /// needs room for a second copy. So this is a one-time cost, paid off
+    /// the startup path, and it answers `false` immediately on every store
+    /// that has already had it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Sqlite`] if the `VACUUM` cannot run — most likely because
+    /// another connection is mid-transaction, which is recoverable: nothing
+    /// has changed and the next start tries again.
+    pub fn adopt_incremental_vacuum(&self) -> Result<bool> {
+        let connection = self.connection()?;
+        if scalar(&connection, "PRAGMA auto_vacuum")? == AUTO_VACUUM_INCREMENTAL {
+            return Ok(false);
+        }
+        connection.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+        Ok(true)
+    }
+}
+
+/// `auto_vacuum = INCREMENTAL`, as SQLite numbers the modes.
+const AUTO_VACUUM_INCREMENTAL: i64 = 2;
+
+/// How many pages are on the freelist right now.
+fn free_pages(connection: &Connection) -> Result<u64> {
+    let count: i64 = connection.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+    Ok(count.max(0) as u64)
 }

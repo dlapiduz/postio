@@ -173,7 +173,10 @@ fn backend_for(
 /// external tool keeps fresh — all the same shape to the sessions.
 ///
 /// [`OAuthConfig`]: postio_model::account::OAuthConfig
-fn token_source(account: &Account, secrets: &Arc<dyn SecretStore>) -> Arc<dyn TokenSource> {
+pub(crate) fn token_source(
+    account: &Account,
+    secrets: &Arc<dyn SecretStore>,
+) -> Arc<dyn TokenSource> {
     if let Some(oauth) = &account.oauth {
         match oauth.token_url.parse() {
             Ok(token_url) => {
@@ -200,7 +203,7 @@ fn token_source(account: &Account, secrets: &Arc<dyn SecretStore>) -> Arc<dyn To
     Arc::new(StoredPasswordSource::new(secrets.clone()))
 }
 
-fn settings(
+pub(crate) fn settings(
     server: &postio_model::account::ServerConfig,
     auth: postio_model::account::AuthMethod,
 ) -> ConnectionSettings {

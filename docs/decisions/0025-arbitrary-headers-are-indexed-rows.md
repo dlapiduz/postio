@@ -1,6 +1,6 @@
 # ADR 0025 — Arbitrary headers are stored on the row and indexed as rows, not as text
 
-- **Status:** Accepted (2026-09-03)
+- **Status:** Accepted (2026-09-03), **Q2's "metadata scale" and Q3's budget amended by [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) (2026-09-04)**
 - **Date:** 2026-09-03
 - **Decision by:** a `/ux-architect` session, on the question
   [#884](https://github.com/dlapiduz/postio/issues/884) raised: `header:` has
@@ -125,6 +125,17 @@ budget. Headers under Q3's caps are metadata scale. The size test in the
 acceptance criteria is what holds that claim to account rather than assuming
 it.
 
+> **"Metadata scale" is wrong, and
+> [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) Q4 replaces it
+> (2026-09-04).** Measured, `message_headers` and its index cost 3,809 bytes a
+> message where `search_documents` and `messages_fts` together cost 184 — it is
+> seventeen times the metadata half of the index it sits in. The conclusion
+> survives on a better reason than the one given here: what made
+> `search_documents.body` unacceptable was that it was *unbounded*, and a
+> message's header rows cannot exceed 64 x 512 bytes however pathological the
+> mail. Boundedness, not smallness, is what the size test should have been
+> holding to account.
+
 **It belongs to `postio-index`, not `postio-storage`.** It is derived data with
 a local generator: droppable, rebuildable from `body_headers` with no network,
 versioned by a `headers` row in `search_schema` on exactly the terms
@@ -204,6 +215,21 @@ corpus with `dbstat`, exactly as `body_index_size.rs` does. The budget is
 rather than an absolute one, because it is the ratio that stays true on another
 machine and another mailbox. If the measurement misses it, the lever is the two
 caps — not a list of names, and not shipping it anyway.
+
+> **Superseded by
+> [ADR 0027](0027-the-header-index-is-budgeted-per-message.md) (2026-09-04),
+> and wrong in a way worth leaving visible.** The instinct — relative rather
+> than absolute — is this project's own, and the wrong relative figure was
+> picked: `message_bodies_fts` is `content = ''` and holds no text at all,
+> while `message_headers` holds every value verbatim, so the ratio measures how
+> well FTS5 compresses the fixture's *bodies* and charges the answer to
+> headers. It moves for reasons the header policy does not control — a corpus
+> of short mail measured 269% where the same policy measured 107% on long mail
+> — and the two caps reach about half the cost where the target needed a
+> twentieth. #1041 is the measurement; ADR 0027 replaces the budget with a
+> ceiling of 5 KiB a message over `message_headers` and
+> `idx_message_headers_name`, and leaves the operator and both caps exactly as
+> this ADR specifies them.
 
 ## Q4 — When `header:` can be answered: exactly when `body:` can
 

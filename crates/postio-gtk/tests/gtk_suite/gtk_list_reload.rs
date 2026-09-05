@@ -202,7 +202,8 @@ pub fn a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone() {
 /// that genuinely never arrives still fails, after the deadline — while a
 /// loaded machine only makes it wait longer.
 fn pump_until(done: impl Fn() -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         pump();
         if done() {

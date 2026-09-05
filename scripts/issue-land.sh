@@ -13,6 +13,8 @@
 #   scripts/issue-land.sh -m "..." --no-merge   # open the PR, do not wait
 #   scripts/issue-land.sh --gates-only          # run the checks, commit nothing
 #   scripts/issue-land.sh --full                # integration suites too, not just units
+#   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
+#   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
 # -m is only for uncommitted work: CLAUDE.md says commit as you go, so the
 # ordinary case is a clean tree with the branch's commits already on it, and
@@ -82,6 +84,64 @@ run_doctests() {
 }
 
 TREE=$(git rev-parse --show-toplevel)
+
+# --detach: run this very script in a session of its own and return (#1129).
+#
+# A landing run from a tool call is killed when the call's cap runs out --
+# two in one day, 79 in the transcript history -- and a killed run commits
+# nothing, then re-pays the push and the CI wait. `setsid` puts the run in
+# its own process group, so the tool giving up on its call cannot reach it;
+# `nohup` alone where there is no setsid (macOS). Output goes to a log in
+# the worktree's private git dir, so `--status` can find it from any shell
+# and it goes away with the worktree. The PreToolUse hook refuses a
+# foreground landing and names this flag.
+LAND_LOG="$(git rev-parse --absolute-git-dir)/postio-land.log"
+LAND_PID="$(git rev-parse --absolute-git-dir)/postio-land.pid"
+case " $* " in
+    *" --status "*)
+        if [ ! -f "$LAND_LOG" ]; then
+            echo "no landing has been detached in this worktree (scripts/issue-land.sh --detach)."
+            exit 0
+        fi
+        if pid=$(cat "$LAND_PID" 2>/dev/null) && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "running (pid $pid), log: $LAND_LOG"
+        else
+            echo "finished, log: $LAND_LOG"
+        fi
+        grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
+        echo "--- last lines ---"
+        tail -n 5 "$LAND_LOG"
+        exit 0
+        ;;
+    *" --detach "*)
+        DETACHED_ARGS=()
+        for arg in "$@"; do
+            [ "$arg" = "--detach" ] || DETACHED_ARGS+=("$arg")
+        done
+        : > "$LAND_LOG"
+        if command -v setsid >/dev/null 2>&1; then
+            setsid bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+                > "$LAND_LOG" 2>&1 < /dev/null &
+        else
+            nohup bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
+                > "$LAND_LOG" 2>&1 < /dev/null &
+        fi
+        printf '%s\n' "$!" > "$LAND_PID"
+        echo "detached (pid $!). It lands on its own; nothing you run now can kill it."
+        echo "log:    $LAND_LOG"
+        echo "status: scripts/issue-land.sh --status"
+        exit 0
+        ;;
+esac
+
+# `.cargo/config.toml` names `postio-linker` and `postio-cc` rather than
+# paths, so the compile cache is shared across worktrees (#1101); this is
+# what puts them on PATH. Guarded because the self-tests copy this file into
+# a sandbox on its own.
+[ -x "$TREE/scripts/install-shims.sh" ] && "$TREE/scripts/install-shims.sh"
+# The gates below draw compile jobs from the machine-wide pool rather than
+# from `jobs = 2` (#1104). Same guard, same reason.
+[ -x "$TREE/scripts/jobserver.sh" ] && eval "$("$TREE/scripts/jobserver.sh" env 2>/dev/null || true)"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 # How many times one landing may hand over to a rebased copy of itself before
 # it gives up rather than merging. Two is enough for the case this exists for
@@ -94,7 +154,7 @@ REEXEC_LIMIT="${POSTIO_LAND_REEXEC_LIMIT:-2}"
 # this run was asked for; the loop underneath shifts them away.
 ORIGINAL_ARGS=("$@")
 
-MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0
+MSG=""; WIP=0; GATES_ONLY=0; MERGE=1; FULL=0; WAIT=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message) MSG="$2"; shift 2 ;;
@@ -102,6 +162,7 @@ while [ $# -gt 0 ]; do
         --gates-only) GATES_ONLY=1; shift ;;
         --no-merge)   MERGE=0;      shift ;;
         --full)       FULL=1;       shift ;;
+        --wait)       WAIT=1;       shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -318,10 +379,10 @@ if [ "$GATES_GREEN" != 1 ]; then
     # per-crate integration suites, which is what this used to always do.
     #
     # The reason for the change is the machine, not the tests. Several
-    # sessions share this workstation with `jobs = 2`, and a single
-    # postio-app integration binary is an ~11-minute compile and link -- so
-    # landing became something you queued for. Measured: the whole suite
-    # spends 108s *executing* and the rest is building (#841).
+    # sessions share this workstation, and the per-crate integration suites
+    # are minutes each -- so landing became something you queued for.
+    # (This once blamed an "~11-minute compile and link" of one binary;
+    # that was a cold worktree, fixed at the claim -- #1101, #1102.)
     #
     # This is safe only because something else still proves the combination:
     # CI runs the full workspace on every pull request, and the nightly run
@@ -345,6 +406,34 @@ if [ "$GATES_GREEN" != 1 ]; then
             echo "[timing] test $crate: $(( $(date +%s) - PHASE_START ))s"
         done
     else
+        # The suites the sanity tier cannot fail for (#1047).
+        #
+        # `--lib` proves the units and `cargo check --all-targets` proves
+        # everything compiles; neither can see a test that *enumerates* a
+        # vocabulary -- the golden binding table, `docs/keybindings.md`,
+        # `[keys]`, `docs/config.md`. Adding one `CommandId` touches six or
+        # seven places, the compiler checks two, and the branch builds and
+        # then fails CI ten minutes later on an assertion about a table.
+        #
+        # So the crates you changed get their integration suites too, minus
+        # the handful whose suites are minutes. `full-suite-crates.sh` holds
+        # that rule and the measurements behind it; its self-test holds the
+        # direction it has to fail in.
+        for crate in $(printf '%s\n' $CRATES | scripts/full-suite-crates.sh); do
+            [ -d "$TREE/crates/$crate" ] || continue
+            echo "--- test (suites): $crate ---"
+            PHASE_START=$(date +%s)
+            # `--no-fail-fast`, because this class of change breaks several
+            # tables at once and plain `cargo test` abandons the remaining
+            # binaries at the first failure. #1003 fixed one table, re-landed,
+            # and failed on a *different* one twenty-five minutes later; a
+            # probe of this gate reproduced exactly that -- `command_registry`
+            # and `keybindings_doc` both fail, and only the first is reported
+            # without this. (CLAUDE.md says the same about the reconcile pass.)
+            run_tests --no-fail-fast -p "$crate"
+            echo "[timing] suites $crate: $(( $(date +%s) - PHASE_START ))s"
+        done
+
         echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
         PHASE_START=$(date +%s)
         # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
@@ -654,6 +743,34 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 
 [ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
 
+# Hand the merge to GitHub and go (#1107). PR open -> merged was p50 10 min
+# and p90 41 across 95 landings, all of it spent by the session that opened
+# the PR sitting in wait-for-checks.sh. A ruleset now requires the CI
+# checks, so `--auto` cannot merge before they are green -- which is the
+# hazard the waiting existed for (#135, #139). Asked of the repository
+# rather than assumed: a repository with auto-merge off (the self-tests'
+# sandboxes, a fork) takes the watching path below, and `--wait` asks for
+# it on purpose. Nobody waits in front of the PR, so a red check has to be
+# found afterwards: the next claim lists the caller's red PRs, /steward
+# sweeps them, and `issue-claim.sh --resume <n>` comes back to the branch.
+# GitHub deletes the head branch on merge; until then it is the PR.
+# The REST field, not `gh repo view --json`: that command has no field for
+# auto-merge at all, and asking it for one is an error whose empty answer
+# reads as "no" -- which is how the first landing after #1107 quietly took
+# the watching path (#1136).
+AUTO_MERGE_ALLOWED=$(gh api "repos/{owner}/{repo}" --jq .allow_auto_merge 2>/dev/null || true)
+if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
+    echo
+    echo "--- auto-merge ---"
+    gh pr merge --auto --rebase
+    echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
+    echo "Nothing waits here. If a check fails, your next claim will say so, and"
+    echo "    scripts/issue-claim.sh --resume $ISSUE"
+    echo "comes back to this branch to fix it on the same PR."
+    echo "Now claim the next issue -- finishing an issue is not finishing a session."
+    exit 0
+fi
+
 # Watch, do not fire and forget. GitHub's own --auto would merge immediately
 # here: it waits for *required* checks, branch protection is what makes a check
 # required, and this repository cannot set any (private repo, free plan). So
@@ -843,5 +960,6 @@ else
     echo "warning: could not delete the remote branch $BRANCH -- it may" >&2
     echo "already be gone. Not fatal: the merge above already succeeded." >&2
 fi
-echo "Now: scripts/issue-release.sh $ISSUE   (removes the worktree)"
-echo "Then claim the next one -- finishing an issue is not finishing a session."
+echo "Next: scripts/issue-claim.sh   (from here: reuses this worktree, build and all)"
+echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+echo "Finishing an issue is not finishing a session."

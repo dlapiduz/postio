@@ -229,7 +229,7 @@ pub fn new_mail_reveals_itself_at_the_top_and_nowhere_else() {
 /// the condition, rather than a fixed number of passes, is what keeps this
 /// strict on a loaded machine instead of merely slow.
 fn pump_until(done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         pump();
         if done() {
@@ -261,7 +261,7 @@ fn settle_frames(window: &Window) {
     let context = glib::MainContext::default();
     let heartbeat =
         glib::timeout_add_local(Duration::from_millis(5), || glib::ControlFlow::Continue);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while left.get() > 0 && Instant::now() < deadline {
         context.iteration(true);
     }

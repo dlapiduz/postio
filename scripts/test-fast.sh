@@ -3,16 +3,18 @@
 #
 # `issue-land.sh` is what proves work is landable, and it is thorough and slow
 # for good reasons. It is the wrong tool to run between one edit and the next,
-# and using it that way is most of why iterating here feels expensive: a
-# single integration binary in `postio-app` is an eleven-minute compile and
-# link, so a red-green-refactor cycle that goes through one costs twenty
-# minutes of waiting for maybe two of thinking.
+# and using it that way is most of why iterating here feels expensive: an
+# integration suite is minutes to run, and a red-green-refactor cycle that
+# goes through one pays that twice for maybe two minutes of thinking.
 #
-# The tests themselves are not the cost. Measured on this workstation:
+# Measured on this workstation, warm:
 #
 #     postio-body unit tests (49)        0.00s
 #     postio-gtk lib tests (330)         0.42s
-#     postio-app --test app_suite (43)   11m26s, almost entirely compile+link
+#     postio-app --test app_suite (43)   ~200s under cargo test, ~20s under nextest
+#
+# (This used to blame an "eleven-minute compile and link". It was a cold
+# worktree, since fixed at the claim -- #1101, #1102.)
 #
 # So this runs `--lib` only: the unit tests compiled into each crate, which
 # link nothing but the crate itself. That is the layer to iterate at, and the
@@ -40,6 +42,10 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
+# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
+[ -x scripts/install-shims.sh ] && scripts/install-shims.sh
+# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
+[ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 

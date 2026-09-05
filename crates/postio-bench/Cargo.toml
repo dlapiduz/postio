@@ -75,7 +75,7 @@ name = "composer_open"
 harness = false
 
 [[bench]]
-name = "thread_drill"
+name = "conversation_rows"
 harness = false
 
 [[bench]]

@@ -107,6 +107,7 @@ pub fn the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document() {
     let document = postio_ui::reader::document::document_for(
         "<p>The tide gate interlock is fixed.</p>",
         postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::Sheet::Theme,
     );
     assert!(
         !document.contains("data:font/"),
@@ -175,7 +176,7 @@ fn track_load_finished(reader: &Reader) -> Rc<RefCell<bool>> {
 }
 
 fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         std::thread::sleep(Duration::from_millis(10));
@@ -183,6 +184,12 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     assert!(*flag.borrow(), "the WebView never finished loading");
 }
 
+/// Turn the loop for `duration`, spending all of it.
+///
+/// POSTIO-FIXED-DEADLINE: nothing is waited *for* here -- callers pass a
+/// window they intend to spend, to give a thing that must not happen every
+/// chance to happen. Scaling it would multiply the case's cost and add no
+/// confidence.
 fn pump_for(duration: Duration) {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {

@@ -442,10 +442,15 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
     window.conversation().set_reader_factory({
-        #[allow(clippy::redundant_clone)]
-        let window = window.clone();
+        // Weak, for the reason `install_run` states in `search.rs`: the
+        // conversation pane is a child the window owns, and a strong clone
+        // stored in its factory is a cycle that keeps the window alive for
+        // the life of the process (#1072). A window that has gone has
+        // nothing to build a reader with, which is what `None` says.
+        let window = glib::object::ObjectExt::downgrade(window);
         let parts = Rc::clone(&parts);
         move |message| {
+            let window = window.upgrade()?;
             let reader = window.new_reader();
             // The reader's own sender/subject/date stay hidden (#308): the
             // entry above it already carries that line. Recipients (#487)
@@ -470,7 +475,7 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
             // rectangle pretending to be a message.
             reader.widget().set_visible(false);
             parts.fill_reader(&reader, message);
-            reader
+            Some(reader)
         }
     });
 

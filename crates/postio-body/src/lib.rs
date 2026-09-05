@@ -39,6 +39,7 @@ pub mod flowed;
 pub mod outgoing;
 pub mod parse;
 pub mod quote;
+pub mod reader_view;
 pub mod replying;
 pub mod sanitize;
 

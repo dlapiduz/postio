@@ -264,7 +264,8 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
     // ── the same call `run` makes, and nothing else ──────────────────────
     let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     let mut found = false;
     while std::time::Instant::now() < deadline && !found {
         while glib::MainContext::default().iteration(false) {}

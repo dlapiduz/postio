@@ -44,7 +44,8 @@ fn bridge_latency(composer: &composer::Composer) -> Duration {
 }
 
 fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + SETTLE_DEADLINE;
+    let limit = postio_test_support::scaled(SETTLE_DEADLINE);
+    let deadline = Instant::now() + limit;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
@@ -58,16 +59,19 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
     let bridge = bridge_latency(composer);
     if bridge > Duration::from_secs(1) {
         panic!(
-            "timed out waiting for {what} after {SETTLE_DEADLINE:?} -- but a trivial \
+            "timed out waiting for {what} after {limit:?} -- but a trivial \
              bridge round trip alone just took {bridge:?}, so this machine is \
              contended and the wait above was racing load, not a real regression; \
              re-run somewhere quieter"
         );
     }
     panic!(
-        "timed out waiting for {what} after {SETTLE_DEADLINE:?} -- the bridge itself \
-         just answered a trivial round trip in {bridge:?}, so the report this test \
-         was waiting on was never going to arrive"
+        "timed out waiting for {what} after {limit:?} -- the bridge answered a \
+         trivial round trip in {bridge:?} once the wait was over, so it is alive \
+         now. That is one sample taken after the fact and it does not establish \
+         that the report never came: a starved web process can be idle and \
+         responsive the moment it is finally asked. Raise POSTIO_TEST_PATIENCE \
+         and see whether it still fails before concluding anything (#957)"
     );
 }
 

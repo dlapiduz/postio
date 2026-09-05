@@ -2652,6 +2652,7 @@ dependencies = [
  "postio-account",
  "postio-config",
  "postio-model",
+ "postio-test-support",
  "rustls",
  "rustls-platform-verifier",
  "secrecy",
@@ -2782,6 +2783,7 @@ dependencies = [
  "postio-session",
  "postio-smtp",
  "postio-storage",
+ "postio-test-support",
  "postio-ui",
  "tempfile",
  "thiserror",
@@ -2887,6 +2889,7 @@ dependencies = [
  "postio-smtp",
  "postio-storage",
  "postio-sync",
+ "postio-test-support",
  "rusqlite",
  "tempfile",
  "tokio",
@@ -2923,6 +2926,7 @@ dependencies = [
  "postio-sync",
  "postio-ui",
  "rusqlite",
+ "secrecy",
  "tempfile",
  "tokio",
  "tracing",
@@ -2937,6 +2941,7 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "idna",
  "io-sasl",
  "io-smtp",
  "postio-model",
@@ -2996,6 +3001,7 @@ name = "postio-ui"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "postio-body",
  "postio-config",
  "postio-core",

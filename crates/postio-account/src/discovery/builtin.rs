@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 
 use postio_config::paths::Platform;
+use postio_model::MailboxRole;
 use std::sync::LazyLock;
 
 use crate::discovery::providers_toml::{self, OAuthRow, ProviderRow, Security};
@@ -160,6 +161,25 @@ impl Preset {
     /// [`requires_app_password`](Self::requires_app_password) is set.
     pub fn password_help_url(&self) -> Option<&str> {
         self.row.password_help_url.as_deref()
+    }
+
+    /// The provider's own name for each special-use folder, when the
+    /// server's `LIST` offers no `SPECIAL-USE` attribute to settle a role
+    /// directly (#959) -- iCloud's `Sent Messages`, `Deleted Messages` and
+    /// `Archives`, for instance.
+    ///
+    /// A key `providers.toml` names that
+    /// [`MailboxRole::from_name`] does not recognise is dropped rather than
+    /// failing the row: this table is maintainer-authored data checked by
+    /// eye at review time, not user input to warn about, the same leniency
+    /// `postio_config`'s own `[mailboxes]` override reads its role names
+    /// with.
+    pub fn role_names(&self) -> BTreeMap<MailboxRole, String> {
+        self.row
+            .mailboxes
+            .iter()
+            .filter_map(|(role, path)| Some((MailboxRole::from_name(role)?, path.clone())))
+            .collect()
     }
 
     /// Whether this provider issues addresses on `domain`.
@@ -321,6 +341,21 @@ pub fn preset_for_mx_host(host: &str) -> Option<&'static Preset> {
         .map(|(_, preset)| preset)
 }
 
+/// The preset whose `imap_host` is exactly `host`, if Postio ships one
+/// (#959).
+///
+/// Unlike [`preset_for_mx_host`]'s suffix match -- for a custom domain
+/// delegated to a provider that has never been connected to -- this is for
+/// an account already connected: the host it is talking to right now, so a
+/// folder-role tie-break can ask "which provider is this" without redoing
+/// the domain-based discovery a running connection has no further use for.
+/// Case-insensitive: DNS host names are.
+pub fn preset_for_imap_host(host: &str) -> Option<&'static Preset> {
+    PRESETS
+        .iter()
+        .find(|preset| preset.imap_host().eq_ignore_ascii_case(host))
+}
+
 /// Returns settings for `domain` when Postio ships them, without any I/O.
 ///
 /// `domain` is matched case-insensitively.
@@ -387,6 +422,57 @@ mod tests {
     fn an_mx_host_nothing_publishes_resolves_to_nothing() {
         assert!(preset_for_mx_host("mx.example.invalid").is_none());
         assert!(preset_for_mx_host("").is_none());
+    }
+
+    /// #959: an already-connected account can ask "which provider is this"
+    /// from the host it is talking to right now, without a fresh
+    /// domain-based lookup.
+    #[test]
+    fn an_imap_host_resolves_to_the_provider_that_publishes_it() {
+        for preset in presets() {
+            let found = preset_for_imap_host(preset.imap_host())
+                .expect("a provider's own imap_host should resolve to itself");
+            assert_eq!(found.display_name(), preset.display_name());
+        }
+    }
+
+    #[test]
+    fn an_imap_host_match_is_case_insensitive() {
+        let Some(preset) = presets().first() else {
+            return; // no row shipped yet
+        };
+        let shouting = preset.imap_host().to_uppercase();
+        assert_eq!(
+            preset_for_imap_host(&shouting).map(Preset::display_name),
+            Some(preset.display_name())
+        );
+    }
+
+    #[test]
+    fn an_imap_host_nothing_publishes_resolves_to_nothing() {
+        assert!(preset_for_imap_host("imap.example.invalid").is_none());
+        assert!(preset_for_imap_host("").is_none());
+    }
+
+    /// The account #501 and #943 describe: iCloud's own real folders, so a
+    /// role tie-break has something to prefer over the look-alike another
+    /// client left beside each one.
+    #[test]
+    fn icloud_names_its_own_role_folders() {
+        let icloud = preset_for_domain("icloud.com").expect("iCloud should be a shipped row");
+        let names = icloud.role_names();
+        assert_eq!(
+            names.get(&MailboxRole::Sent).map(String::as_str),
+            Some("Sent Messages")
+        );
+        assert_eq!(
+            names.get(&MailboxRole::Trash).map(String::as_str),
+            Some("Deleted Messages")
+        );
+        assert_eq!(
+            names.get(&MailboxRole::Archive).map(String::as_str),
+            Some("Archives")
+        );
     }
 
     #[test]

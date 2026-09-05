@@ -55,6 +55,8 @@ type ActionHandler = Box<dyn Fn(postio_core::Command)>;
 type ExtCommandHandler = Box<dyn Fn(postio_core::ExtId)>;
 /// See [`Window::connect_keymap`].
 type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
+/// See [`Window::connect_storage_changed`].
+type StorageHandler = Box<dyn Fn(Option<u64>)>;
 
 /// The default size, from canvas 1b: a 1120px board over a 52px header bar.
 ///
@@ -63,14 +65,14 @@ type KeymapHandler = Box<dyn Fn(&postio_core::Keymap)>;
 /// argument about what it is.
 pub const DEFAULT_SIZE: (i32, i32) = (1120, 700);
 
-/// How much of a thread a drill-in reads.
+/// How much of a conversation one read asks for.
 ///
 /// One request rather than a paged feed: a thread is a conversation, and the
-/// column already holds every message it is given in memory to sort and
-/// filter them. `postio-bench`'s `thread_drill.rs` measures the drill-in against a
-/// 200-message thread, which is the size this is chosen to clear comfortably;
-/// a conversation past it is pathological rather than long, and the header's
-/// `n of m` says so honestly.
+/// pane already holds every message it is given in memory to stack them.
+/// `postio-bench`'s `conversation_rows.rs` measures binding a read-ahead
+/// window's worth against a 200-message thread, which is the size this is
+/// chosen to clear comfortably; a conversation past it is pathological
+/// rather than long.
 const THREAD_PAGE: u32 = 500;
 
 /// What the reading pane is showing, as far as the read-clocks care.
@@ -103,26 +105,22 @@ mod imp {
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
         pub list: OnceCell<MessageListView>,
-        /// The list and its named states, together — hidden as one thing
-        /// while a thread has the column.
+        /// The list and its named states, together.
         pub list_pane: OnceCell<gtk::Overlay>,
-        /// The thread, where the list was. See [`crate::thread`].
-        pub thread: OnceCell<crate::thread::ThreadView>,
-        /// Where a drill-in reads the whole thread from.
+        /// Where opening a conversation reads the whole thread from.
         ///
         /// The message list's own feed owns this too; the window keeps a
-        /// handle because a thread is not a page of the list and cannot be
-        /// asked for through it. `None` until `install_feeds`, which is the
-        /// state a window built for a test of one widget is in — the drill-in
-        /// then shows what the list model holds, exactly as it always did.
+        /// handle because a conversation is not a page of the list and cannot
+        /// be asked for through it. `None` until `install_feeds`, which is
+        /// the state a window built for a test of one widget is in — the pane
+        /// then shows what the list model holds, which for a thread row is
+        /// one message.
         pub messages: std::cell::RefCell<Option<std::rc::Rc<dyn MessageSource>>>,
         /// Switch to a mailbox the way picking it in the sidebar does: set
         /// by [`install_feeds`](super::Window::install_feeds), so
         /// [`open_mailbox`](super::Window::open_mailbox) is a no-op before
         /// the window has been fed anything to switch to.
         pub open_mailbox: std::cell::RefCell<Option<OpenMailbox>>,
-        /// Where the list was scrolled to when the drill-in hid it.
-        pub list_scroll: std::cell::Cell<f64>,
         pub finder: OnceCell<Finder>,
         pub cheatsheet: OnceCell<CheatSheet>,
         /// ADR 0012's first-run keyboard orientation. This crate builds and
@@ -235,6 +233,9 @@ mod imp {
         /// live keymap — see
         /// [`Window::connect_keymap`](super::Window::connect_keymap).
         pub keymaps: std::cell::RefCell<Vec<KeymapHandler>>,
+        /// Whoever owns the store side of `[storage] max_bytes` — see
+        /// [`Window::connect_storage_changed`](super::Window::connect_storage_changed).
+        pub storage_changed: std::cell::RefCell<Vec<StorageHandler>>,
         /// The keymap currently in force, once one has been applied, so a
         /// surface built later can be handed it rather than waiting for the
         /// next edit.
@@ -373,213 +374,10 @@ impl Window {
         }
     }
 
-    /// The thread column, shown in the list's place while drilled in.
-    pub fn thread(&self) -> crate::thread::ThreadView {
-        self.imp()
-            .thread
-            .get()
-            .expect("built in constructed")
-            .clone()
-    }
-
-    /// Whether a thread has the list column.
-    pub fn thread_open(&self) -> bool {
-        self.imp()
-            .thread
-            .get()
-            .is_some_and(|thread| thread.thread().is_some())
-    }
-
-    /// Drill into `row`'s thread.
-    ///
-    /// Paints twice. First with whatever the list already holds for that
-    /// thread, which is at best a folder's worth and at worst a page that has
-    /// not been scrolled to — see [`crate::thread`]. Then with a real read of
-    /// the whole conversation (below), which supersedes it.
-    ///
-    /// Public so a test, and whoever wires a real thread read later, can put
-    /// the column up without synthesizing a key event.
-    pub fn open_thread(&self, row: &crate::list::Row) {
-        let Some(id) = row.thread else { return };
-        // What the list already holds, first and synchronously. A drill-in is
-        // an ordinary interaction and owes an answer inside the 16ms budget;
-        // waiting for a read would make `t` feel like a load. This is the
-        // same local-first shape every mutating action here uses.
-        self.show_thread(
-            id,
-            row.subject.as_deref(),
-            self.thread_rows(id),
-            row.thread_count,
-        );
-
-        // Then the whole conversation. `ListScope::Thread` is answered from
-        // `idx_messages_thread` with no mailbox or account restriction (#44):
-        // a message filed in Archive, or on a page the list never scrolled
-        // to, is not in what `thread_rows` gave the paint above, and is in
-        // this.
-        let Some(source) = self.imp().messages.borrow().clone() else {
-            return;
-        };
-        let future = source.fetch(crate::feed::PageRequest {
-            scope: crate::feed::ListScope::Thread(id),
-            page: 0,
-            offset: 0,
-            limit: THREAD_PAGE,
-        });
-        glib::spawn_future_local(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            async move {
-                // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method,
-                // and the trait's contract is that what it returns is pollable
-                // on the main context -- `postio-app` implements it by
-                // spawning the runtime work and handing back a channel
-                // receive.
-                match future.await {
-                    Ok(page) => {
-                        window.thread().fill(id, page.rows, page.total);
-                        // And the pane, which was opened a moment ago from
-                        // what the list model held — this folder's part of
-                        // the conversation. The rest of it arriving is the
-                        // whole point of this read, and a pane left showing
-                        // the subset would be the bug #44 fixed, one surface
-                        // over.
-                        window.refill_conversation();
-                    }
-                    // The column keeps what the list gave it, which is a
-                    // subset rather than nothing, and the header goes on
-                    // saying `n of m`. Worth a line, not a banner.
-                    Err(message) => tracing::debug!(message, "the thread could not be read"),
-                }
-            }
-        ));
-    }
-
-    /// Put `thread` in the column, with the messages you name.
-    ///
-    /// The half of [`Window::open_thread`] that does not read the list model,
-    /// so a test or a render can put the column up without one — and does it
-    /// through the same swap the application makes, rather than beside it.
-    pub fn show_thread(
-        &self,
-        thread: postio_model::ids::ThreadId,
-        subject: Option<&str>,
-        rows: Vec<crate::list::Row>,
-        total: u32,
-    ) {
-        let view = self.thread();
-        // Shown *before* it is filled. A `GtkListView` with no allocation
-        // cannot know how many rows fit, so it binds far more of the model
-        // than a screenful — filling it while hidden was measured at 16ms for
-        // a 200-message thread against a 16ms interaction budget, and at
-        // under 1ms once the viewport had a height to answer with.
-        self.imp().list_scroll.set(self.list().scroll_offset());
-        if let Some(pane) = self.imp().list_pane.get() {
-            pane.set_visible(false);
-        }
-        view.set_visible(true);
-        view.open(
-            thread,
-            subject,
-            rows,
-            total,
-            Some(&self.list().mailbox_name()),
-        );
-
-        // The swap is a `set_visible` and nothing else: no reparenting, no
-        // revealer, no transition. The list keeps its model, its cursor and
-        // its selection because nothing here touches them, which is most of
-        // what makes `Esc` restore the position exactly rather than
-        // approximately. Hiding the *overlay* rather than the list takes the
-        // named states with it — an "Offline, reading local mail" panel that
-        // stayed up over the thread would be answering a question nobody
-        // asked.
-        //
-        // The scroll offset is the one thing that does not survive by itself,
-        // and it is worth being precise about why: nothing here moves it, but
-        // giving the list the keyboard back on the way out scrolls the cursor
-        // row into view, and "into view" is not the pixel offset the user
-        // left. Measured at two rows of drift on a 200-message list.
-        // The reading pane becomes the conversation (ADR 0015 Q4). The
-        // column beside it is now an *index* into this rather than a second
-        // copy of it, so both are filled from the same rows and the pane's
-        // own policy decides where focus opens.
-        self.show_conversation(view.rows());
-        // The column follows the pane rather than the other way round on
-        // open: the pane knows which message is the first unread, and the
-        // index has to point at whatever the content opened on.
-        if let Some(focused) = self.conversation().focused() {
-            view.focus_message(focused);
-        }
-
-        view.focus_rows();
-        self.set_context(Context::Thread);
-    }
-
-    /// Leave the thread and put the list back.
-    pub fn close_thread(&self) {
-        if !self.thread_open() {
-            return;
-        }
-        let thread = self.thread();
-        thread.set_visible(false);
-        thread.close();
-        // The column goes; the conversation stays (#755). The pane is the
-        // conversation (ADR 0015 Q4) and the list cursor is still on the row
-        // that opened it, so swapping a single-message reader in on the way
-        // out would answer `Esc` with a surface nobody asked for. The swap
-        // back to the reader lives in [`Window::show_message`] and
-        // [`Window::show_absent`] now, and runs when the cursor lands on a
-        // row that is not a conversation.
-        if let Some(pane) = self.imp().list_pane.get() {
-            pane.set_visible(true);
-        }
-        // Focus first, then put the offset back — on a frame tick, not on an
-        // idle.
-        //
-        // Grabbing the keyboard scrolls the cursor row into view, and "into
-        // view" is not the pixel offset the user left: two rows of drift on a
-        // 200-message list, 84px of it here.
-        //
-        // So the offset has to go back *after* that scroll. `idle_add` is the
-        // obvious way and it is not ordered against the frame clock, which
-        // drives the layout pass that performs the scroll — so it restored
-        // correctly about half the time and left exactly those two rows the
-        // other half (`postio-1ff`: 6 of 12 runs on an idle box, always the
-        // same 84px). Restoring *before* the grab does not work either: the
-        // scroll-into-view happens regardless of whether the row is already
-        // visible, so a synchronous restore is simply overwritten — that
-        // variant failed 20 of 20.
-        //
-        // A tick callback is ordered: it runs on the frame clock, so waiting
-        // one full frame puts this strictly after the layout pass that did
-        // the scrolling. The first tick can be the one the scroll happens in,
-        // which is why it takes two.
-        let offset = self.imp().list_scroll.get();
-        let list = self.list();
-        list.grab_focus();
-        let ticks = std::cell::Cell::new(0u8);
-        list.clone().add_tick_callback(move |list, _| {
-            ticks.set(ticks.get() + 1);
-            if ticks.get() < 2 {
-                return glib::ControlFlow::Continue;
-            }
-            list.set_scroll_offset(offset);
-            glib::ControlFlow::Break
-        });
-        self.set_context(Context::List);
-    }
-
-    /// The first row the list is holding for `thread`, for its subject and
-    /// its thread count.
-    fn row_in_thread(&self, thread: postio_model::ids::ThreadId) -> Option<crate::list::Row> {
-        self.thread_rows(thread).into_iter().next()
-    }
-
     /// The rows the list is holding for `thread`.
     ///
-    /// Read off the model rather than asked for, which is what lets the
-    /// drill-in work without a thread query behind it. The model is windowed,
+    /// Read off the model rather than asked for, which is what lets the pane
+    /// answer the cursor without waiting for a query. The model is windowed,
     /// so this is what the list has paged in — the header says as much when
     /// that is fewer than the row's own thread count.
     fn thread_rows(&self, thread: postio_model::ids::ThreadId) -> Vec<crate::list::Row> {
@@ -602,7 +400,7 @@ impl Window {
 
     /// Show `row`'s whole conversation in the reading pane (ADR 0015 Q4).
     ///
-    /// The half of [`Window::open_thread`] that is about content rather than
+    /// The half of opening a conversation that is about content rather than
     /// the index column: landing on a thread row — the cursor, a click,
     /// `Enter` — opens the conversation here, and `t`'s own job is only ever
     /// the column (#755). Same local-first shape too: what the list already
@@ -620,9 +418,9 @@ impl Window {
         // chosen landing may start the read-clock, which is #71's rule on
         // the list applied to the pane it now feeds.
         let chosen = self.list().landed();
-        self.show_conversation(crate::thread::arrange(
+        self.show_conversation(crate::conversation::arrange(
             &self.thread_rows(id),
-            crate::thread::Order::Oldest,
+            crate::conversation::Order::Oldest,
             false,
         ));
         if !chosen {
@@ -666,7 +464,7 @@ impl Window {
     ///
     /// The tail of [`Window::show_thread`] that is not about the column, so
     /// [`Window::open_conversation`] can raise the pane without one. Expects
-    /// `rows` oldest first — [`crate::thread::arrange`]'s order — because
+    /// `rows` oldest first — [`crate::conversation::arrange`]'s order — because
     /// Whether the conversation pane is the one on screen.
     ///
     /// Asked of the slot and of the widget, never of `reading`: that flag is
@@ -726,7 +524,7 @@ impl Window {
         //
         // Here rather than in `show_thread`, because that is one of two ways
         // in: #755 made the list open a conversation directly, without the
-        // drill-in column. This is the single point both routes pass through
+        // conversation pane. This is the single point both routes pass through
         // -- the pane becoming visible is exactly the moment the row stops
         // being what is in front of the reader.
         //
@@ -784,9 +582,9 @@ impl Window {
         }
         let pane = self.conversation();
         let focused = pane.focused();
-        pane.open(crate::thread::arrange(
+        pane.open(crate::conversation::arrange(
             &rows,
-            crate::thread::Order::Oldest,
+            crate::conversation::Order::Oldest,
             false,
         ));
         if let Some(focused) = focused
@@ -831,13 +629,26 @@ impl Window {
         // once, here, because this is the moment the second of the pair comes
         // into existence — and because neither widget should have to know the
         // other one does.
+        // Weak, for the same reason `postio-app`'s composition wiring is
+        // (#1072, #794): `composer` is a child this window owns via
+        // `imp().composer`, so a strong clone here is a cycle that keeps the
+        // window alive for the life of the process. A window that has gone
+        // has no reading pane left to sync.
         composer.connect_opened({
-            let window = self.clone();
-            move || window.sync_reading_pane()
+            let window = glib::object::ObjectExt::downgrade(self);
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.sync_reading_pane();
+                }
+            }
         });
         composer.connect_closed({
-            let window = self.clone();
-            move |_| window.sync_reading_pane()
+            let window = glib::object::ObjectExt::downgrade(self);
+            move |_| {
+                if let Some(window) = window.upgrade() {
+                    window.sync_reading_pane();
+                }
+            }
         });
         // Built after the keymap was applied, so it starts on the user's
         // bindings rather than the registry defaults `build_actions` drew
@@ -910,17 +721,17 @@ impl Window {
     /// Called when the rest of a conversation arrives from the store. Focus
     /// is restored rather than recomputed: the opening policy is for
     /// *opening*, and re-running it a moment later would move the reader out
-    /// from under somebody who had already pressed `k` — the same reason
-    /// [`crate::thread::ThreadView::fill`] keeps its cursor.
+    /// from under somebody who had already pressed `K`.
     pub fn refill_conversation(&self) {
         let Some(pane) = self.imp().conversation.get() else {
             return;
         };
-        if !self.thread_open() {
+        if pane.is_empty() {
             return;
         }
         let focused = pane.focused();
-        pane.open(self.thread().rows());
+        let rows = pane.rows();
+        pane.open(rows);
         if let Some(focused) = focused
             && pane.rows().iter().any(|row| row.id == focused)
         {
@@ -932,9 +743,8 @@ impl Window {
     ///
     /// Mounted into the same box as the reader and hidden until a
     /// conversation is opened. Both live there because they answer different
-    /// moments: moving the list cursor previews one message, and opening a
-    /// thread row shows the whole conversation with the drill-in column
-    /// indexing it.
+    /// moments: a row that is one message previews that message, and a row
+    /// that stands for a conversation fills the pane with all of it.
     pub fn conversation(&self) -> crate::conversation::ConversationView {
         if let Some(pane) = self.imp().conversation.get() {
             return pane.clone();
@@ -946,44 +756,25 @@ impl Window {
         widget.set_visible(false);
         self.shell().reader().append(&widget);
 
-        // One current message, two surfaces showing it: the column is an
-        // index into this pane, so moving either has to move the other.
-        //
-        // Guarded, because each direction drives the other and an unguarded
-        // pair rings: the column's cursor announces, the pane focuses, the
-        // pane announces, the column moves, and so on. The flag is held for
-        // the duration of the call rather than compared by value, because the
-        // two surfaces agreeing on the message is exactly the state this is
-        // in the middle of establishing.
-        let echoing = std::rc::Rc::new(std::cell::Cell::new(false));
-        pane.connect_focus_changed({
-            let window = self.clone();
-            let echoing = std::rc::Rc::clone(&echoing);
-            move |message| {
-                if echoing.replace(true) {
-                    return;
-                }
-                window.thread().focus_message(message);
-                echoing.set(false);
-            }
-        });
-        self.thread().connect_activated({
-            let window = self.clone();
-            let echoing = std::rc::Rc::clone(&echoing);
-            move |message| {
-                if !window.thread_open() {
-                    return;
-                }
-                if echoing.replace(true) {
-                    return;
-                }
-                window.conversation().focus_message(message);
-                echoing.set(false);
-            }
-        });
-
         let _ = self.imp().conversation.set(pane.clone());
         pane
+    }
+
+    /// The reader currently drawing a message.
+    ///
+    /// There is more than one, and which one a per-message verb aims at is
+    /// not a fact about the window: the conversation pane builds a reader per
+    /// expanded message, so `View original` in a stacked conversation means
+    /// *the focused message's* reader, not the single-message one behind it.
+    /// Falls back to that one, which is what a folder row that is not a
+    /// conversation puts on screen.
+    fn reader_showing(&self) -> crate::reader::Reader {
+        self.imp()
+            .conversation
+            .get()
+            .and_then(|pane| pane.focused())
+            .and_then(|message| self.conversation().reader_for(message))
+            .unwrap_or_else(|| self.reader())
     }
 
     pub fn reader(&self) -> crate::reader::Reader {
@@ -1649,12 +1440,10 @@ impl Window {
         list_overlay.add_overlay(&list_state);
         shell.list().append(&list_overlay);
 
-        // ADR 0012 Q4: above the column rather than over it, so the rows it
+        // ADR 0012 Q4: above the list rather than over it, so the rows it
         // is talking about stay visible and scrollable underneath — the
         // same arrangement `ListStateView`'s banner placement makes, and
-        // for the same reason. Prepended, because the list and the thread
-        // are already in this box and the strip belongs above whichever of
-        // them has the column. Hidden until `postio-app` says otherwise.
+        // for the same reason. Hidden until `postio-app` says otherwise.
         let orientation = crate::orientation::OrientationStrip::new();
         shell.list().prepend(&orientation.widget());
         orientation.connect_dismissed(glib::clone!(
@@ -1662,23 +1451,6 @@ impl Window {
             self,
             move || window.orientation().retire()
         ));
-
-        // Canvas 3a: `t` turns this column into the thread. Built alongside
-        // the list rather than lazily, because the swap has to be a
-        // `set_visible` and nothing else — a pane that had to be constructed
-        // on the way in could not be instant, and the motion budget says pane
-        // switches do not animate at all.
-        let thread = crate::thread::ThreadView::new();
-        thread.set_vexpand(true);
-        shell.list().append(&thread);
-        thread.connect_back(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            // The button runs the registry's own `Back`, so leaving a thread
-            // is one path whether it was the mouse or `Esc` that asked.
-            move || window.run(CommandId::Back)
-        ));
-        let _ = self.imp().thread.set(thread);
         let _ = self.imp().list_pane.set(list_overlay.clone());
 
         // The mouse runs the same commands the keyboard does, through the
@@ -2031,50 +1803,30 @@ impl Window {
         }
     }
 
-    /// Swaps the list column for the thread, or back, and says what the
-    /// application should be told if it did.
+    /// Leaves the conversation, and says what the application should be told
+    /// if it did.
     ///
-    /// `None` means this was not a drill-in and the caller's own command
-    /// stands. Unlike `handled_here` this acts *and* lets the command go out:
-    /// the panes swap here, and `AppState` has to hear about it or its back
-    /// stack and its keyboard context drift out of step with what is on
-    /// screen.
-    fn follow_drill_in(&self, command: &postio_core::Command) -> Option<postio_core::Command> {
-        match command {
-            postio_core::Command::Thread { thread } if !self.thread_open() => {
-                // A keystroke names only the verb, so it means the row the
-                // cursor is on. An invocation that names a thread means that
-                // one, wherever the cursor happens to be.
-                let row = match thread {
-                    Some(id) => self.row_in_thread(*id)?,
-                    None => self.list().cursor_row()?,
-                };
-                // A message threading has not placed yet has no thread to
-                // drill into. Leave the key alone rather than opening a column
-                // that would have to explain itself.
-                let thread = row.thread?;
-                self.open_thread(&row);
-                Some(postio_core::Command::Thread {
-                    thread: Some(thread),
-                })
-            }
-            postio_core::Command::Back if self.thread_open() => {
-                self.close_thread();
-                None
-            }
-            // `h`/`Left`: the keyboard-only sibling of `Back` (#765) --
-            // "step back to the previous view without leaving the
-            // keyboard," restricted to the message surfaces themselves
-            // rather than `Back`'s every overlay. The one view PrevView can
-            // step back out of today is a thread; a bare List has nowhere
-            // further to go, so it is a no-op there, same as `Back` with
-            // nothing to close.
-            postio_core::Command::PrevView if self.thread_open() => {
-                self.close_thread();
-                None
-            }
-            _ => None,
+    /// `None` means this was not a way out of the conversation and the
+    /// caller's own command stands. Unlike `handled_here` this acts *and*
+    /// lets the command go out: the keyboard moves here, and `AppState` has
+    /// to hear about it or its back stack and its keyboard context drift out
+    /// of step with what is on screen.
+    ///
+    /// Used to swap the list column for a thread column (#1003). There is no
+    /// column any more, so leaving a conversation is not a pane swap: the
+    /// list never went anywhere, and what `Esc` and `h` do is give it the
+    /// keyboard back.
+    fn leave_conversation(&self, command: &postio_core::Command) -> Option<postio_core::Command> {
+        if !matches!(
+            command,
+            postio_core::Command::Back | postio_core::Command::PrevView
+        ) || self.context() != Context::Conversation
+        {
+            return None;
         }
+        self.list().grab_focus();
+        self.set_context(Context::List);
+        Some(command.clone())
     }
 
     /// Whether the window answered `id` itself.
@@ -2086,6 +1838,33 @@ impl Window {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
             CommandId::CheatSheet => self.toggle_cheatsheet(),
+            // The conversation's own axis. `j`/`k` move between threads in
+            // the list; these move between the messages of the one that is
+            // open, and both are the window's business rather than the
+            // bus's (#1007).
+            CommandId::NextInConversation => {
+                self.conversation().focus_next();
+            }
+            CommandId::PrevInConversation => {
+                self.conversation().focus_previous();
+            }
+            CommandId::ToggleFold => {
+                self.conversation().toggle_fold();
+            }
+            // Reader view is per message, so this is per message too: it acts
+            // on whichever reader is currently drawing one, and does nothing
+            // when that reader is already showing the sender's own markup
+            // (#1009).
+            CommandId::ViewOriginal => {
+                self.reader_showing().view_original();
+            }
+
+            // The conversation's own, so it goes to the pane rather than out
+            // on the bus: nothing outside this window has anything to do with
+            // how much of a conversation is open (#1004).
+            CommandId::ExpandAll => {
+                self.conversation().expand_all();
+            }
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
             // The header button already flips this property directly
@@ -2125,6 +1904,12 @@ impl Window {
                     self.settings().toggle_account_enabled(id);
                 }
             }
+            CommandId::RebuildAccountIndex => {
+                if let Some(id) = self.settings().focused_account() {
+                    self.settings()
+                        .request_account_action(id, crate::settings::AccountAction::RebuildIndex);
+                }
+            }
             // `u` here means the removal toast, never the global stack: the
             // stack never held this removal (#464 wired it straight to
             // AccountRepository::restore), so nothing else could answer it.
@@ -2148,36 +1933,14 @@ impl Window {
             // Nearer than a selection made before the keyboard went to the
             // folders: `Esc` in the sidebar means "back to the messages".
             CommandId::Back if self.context() == Context::Sidebar => self.leave_sidebar(),
-            // Not while a thread has the column: `Esc` there means "back to
-            // the list", which is nearer than a selection made before the
-            // drill-in. It falls through to `follow_drill_in`, which needs to
-            // tell the application as well as move the panes.
-            CommandId::Back if !self.thread_open() && !self.list().selection().is_empty() => {
-                self.list().clear_selection()
-            }
+            CommandId::Back if !self.list().selection().is_empty() => self.list().clear_selection(),
 
             // Where the keyboard is, and what an action would hit. Two
             // different things, moved by two different sets of keys — see
             // `crate::selection`.
-            // `j`/`k` mean the same verb in both columns; which column they
-            // move is a fact about what is on screen, not a second binding.
-            CommandId::NextMessage if self.thread_open() => self.thread().next_row(),
-            CommandId::PrevMessage if self.thread_open() => self.thread().prev_row(),
-            CommandId::FirstMessage if self.thread_open() => self.thread().first_row(),
-            CommandId::LastMessage if self.thread_open() => self.thread().last_row(),
-            // View options on the open thread. The registry keeps these to
-            // `Context::Thread`, so the guard is defence rather than the
-            // thing doing the filtering -- it just keeps a stray invocation
-            // (the palette, say, with no thread on screen) from touching a
-            // column that is not there.
-            CommandId::ToggleThreadUnread if self.thread_open() => {
-                let thread = self.thread();
-                thread.set_unread_only(!thread.unread_only());
-            }
-            CommandId::ToggleThreadOrder if self.thread_open() => {
-                let thread = self.thread();
-                thread.set_order(thread.order().toggled());
-            }
+            // `j`/`k` walk threads in the list, and only there. Walking the
+            // messages *inside* an open conversation is `J`/`K`, which is a
+            // different pair of bindings on a different surface (#1007).
             CommandId::NextMessage => self.list().next_row(),
             CommandId::PrevMessage => self.list().prev_row(),
             CommandId::FirstMessage => self.list().first_row(),
@@ -2260,22 +2023,18 @@ impl Window {
     /// it changes panes, sometimes it changes items within a pane". This is
     /// the deliberate version.
     ///
-    /// The list position is the thread when one is drilled into, because the
-    /// thread *is* the list at that moment; cycling to a hidden list behind
-    /// it would be a pane the user cannot see.
+    /// Three panes, always the same three. The drill-in used to make the
+    /// middle one sometimes a thread column instead of the list (#1003);
+    /// the list is only ever the list now, and the conversation is what the
+    /// reading pane holds rather than a pane of its own.
     fn cycle_pane(&self, forward: bool) {
-        let list_pane = if self.thread_open() {
-            Context::Thread
-        } else {
-            Context::List
-        };
         let next = match (self.context(), forward) {
-            (Context::Sidebar, true) => list_pane,
-            (Context::List | Context::Thread, true) => Context::Reader,
+            (Context::Sidebar, true) => Context::List,
+            (Context::List | Context::Conversation, true) => Context::Reader,
             (Context::Reader, true) => Context::Sidebar,
             (Context::Sidebar, false) => Context::Reader,
-            (Context::List | Context::Thread, false) => Context::Sidebar,
-            (Context::Reader, false) => list_pane,
+            (Context::List | Context::Conversation, false) => Context::Sidebar,
+            (Context::Reader, false) => Context::List,
             // Tab does not resolve to this command anywhere else -- see
             // `PANE_SURFACES` -- so any other context means the keymap and
             // the registry disagree. Do nothing rather than guess a pane.
@@ -2292,9 +2051,11 @@ impl Window {
             // silently skip a pane at the narrow breakpoint (#494's
             // acceptance says handled the same way `FocusSidebar` does).
             Context::Sidebar => self.enter_sidebar(),
-            Context::Thread => {
-                self.thread().grab_focus();
-                self.set_context(Context::Thread);
+            // The conversation is inside the reading pane, so the keyboard
+            // going there is the reading pane taking it.
+            Context::Conversation => {
+                self.reader().view().grab_focus();
+                self.set_context(Context::Conversation);
             }
             Context::List => {
                 self.list().grab_focus();
@@ -2312,11 +2073,7 @@ impl Window {
     fn leave_sidebar(&self) {
         let previous = self.imp().before_sidebar.take().unwrap_or(Context::List);
         self.set_context(previous);
-        if self.thread_open() {
-            self.thread().grab_focus();
-        } else {
-            self.list().grab_focus();
-        }
+        self.list().grab_focus();
     }
 
     /// Hand one invocation to everything listening, in both shapes.
@@ -2488,6 +2245,33 @@ impl Window {
         self.imp().keymaps.borrow_mut().push(Box::new(handler));
     }
 
+    /// Called with the new `[storage] max_bytes` every time `config.rs`'s
+    /// reload loop sees that section move (#929).
+    ///
+    /// `postio-gtk` has no store to enforce a ceiling against, so this only
+    /// asks — the composition root, which owns the `Database`/`BlobStore`
+    /// pair, is what subscribes and re-runs the eviction pass.
+    ///
+    /// Not replayed on connect the way [`connect_keymap`](Self::connect_keymap)
+    /// is: the initial ceiling is already read once at startup through
+    /// `Wiring::storage_ceiling`, and this signal only exists for the values
+    /// after that.
+    pub fn connect_storage_changed(&self, handler: impl Fn(Option<u64>) + 'static) {
+        self.imp()
+            .storage_changed
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires what [`connect_storage_changed`](Self::connect_storage_changed)
+    /// is listening for. Called from `config.rs`'s reload loop, in the same
+    /// crate.
+    pub(crate) fn notify_storage_changed(&self, max_bytes: Option<u64>) {
+        for handler in self.imp().storage_changed.borrow().iter() {
+            handler(max_bytes);
+        }
+    }
+
     /// Called with every *registered* command a key or a palette row reaches.
     ///
     /// The extension counterpart of [`connect_action`](Self::connect_action).
@@ -2587,7 +2371,7 @@ impl Window {
         if self.handled_here(command.id()) {
             return;
         }
-        let command = self.follow_drill_in(&command).unwrap_or(command);
+        let command = self.leave_conversation(&command).unwrap_or(command);
         self.deliver(command);
     }
 
@@ -2812,6 +2596,10 @@ impl Window {
         self.orientation().set_keymap(&keymap);
         self.parts().set_keymap(&keymap);
         self.reader().set_keymap(&keymap);
+        // Every message in the stack carries its own Reply/Reply all/Forward
+        // caps now (#1002), so the pane has to be re-capped like every other
+        // surface that shows a key.
+        self.conversation().set_keymap(&keymap);
         // #828: the composer's Send / Schedule / Save draft hints were
         // literals, so they went on naming the default key after a rebind.
         //

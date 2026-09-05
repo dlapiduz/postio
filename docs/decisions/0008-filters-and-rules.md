@@ -193,6 +193,22 @@ archive          trash          forward:<address>          stop
   A forwarded message appears in Sent like any other, because the send goes
   through the ordinary operation queue. It is not invisible.
 
+> **Restated by [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md)
+> (2026-09-04), because #481 transcribed the second guard inverted.** The guard
+> above is the one that stands: a target anywhere *except* an address of a
+> configured account. #481's body has it the other way round — own accounts
+> only — and that is corrected rather than honoured. ADR 0028 Q2 adds the
+> sentence that makes the exfiltration worry it was aimed at go away: **the
+> target is a literal**, never interpolated from the message, so nothing a
+> sender controls can choose where mail goes. Guards one and three are loop and
+> volume guards and not security guards; reading them as security guards is how
+> they get either weakened carelessly or defended past their purpose.
+>
+> The last paragraph of this Q — *"there is no rules-only mutation path"* — is
+> also load-bearing and was read as reassurance. ADR 0028 Q1 is what makes it
+> true: the mutating half of the verbs moves into `postio-storage`, and the
+> rules pass and the command bus call the same implementation.
+
 **Every action is local-first, exactly like a keystroke** (`ARCHITECTURE.md`
 §1): SQLite write, enqueue the remote operation, emit the event. There is no
 rules-only mutation path, which means rules inherit offline behaviour,

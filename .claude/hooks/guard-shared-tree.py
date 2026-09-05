@@ -51,6 +51,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -181,6 +182,35 @@ REMOTE_RULES: list[tuple[str, str]] = [
 
 # Start of string, or just after a shell command separator.
 ANCHOR = r"(?:^|[;&|(]|&&|\|\||\n)\s*"
+
+# The loop's own shape (#1131). Not shared-tree hazards, so these hold in a
+# private worktree too, and they are checked before the worktree exemption
+# for that reason. Each message carries the fix, because the docs that say
+# the same thing are not read at the moment it matters: the transcripts
+# show 427 workspace test runs and 852 whole-crate runs used as the inner
+# loop against 6 runs of test-fast.sh, and 79 landings killed at a
+# foreground tool call's cap.
+LOOP_RULES: list[tuple[str, str]] = [
+    (
+        r"(?:POSTIO_WORKSPACE_TESTS=1\s+)?cargo\s+(?:nextest\s+run|test)\s+(?:[^|;&\n]*\s)?"
+        r"(?:--workspace|--all)\b(?![^|;&\n]*(?:--lib\b|--no-run\b|--doc\b))",
+        "Refusing a whole-workspace test run: it links every integration "
+        "binary and is what the transcripts show sessions waiting on most. "
+        "Between edits, scripts/test-fast.sh (changed crates, --lib); before "
+        "landing, scripts/test-sanity.sh (workspace, --lib); one suite, "
+        "`cargo nextest run -p <crate> --test <suite>`. issue-land.sh and CI "
+        "run the rest. The reconcile pass is /steward's, and it prefixes "
+        "POSTIO_WORKSPACE_TESTS=1 to say so.",
+    ),
+    (
+        r"(?:(?:nohup|setsid|bash|sh|time)\s+)*(?:\S*/)?issue-land\.sh\b(?![^|;&\n]*--(?:detach|status)\b)",
+        "Refusing a foreground landing: the gate chain can outlive a tool "
+        "call's cap, and a run killed mid-way commits nothing and re-pays the "
+        "push and the CI wait. Run `scripts/issue-land.sh --detach` (same "
+        "arguments after it), then `scripts/issue-land.sh --status` to read "
+        "the log -- or background the call.",
+    ),
+]
 
 # A `rustfmt` that will WRITE: at command position, or fed by xargs, and not
 # in one of the read-only forms. `--check` and `-l` only report.
@@ -672,6 +702,37 @@ def log(event: str, **fields: object) -> None:
         pass
 
 
+CARGO_WORD = re.compile(r"(?<![\w/.-])cargo(?![\w.-])")
+
+
+def ensure_jobserver(command: str) -> None:
+    """Before a command that runs cargo, make sure the machine-wide jobserver
+    is there for it to join (#1104).
+
+    `.claude/settings.json` exports MAKEFLAGS naming a fifo for every
+    session, and cargo reads that at startup -- too early for anything the
+    repo's own wrappers could do. So the fifo has to exist *before* cargo
+    runs, and this hook is the one thing that runs before every command a
+    session issues. `scripts/jobserver.sh ensure` is idempotent and takes
+    milliseconds when the pool is already up; it also refills tokens a
+    killed cargo took with it, which is why it runs every time rather than
+    once. Fail-open throughout: without the pool cargo warns and uses
+    `jobs = 2`, which is where it was before.
+    """
+    if not CARGO_WORD.search(command):
+        return
+    # Beside this hook, not under CLAUDE_PROJECT_DIR: a session re-reads
+    # this file from the tree it was started in, and the script that goes
+    # with it is two directories up from here in that same tree.
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "jobserver.sh")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run(["bash", script, "ensure"], capture_output=True, timeout=15)
+    except Exception:  # noqa: BLE001 - a missing pool costs speed, not safety
+        pass
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -683,6 +744,8 @@ def main() -> int:
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return 0
+
+    ensure_jobserver(command)
 
     # Kill switch: export POSTIO_GUARD=off to disable without editing settings,
     # which already-running sessions would not re-read.
@@ -719,11 +782,27 @@ def main() -> int:
 
     matched: tuple[str, str] | None = None
 
+    # The loop's shape, before anything about where the command runs: a
+    # workspace test run is the wrong inner loop in a private worktree too.
+    # A backgrounded land is the other spelling of --detach and is fine.
+    background = bool((payload.get("tool_input") or {}).get("run_in_background"))
+    for pattern, reason in LOOP_RULES:
+        if "issue-land" in pattern and background:
+            continue
+        # POSTIO_WORKSPACE_TESTS=1 is the steward saying it means it.
+        if "POSTIO_WORKSPACE_TESTS" in pattern and re.search(
+            r"POSTIO_WORKSPACE_TESTS=1\s", command
+        ):
+            continue
+        if re.search(ANCHOR + pattern, haystack):
+            matched = (pattern, reason)
+            break
+
     # Checked before the worktree exemption, never after it: these are about
     # the remote, which a private worktree shares with everybody else. See
     # REMOTE_RULES.
     for pattern, reason in REMOTE_RULES:
-        if re.search(ANCHOR + pattern, haystack):
+        if matched is None and re.search(ANCHOR + pattern, haystack):
             matched = (pattern, reason)
             break
 

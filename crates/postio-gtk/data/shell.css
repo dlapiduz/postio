@@ -1317,13 +1317,6 @@ button.postio-compose {
   color: var(--postio-ink-secondary);
 }
 
-/* `Ret`, in the mono face every other key hint wears. */
-.postio-unavailable-hint {
-  font-family: var(--postio-font-mono);
-  font-size: 0.7159rem;
-  opacity: 0.75;
-}
-
 /* ── First run (canvas 3e) ───────────────────────────────────────────
    One screen, on its own plate in the middle of the window. The same plate
    the palette and the parts panel use, because it is the same kind of thing:
@@ -1559,6 +1552,71 @@ button.postio-settings-revert:hover {
   background-color: var(--postio-hover-bg);
 }
 
+
+/* The account's signatures (#1086). Rows rather than bare text: each one
+   opens an editor, so it has to look like something you can press. */
+.postio-settings-signature-list {
+  background-color: transparent;
+}
+
+.postio-settings-signature-list row {
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-settings-signature-list row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-row {
+  padding: var(--postio-space-2) var(--postio-space-3);
+}
+
+/* The body. A framed field like the Name entry above it: without this it is
+   text on the ground, and nothing says it can be typed into. */
+.postio-settings-signature-text {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-text text {
+  background-color: transparent;
+}
+
+/* Why a signature would not save -- a name already taken, so far. The
+   accent's warning cousin, like every other refusal in this app: nothing has
+   gone wrong, the store said no. */
+.postio-settings-signature-error {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+  font-size: 0.8864rem;
+}
+
+/* What the last connection test found (#980). Under the servers it is about,
+   because the result is something you read, compare against the fields above,
+   and then edit -- a toast would take it away before either. */
+.postio-settings-account-detail-test-status {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+  font-size: 0.8864rem;
+  line-height: 1.5;
+}
+
+/* A refusal, in the accent's warning cousin rather than a red banner: the
+   same call `.postio-onboarding-failed` makes, for the same reason. Nothing
+   has gone wrong with Postio -- the server said no. */
+.postio-settings-account-detail-test-status.postio-settings-account-detail-test-failed {
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
 /* ── The composer (canvas 2a) ─────────────────────────────────────────
    Compose takes over the reading pane, so it has to read as a different
    plane from the message it replaced: `--postio-surface` rather than
@@ -1757,4 +1815,83 @@ button.postio-compose-more {
 
 .conversation-actions button:hover {
   color: var(--postio-accent-text);
+}
+
+/* ── The shared controls (#1002) ─────────────────────────────────────
+   A button with its key beside it, a row of them, and a one-line notice.
+   Postio had three or four hand-rolled copies of each; these are the
+   classes the single implementation wears, and every surface that draws
+   one of these draws this. `postio_gtk::widgets` is the code. */
+
+/* An action bar is a row of real buttons with keycap hints, identical on
+   every screen — the canvas's turn-7 rule. The surfaces that mount one add
+   their own class beside this for the padding and the rule above it. */
+.postio-action-bar {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+/* ── One-line notices ────────────────────────────────────────────────
+   Icon, ellipsised text, one action, an overflow. It never wraps: a notice
+   that grows vertically pushes the mail down the pane, which is the
+   opposite of what a notice is for. The height is fixed for the same
+   reason — a notice appearing must not reflow the message under it by a
+   variable amount. */
+.postio-notice {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.postio-notice-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-notice-label {
+  color: var(--postio-ink-secondary);
+  font-size: 0.8523rem;
+}
+
+/* ── The conversation pane's own chrome (canvas turn 8a, #1004/#1005/#1006)
+   The header names the conversation and the footer carries its verbs; both
+   sit outside the scroller, so a long thread never loses either. Between
+   them the stack, and the dividers that stand in for folded runs. */
+.conversation-header {
+  padding: var(--postio-space-3) var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+/* The largest type in the pane. This is the one place the conversation is
+   named -- before #1003 there were two and they could disagree. */
+.conversation-subject {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.4318rem;
+  color: var(--postio-ink);
+}
+
+/* `8 messages · Ada, Bo, Site Office · 10-25 Aug`. One line, ellipsised --
+   the participants are the unbounded part and must not grow the header. */
+.conversation-meta {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
+.conversation-divider {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+.conversation-divider-label {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-dim);
+}
+
+/* The conversation's verbs, against the per-message ones inside an entry. */
+.conversation-footer {
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
 }

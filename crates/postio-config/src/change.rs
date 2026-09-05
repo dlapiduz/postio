@@ -39,7 +39,7 @@ use crate::Config;
 /// `sync`. Nothing else has to do anything.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigChanged {
-    /// `[ui]` — density, theme, hover actions, thread drill-in.
+    /// `[ui]` — density, theme, hover actions, key hints.
     pub ui: bool,
     /// `[keys]` — bindings, so the keymap must be rebuilt.
     pub keys: bool,

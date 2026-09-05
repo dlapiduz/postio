@@ -42,9 +42,14 @@ pub enum ViewMode {
     /// The message list.
     #[default]
     List,
-    /// One thread, drilled into from the list.
-    Thread {
-        /// The thread on screen.
+    /// One conversation, stacked in the reading pane.
+    ///
+    /// Was `Thread`, when a thread meant a column that replaced the list
+    /// (#1003). The list is never anything but the list now; what changes is
+    /// what the reading pane holds — one message, or all of a
+    /// conversation's.
+    Conversation {
+        /// The conversation on screen.
         thread: ThreadId,
     },
     /// One message in the reading pane.
@@ -73,7 +78,7 @@ impl ViewMode {
     pub fn context(&self) -> Context {
         match self {
             ViewMode::List => Context::List,
-            ViewMode::Thread { .. } => Context::Thread,
+            ViewMode::Conversation { .. } => Context::Conversation,
             ViewMode::Reader { .. } => Context::Reader,
             ViewMode::Search { .. } => Context::Search,
             ViewMode::Composer { .. } => Context::Composer,
@@ -485,7 +490,12 @@ impl AppState {
 
     /// Move to the next scope: unified, then each account in turn, and round.
     ///
-    /// What `g a` does. Cycling rather than a menu because the set is small
+    /// The rule `g a` cycles by, spelled once so a frontend can share it —
+    /// today's GTK frontend does not: `postio_gtk::sidebar::Sidebar::select_next_scope`
+    /// walks the strip's own rows directly and never reaches this (#974), so
+    /// this has no production caller. It is kept, tested and correct for
+    /// whichever caller closes that gap, rather than deleted for being
+    /// unreached today. Cycling rather than a menu because the set is small
     /// and ordered, and because a keystroke has no argument to name a scope
     /// with — the sidebar's rows are the surface for going somewhere
     /// directly.
@@ -622,8 +632,8 @@ impl AppState {
     }
 
     /// Drill into a thread, remembering where we came from.
-    pub fn open_thread(&mut self, thread: ThreadId) -> Vec<Event> {
-        self.commit(|state| state.push(ViewMode::Thread { thread }))
+    pub fn open_conversation(&mut self, thread: ThreadId) -> Vec<Event> {
+        self.commit(|state| state.push(ViewMode::Conversation { thread }))
     }
 
     /// Open a message in the reading pane, remembering where we came from.
@@ -1053,14 +1063,14 @@ mod tests {
         let mut state = AppState::new();
         let last = AppState::MAX_BACK_DEPTH as i64 + 5;
         for id in 0..=last {
-            state.open_thread(ThreadId::new(id));
+            state.open_conversation(ThreadId::new(id));
         }
 
         assert_eq!(state.back_depth(), AppState::MAX_BACK_DEPTH);
         state.back();
         assert_eq!(
             *state.view(),
-            ViewMode::Thread {
+            ViewMode::Conversation {
                 thread: ThreadId::new(last - 1)
             },
             "Esc undoes the most recent drill-in"

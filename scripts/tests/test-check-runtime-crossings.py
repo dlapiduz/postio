@@ -264,6 +264,50 @@ fn wire() {
         should_fail=False,
     )
 
+    # ── a char literal is not a string, and reading it as one loses the
+    #    rest of the file (#1103) ────────────────────────────────────────
+    #
+    # `'"'` holds one double quote. Scanned as the start of a string literal
+    # it inverts the quote parity of everything after it, so real code is
+    # blanked as "string" and string contents are read as code -- and a
+    # crossing past that point silently stops being seen.
+    case(
+        "a char literal holding a quote does not swallow the crossing after it",
+        '''
+fn escape(c: char) -> &'static str {
+    match c {
+        '"' => "&quot;",
+        _ => "",
+    }
+}
+
+fn submit() {
+    glib::spawn_future_local(async move {
+        secrets.store(&key, &password).await.unwrap();
+    });
+}
+''',
+        should_fail=True,
+        expect_text="secrets.store",
+    )
+
+    case(
+        "a lifetime is still not a char literal",
+        '''
+fn borrow<'a>(text: &'a str) -> &'a str {
+    text
+}
+
+fn submit() {
+    glib::spawn_future_local(async move {
+        secrets.store(&key, &password).await.unwrap();
+    });
+}
+''',
+        should_fail=True,
+        expect_text="secrets.store",
+    )
+
     print()
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed.", file=sys.stderr)

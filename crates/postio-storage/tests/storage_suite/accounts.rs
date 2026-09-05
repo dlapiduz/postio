@@ -663,3 +663,100 @@ fn the_backend_choice_round_trips_and_defaults_to_imap() {
         }
     );
 }
+
+#[test]
+fn two_signatures_in_one_account_cannot_share_a_name() {
+    // `signatures.name` is documented "unique per account so the picker never
+    // offers two entries a person cannot tell apart", and `idx_signatures_name`
+    // is what makes that true rather than aspirational. Asserted because a
+    // constraint nothing exercises is one a later migration can drop without
+    // anybody noticing — and #1086 is about to put a *creation* flow in front
+    // of it, where a duplicate stops being hypothetical.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let mut account = an_account();
+    accounts.create(&mut account).expect("create");
+
+    let signatures = SignatureRepository::new(&connection);
+    let mut first = Signature::new("Work", "— Lena");
+    signatures.create(account.id, &mut first).expect("create");
+
+    let mut clash = Signature::new("Work", "— Lena Tomlin");
+    signatures
+        .create(account.id, &mut clash)
+        .expect_err("a second signature called Work must not be stored");
+
+    // The first is untouched: a refused insert is not a partial one.
+    let loaded = accounts.get(account.id).expect("get").expect("there");
+    assert_eq!(loaded.signatures.len(), 1);
+    assert_eq!(loaded.signatures[0].text, "— Lena");
+}
+
+#[test]
+fn the_same_name_in_a_different_account_is_fine() {
+    // The other half of "unique *per account*": two people's mail on one
+    // machine both having a "Work" signature is the ordinary case, and a
+    // global constraint would refuse the second.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let mut mine = an_account();
+    accounts.create(&mut mine).expect("create");
+    let mut theirs = Account::new(
+        "Other",
+        EmailAddress::new(Some("Grace"), "grace@example.net"),
+    );
+    accounts.create(&mut theirs).expect("create");
+
+    let signatures = SignatureRepository::new(&connection);
+    signatures
+        .create(mine.id, &mut Signature::new("Work", "— Lena"))
+        .expect("create");
+    signatures
+        .create(theirs.id, &mut Signature::new("Work", "— Grace"))
+        .expect("the same name in another account is a different signature");
+}
+
+#[test]
+fn deleting_the_default_signature_leaves_no_dangling_reference() {
+    // #1086's fourth criterion. `accounts.default_signature_id` is
+    // `REFERENCES signatures(id) ON DELETE SET NULL`, so the row clears
+    // itself — but only with foreign keys actually on, which is exactly the
+    // kind of thing that is true until a connection somewhere forgets to
+    // enable them.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+    let mut account = an_account();
+    accounts.create(&mut account).expect("create");
+
+    let signatures = SignatureRepository::new(&connection);
+    let mut work = Signature::new("Work", "— Lena");
+    let mut brief = Signature::new("Brief", "— L");
+    signatures.create(account.id, &mut work).expect("create");
+    signatures.create(account.id, &mut brief).expect("create");
+
+    account.default_signature_id = Some(work.id);
+    accounts.update(&mut account).expect("update");
+    let loaded = accounts.get(account.id).expect("get").expect("there");
+    assert_eq!(
+        loaded.default_signature_id,
+        Some(work.id),
+        "the fixture has to start with a default, or the assertion below is vacuous"
+    );
+
+    assert!(signatures.delete(work.id).expect("delete"));
+
+    let loaded = accounts.get(account.id).expect("get").expect("there");
+    assert_eq!(
+        loaded.default_signature_id, None,
+        "the account still points at a signature that no longer exists, so \
+         every reader of it is holding an id that resolves to nothing"
+    );
+    assert_eq!(
+        loaded.signatures.len(),
+        1,
+        "and the one that was not deleted is still there"
+    );
+}

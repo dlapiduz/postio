@@ -121,7 +121,7 @@ const STARTER_HEADER: &str = "\
 /// The whole of `config.toml`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// `[ui]` — density, theme, hover actions, thread drill-in.
+    /// `[ui]` — density, theme, hover actions, key hints.
     #[serde(default)]
     pub ui: UiConfig,
     /// `[keys]` — command id to binding, overriding [`keys::DEFAULT_BINDINGS`].

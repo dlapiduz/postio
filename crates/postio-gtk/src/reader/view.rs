@@ -33,19 +33,19 @@ use gtk::glib;
 use postio_model::message::MessageBody;
 use webkit6::prelude::*;
 
-use super::actions::ReaderActions;
 use super::allowlist::RemoteImageAllowList;
 use super::banner::{DecodeNotice, RemoteImageBanner, UnsubscribeBanner};
 use super::message_header::MessageHeader;
 use super::scheme::{self, BlobSource};
+use crate::widgets::ActionBar;
 use postio_body::sanitize::RemoteImages;
 // The document itself — CSP, wrapper, fonts, markers, absent states,
 // sanitizing and containing the body — is postio-ui's (#567, #590, ADR 0019
 // Q6): one implementation for every frontend, re-exported here so existing
 // paths keep resolving. What remains in this file is webkit6 glue.
 pub use postio_ui::reader::document::{
-    Absent, DOCUMENT_BASE_URI, HeldBack, SCROLL_MARKERS, absent_html, body_html,
-    content_security_policy, document_for, reader_ground, wrap_document,
+    Absent, DOCUMENT_BASE_URI, HeldBack, Rendering, SCROLL_MARKERS, Sheet, absent_html, body_html,
+    content_security_policy, document_for, reader_ground, sheet_for, wrap_document,
 };
 
 /// The message currently on screen, kept so the banner's two actions can ask
@@ -53,6 +53,21 @@ pub use postio_ui::reader::document::{
 struct Open {
     body: MessageBody,
     sender: Option<String>,
+    /// Which of the two ways this message is being drawn.
+    ///
+    /// Per message, and reset by every `render`: `View original` is an answer
+    /// about *this* newsletter, and carrying it to the next one would be the
+    /// reader quietly deciding that a person who wanted one sender's layout
+    /// wants everyone's.
+    rendering: Rendering,
+    /// Whether reader view had something to offer on this message.
+    ///
+    /// Recorded at `render` rather than asked again per draw:
+    /// [`suits_reader_view`] parses the markup, and the answer cannot change
+    /// while one message is on screen. It is what tells `View original` apart
+    /// from ordinary correspondence, which is also `Rendering::Original` and
+    /// must keep following the theme.
+    bulk: bool,
 }
 
 /// Called with how many remote references the pane is currently holding
@@ -76,6 +91,9 @@ pub struct Reader {
     header: Rc<MessageHeader>,
     banner: Rc<RemoteImageBanner>,
     decode_notice: Rc<DecodeNotice>,
+    /// "Reader view — the sender's HTML layout is hidden", with the way
+    /// back. Shown only while a message is actually drawn reduced.
+    reader_notice: Rc<crate::widgets::NoticeBar>,
     unsubscribe_banner: Rc<UnsubscribeBanner>,
     /// The list identifier [`Reader::set_unsubscribe`] last set — what a
     /// click on the banner's button reports to
@@ -83,7 +101,10 @@ pub struct Reader {
     /// since the click itself carries no data.
     unsubscribe_list: Rc<RefCell<Option<String>>>,
     on_unsubscribe: Rc<RefCell<Vec<UnsubscribeHandler>>>,
-    actions: Rc<ReaderActions>,
+    // `ActionBar`, not `ReaderActions`: #1002 replaced the reading pane's
+    // hand-rolled bar with the shared one, and `actions.rs` now owns only
+    // which four verbs it carries.
+    actions: Rc<ActionBar>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
@@ -113,6 +134,8 @@ pub struct Reader {
     /// How many documents have actually been handed to WebKit — see
     /// [`Reader::loads`].
     loads: Rc<std::cell::Cell<u32>>,
+    /// The last document handed to WebKit — see [`Reader::test_document`].
+    document: Rc<RefCell<String>>,
     /// Set by [`Reader::set_actions_visible`]`(false)` — overrides what
     /// [`render`](Self::render) and [`show_absent`](Self::show_absent) would
     /// otherwise show the action bar for.
@@ -213,8 +236,16 @@ impl Reader {
         let header = Rc::new(MessageHeader::new());
         let banner = Rc::new(RemoteImageBanner::new());
         let decode_notice = Rc::new(DecodeNotice::new());
+        let reader_notice =
+            crate::widgets::NoticeBar::new("view-reveal-symbolic", "postio-reader-view-notice");
+        reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
+        reader_notice.set_action(Some("View original"));
+        reader_notice.set_action_key(
+            postio_core::Keymap::resolve(&Default::default())
+                .binding(postio_core::CommandId::ViewOriginal),
+        );
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
-        let actions = ReaderActions::new();
+        let actions = super::actions::new();
 
         let chips = crate::parts::Chips::new();
 
@@ -226,6 +257,7 @@ impl Reader {
         container.append(&header.widget());
         container.append(&banner.widget());
         container.append(&decode_notice.widget());
+        container.append(&reader_notice.widget());
         container.append(&unsubscribe_banner.widget());
         container.append(&view);
         container.append(&chips.widget());
@@ -237,6 +269,7 @@ impl Reader {
             header,
             banner,
             decode_notice,
+            reader_notice,
             unsubscribe_banner,
             unsubscribe_list: Rc::new(RefCell::new(None)),
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
@@ -251,6 +284,7 @@ impl Reader {
             page: Rc::new(std::cell::Cell::new(0)),
             paints: Rc::new(std::cell::Cell::new(0)),
             loads: Rc::new(std::cell::Cell::new(0)),
+            document: Rc::new(RefCell::new(String::new())),
             _dark_notify: Rc::new(DarkNotify {
                 handler: Some(dark_notify),
             }),
@@ -264,24 +298,95 @@ impl Reader {
         // struct that owns the button, a cycle nothing would ever free.
         // `view`, `open` and `allowlist` hold no reference back to the
         // banner, so they can be captured strongly with no such risk.
+        // `View original` on the notice runs the same thing `ctrl+o` does.
+        // Weakly, for the reason the banner's own buttons are weak: the
+        // button lives inside `reader.reader_notice`, so a closure its
+        // `clicked` signal owns must not hold a strong reference back to the
+        // struct that owns the button.
+        {
+            let weak = Rc::downgrade(&reader.reader_notice);
+            let view = reader.view.clone();
+            let open = Rc::clone(&reader.open);
+            let allowlist = Rc::clone(&reader.allowlist);
+            // Weakly, and this is the half that is easy to get wrong: the
+            // banner's own closures hold the notice (below), so a strong
+            // reference back would be a cycle between two Rcs that nothing
+            // ever frees -- and both of them hold a `WebView` clone, so what
+            // leaks is a WebProcess per message. `gtk_reader_teardown` is
+            // what says so: "5 of 5 WebViews outlived the readers that made
+            // them".
+            let banner_from_notice = Rc::downgrade(&reader.banner);
+            let highlight = Rc::clone(&reader.highlight);
+            let rendered = Rc::clone(&reader.rendered);
+            let page = Rc::clone(&reader.page);
+            let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
+            reader.reader_notice.connect_action(move || {
+                let Some(notice) = weak.upgrade() else { return };
+                let Some(banner) = banner_from_notice.upgrade() else {
+                    return;
+                };
+                {
+                    let mut guard = open.borrow_mut();
+                    let Some(current) = guard.as_mut() else {
+                        return;
+                    };
+                    if current.rendering == Rendering::Original {
+                        return;
+                    }
+                    current.rendering = Rendering::Original;
+                }
+                let allowed = open
+                    .borrow()
+                    .as_ref()
+                    .and_then(|current| current.sender.clone())
+                    .is_some_and(|sender| allowlist.borrow().is_allowed(&sender));
+                render_open(
+                    &Canvas {
+                        view: &view,
+                        document: &document,
+                        page: &page,
+                        loads: &loads,
+                    },
+                    &banner,
+                    &notice,
+                    &open,
+                    &highlight,
+                    if allowed {
+                        RemoteImages::Allowed
+                    } else {
+                        RemoteImages::Blocked
+                    },
+                    &rendered,
+                );
+            });
+        }
+
         let banner_weak = Rc::downgrade(&reader.banner);
         {
             let view = reader.view.clone();
             let open = Rc::clone(&reader.open);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
             let banner_weak = banner_weak.clone();
             reader.banner.connect_show_once(move || {
+                let Some(reader_notice) = notice_weak.upgrade() else {
+                    return;
+                };
                 if let Some(banner) = banner_weak.upgrade() {
                     render_open(
                         &Canvas {
                             view: &view,
+                            document: &document,
                             page: &page,
                             loads: &loads,
                         },
                         &banner,
+                        &reader_notice,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
@@ -296,9 +401,14 @@ impl Reader {
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
             let rendered = Rc::clone(&reader.rendered);
+            let notice_weak = Rc::downgrade(&reader.reader_notice);
             let page = Rc::clone(&reader.page);
             let loads = Rc::clone(&reader.loads);
+            let document = Rc::clone(&reader.document);
             reader.banner.connect_always_allow(move || {
+                let Some(reader_notice) = notice_weak.upgrade() else {
+                    return;
+                };
                 let sender = open.borrow().as_ref().and_then(|o| o.sender.clone());
                 if let Some(sender) = sender {
                     let mut allowlist = allowlist.borrow_mut();
@@ -314,10 +424,12 @@ impl Reader {
                     render_open(
                         &Canvas {
                             view: &view,
+                            document: &document,
                             page: &page,
                             loads: &loads,
                         },
                         &banner,
+                        &reader_notice,
                         &open,
                         &highlight,
                         RemoteImages::Allowed,
@@ -486,9 +598,21 @@ impl Reader {
         // they are showing, through `set_encoding_problems`.
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Reader view is decided per message, from the message. Bulk mail
+        // opens reduced; correspondence never does. See
+        // `document::suits_reader_view` for why the question is "was this
+        // laid out by a template" rather than "could this be reduced".
+        let bulk = postio_ui::reader::document::suits_reader_view(body);
+        let rendering = if bulk {
+            Rendering::Reader
+        } else {
+            Rendering::Original
+        };
         *self.open.borrow_mut() = Some(Open {
             body: body.clone(),
             sender: sender.map(str::to_owned),
+            rendering,
+            bulk,
         });
         self.show_actions_unless_suppressed();
         let allowed = sender.is_some_and(|sender| self.allowlist.borrow().is_allowed(sender));
@@ -500,6 +624,78 @@ impl Reader {
         render_open(
             &self.canvas(),
             &self.banner,
+            &self.reader_notice,
+            &self.open,
+            &self.highlight,
+            remote,
+            &self.rendered,
+        );
+    }
+
+    /// Draw the sender's own markup for whatever is on screen — `C-o`.
+    ///
+    /// Per message and not sticky: the next message decides for itself. A
+    /// person who wanted to see one newsletter's layout has not said anything
+    /// about the next one, and a reader that remembered would be answering a
+    /// question nobody asked.
+    ///
+    /// A no-op when the pane is empty or already showing the original, so the
+    /// key is safe to press anywhere.
+    pub fn view_original(&self) {
+        {
+            let mut guard = self.open.borrow_mut();
+            let Some(open) = guard.as_mut() else { return };
+            if open.rendering == Rendering::Original {
+                return;
+            }
+            open.rendering = Rendering::Original;
+        }
+        self.rerender();
+    }
+
+    /// Whether the pane is currently drawing a message reduced.
+    ///
+    /// The drawn state, not an intention: a test asking "is reader view on"
+    /// wants to know what a person can see.
+    pub fn is_reader_view(&self) -> bool {
+        self.open
+            .borrow()
+            .as_ref()
+            .is_some_and(|open| open.rendering == Rendering::Reader)
+    }
+
+    /// Whether the notice offering `View original` is on screen.
+    pub fn reader_notice_visible(&self) -> bool {
+        self.reader_notice.is_visible()
+    }
+
+    /// Press `View original` without a pointer, for a test.
+    pub fn click_view_original(&self) {
+        self.reader_notice.press_action();
+    }
+
+    /// Draw whatever is open again, with its current rendering.
+    ///
+    /// What `View original` needs and `render` cannot give it: the message
+    /// has not changed, only the way it is being drawn, so re-deriving the
+    /// remote-image decision and re-entering `render` would reset the very
+    /// choice that was just made.
+    fn rerender(&self) {
+        let allowed = self
+            .open
+            .borrow()
+            .as_ref()
+            .and_then(|open| open.sender.clone())
+            .is_some_and(|sender| self.allowlist.borrow().is_allowed(&sender));
+        let remote = if allowed {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        };
+        render_open(
+            &self.canvas(),
+            &self.banner,
+            &self.reader_notice,
             &self.open,
             &self.highlight,
             remote,
@@ -511,6 +707,7 @@ impl Reader {
     fn canvas(&self) -> Canvas<'_> {
         Canvas {
             view: &self.view,
+            document: &self.document,
             page: &self.page,
             loads: &self.loads,
         }
@@ -568,6 +765,11 @@ impl Reader {
     /// [`Window::apply_keymap`]: crate::window::Window::apply_keymap
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
         self.actions.set_keymap(keymap);
+        // The notice's own cap, from the same keymap. Written down here it
+        // would go on saying `C-o` after a rebind moved the key, which is the
+        // drift `KeycapButton` exists to end (#1002).
+        self.reader_notice
+            .set_action_key(keymap.binding(postio_core::CommandId::ViewOriginal));
     }
 
     /// Called with the invocation whenever a button in the action bar is
@@ -615,7 +817,7 @@ impl Reader {
         self.banner.set_visible(false);
         load_document(
             &self.canvas(),
-            &wrap_document(&absent_html(state), RemoteImages::Blocked),
+            &wrap_document(&absent_html(state), RemoteImages::Blocked, Sheet::Theme),
         );
         // No body drawn, so nothing is being held back either — a caller
         // watching `connect_rendered` must not keep showing the previous
@@ -649,6 +851,17 @@ impl Reader {
     #[doc(hidden)]
     pub fn loads(&self) -> u32 {
         self.loads.get()
+    }
+
+    /// The document the pane last handed to WebKit.
+    ///
+    /// The reader's `WebView` runs with JavaScript off, so a test cannot ask
+    /// the live page what it painted; this is the finished document, which is
+    /// the last thing that exists before WebKit and the place a wiring
+    /// mistake shows. Not meant for anything but tests.
+    #[doc(hidden)]
+    pub fn test_document(&self) -> String {
+        self.document.borrow().clone()
     }
 
     /// Which [`Absent`] the pane is explaining, or `None` if it has a body.
@@ -709,7 +922,10 @@ impl Reader {
         self.banner.set_visible(false);
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
-        load_document(&self.canvas(), &wrap_document("", RemoteImages::Blocked));
+        load_document(
+            &self.canvas(),
+            &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
+        );
         for handler in self.rendered.borrow().iter() {
             handler(HeldBack::default());
         }
@@ -781,6 +997,15 @@ fn paint_ground(view: &webkit6::WebView) {
 /// `page` whether or not the load was worth doing.
 struct Canvas<'a> {
     view: &'a webkit6::WebView,
+    /// The last document handed to WebKit, kept for [`Reader::test_document`].
+    ///
+    /// The reader's `WebView` has JavaScript off by construction, so a test
+    /// cannot ask the live page what colour it ended up painting -- the one
+    /// assertion that would be closer to what a person sees is the one this
+    /// pane's hardening rules out. This is the next thing down: the finished
+    /// document, the last artifact before WebKit, which is where a wiring
+    /// mistake would show.
+    document: &'a RefCell<String>,
     /// Which of [`SCROLL_MARKERS`]' anchors the pane is at.
     page: &'a Rc<std::cell::Cell<u32>>,
     /// Documents actually handed to WebKit — [`Reader::loads`].
@@ -803,6 +1028,7 @@ struct Canvas<'a> {
 /// judgement belongs where message identity exists, in `postio_app::reading`.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
+    canvas.document.replace(document.to_owned());
     canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
     // before this call -- see `Reader::page_down`.
@@ -819,28 +1045,60 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 fn render_open(
     canvas: &Canvas<'_>,
     banner: &RemoteImageBanner,
+    reader_notice: &crate::widgets::NoticeBar,
     open: &Rc<RefCell<Option<Open>>>,
     highlight: &Rc<RefCell<Vec<String>>>,
     remote: RemoteImages,
     rendered: &Rc<RefCell<Vec<RenderedHandler>>>,
 ) {
-    let (body, sender) = {
+    let (body, sender, rendering, bulk) = {
         let guard = open.borrow();
         let Some(current) = guard.as_ref() else {
             return;
         };
-        (current.body.clone(), current.sender.clone())
+        (
+            current.body.clone(),
+            current.sender.clone(),
+            current.rendering,
+            current.bulk,
+        )
     };
-    let (content, held_back) = body_html(&body, remote);
+    let drawn = body_html(&body, remote, rendering);
+    let held_back = drawn.held_back;
+    let content = drawn.html.clone();
     // After sanitizing and quote-folding, never before: ammonia would strip
     // the `<mark>` as an unknown tag, and there is no point running a matcher
     // over markup that has not been cleaned yet.
     let content = crate::search::mark_html(&content, &highlight.borrow());
 
     banner.set_sender(sender.as_deref());
+    // The count, before the visibility: a notice that appeared and then
+    // changed what it said would flicker a number at the reader (#1008).
+    banner.set_held_back(held_back);
     banner.set_visible(remote == RemoteImages::Blocked && held_back.total() > 0);
 
-    load_document(canvas, &document_for(&content, remote));
+    // Only while a message is actually drawn reduced. A notice offering to
+    // show an original that is already on screen is a control that does
+    // nothing, which is worse than no control.
+    reader_notice.set_visible(drawn.rendering == Rendering::Reader);
+    if drawn.rendering == Rendering::Reader && drawn.links_dropped > 0 {
+        reader_notice.set_text(&format!(
+            "Reader view — {} link{} kept of {}",
+            drawn.links_kept,
+            if drawn.links_kept == 1 { "" } else { "s" },
+            drawn.links_total()
+        ));
+    } else {
+        reader_notice.set_text("Reader view — the sender's layout, fonts and footer are hidden");
+    }
+
+    // Which paper this goes on. `Rendering::Original` alone is not enough --
+    // correspondence is Original too, and must keep following the theme; the
+    // sender's sheet is for the person who left reader view to see what was
+    // actually sent. `sheet_for` is where that rule lives, so this frontend
+    // and the FFI one cannot express it differently.
+    let sheet = sheet_for(drawn.rendering, bulk);
+    load_document(canvas, &document_for(&content, remote, sheet));
 
     for handler in rendered.borrow().iter() {
         handler(held_back);
@@ -1065,7 +1323,7 @@ mod tests {
 
     #[test]
     fn the_document_carries_the_base_uri_and_the_stylesheet() {
-        let doc = wrap_document("<p>hi</p>", RemoteImages::Blocked);
+        let doc = wrap_document("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
         assert!(doc.contains("<style>"));
         assert!(doc.contains("<p>hi</p>"));
         assert!(doc.contains("Content-Security-Policy"));

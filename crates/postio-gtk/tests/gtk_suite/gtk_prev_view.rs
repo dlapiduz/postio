@@ -3,7 +3,7 @@
 //! `PrevView` was a registry command — binding, title, doc comment promising
 //! "step back to the previous view without leaving the keyboard" — with no
 //! handler anywhere: not in `Window::handled_here`, not in
-//! `follow_drill_in`, not on the bus. Invoking it did nothing. It reads as
+//! `leave_conversation`, not on the bus. Invoking it did nothing. It reads as
 //! `Back`'s keyboard-only sibling (`Back` is `Escape`, reachable everywhere;
 //! `PrevView` is `h`/`Left`, reachable only from the message surfaces
 //! `Back` already knows how to leave a thread from), so this proves the
@@ -29,7 +29,7 @@ use postio_model::EmailAddress;
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::mailbox::{Mailbox, MailboxCounts, MailboxRole};
 
-/// One thread, two messages — just enough for a drill-in to have something
+/// One thread, two messages — just enough for the pane to have something
 /// to open and something to leave.
 struct TinyThread;
 
@@ -79,7 +79,7 @@ impl MailboxSource for TinyThread {
 }
 
 fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         pump();
         if done() {
@@ -105,31 +105,34 @@ pub fn h_steps_back_out_of_a_thread_the_same_way_escape_does() {
     let feeds = window.install_feeds(account, "lena@example.com", source.clone(), source);
     window.present();
     pump();
-    settle(&window, "the list to have a row to drill into", || {
+    settle(&window, "the list to have a row to land on", || {
         window.list().model().n_items() > 0
     });
 
-    // A bare invocation, with no row named, means the cursor's own thread —
-    // same as `t` from the keyboard.
-    assert!(!window.thread_open());
-    window.act(postio_core::Command::Thread { thread: None });
+    // Landing on a thread row is the whole gesture: the conversation fills
+    // the reading pane and the keyboard is reading it. There is no drill-in
+    // to open any more (#1003).
+    window.list().first_row();
+    let row = window.list().cursor_row().expect("a row to land on");
+    window.open_conversation(&row);
+    window.set_context(Context::Conversation);
     pump();
-    assert!(window.thread_open(), "the drill-in should have opened");
+    assert_eq!(window.context(), Context::Conversation);
 
     // ── the real command, not a widget call ────────────────────────────
     window.act(postio_core::Command::PrevView);
     pump();
-    assert!(
-        !window.thread_open(),
-        "PrevView through Window::act should have closed the thread"
+    assert_eq!(
+        window.context(),
+        Context::List,
+        "PrevView through Window::act should have given the list the keyboard"
     );
-    assert_eq!(window.context(), Context::List);
 
     // A second PrevView, with nowhere left to step back from, is a no-op —
-    // not a panic, not a phantom close of something already closed.
+    // not a panic, not a phantom step out of something already left.
     window.act(postio_core::Command::PrevView);
     pump();
-    assert!(!window.thread_open());
+    assert_eq!(window.context(), Context::List);
 
     drop(feeds);
     window.destroy();

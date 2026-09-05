@@ -134,7 +134,7 @@ const fn ctx(contexts: &'static [Context]) -> ContextSet {
 
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
-const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::Reader];
+const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Conversation, Context::Reader];
 /// `MESSAGE_SURFACES` plus the composer.
 ///
 /// Reply, reply-all and forward have to *resolve* while a draft is already
@@ -145,7 +145,7 @@ const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Thread, Context::
 /// silent.
 const REPLY_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Composer,
 ];
@@ -157,14 +157,22 @@ const REPLY_SURFACES: &[Context] = &[
 const PANE_SURFACES: &[Context] = &[
     Context::Sidebar,
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
 ];
 
 /// The surfaces that scroll through a list of messages.
+/// Where extending a *row* selection means something.
+///
+/// [`LIST_SURFACES`] minus the conversation pane. Inside a conversation the
+/// keyboard is walking one thread's messages, not a list of threads, so
+/// there is nothing for `J`/`K` to extend — which is exactly what frees them
+/// for the walk itself (#1007).
+const SELECTION_SURFACES: &[Context] = &[Context::List, Context::Reader, Context::Search];
+
 const LIST_SURFACES: &[Context] = &[
     Context::List,
-    Context::Thread,
+    Context::Conversation,
     Context::Reader,
     Context::Search,
 ];
@@ -224,7 +232,7 @@ static SPECS: &[CommandSpec] = &[
         // vim-style open, and both reach the same command.
         default_binding: "Return",
         alternate_bindings: &["l", "Right"],
-        contexts: ctx(&[Context::List, Context::Thread, Context::Search]),
+        contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -248,7 +256,11 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection down",
         default_binding: "J",
         alternate_bindings: &["shift+Down"],
-        contexts: ctx(LIST_SURFACES),
+        // `LIST_SURFACES` minus the conversation: `J` walks the open
+        // conversation's messages there (#1007), and there is no row
+        // selection to extend while the keyboard is inside the pane.
+        // `shift+Down` still reaches this everywhere it ever did.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -258,7 +270,8 @@ static SPECS: &[CommandSpec] = &[
         title: "Extend selection up",
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
-        contexts: ctx(LIST_SURFACES),
+        // See `ExtendSelectionDown`.
+        contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: None,
@@ -295,41 +308,6 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
-        id: CommandId::Thread,
-        title: "Show thread",
-        default_binding: "t",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::List, Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadUnread,
-        title: "Unread only",
-        // `u` is Undo and `U` is Mark unread in every message surface
-        // including this one -- both taken before this command exists, so
-        // neither is available to it.
-        default_binding: "n",
-        alternate_bindings: &[],
-        // Only meaningful with a thread column on screen: there is nothing
-        // else in the application this filter could apply to.
-        contexts: ctx(&[Context::Thread]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
-        id: CommandId::ToggleThreadOrder,
-        title: "Toggle order",
-        default_binding: "o",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Thread]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: None,
-    },
-    CommandSpec {
         id: CommandId::ToggleResultOrder,
         // The same title and key as the thread's own toggle, deliberately:
         // "the order of what I am looking at" is one idea, and `o` means it
@@ -343,6 +321,80 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     // -- Message actions -------------------------------------------------
+    CommandSpec {
+        id: CommandId::NextInConversation,
+        title: "Next message in conversation",
+        // Shifted `j`, because it is the same verb one level in: `j` walks
+        // the list of conversations, `J` walks the messages of the one that
+        // is open. The pair `a`/`A` already means "this, and this whole
+        // thread" -- the shift is the level, not a different action.
+        default_binding: "J",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::PrevInConversation,
+        title: "Previous message in conversation",
+        default_binding: "K",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleFold,
+        title: "Fold or unfold this message",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        // How much of a conversation is open is view state, not durable
+        // data -- nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ViewOriginal,
+        title: "View original",
+        // `mod+o`, not a bare letter: it is a rare gesture on a surface
+        // where every bare letter is already a verb people use constantly,
+        // and reader view is the default rather than something to escape.
+        //
+        // `mod`, not a literal `ctrl` -- the canvas writes it `C-o`, which
+        // means the primary accelerator, and that is Command on a Mac (#669).
+        // A literal `ctrl` here would also break the invariant
+        // `platform_bindings.rs` checks: that the two tables differ nowhere
+        // *but* the primary modifier.
+        default_binding: "mod+o",
+        alternate_bindings: &[],
+        // Wherever a message is drawn. A no-op when nothing is reduced, so
+        // it costs nothing to offer everywhere mail is read rather than
+        // making the key's meaning depend on what happens to be on screen.
+        contexts: ctx(MESSAGE_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ExpandAll,
+        title: "Expand all",
+        // `o` was the drill-in column's order toggle until #1003 retired it,
+        // which is what makes this letter available. Shifted, because it acts
+        // on the whole conversation -- the same relationship `a`/`A` already
+        // has between a message and its thread.
+        default_binding: "O",
+        alternate_bindings: &[],
+        // Only where there is a conversation to expand. Offering it on the
+        // list would be a key that does nothing most of the time.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
     CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
@@ -954,6 +1006,21 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::RebuildAccountIndex,
+        title: "Rebuild search index",
+        // `r` for rebuild. Free within `Context::Accounts` -- the other three
+        // rows here use `Return`, `d` and `c`, and `Refresh`'s own `R` is
+        // scoped to the message surfaces, not this one.
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // Rewriting a derived table -- postio_session::reindex_account's own
+        // doc explains why there is nothing here for undo to reach.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
@@ -1079,7 +1146,13 @@ static SPECS: &[CommandSpec] = &[
         // `ScrollReaderUp` for why the shifted form is its pair rather than
         // a binding of its own.
         alternate_bindings: &["space"],
-        contexts: ctx(MESSAGE_SURFACES),
+        // Not in the conversation pane, where `space` folds the focused
+        // message instead (canvas turn 8a, #1007). A real trade rather than
+        // a free one: a long message inside a stack loses its page-turn key
+        // and keeps `Page_Down`. The canvas is explicit, and folding is the
+        // gesture a stack is *for* -- scrolling is what the scrollbar and
+        // the wheel already do.
+        contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.
@@ -1588,7 +1661,7 @@ mod tests {
         for context in [
             Context::Sidebar,
             Context::List,
-            Context::Thread,
+            Context::Conversation,
             Context::Reader,
         ] {
             assert_eq!(

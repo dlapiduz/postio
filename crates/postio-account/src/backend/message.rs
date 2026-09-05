@@ -754,18 +754,42 @@ pub enum MailboxEvent {
 /// settled and it never has to guess again. #943 was discovery re-deriving
 /// roles from names and handing a look-alike its role straight back.
 ///
-/// Two rules, in order:
+/// No provider names known -- see [`resolve_roles_with_known_names`] for the
+/// IMAP edge's own call, which has one to offer.
+pub fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
+    resolve_roles_with_known_names(mailboxes, &BTreeMap::new());
+}
+
+/// As [`resolve_roles`], but a folder named exactly what `known_names` says a
+/// provider calls this role settles a tie the alphabet would otherwise
+/// decide (#959).
+///
+/// Three rules, in order:
 ///
 /// 1. **The server wins.** A folder the server marked `\Sent` is the sent
 ///    folder, whatever it is called and whatever else looks like one.
-/// 2. **Otherwise, the shallowest name match wins.** `Sent Messages` at the
+/// 2. **Otherwise, the provider's own name wins**, when one is known. iCloud
+///    advertises no `SPECIAL-USE` at all, and years of other clients have
+///    left a look-alike beside each of its real folders --
+///    `Sent`/`Sent Messages`, `Trash`/`Deleted Messages`, `Archive`/`Archives`
+///    (#501, #943) -- so an alphabetical tie-break settles on whichever
+///    sorts first, not on the one the account's mail is actually in.
+/// 3. **Otherwise, the shallowest name match wins.** `Sent Messages` at the
 ///    top level beats `Projects/Sent`, and the loser goes back to being an
 ///    ordinary folder. Ties break alphabetically so a listing resolves the
-///    same way every time.
+///    same way every time -- and this is exactly what a role with no entry
+///    in `known_names`, or whose named folder is not in this listing at all,
+///    still falls back to.
 ///
 /// [`MailboxRole::Inbox`] is exempt: `INBOX` is reserved by RFC 3501 and
-/// cannot be contested.
-pub fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
+/// cannot be contested. A folder pinned by the user's own `[mailboxes]`
+/// mapping is not this function's concern -- that outranks everything here,
+/// and is applied afterward, once a row exists to apply it to (see
+/// `RoleOverrides::settle`).
+pub fn resolve_roles_with_known_names(
+    mailboxes: &mut [MailboxSummary],
+    known_names: &BTreeMap<MailboxRole, String>,
+) {
     let mut winners: BTreeMap<MailboxRole, usize> = BTreeMap::new();
 
     for (index, mailbox) in mailboxes.iter().enumerate() {
@@ -778,7 +802,7 @@ pub fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
                 winners.insert(role, index);
             }
             Some(&held) => {
-                if beats(mailbox, &mailboxes[held]) {
+                if beats(mailbox, &mailboxes[held], known_names) {
                     winners.insert(role, index);
                 }
             }
@@ -794,20 +818,57 @@ pub fn resolve_roles(mailboxes: &mut [MailboxSummary]) {
             mailbox.role = MailboxRole::Regular;
         }
     }
+
+    // Visibly, per #959's own acceptance criterion: a provider name that
+    // named nothing in this listing is not a silent no-op, it is a listing
+    // that degraded to the plain name guess and is worth being able to find
+    // in a log when someone asks why the wrong folder still won.
+    for (role, name) in known_names {
+        let matched = mailboxes
+            .iter()
+            .any(|mailbox| mailbox.role == *role && &mailbox.path == name);
+        if !matched {
+            tracing::debug!(
+                role = ?role,
+                expected = %name,
+                "the provider's own name for this role was not in the listing; \
+                 falling back to the shallowest name match"
+            );
+        }
+    }
 }
 
 /// Whether `candidate` has a better claim to its role than `held`.
-fn beats(candidate: &MailboxSummary, held: &MailboxSummary) -> bool {
+fn beats(
+    candidate: &MailboxSummary,
+    held: &MailboxSummary,
+    known_names: &BTreeMap<MailboxRole, String>,
+) -> bool {
     let candidate_declared = declares_role(candidate);
     let held_declared = declares_role(held);
     if candidate_declared != held_declared {
         return candidate_declared;
+    }
+    if !candidate_declared {
+        let candidate_known = matches_known_name(candidate, known_names);
+        let held_known = matches_known_name(held, known_names);
+        if candidate_known != held_known {
+            return candidate_known;
+        }
     }
     match candidate.depth().cmp(&held.depth()) {
         std::cmp::Ordering::Less => true,
         std::cmp::Ordering::Greater => false,
         std::cmp::Ordering::Equal => candidate.path < held.path,
     }
+}
+
+/// Whether `mailbox`'s path is exactly the provider's own name for its role.
+fn matches_known_name(
+    mailbox: &MailboxSummary,
+    known_names: &BTreeMap<MailboxRole, String>,
+) -> bool {
+    known_names.get(&mailbox.role) == Some(&mailbox.path)
 }
 
 /// Whether the server itself named this folder's role.

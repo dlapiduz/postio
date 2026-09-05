@@ -7,6 +7,7 @@
 //! The `e2e*` binaries stay out on purpose: they run under the headless
 //! runner's watchdog by *name* (#272), in isolation.
 
+mod account_connection_wiring;
 mod add_account_wiring;
 mod aiming;
 mod attach_account;
@@ -35,9 +36,11 @@ mod manual_sync;
 mod onboarding_probe;
 mod orientation;
 mod parts_open_wiring;
+mod read_receipt_wiring;
 mod reader_loads;
 mod reading;
 mod reading_offline;
+mod reclaim_pages;
 mod reclaim_wiring;
 mod reply_identity;
 mod reply_source;
@@ -49,6 +52,7 @@ mod search_live;
 mod search_open;
 mod search_results;
 mod search_return_and_tab;
+mod search_unreachable_retraction;
 mod search_wiring;
 mod second_activate_wiring;
 mod send_later_wiring;
@@ -57,19 +61,23 @@ mod settings_account_detail_wiring;
 mod settings_accounts_token_wiring;
 mod settings_accounts_wiring;
 mod settings_credential_wiring;
+mod settings_reindex_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
 mod startup_repair;
+mod storage_ceiling_wiring;
 mod sync_window;
 mod thread_bulk_keystroke;
-mod thread_cursor_preview;
 mod thread_dwell;
 mod thread_keystroke;
 mod unconfirmed_send;
 mod unified_list;
+mod unified_search;
+mod unified_search_reach;
 mod unified_select_all;
 mod unsubscribe_wiring;
 mod window_drain;
+mod window_teardown;
 mod wiring;
 
 /// Cases held out of a default run, by name.
@@ -77,15 +85,17 @@ mod wiring;
 /// libtest spells this `#[ignore]`; a table-driven harness needs a table. A
 /// name here still runs when asked for explicitly, and still appears in
 /// `--list`, exactly as an ignored libtest case does.
-const IGNORED: &[&str] = &[
-    "parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop",
-    "search_return_and_tab::return_and_tab_move_the_keyboard_to_the_message_list",
-];
+const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
+    ),
+    (
+        "account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate",
+        account_connection_wiring::a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate
+            as fn(),
     ),
     (
         "add_account_wiring::the_add_account_key_opens_a_blank_form_over_the_running_window",
@@ -204,12 +214,21 @@ const CASES: &[(&str, fn())] = &[
         reading_offline::the_pane_says_offline_and_updates_the_moment_the_connection_does as fn(),
     ),
     (
+        "reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application",
+        reclaim_pages::a_store_written_before_the_setting_is_converted_by_the_application as fn(),
+    ),
+    (
         "reclaim_wiring::opening_a_store_reclaims_what_nothing_references",
         reclaim_wiring::opening_a_store_reclaims_what_nothing_references as fn(),
     ),
     (
         "reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it",
         reclaim_wiring::opening_a_store_with_a_ceiling_evicts_down_to_it as fn(),
+    ),
+    (
+        "storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs",
+        storage_ceiling_wiring::editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs
+            as fn(),
     ),
     (
         "reply_identity::a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity",
@@ -246,6 +265,19 @@ const CASES: &[(&str, fn())] = &[
         search_index::opening_the_window_indexes_local_headers_without_being_asked as fn(),
     ),
     (
+        "unified_search::a_unified_search_reaches_every_account",
+        unified_search::a_unified_search_reaches_every_account as fn(),
+    ),
+    (
+        "unified_search_reach::a_unified_search_names_the_account_it_could_not_reach",
+        unified_search_reach::a_unified_search_names_the_account_it_could_not_reach as fn(),
+    ),
+    (
+        "search_unreachable_retraction::an_account_going_away_and_coming_back_updates_the_caveat_without_asking_again",
+        search_unreachable_retraction::an_account_going_away_and_coming_back_updates_the_caveat_without_asking_again
+            as fn(),
+    ),
+    (
         "egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable",
         egress_wiring::opening_the_app_costs_zero_connections_and_the_log_is_auditable as fn(),
     ),
@@ -253,6 +285,10 @@ const CASES: &[(&str, fn())] = &[
         "unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it",
         unsubscribe_wiring::clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it
             as fn(),
+    ),
+    (
+        "read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt",
+        read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",
@@ -308,6 +344,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "settings_reindex_wiring::the_rows_own_action_clears_and_refills_its_accounts_local_index",
+        settings_reindex_wiring::the_rows_own_action_clears_and_refills_its_accounts_local_index
+            as fn(),
+    ),
+    (
         "sidebar_backfill_wiring::the_menu_persists_and_the_sidebar_reflects_it_without_a_sync",
         sidebar_backfill_wiring::the_menu_persists_and_the_sidebar_reflects_it_without_a_sync
             as fn(),
@@ -324,10 +365,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it",
         thread_dwell::resting_inside_a_conversation_reads_each_message_as_focus_reaches_it as fn(),
-    ),
-    (
-        "thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane",
-        thread_cursor_preview::moving_the_thread_cursor_fills_the_reading_pane as fn(),
     ),
     (
         "thread_bulk_keystroke::marking_two_thread_rows_archives_both_conversations",
@@ -348,6 +385,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "unified_list::picking_unified_lists_mail_from_every_account",
         unified_list::picking_unified_lists_mail_from_every_account as fn(),
+    ),
+    (
+        "window_teardown::a_window_the_composition_root_wired_still_frees_when_destroyed",
+        window_teardown::a_window_the_composition_root_wired_still_frees_when_destroyed as fn(),
     ),
     (
         "wiring::a_window_over_a_populated_store_lists_its_mail",

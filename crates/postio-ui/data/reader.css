@@ -226,3 +226,39 @@ mark.postio-match {
   border-radius: 3px;
   color: var(--r-ink-secondary);
 }
+
+/* The facts block transactional mail buries in a paragraph, drawn above the
+   body copy (canvas turn 7, screen 20; #1030). `postio_body::reader_view`
+   finds the rows and takes them out of the copy; `reader/document.rs` emits
+   them as a description list, which is what they are — a label and the value
+   it names, in order, for anything reading the document rather than looking
+   at it.
+
+   Two columns are a grid over that list rather than a table, so the markup
+   stays a list. `max-content` on the first track keeps the labels aligned to
+   the longest one without letting a long value push them around, and the
+   whole thing falls back to plain stacked rows wherever grid is unavailable.
+
+   The labels are IBM Plex Mono for the same reason every count and key in
+   Postio is: this is metadata, and the mono face is what says so. */
+dl.postio-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25em 1em;
+  margin: 0 0 1.1em 0;
+  padding: 0 0 0.9em 0;
+  border-bottom: 1px solid var(--r-hairline);
+}
+
+dl.postio-facts dt {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+  /* The labels read as a column of keys, not as sentence starts. */
+  text-transform: lowercase;
+}
+
+dl.postio-facts dd {
+  margin: 0;
+  color: var(--r-ink);
+}

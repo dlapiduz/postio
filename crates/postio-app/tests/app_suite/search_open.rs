@@ -30,6 +30,7 @@ use crate::settle_until;
 use gtk::{gdk, glib};
 use postio_app::{Wired, commands, feed_the_window, notifications};
 use postio_core::bridge::{Bridge, EventHub, handler_fn};
+use postio_core::state::SharedState;
 use postio_gtk::finder::{Mode, Query};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -113,7 +114,13 @@ pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
         wiring.runtime.clone(),
         Default::default(),
     );
-    commands::drain(&window, &feeds, hub.subscribe("window"), notifier);
+    commands::drain(
+        &window,
+        &feeds,
+        hub.subscribe("window"),
+        notifier,
+        SharedState::default(),
+    );
 
     // ── search, and let the preview settle on a result ───────────────────
     let finder = window.finder();

@@ -17,6 +17,7 @@
 //! grows one has to move back out, or it will change what its neighbours see.
 
 mod accounts;
+mod actions;
 mod blob;
 mod blob_encryption;
 mod body;
@@ -25,7 +26,9 @@ mod cold_jump_cost;
 mod connection;
 mod connection_priority;
 mod contact_groups;
+mod contact_rank_index;
 mod contacts;
+mod draft_indexes;
 mod drafts;
 mod encrypt_migration;
 mod encryption;
@@ -34,6 +37,7 @@ mod list_statement_count;
 mod mailbox_counts;
 mod mailbox_size;
 mod mailboxes;
+mod measurements;
 mod messages;
 mod migrations;
 mod operations;
@@ -44,4 +48,5 @@ mod sync_state;
 mod threading;
 mod threads;
 mod unified_threads;
+mod vacuum;
 mod write_gate;

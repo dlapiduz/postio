@@ -185,6 +185,11 @@ pub fn run() -> glib::ExitCode {
     let first = postio_session::store_key_blocking(context.secrets.as_ref())
         .map_err(|error| error.to_string())
         .and_then(|key| open_with(&key, &context));
+    // Marked whether or not the store opened: a refused keyring still spent
+    // the time, and a phase that only appears on the happy path measures the
+    // wrong startup. #790 -- this and the widget tree used to share one
+    // phase, and the 228 ms they summed to got attributed to GTK.
+    timeline.mark(Phase::Store);
     let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
     // Whether `open_or_onboard` has already run for this window (#514): a
     // second `activate` -- a second launch of a single-instance app just
@@ -383,7 +388,7 @@ fn open_account(
     // them — and `take`, because a second `activate` must not drain a stream
     // that is already being drained.
     if let Some(stream) = events.borrow_mut().take() {
-        commands::drain(window, &feeds, stream, notifier.clone());
+        commands::drain(window, &feeds, stream, notifier.clone(), state.clone());
     }
 }
 
@@ -573,8 +578,15 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // a drop actually asks, so this costs nothing until it is used.
     export::install(window, wiring);
 
-    // The settings panel's account rows: enable/disable, remove-with-undo.
-    settings_accounts::install(window, wiring);
+    // Which accounts are rebuilding their local search index right now
+    // (#981) -- shared between the settings panel, which owns the set, and
+    // search, which reads it to raise a search outcome's own corpus caveat
+    // while a rebuild is running.
+    let reindexing: settings_accounts::Reindexing = Default::default();
+
+    // The settings panel's account rows: enable/disable, remove-with-undo,
+    // rebuild-index.
+    settings_accounts::install(window, wiring, reindexing.clone());
     // And its connection list: the egress log, auditable (#151).
     settings_egress::install(window, wiring);
     // The privacy pane's unsubscribe-activation log (#971).
@@ -594,13 +606,37 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search = search::install(window, wiring, &feeds).map(|view| &*Box::leak(Box::new(view)));
+    let search =
+        search::install(window, wiring, &feeds, reindexing).map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
     repair_the_header_blocks(wiring);
     catch_up_the_header_index(wiring);
     train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
+
+    // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
+    // through `Wiring::storage_ceiling` -- this is the other half. Lowering
+    // it evicts without a restart; raising it needs nothing beyond the next
+    // pass reading the new number. Off the main thread, the same reason
+    // `reclaim_disk`'s own ceiling pass above is: `evict_to_fit` reads and
+    // deletes blobs.
+    window.connect_storage_changed({
+        let database = wiring.database.clone();
+        let blobs = wiring.blobs.clone();
+        let runtime = wiring.runtime.clone();
+        move |max_bytes| {
+            let database = database.clone();
+            let blobs = blobs.clone();
+            runtime.spawn_blocking(move || {
+                if let Err(error) =
+                    postio_session::enforce_storage_ceiling(&database, &blobs, max_bytes)
+                {
+                    tracing::warn!(%error, "could not bring the store under its new ceiling");
+                }
+            });
+        }
+    });
 
     Some(Wired { feeds, search })
 }
@@ -774,6 +810,31 @@ fn reclaim_disk(wiring: &Wiring) {
         // that costs a refetch, so it takes what the free sweeps left.
         if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling) {
             tracing::warn!(%error, "could not bring the store under its ceiling");
+        }
+        // The database's own pages, after the blob sweeps and for the same
+        // reason (#381). Deleting a message frees pages inside the file and
+        // hands nothing back to the filesystem: under `auto_vacuum = NONE`
+        // there is no mechanism to, and that is what a store about to hold a
+        // whole mailbox replica cannot afford -- a `UIDVALIDITY` reset wipes
+        // and re-syncs an entire folder from one server-side event.
+        //
+        // The conversion first, because it is what makes the reclaim
+        // possible on a store written before the setting existed, and it is
+        // a full rewrite -- minutes on a mailbox, which is exactly why it is
+        // here on the housekeeping worker and not on the startup path.
+        match database.adopt_incremental_vacuum() {
+            Ok(true) => tracing::info!("converted the store to incremental vacuum"),
+            Ok(false) => {}
+            // Recoverable, and the ordinary reason is another connection
+            // mid-transaction: nothing changed and the next start tries
+            // again.
+            Err(error) => tracing::warn!(%error, "could not convert the store"),
+        }
+        match database.reclaim_free_pages() {
+            Ok(0) => {}
+            // Pages and bytes, never what was in them.
+            Ok(pages) => tracing::info!(pages, "returned free pages to the filesystem"),
+            Err(error) => tracing::warn!(%error, "could not return free pages"),
         }
     });
 }

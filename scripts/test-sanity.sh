@@ -13,14 +13,13 @@
 # Measured on this workstation, warm:
 #
 #     cargo test --workspace --lib     1,313 tests   4.96 s wall, 12.3 s CPU
-#     the full suite                   3,169 tests   ~497 s on CI; postio-app's
-#                                                    app_suite alone is an
-#                                                    ~11-minute compile and link
+#     the full suite                   3,169 tests   ~497 s on CI (~119 s under
+#                                                    nextest on an idle box)
 #
 # 19 binaries against 197. That is not a smaller version of the suite, it is a
 # different order of cost, and it is the whole reason this file exists: several
-# sessions share this machine with `jobs = 2`, so two gate runs contend and
-# landing became something you queued for rather than something you did.
+# sessions share this machine, so two full gate runs contend and landing
+# became something you queued for rather than something you did.
 #
 # # What it does not prove, which matters more than what it does
 #
@@ -49,6 +48,10 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
+# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
+[ -x scripts/install-shims.sh ] && scripts/install-shims.sh
+# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
+[ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 
 FILTER=""
 while [ $# -gt 0 ]; do

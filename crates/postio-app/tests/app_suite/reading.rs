@@ -46,7 +46,7 @@ use postio_storage::{BlobStore, test_support};
 /// being waited for. It is wrong when the wait is a *probe* — asking whether
 /// this row has attachments — because every miss then costs the full budget.
 fn settle_for(budget: std::time::Duration, done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + budget;
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(budget);
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
         if done() {
