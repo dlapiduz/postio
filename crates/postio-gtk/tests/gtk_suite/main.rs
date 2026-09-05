@@ -1035,6 +1035,10 @@ const CASES: &[(&str, fn())] = &[
         list_model::a_source_that_answers_too_soon_is_held_until_it_is_safe as fn(),
     ),
     (
+        "list_model::a_held_delivery_is_not_postponed_by_a_window_that_is_repainting",
+        list_model::a_held_delivery_is_not_postponed_by_a_window_that_is_repainting as fn(),
+    ),
+    (
         "gtk_reader_teardown::a_dropped_reader_releases_its_webview",
         gtk_reader_teardown::a_dropped_reader_releases_its_webview as fn(),
     ),

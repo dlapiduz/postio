@@ -559,3 +559,64 @@ pub fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
         Some("message 3".to_string())
     );
 }
+
+/// GDK paints at `GDK_PRIORITY_REDRAW`, which is `G_PRIORITY_HIGH_IDLE + 20`.
+///
+/// Named here rather than assumed: the whole point of the case below is the
+/// arithmetic between this and the band the hold runs in.
+const GDK_PRIORITY_REDRAW: i32 = 120;
+
+pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
+    // The hold is a main-loop idle, and an idle has a priority. A held change
+    // used to run at `G_PRIORITY_DEFAULT_IDLE`, which is 200, and a window
+    // with something to paint every time the loop looks is ready at 120 --
+    // so for as long as the painting lasts, the loop never gets down to the
+    // change. "The next turn of the main loop" is not a promise a number that
+    // large can keep.
+    //
+    // Not a frame or two, either. #1015 caught a 300-message list sitting at
+    // nought resident rows for a full five seconds with its window mapped and
+    // painting perfectly well, which is what this looks like from outside.
+    //
+    // Standing in for that window: a source at exactly the redraw priority
+    // that is always ready, which is what a window drawing flat out looks
+    // like to the main loop.
+    let source = Rc::new(Impatient {
+        total: 120,
+        list: RefCell::new(None),
+    });
+    let list = MessageList::new();
+    *source.list.borrow_mut() = Some(list.clone());
+    list.set_source(source.clone());
+
+    // Asking for a row is what makes the source answer, inside the read, and
+    // therefore what gets held.
+    assert!(
+        !list
+            .item(0)
+            .and_downcast::<MessageRow>()
+            .expect("a position inside the folder answers")
+            .is_loaded(),
+        "the delivery was applied during the read instead of being held"
+    );
+
+    let painting = glib::idle_add_local_full(glib::Priority::from(GDK_PRIORITY_REDRAW), || {
+        glib::ControlFlow::Continue
+    });
+    // Generous, because the number is not the point: at 200 the change never
+    // runs however long this goes on, and above the redraw it runs on the
+    // first turn.
+    const TURNS: usize = 2_000;
+    for _ in 0..TURNS {
+        glib::MainContext::default().iteration(false);
+    }
+    painting.remove();
+
+    assert!(
+        list.item(0)
+            .and_downcast::<MessageRow>()
+            .is_some_and(|item| item.is_loaded()),
+        "{TURNS} turns of the main loop and the held delivery never ran: a \
+         window that is repainting postponed it indefinitely"
+    );
+}
