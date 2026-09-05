@@ -183,6 +183,13 @@ pub(crate) fn token_source(
                         secrets.clone(),
                         token_url,
                         oauth.client_id.clone(),
+                        // The provider's stated refresh lifetime, copied onto
+                        // the row at sign-in. Read here rather than looked up
+                        // so a launch needs neither the preset table nor a
+                        // network to know when this grant dies (#954).
+                        oauth
+                            .refresh_token_lifetime_days
+                            .map(|days| std::time::Duration::from_secs(u64::from(days) * 86_400)),
                     ),
                 );
             }
@@ -452,6 +459,7 @@ mod tests {
             token_url: "https://auth.example.com/token".to_string(),
             authorize_url: "https://auth.example.com/authorize".to_string(),
             scopes: "https://mail.example.com/".to_string(),
+            refresh_token_lifetime_days: None,
         });
         let source = token_source(&account, &secrets);
         assert!(

@@ -25,7 +25,7 @@ id, display_name, address, address_name, incoming_host, incoming_port, incoming_
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
 auth_method, enabled, created_at, default_signature_id, pending_deletion,
 oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes, backend,
-jmap_session_url";
+jmap_session_url, oauth_refresh_lifetime_days";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -48,9 +48,9 @@ impl<'a> AccountRepository<'a> {
                                    outgoing_username, auth_method, enabled, created_at,
                                    default_signature_id, oauth_client_id, oauth_token_url,
                                    oauth_authorize_url, oauth_scopes, backend,
-                                   jmap_session_url)
+                                   jmap_session_url, oauth_refresh_lifetime_days)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, ?17, ?18, ?19, ?20, ?21)",
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 account.display_name,
                 account.address.address,
@@ -81,6 +81,10 @@ impl<'a> AccountRepository<'a> {
                     postio_model::account::Backend::Imap
                     | postio_model::account::Backend::Gmail => None,
                 },
+                account
+                    .oauth
+                    .as_ref()
+                    .and_then(|oauth| oauth.refresh_token_lifetime_days),
             ],
         )?;
 
@@ -126,7 +130,8 @@ impl<'a> AccountRepository<'a> {
                     enabled = ?14, created_at = ?15, default_signature_id = ?16,
                     oauth_client_id = ?17, oauth_token_url = ?18,
                     oauth_authorize_url = ?19, oauth_scopes = ?20, backend = ?21,
-                    jmap_session_url = ?22
+                    jmap_session_url = ?22,
+                    oauth_refresh_lifetime_days = ?23
               WHERE id = ?1",
             params![
                 id,
@@ -159,6 +164,10 @@ impl<'a> AccountRepository<'a> {
                     postio_model::account::Backend::Imap
                     | postio_model::account::Backend::Gmail => None,
                 },
+                account
+                    .oauth
+                    .as_ref()
+                    .and_then(|oauth| oauth.refresh_token_lifetime_days),
             ],
         )?;
         if changed == 0 {
@@ -599,6 +608,7 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
                 token_url,
                 authorize_url: row.get::<_, Option<String>>(19)?.unwrap_or_default(),
                 scopes: row.get::<_, Option<String>>(20)?.unwrap_or_default(),
+                refresh_token_lifetime_days: row.get::<_, Option<u32>>(23)?,
             }),
             _ => None,
         },

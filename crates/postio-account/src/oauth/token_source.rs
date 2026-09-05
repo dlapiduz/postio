@@ -72,6 +72,67 @@ fn oauth_expiry_key(account: &AccountKey) -> AccountKey {
     AccountKey::new(format!("{}#oauth-expiry", account.account()))
 }
 
+/// Where the **refresh** grant's own deadline is kept.
+///
+/// Beside the access token's expiry and for the same reasons — the keyring
+/// is where every derived fact about this credential already lives, and
+/// `config.toml` strips anything token-shaped on the way through.
+fn refresh_deadline_key(account: &AccountKey) -> AccountKey {
+    AccountKey::new(format!("{}#oauth-refresh-deadline", account.account()))
+}
+
+/// Records when `account`'s refresh grant dies, or clears the record when
+/// the provider states no lifetime.
+///
+/// Called at every point the grant is renewed — the mint and every refresh —
+/// because a sliding window resets on use, and a deadline written only once
+/// would retire an account that is working perfectly (#954).
+///
+/// Best-effort, exactly like [`persist_expiry`]: losing this costs the early
+/// warning, never the token. The reactive path still catches a dead grant
+/// the way it always did.
+async fn persist_refresh_deadline(
+    store: &dyn SecretStore,
+    account: &AccountKey,
+    lifetime: Option<Duration>,
+) {
+    let key = refresh_deadline_key(account);
+    let Some(lifetime) = lifetime else {
+        // No stated lifetime clears rather than leaves: a provider row that
+        // drops the field must stop retiring accounts, not keep acting on a
+        // deadline nobody stands behind any more.
+        let _ = store.delete(&key).await;
+        return;
+    };
+    let Ok(since_epoch) = (SystemTime::now() + lifetime).duration_since(UNIX_EPOCH) else {
+        return;
+    };
+    if let Err(error) = store
+        .store(&key, &Password::new(since_epoch.as_secs().to_string()))
+        .await
+    {
+        tracing::warn!(
+            account = %account.account(),
+            %error,
+            "could not persist the OAuth refresh grant's deadline"
+        );
+    }
+}
+
+/// When `account`'s refresh grant dies, if its provider states a lifetime.
+///
+/// `None` means there is nothing to act on — no OAuth account, no grant yet,
+/// or a provider that states no lifetime — and every one of those must behave
+/// as Postio did before this existed.
+pub async fn stored_refresh_deadline(
+    store: &dyn SecretStore,
+    account: &AccountKey,
+) -> Option<SystemTime> {
+    let raw = store.retrieve(&refresh_deadline_key(account)).await.ok()?;
+    let seconds: u64 = raw.expose().parse().ok()?;
+    Some(UNIX_EPOCH + Duration::from_secs(seconds))
+}
+
 /// Persists `expires_at` for `account`, or clears whatever was there when
 /// there is nothing to persist — a provider that stops saying `expires_in`
 /// must not leave a stale timestamp behind for the account row to read as
@@ -168,6 +229,13 @@ pub struct OwnClientTokenSource {
     /// carrying it: the shape the engine rebuilds at every launch, where
     /// nothing may hold a secret in a struct that lives for the process.
     stored_client_secret: bool,
+    /// How long this provider says its refresh grant lives, when it says.
+    ///
+    /// Provider data, carried here from the account row so a refresh can
+    /// renew the deadline without a lookup — and `None` everywhere the
+    /// provider states nothing, which is the case that must behave exactly
+    /// as Postio did before #954.
+    refresh_lifetime: Option<Duration>,
     cache: Mutex<HashMap<AccountKey, CachedAccessToken>>,
     /// One refresh per account at a time, its result shared.
     ///
@@ -196,6 +264,7 @@ impl OwnClientTokenSource {
         token_url: Url,
         client_id: impl Into<String>,
         client_secret: Option<String>,
+        refresh_lifetime: Option<Duration>,
     ) -> Self {
         Self {
             store,
@@ -203,6 +272,7 @@ impl OwnClientTokenSource {
             client_id: client_id.into(),
             client_secret,
             stored_client_secret: false,
+            refresh_lifetime,
             cache: Mutex::new(HashMap::new()),
             refreshing: SingleFlight::default(),
         }
@@ -216,8 +286,9 @@ impl OwnClientTokenSource {
         store: Arc<dyn SecretStore>,
         token_url: Url,
         client_id: impl Into<String>,
+        refresh_lifetime: Option<Duration>,
     ) -> Self {
-        let mut source = Self::new(store, token_url, client_id, None);
+        let mut source = Self::new(store, token_url, client_id, None, refresh_lifetime);
         source.stored_client_secret = true;
         source
     }
@@ -261,6 +332,7 @@ impl OwnClientTokenSource {
         }
         let expires_at = response.expires_in.map(|d| Instant::now() + d);
         persist_expiry(self.store.as_ref(), account, expires_at).await;
+        persist_refresh_deadline(self.store.as_ref(), account, self.refresh_lifetime).await;
         self.cache.lock().expect("token cache mutex").insert(
             account.clone(),
             CachedAccessToken {
@@ -322,6 +394,10 @@ impl OwnClientTokenSource {
         let access_token = response.access_token.clone();
         let expires_at = response.expires_in.map(|d| Instant::now() + d);
         persist_expiry(self.store.as_ref(), account, expires_at).await;
+        // Unconditionally, and not only when the provider rotated the token:
+        // a sliding window resets on *use*, so the account that keeps
+        // refreshing is exactly the one that must never reach its deadline.
+        persist_refresh_deadline(self.store.as_ref(), account, self.refresh_lifetime).await;
         self.cache.lock().expect("token cache mutex").insert(
             account.clone(),
             CachedAccessToken {
@@ -338,6 +414,18 @@ impl TokenSource for OwnClientTokenSource {
     async fn access_token(&self, account: &AccountKey) -> Result<Password, SecretError> {
         if let Some(token) = self.cached(account) {
             return Ok(token);
+        }
+        // Before the round trip, not after it. The deadline is known here,
+        // so an account whose grant has died says so without the user first
+        // watching a sync fail (#954). A cached access token is still served
+        // above: it works until it expires, and refusing it early would
+        // interrupt a session for a deadline that has not cost anything yet.
+        if let Some(deadline) = stored_refresh_deadline(self.store.as_ref(), account).await
+            && SystemTime::now() >= deadline
+        {
+            return Err(SecretError::GrantExpired {
+                account: account.account().to_string(),
+            });
         }
         self.refreshing
             .run(account, async {
@@ -372,20 +460,20 @@ mod tests {
 
     use super::*;
 
-    fn account() -> AccountKey {
+    pub(super) fn account() -> AccountKey {
         AccountKey::new("ada@example.com")
     }
 
     /// A token endpoint that answers every request the same way, on a
     /// background thread, for as many requests as the test needs.
-    fn mock_refresh_endpoint(body: &'static str) -> Url {
+    pub(super) fn mock_refresh_endpoint(body: &'static str) -> Url {
         mock_refresh_endpoint_counting(body).0
     }
 
     /// As [`mock_refresh_endpoint`], handing back the count of requests it has
     /// served — which is the only place "how many refreshes happened" can
     /// honestly be observed.
-    fn mock_refresh_endpoint_counting(
+    pub(super) fn mock_refresh_endpoint_counting(
         body: &'static str,
     ) -> (Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
         let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -442,6 +530,7 @@ mod tests {
             "http://127.0.0.1:1/token".parse().unwrap(),
             "client-1",
             None,
+            None,
         );
         source
             .seed(
@@ -465,7 +554,7 @@ mod tests {
     async fn an_expired_cached_token_is_refreshed_from_the_stored_refresh_token() {
         let url = mock_refresh_endpoint(r#"{"access_token":"refreshed-token","expires_in":3600}"#);
         let store = Arc::new(MemorySecretStore::new());
-        let source = OwnClientTokenSource::new(store, url, "client-1", None);
+        let source = OwnClientTokenSource::new(store, url, "client-1", None, None);
         source
             .seed(
                 &account(),
@@ -491,7 +580,7 @@ mod tests {
     async fn invalidate_forces_the_next_call_to_refresh() {
         let url = mock_refresh_endpoint(r#"{"access_token":"after-invalidate","expires_in":3600}"#);
         let store = Arc::new(MemorySecretStore::new());
-        let source = OwnClientTokenSource::new(store, url, "client-1", None);
+        let source = OwnClientTokenSource::new(store, url, "client-1", None, None);
         source
             .seed(
                 &account(),
@@ -525,6 +614,7 @@ mod tests {
             Arc::clone(&store) as Arc<dyn SecretStore>,
             url,
             "client-1",
+            None,
             None,
         );
         source
@@ -566,7 +656,9 @@ mod tests {
         let (url, served) =
             mock_refresh_endpoint_counting(r#"{"access_token":"one-refresh","expires_in":3600}"#);
         let store = Arc::new(MemorySecretStore::new());
-        let source = Arc::new(OwnClientTokenSource::new(store, url, "client-1", None));
+        let source = Arc::new(OwnClientTokenSource::new(
+            store, url, "client-1", None, None,
+        ));
         source
             .seed(
                 &account(),
@@ -609,7 +701,9 @@ mod tests {
     async fn a_refresh_that_fails_is_also_only_attempted_once() {
         let (url, served) = mock_refresh_endpoint_counting(r#"{"not":"a token response"}"#);
         let store = Arc::new(MemorySecretStore::new());
-        let source = Arc::new(OwnClientTokenSource::new(store, url, "client-1", None));
+        let source = Arc::new(OwnClientTokenSource::new(
+            store, url, "client-1", None, None,
+        ));
         source
             .seed(
                 &account(),
@@ -653,6 +747,7 @@ mod tests {
             "http://127.0.0.1:1/token".parse().unwrap(),
             "client-1",
             None,
+            None,
         );
         let before = SystemTime::now();
         source
@@ -692,6 +787,7 @@ mod tests {
             "http://127.0.0.1:1/token".parse().unwrap(),
             "client-1",
             None,
+            None,
         );
         source
             .seed(
@@ -720,6 +816,7 @@ mod tests {
             store.clone(),
             "http://127.0.0.1:1/token".parse().unwrap(),
             "client-1",
+            None,
             None,
         );
         source
@@ -761,7 +858,7 @@ mod tests {
     async fn a_refresh_updates_the_persisted_expiry_too() {
         let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":60}"#);
         let store = Arc::new(MemorySecretStore::new());
-        let source = OwnClientTokenSource::new(store.clone(), url, "client-1", None);
+        let source = OwnClientTokenSource::new(store.clone(), url, "client-1", None, None);
         source
             .seed(
                 &account(),
@@ -804,6 +901,7 @@ mod tests {
             "http://127.0.0.1:1/token".parse().unwrap(),
             "client-1",
             None,
+            None,
         );
         first
             .seed(
@@ -824,5 +922,139 @@ mod tests {
             stored_expiry(store.as_ref(), &account()).await.is_some(),
             "a fresh source over the same keyring must still see the earlier one's expiry"
         );
+    }
+}
+
+#[cfg(test)]
+mod refresh_deadline_tests {
+    use std::sync::atomic::Ordering;
+
+    use crate::secret::MemorySecretStore;
+
+    use super::tests::{account, mock_refresh_endpoint, mock_refresh_endpoint_counting};
+    use super::*;
+
+    /// A grant that was just minted, for a provider that states `lifetime`.
+    async fn seeded(
+        lifetime: Option<Duration>,
+        url: Url,
+    ) -> (Arc<MemorySecretStore>, OwnClientTokenSource) {
+        let store = Arc::new(MemorySecretStore::new());
+        let source = OwnClientTokenSource::new(store.clone(), url, "client-1", None, lifetime);
+        source
+            .seed(
+                &account(),
+                TokenResponse {
+                    access_token: Password::new("stale"),
+                    refresh_token: Some(Password::new("the-refresh-token")),
+                    // Already stale, so the next call has to refresh.
+                    expires_in: Some(Duration::from_secs(0)),
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                },
+            )
+            .await
+            .expect("seed succeeds");
+        (store, source)
+    }
+
+    #[tokio::test]
+    async fn minting_a_grant_records_when_it_dies() {
+        let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":60}"#);
+        let (store, _source) = seeded(Some(Duration::from_secs(7 * 86_400)), url).await;
+
+        let deadline = stored_refresh_deadline(store.as_ref(), &account())
+            .await
+            .expect("the mint recorded a deadline");
+        let expected = SystemTime::now() + Duration::from_secs(7 * 86_400);
+        let slack = Duration::from_secs(60);
+        assert!(
+            deadline > expected - slack && deadline < expected + slack,
+            "a seven-day grant should die in about seven days"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_states_no_lifetime_records_no_deadline() {
+        // The must-not-regress case: absent means absent, not zero.
+        let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":60}"#);
+        let (store, _source) = seeded(None, url).await;
+        assert!(
+            stored_refresh_deadline(store.as_ref(), &account())
+                .await
+                .is_none(),
+            "a provider with no stated lifetime must leave no deadline behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_refresh_pushes_the_deadline_out() {
+        // Microsoft's ninety days slide: they reset on each use, so an
+        // account in continuous use must never reach its deadline. Persisting
+        // only at mint is what would mark a healthy account stale.
+        let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":0}"#);
+        let (store, source) = seeded(Some(Duration::from_secs(90 * 86_400)), url).await;
+        assert!(
+            stored_refresh_deadline(store.as_ref(), &account())
+                .await
+                .is_some(),
+            "the mint recorded one to begin with"
+        );
+
+        // Cleared, so what is found afterwards can only have been written by
+        // the refresh. Comparing timestamps instead would prove nothing: both
+        // writes land in the same second, so a refresh that never wrote leaves
+        // the mint's deadline behind and every `>=` still holds.
+        store
+            .delete(&refresh_deadline_key(&account()))
+            .await
+            .expect("clearing the deadline");
+
+        source
+            .access_token(&account())
+            .await
+            .expect("the refresh succeeds");
+
+        assert!(
+            stored_refresh_deadline(store.as_ref(), &account())
+                .await
+                .is_some(),
+            "a refresh must renew the deadline, or a sliding window retires \
+             the account that is using it most"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_grant_past_its_deadline_is_refused_without_asking_the_server() {
+        // The whole point: the user learns before a sync is attempted, and
+        // the server is never troubled for a grant that cannot work.
+        let (url, served) =
+            mock_refresh_endpoint_counting(r#"{"access_token":"refreshed","expires_in":60}"#);
+        let (_store, source) = seeded(Some(Duration::from_secs(0)), url).await;
+
+        let error = source
+            .access_token(&account())
+            .await
+            .expect_err("a dead grant cannot produce a token");
+        assert!(
+            matches!(error, SecretError::GrantExpired { .. }),
+            "expected a dead grant, got {error:?}"
+        );
+        assert_eq!(
+            served.load(Ordering::SeqCst),
+            0,
+            "a grant known to be dead must not cost a round trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_grant_with_no_deadline_still_refreshes_exactly_as_before() {
+        let url = mock_refresh_endpoint(r#"{"access_token":"refreshed","expires_in":60}"#);
+        let (_store, source) = seeded(None, url).await;
+        let token = source
+            .access_token(&account())
+            .await
+            .expect("no deadline, so nothing refuses it");
+        assert_eq!(token.expose(), "refreshed");
     }
 }

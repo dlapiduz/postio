@@ -42,6 +42,7 @@ fn sample_account() -> Account {
             token_url: "https://login.example.com/token".into(),
             authorize_url: "https://login.example.com/authorize".into(),
             scopes: "mail.everything".into(),
+            refresh_token_lifetime_days: Some(7),
         }),
         enabled: true,
         identities: vec![sample_identity()],
