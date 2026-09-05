@@ -51,6 +51,7 @@ fn sample_account() -> Account {
         backend: postio_model::account::Backend::Imap,
         created_at: at(1_000),
         pending_deletion: false,
+        is_default: true,
     }
 }
 
