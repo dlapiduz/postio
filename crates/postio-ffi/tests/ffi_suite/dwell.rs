@@ -76,23 +76,35 @@ fn a_dwell_marks_the_message_read() {
 }
 
 #[test]
-fn the_delay_is_the_shared_one() {
-    // Not a number chosen in a frontend. #71's rule is that the delay
-    // separates a sweep from a read, and two frontends that picked their own
-    // would separate them differently — on the one rule where being wrong
-    // destroys unread state rather than merely looking wrong.
-    let session = Session::open(SessionOptions::in_memory()).expect("a session");
+fn the_arming_decision_crosses_whole() {
+    // The delay *and* the rule, in one answer. Handing over only the number
+    // is what made the first version of this dead code: a frontend given a
+    // constant wrote the rule again beside it, and a rule with no caller
+    // cannot keep anything in step (#1167's review).
     assert_eq!(
-        session.dwell_milliseconds_ffi(),
-        postio_ui::dwell::DWELL_TO_READ.as_millis() as u64
+        postio_ffi::dwell_on_cursor(Some(7)),
+        postio_ffi::DwellArmFfi::Start {
+            message: 7,
+            milliseconds: postio_ui::dwell::DWELL_TO_READ.as_millis() as u64,
+        }
     );
-    session.shutdown();
+    // A cursor on nothing — no row, or a row whose page has not arrived —
+    // cancels. That is the core's answer, so a frontend cannot get it wrong
+    // by writing its own `guard`.
+    assert_eq!(
+        postio_ffi::dwell_on_cursor(None),
+        postio_ffi::DwellArmFfi::Cancel
+    );
 }
 
 /// Drive until `done`, or give up. The verb is local-first: it writes and
 /// returns, and the write lands on the runtime a moment later.
 fn settle_until(done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Scaled, so `POSTIO_TEST_PATIENCE` reaches it. A hand-rolled deadline
+    // measures the process it runs in, which on a shared machine is a flake
+    // nobody can reproduce alone (#842, #957).
+    let deadline =
+        std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         if done() {
             return true;

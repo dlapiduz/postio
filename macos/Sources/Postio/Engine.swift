@@ -90,7 +90,7 @@ final class Engine {
             // Resting on a message marks it read; sweeping past marks
             // nothing. The delay and the arming rule are `postio_ui::dwell`'s
             // — see `DwellClock`, which owns only the timer.
-            dwell = DwellClock(delay: session.dwellDelay) { [weak self] message in
+            dwell = DwellClock { [weak self] message in
                 self?.session?.markReadOnDwell(message)
             }
             // The menu bar, rendered from the same registry the palette and

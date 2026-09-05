@@ -37,16 +37,22 @@ pub const DWELL_TO_READ: Duration = Duration::from_millis(1_000);
 
 /// What a frontend should do about a cursor that has just moved.
 ///
-/// The arming rule, as a value rather than as prose in two codebases. It is
-/// deliberately small: everything hard about a dwell is the *timer*, and a
-/// timer belongs to whichever toolkit owns the run loop.
+/// The arming rule *and* the delay, together, deliberately. Handing them over
+/// separately is what made the first version of this dead code: a frontend
+/// given only the number wrote the rule again beside it, and a rule with no
+/// caller cannot keep anything in step. [`Start`](Arm::Start) carries how long
+/// to wait, so a frontend cannot arm a clock without having asked.
+///
+/// Everything hard about a dwell is still the *timer*, and a timer belongs to
+/// whichever toolkit owns the run loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arm {
     /// Cancel whatever is running and start a clock on this message.
     Start {
         /// The message the cursor landed on.
         message: i64,
-        /// How long to wait before it counts as read.
+        /// How long to wait before it counts as read. [`DWELL_TO_READ`],
+        /// carried rather than looked up so the two arrive together.
         after: Duration,
     },
     /// Cancel whatever is running and start nothing.

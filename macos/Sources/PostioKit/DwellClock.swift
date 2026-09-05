@@ -1,11 +1,17 @@
 import Foundation
+import PostioFFI
 
 /// The clock that decides a message has been read.
 ///
-/// **The rule is `postio_ui::dwell`'s, not this file's.** The delay comes
-/// across the boundary and the arming rule — start on a message, cancel on
-/// anything else — is the same one the GTK list has. What is here is the
-/// timer, because a timer belongs to whichever run loop owns it.
+/// **The rule is `postio_ui::dwell`'s, and this file asks it rather than
+/// restating it.** `dwellOnCursor` answers `.start(message, milliseconds)` or
+/// `.cancel`; this arms a timer accordingly and decides nothing. The first
+/// version of this took only the *delay* across and wrote the rule again in
+/// Swift, which left the rule with three copies that happened to agree and no
+/// way to keep them agreeing — caught in review on #1167.
+///
+/// What is genuinely here is the timer, because a timer belongs to whichever
+/// run loop owns it.
 ///
 /// Why it is a type and not three lines inside `Engine`: the thing worth
 /// asserting is that **sweeping marks nothing**, and that is a statement about
@@ -16,8 +22,6 @@ import Foundation
 public final class DwellClock {
     /// Called when a message has been in front of somebody long enough.
     private let fired: (Int64) -> Void
-    /// How long that is. From the boundary, so both frontends wait the same.
-    private let delay: TimeInterval
     /// Schedules `work` after `delay`, and answers something that cancels it.
     ///
     /// Injected so a test can drive time rather than wait for it. The
@@ -33,12 +37,10 @@ public final class DwellClock {
     }
 
     public init(
-        delay: TimeInterval,
         schedule: @escaping @MainActor (TimeInterval, @escaping () -> Void) -> Cancellable =
             DwellClock.afterOnMain,
         fired: @escaping (Int64) -> Void
     ) {
-        self.delay = delay
         self.schedule = schedule
         self.fired = fired
     }
@@ -54,8 +56,13 @@ public final class DwellClock {
     public func cursorMoved(to message: Int64?) {
         armed?.cancel()
         armed = nil
-        guard let message else { return }
-        armed = schedule(delay) { [weak self] in
+        // The decision is the core's. A `.cancel` for a cursor on nothing is
+        // its rule, not a `guard` written here — a clock armed against an
+        // unknown message would mark whichever one turned up.
+        guard case let .start(message, milliseconds) = dwellOnCursor(message: message) else {
+            return
+        }
+        armed = schedule(TimeInterval(milliseconds) / 1000) { [weak self] in
             guard let self else { return }
             self.armed = nil
             // Named, not re-read from the cursor: it may have moved on

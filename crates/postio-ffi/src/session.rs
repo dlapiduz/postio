@@ -576,16 +576,6 @@ impl Session {
         self.mark_read_on_dwell(message);
     }
 
-    /// How long the cursor must rest before that happens.
-    ///
-    /// From `postio_ui::dwell`, so the two frontends wait the same time.
-    /// Milliseconds because uniffi has no `Duration`; the frontend turns it
-    /// back into whatever its own timer takes.
-    #[uniffi::method(name = "dwellMilliseconds")]
-    pub fn dwell_milliseconds_ffi(&self) -> u64 {
-        postio_ui::dwell::DWELL_TO_READ.as_millis() as u64
-    }
-
     /// Put the cursor on `row` — what a click on the list means.
     ///
     /// Sets the position *and* the message, which

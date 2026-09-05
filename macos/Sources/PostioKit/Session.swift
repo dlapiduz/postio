@@ -233,14 +233,6 @@ public final class PostioSession {
         inner.markReadOnDwell(message: message)
     }
 
-    /// How long the cursor must rest before that happens, in seconds.
-    ///
-    /// `postio_ui::dwell`'s number, so both frontends separate a sweep from a
-    /// read at the same point. Not a constant chosen here.
-    public var dwellDelay: TimeInterval {
-        TimeInterval(inner.dwellMilliseconds()) / 1000
-    }
-
     /// Put the cursor on `row` — what a click on the list means.
     ///
     /// The position, not just the message: after a click, `j` has to move
