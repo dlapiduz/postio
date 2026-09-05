@@ -70,6 +70,11 @@ jobs:
     outputs:
       rust: ${{ steps.classify.outputs.rust }}
       docs: ${{ steps.classify.outputs.docs }}
+      # Declared, or `needs.changes.outputs.macos` is the empty string and the
+      # macOS job silently skips itself on every run -- reported as skipped,
+      # which the ruleset counts as passed. A gate that reports green having
+      # done nothing is exactly what #666's other half is about.
+      macos: ${{ steps.classify.outputs.macos }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

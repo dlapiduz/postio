@@ -20,9 +20,9 @@
 
 use std::sync::Arc;
 
-use postio_ffi::{Session, SessionOptions};
 use postio_account::discovery::{AccountSettings, Encryption, ServerSettings, SettingsSource};
 use postio_account::secret::{MemorySecretStore, Password, SecretStore};
+use postio_ffi::{Session, SessionOptions};
 use postio_session::provision::{Provisioned, account_from, provision};
 
 const ADDRESS: &str = "ada@example.com";
