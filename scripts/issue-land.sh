@@ -242,9 +242,28 @@ echo
 # so. A hardcoded pair was right the day it was written and would go wrong
 # the next time a crate dev-depends on the frontend, silently and only on
 # macOS (#1152). See `scripts/unbuildable-crates.sh`.
-MISSING_LIBS=$(scripts/unbuildable-crates.sh --libs)
-UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
-UNBUILDABLE="${UNBUILDABLE% }"
+#
+# Guarded, because the self-tests build sandbox repositories that copy *this*
+# script and the checks it runs, and deliberately not the rest of `scripts/`
+# -- "each self-test builds its own sandbox and reads only the copy of the
+# tooling it put there". A land script that could not start without every
+# sibling script would make all eleven of those sandboxes copy the whole
+# directory. Absent, this falls back to the roots inline, which is what the
+# code did before and is right in a sandbox: a dummy workspace has no
+# frontend to be unable to build.
+if [ -x scripts/unbuildable-crates.sh ]; then
+    MISSING_LIBS=$(scripts/unbuildable-crates.sh --libs)
+    UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
+    UNBUILDABLE="${UNBUILDABLE% }"
+else
+    MISSING_LIBS=""
+    for lib in gtk4 libadwaita-1 webkitgtk-6.0; do
+        pkg-config --exists "$lib" 2>/dev/null \
+            || MISSING_LIBS="${MISSING_LIBS:+$MISSING_LIBS }$lib"
+    done
+    UNBUILDABLE=""
+    [ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-gtk postio-app"
+fi
 
 BLOCKED=""
 for crate in $CRATES; do
