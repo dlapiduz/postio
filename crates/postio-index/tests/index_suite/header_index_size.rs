@@ -18,37 +18,39 @@
 //! an FTS5 index is made of, which is the only honest way to compare a
 //! virtual table with an ordinary one.
 //!
-//! # The budget is not met, and the caps are not the lever
+//! # The gate is bytes per message, and ADR 0027 is why
 //!
-//! Measured here, and the ratio does not come close on any fixture. The cause
-//! is structural rather than a matter of tuning: `message_bodies_fts` is
-//! `content = ''` — an inverted index holding *no text at all* — while
-//! `message_headers` holds every value verbatim, because a substring match
-//! needs the string. Real mail's header block is not much smaller than its
-//! body, and for a mailing-list message it is larger.
+//! ADR 0025 Q3 asked for `message_headers` to stay under 25% of
+//! `message_bodies_fts`, and that target is unreachable by the levers it
+//! named. The cause is structural rather than tuning: `message_bodies_fts` is
+//! `content = ''`, an inverted index holding *no text at all*, while
+//! `message_headers` holds every value verbatim because a substring match
+//! needs the string. Measured on four corpora the share ran 64% to 269%, and
+//! moved with **body** length rather than with anything about the header
+//! policy -- the committed fixture measures 636% for that reason alone.
 //!
-//! What was measured, 1,000 messages, `message_headers` as a share of
-//! `message_bodies_fts`:
+//! ADR 0027 amends it. The ceiling is now on the thing the caps actually
+//! control:
 //!
-//! | corpus | share |
-//! |---|---|
-//! | long threaded bodies, no signatures, 3 hops | 64% |
-//! | long threaded bodies, one DKIM, 4 hops | 107% |
-//! | short bodies, one DKIM, 4 hops | 269% |
-//! | long threaded bodies, three ARC/DKIM, 8 hops | 205% |
+//! > `message_headers` plus `idx_message_headers_name`, in `dbstat` page
+//! > bytes, divided by the number of messages, must stay under 5 KiB.
 //!
-//! Dropping the value cap from 512 bytes to 64 — which would stop
-//! `header:x-mailer=mutt 1.5.24` and every `Received` match from working —
-//! moves the first row to 149%. Reaching 25% needs roughly fifty bytes of
-//! header per message, which is two short fields: an allowlist by arithmetic
-//! rather than by name, and the thing ADR 0025 Q3 refuses.
+//! Bytes per message is invariant to the one quantity that differs between
+//! mailboxes, and it multiplies straight into disk: 3.72 KiB a message is
+//! ~310 MB on ADR 0017's 81,744-message reference account, which is a line
+//! item rather than a claim. The ratio survives below as a printed
+//! observation and asserts nothing.
 //!
-//! So ADR 0025 Q3 asks for something its own two levers cannot deliver, and
-//! which of the two to revise — the budget or the operator — is the
-//! architecture call #1041 is open on. Until then the ratio assertion is
-//! held out by name rather than quietly relaxed: `--ignored` runs it, and it
-//! fails, which is the honest state.
-
+//! **The index is counted too.** This measurement used to ask `dbstat` for
+//! `name = 'message_headers' OR name LIKE 'message\_headers\_%'` -- a pattern
+//! written for FTS5's shadow tables, which `idx_message_headers_name` does not
+//! match. The index is 221 KB against the table's 1.30 MB here, so the cost
+//! was understated by 17% and the gate was pointed at part of the object.
+//!
+//! The fixture is committed and deliberately heavy -- three signature sets, a
+//! three-hop `Received` chain, a full mailing-list header set -- so it reads
+//! as a ceiling: a lighter mailbox passes by definition.
+//!
 use postio_index::index::{HEADER_ROWS_PER_MESSAGE, ensure_schema, index_body, index_headers};
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
@@ -57,7 +59,13 @@ use rusqlite::Connection;
 
 /// ADR 0025 Q3's budget: `message_headers` may cost at most this share of
 /// what `message_bodies_fts` costs on the same corpus.
-const BUDGET: f64 = 0.25;
+/// ADR 0027 Q2: `message_headers` + `idx_message_headers_name`, per message.
+///
+/// The committed fixture measures 3,809 B a message, so the ceiling is about
+/// a third above it -- enough headroom to absorb ADR 0017's move to
+/// `page_size = 8192`, a b-tree fanout change or a SQLite upgrade, and far
+/// too little to absorb a policy change.
+const BYTES_PER_MESSAGE: i64 = 5 * 1024;
 
 /// Enough messages that the b-trees are more than their root pages and the
 /// ratio is about the data rather than about SQLite's overhead. Deliberately
@@ -143,6 +151,22 @@ fn a_block(n: usize) -> postio_model::Headers {
     headers
 }
 
+/// What the header policy costs on disk: the table and its index.
+///
+/// Both b-trees by name, and any future one with them -- a secondary index is
+/// part of what a policy costs, and leaving it out understated this by 17%
+/// (ADR 0027 Q2).
+fn header_index_bytes(connection: &Connection) -> i64 {
+    connection
+        .query_row(
+            "SELECT coalesce(sum(pgsize), 0) FROM dbstat
+              WHERE name = 'message_headers' OR name LIKE 'idx_message_headers%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("dbstat")
+}
+
 fn table_bytes(connection: &Connection, name: &str) -> i64 {
     connection
         .query_row(
@@ -203,9 +227,7 @@ fn no_message_may_contribute_more_than_the_two_caps_allow() {
 }
 
 #[test]
-#[ignore = "ADR 0025 Q3's <= 25% budget is unreachable as specified; see the \
-            module docs and #1041. Run with --ignored to see it."]
-fn the_header_index_stays_inside_its_share_of_the_body_index() {
+fn the_header_index_stays_inside_its_per_message_ceiling() {
     let database = test_support::temp();
     let connection = database.connection().expect("checkout");
     ensure_schema(&connection).expect("schema");
@@ -233,30 +255,36 @@ fn the_header_index_stays_inside_its_share_of_the_body_index() {
          is measuring nothing; got {header_rows} rows"
     );
 
-    let headers = table_bytes(&connection, "message_headers");
+    let headers = header_index_bytes(&connection);
     let bodies = table_bytes(&connection, "message_bodies_fts");
-    assert!(bodies > 0, "the body index measured as empty");
+    assert!(headers > 0, "the header index measured as empty");
 
-    let share = headers as f64 / bodies as f64;
+    let per_message = headers / MESSAGES as i64;
     let mb = |bytes: i64| bytes as f64 / (1024.0 * 1024.0);
+    // The ratio is printed and asserts nothing (ADR 0027 Q1): it moves with
+    // body length, so on this fixture it says more about `a_body` than about
+    // the header policy. Kept because it is the number ADR 0025 Q3 reasoned
+    // from, and seeing it move while the per-message figure does not is the
+    // clearest statement of why the denominator was wrong.
     println!(
-        "\n{MESSAGES} messages\n  message_headers    {:>8.2} MB\n  \
-         message_bodies_fts {:>8.2} MB\n  share              {:>8.1} %\n",
+        "\n{MESSAGES} messages\n  message_headers + index {:>8.2} MB\n  \
+         message_bodies_fts      {:>8.2} MB\n  share                   {:>8.1} %\n  \
+         per message             {per_message:>8} B\n",
         mb(headers),
         mb(bodies),
-        100.0 * share
+        100.0 * headers as f64 / bodies.max(1) as f64,
     );
 
     assert!(
-        share <= BUDGET,
-        "message_headers is {:.1}% of message_bodies_fts on the same corpus, \
-         over ADR 0025 Q3's {:.0}% budget. The lever is the two caps -- \
+        per_message <= BYTES_PER_MESSAGE,
+        "the header index costs {per_message} B a message, over ADR 0027 Q2's \
+         {BYTES_PER_MESSAGE} B ceiling. The lever is the two caps -- \
          `postio_model::headers::VALUE_LIMIT` and \
          `postio_index::index::HEADER_ROWS_PER_MESSAGE` -- not a list of \
-         header names, and not shipping it anyway. Bump HEADERS_SCHEMA_VERSION \
-         with whichever cap moves, so existing stores are refilled under the \
-         new policy.",
-        100.0 * share,
-        100.0 * BUDGET
+         header names, and not shipping it anyway. ADR 0027 Q1 prices them: \
+         512 -> 2,793 B/msg, 256 -> 2,025, 128 -> 1,630, 64 -> 1,246, so a cap \
+         takes about half once and never an order of magnitude. Bump \
+         HEADERS_SCHEMA_VERSION with whichever cap moves, so existing stores \
+         are refilled under the new policy."
     );
 }
