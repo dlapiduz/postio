@@ -57,6 +57,26 @@ impl<'a> LabelRepository<'a> {
         Ok(rows.next()?.map(read_label).transpose()?)
     }
 
+    /// One of `account_id`'s labels, by name.
+    ///
+    /// Case-insensitively, because `idx_labels_account_name` is `COLLATE
+    /// NOCASE` and so the account cannot hold a `work` beside a `Work` — a
+    /// case-sensitive lookup could only ever fail to find a label that
+    /// exists. This is how a rule's `label:invoices` reaches a label the user
+    /// created in the picker (#1141), the same way `move:` reaches a mailbox
+    /// by path.
+    ///
+    /// Scoped to the account for the reason [`list`](Self::list) is: a label
+    /// another account owns is not one this message can carry.
+    pub fn by_name(&self, account_id: AccountId, name: &str) -> Result<Option<Label>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT {LABEL_COLUMNS} FROM labels
+              WHERE account_id = ?1 AND name = ?2 COLLATE NOCASE"
+        ))?;
+        let mut rows = statement.query(params![account_id.get(), name])?;
+        Ok(rows.next()?.map(read_label).transpose()?)
+    }
+
     /// Every label `account_id` owns, by name.
     ///
     /// Scoped to the account because a picker that offered another account's
