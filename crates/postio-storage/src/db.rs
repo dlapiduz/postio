@@ -157,6 +157,22 @@ fn silence_openssl_atexit() {
     });
 }
 
+/// Whether a `rusqlite` error is sqlcipher refusing the key pragma.
+///
+/// Matched on the text and not on a code, because there is no code to match:
+/// sqlcipher reports this through `sqlite3ErrorMsg`, which produces a plain
+/// `SQLITE_ERROR` — the same code as a syntax error or a failed constraint.
+/// The sentence is the only thing that distinguishes it, and it is a literal
+/// in the vendored amalgamation rather than anything assembled at run time.
+///
+/// See [`Error::CipherUnavailable`] for what it means, which is not what it
+/// says.
+fn is_key_pragma_refusal(error: &rusqlite::Error) -> bool {
+    error
+        .to_string()
+        .contains("PRAGMA key requires a key of one or more")
+}
+
 /// libcrypto's "do not register an `atexit` handler" flag.
 const OPENSSL_INIT_NO_ATEXIT: u64 = 0x0008_0000;
 
@@ -212,8 +228,11 @@ unsafe extern "C" {
 ///
 /// # Why it reads something afterwards
 ///
-/// `PRAGMA key` cannot fail: SQLCipher accepts any key and only discovers a
-/// wrong one when a page will not decrypt. Left alone, that surfaces later and
+/// `PRAGMA key` cannot fail *on the key*: SQLCipher accepts any key and only
+/// discovers a wrong one when a page will not decrypt. (It can fail on
+/// SQLCipher itself — see [`Error::CipherUnavailable`], and note that its
+/// message names the key, which is what made #710 hard to read.) Left alone,
+/// a wrong key surfaces later and
 /// somewhere else, as `SQLITE_NOTADB` — "file is not a database" — which tells
 /// a user their mail is corrupt when it is intact and merely locked. So this
 /// touches one page immediately and turns the failure into
@@ -229,8 +248,15 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
 
     // Zeroized on drop, and the only place the database subkey is rendered.
     let hex = key.to_hex();
-    connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
+    let keyed = connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex));
     drop(hex);
+    keyed.map_err(|error| {
+        if is_key_pragma_refusal(&error) {
+            Error::CipherUnavailable
+        } else {
+            Error::Sqlite(error)
+        }
+    })?;
 
     // The probe. `sqlite_schema` lives on page 1, so this is the cheapest read
     // that proves the key: one page, already in cache for everything after it.
