@@ -25,6 +25,15 @@ extension PostioSession: @unchecked Sendable {}
 public final class PostioSession {
     private let inner: Session
 
+    /// Turn the log on, before anything can have anything to say.
+    ///
+    /// `POSTIO_LOG` and `[logging]` in `config.toml`, the same two controls
+    /// the GTK build has. Worth calling first rather than at leisure: opening
+    /// a session reads the Keychain and migrates the store, and both can fail
+    /// before there is any UI to report it in — which on this platform used to
+    /// mean a blank window and no way to ask why.
+    public static func startLogging() { PostioFFI.startLogging() }
+
     /// Opens a session over the store at the platform's usual path.
     ///
     /// Blocks: the store's key comes from the OS keyring and that round trip

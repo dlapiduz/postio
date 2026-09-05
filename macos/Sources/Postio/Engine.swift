@@ -17,18 +17,54 @@ import SwiftUI
 @Observable
 final class Engine {
     enum State {
+        /// The store is being opened, off this actor. See ``Engine/init()``.
+        case opening
         /// A live session, with the list driven from it.
         case open(MessageTableController)
         /// No session, and the sentence explaining why.
         case unavailable(String)
     }
 
-    private(set) var state: State
+    private(set) var state: State = .opening
     private(set) var session: PostioSession?
 
+    /// Starts the log, then opens the store **off this actor**.
+    ///
+    /// `Session::open` says not to call it on the main actor and means it: the
+    /// store's key comes from the login Keychain, that round trip can wait on
+    /// a user prompt, and `@State private var engine = Engine()` runs inside
+    /// `App.init()` — before SwiftUI has a scene. Done synchronously, the
+    /// application appeared in the Dock and drew no window at all, parked in
+    /// `store_key_blocking` while macOS asked a question about an application
+    /// that was not on screen to be asked about (#1146).
+    ///
+    /// An ad-hoc-signed build has a new code identity on every rebuild, so the
+    /// Keychain asks again after each one — this is the ordinary path here,
+    /// not an edge case.
+    ///
+    /// So opening is a *state*, and the window that draws it is also what the
+    /// Keychain prompt has to appear in front of.
     init() {
-        do {
-            let session = try PostioSession.open()
+        // First, so the two things most likely to fail on this platform -- the
+        // Keychain refusing and the store refusing to migrate -- say so
+        // somewhere rather than arriving as an empty window.
+        PostioSession.startLogging()
+        Task.detached(priority: .userInitiated) {
+            // `PostioSession` is `@unchecked Sendable` and this is the call
+            // that must not run on the main actor, so it happens here and only
+            // its *result* hops back.
+            let opened = Result { try PostioSession.open() }
+            await MainActor.run { [weak self] in self?.adopt(opened) }
+        }
+    }
+
+    /// Take up a session that opened, or record why one did not.
+    ///
+    /// Everything that needs a session is wired here rather than in `init`,
+    /// because until this runs there is not one to wire anything to.
+    private func adopt(_ opened: Result<PostioSession, Error>) {
+        switch opened {
+        case let .success(session):
             self.session = session
             state = .open(MessageTableController(source: SessionRowSource(session: session)))
             // Nothing was ever fetched before this: the store opened and
@@ -66,7 +102,7 @@ final class Engine {
             reachability.start { [weak self] offline in
                 Task { @MainActor in self?.session?.setOffline(offline) }
             }
-        } catch {
+        case let .failure(error):
             // The message the boundary wrote, not one invented here: a locked
             // keychain says how to unlock it, and a broken store says what
             // broke. Replacing either with "could not start" throws away the

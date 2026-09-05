@@ -108,6 +108,18 @@ struct Shell: View {
     @ViewBuilder
     private var messages: some View {
         switch engine.state {
+        case .opening:
+            // Not decoration. The store's key comes from the login Keychain,
+            // and macOS raises its prompt in front of whatever window the
+            // asking application has -- so this *is* the window the prompt
+            // appears over. Before #1146 there was none, and the application
+            // sat in the Dock drawing nothing while being asked a question
+            // nobody could connect to it.
+            ContentUnavailableView {
+                Label("Unlocking your mail", systemImage: "lock")
+            } description: {
+                Text("Postio is asking the Keychain for this store's key.")
+            }
         case let .open(controller):
             if engine.rowCount == 0 {
                 // Empty is a state, not a blank. A list showing nothing and a
@@ -143,7 +155,11 @@ struct Shell: View {
 
     @ViewBuilder
     private var reader: some View {
-        if let session = engine.session, let showing {
+        if case .opening = engine.state {
+            // Nothing to say yet, and "no message selected" would be a claim
+            // about a store that has not been opened.
+            Color.clear
+        } else if let session = engine.session, let showing {
             // Remote images blocked. `PRODUCT.md`'s "nothing leaves this
             // machine that the user did not ask for" starts at the tracking
             // pixel, and per-sender allowing is its own work.
