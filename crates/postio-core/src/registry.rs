@@ -1021,6 +1021,28 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::SetDefaultAccount,
+        // Says what it does rather than asserting a status (#960). "Primary"
+        // invites the reading the decision rules out -- that this account is
+        // more the user's than the other one -- so the word is "default"
+        // everywhere, never "primary" and never "main".
+        title: "Set as default account",
+        // `m` for "make default". Free within `Context::Accounts`: the other
+        // four rows here use `Return`, `d`, `c` and `r`, and `Move`'s `m` is
+        // scoped to the message surfaces, which this context does not layer
+        // over.
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::Accounts]),
+        destructive: false,
+        // On `ToggleAccountEnabled`'s stated precedent: the reversal is the
+        // same key on another row, so there is nothing for the undo stack to
+        // hold. Nothing is lost either -- the previous holder is still there,
+        // unmarked.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::NextScope,
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is

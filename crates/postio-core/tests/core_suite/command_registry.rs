@@ -401,3 +401,48 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
         );
     }
 }
+
+/// The default-account marker is set from a keyboard row like the other four
+/// account commands (#960).
+///
+/// `Context::Accounts` already carries `Return`, `d`, `c` and `r`, so this is
+/// a fifth row in the registry rather than a new surface — which is what makes
+/// the palette entry, the cheat-sheet row and the focused-row key hint come
+/// from one place and stay in step. `m` for "make default", free within this
+/// context because `Move`'s `m` is scoped to the message surfaces.
+///
+/// `bindings_do_not_collide_within_a_context` is what would catch the shadow
+/// if that ever stopped being true; this test is the decision itself.
+#[test]
+fn setting_the_default_account_is_an_accounts_row_bound_to_m() {
+    let spec = registry::get(CommandId::SetDefaultAccount);
+
+    assert_eq!(
+        spec.default_binding, "m",
+        "#960 chose `m` for \"make default\"; the cheat sheet and the palette \
+         both read this row"
+    );
+    assert!(
+        spec.contexts.contains(Context::Accounts),
+        "it belongs to the accounts page"
+    );
+    assert_eq!(
+        spec.contexts,
+        registry::get(CommandId::RebuildAccountIndex).contexts,
+        "and to that page alone, exactly as the other four account rows do -- \
+         a default marker reachable from the message list would be a fifth \
+         meaning nobody asked for"
+    );
+    assert!(
+        !spec.destructive,
+        "marking an account is not destructive: nothing is lost and the \
+         previous holder is still there"
+    );
+    assert_eq!(
+        spec.recovery,
+        Recovery::None,
+        "the reversal is the same key on another row, exactly as \
+         ToggleAccountEnabled argues -- there is nothing for the undo stack \
+         to hold"
+    );
+}
