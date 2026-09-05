@@ -307,30 +307,30 @@ final class Engine {
     /// hand-maintained command table #657 exists to prevent.
     func run(_ id: String) {
         switch id {
-        case "command_palette":
+        case Intercepted.palette:
             showingCheatSheet = false
             showingPalette = true
-        case "cheat_sheet":
+        case Intercepted.cheatSheet:
             showingPalette = false
             showingCheatSheet = true
-        case "search":
+        case Intercepted.search:
             showingSearch = true
             context = .search
-        case "back" where showingSearch:
+        case Intercepted.back where showingSearch:
             // Escape in search closes it; `SearchField` restores the scope on
             // its way out, so this only has to put the keyboard back.
             showingSearch = false
             context = pane.context
-        case "cycle_pane":
+        case Intercepted.cyclePane:
             // The visual order — sidebar, list, reader — and it wraps. A
             // focus order that disagrees with the layout is how a
             // keyboard-first application becomes unusable without a mouse.
             focus(pane.next())
-        case "cycle_pane_back":
+        case Intercepted.cyclePaneBack:
             focus(pane.next(false))
-        case "focus_sidebar":
+        case Intercepted.focusSidebar:
             focus(.sidebar)
-        case "back" where showingPalette || showingCheatSheet:
+        case Intercepted.back where showingPalette || showingCheatSheet:
             // Escape means "get me out of here", and the innermost "here" is
             // whichever of these is open.
             showingPalette = false

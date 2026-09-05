@@ -95,6 +95,34 @@ public enum Pane: CaseIterable, Sendable {
     }
 }
 
+/// The commands this frontend presents a surface for, rather than sending on.
+///
+/// Almost everything goes to `invoke`, where the boundary decides whether it
+/// is its own or the engine's. These are the exceptions: each one *is* a
+/// window, and a session cannot present one. `postio-gtk`'s `run_action` makes
+/// the same call for the same reason.
+///
+/// They are named here rather than written as literals at the `switch`,
+/// because a literal that no longer matches the registry is a key that
+/// silently does nothing — `/` not opening search, with no error anywhere to
+/// say why — and `everyInterceptedCommandIsInTheRegistry` is what notices.
+/// Keeping the list short is what stops it becoming the hand-maintained
+/// command table #657 exists to prevent.
+public enum Intercepted {
+    public static let palette = "command_palette"
+    public static let cheatSheet = "cheat_sheet"
+    public static let search = "search"
+    public static let back = "back"
+    public static let cyclePane = "cycle_pane"
+    public static let cyclePaneBack = "cycle_pane_back"
+    public static let focusSidebar = "focus_sidebar"
+
+    /// Every id above, for the test that checks they still exist.
+    public static let all = [
+        palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar,
+    ]
+}
+
 /// How long a transition may take.
 ///
 /// `PRODUCT.md` §18: transitions are ≤100 ms or absent, and the preference is

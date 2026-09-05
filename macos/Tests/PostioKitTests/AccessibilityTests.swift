@@ -87,6 +87,18 @@ import Testing
         }
     }
 
+    @Test func everyInterceptedCommandIsInTheRegistry() {
+        // The frontend presents a surface for these rather than sending them
+        // on, and it matches them by *string*. A literal that no longer names
+        // a registered command is a key that silently does nothing — `/` not
+        // opening search, and no error anywhere to say why. The registry is
+        // the authority, so ask it.
+        let known = Set(PostioRegistry.commands.map(\.id))
+        for id in Intercepted.all {
+            #expect(known.contains(id), "`\(id)` is intercepted and is not a command")
+        }
+    }
+
     @Test func reduceMotionRemovesTheTravelRatherThanShorteningIt() {
         // Asked for by people for whom movement is a symptom. A 50ms slide is
         // still a slide.
