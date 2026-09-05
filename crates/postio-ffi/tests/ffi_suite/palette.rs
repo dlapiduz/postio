@@ -154,3 +154,66 @@ fn the_primary_modifier_reaches_the_sheet_as_this_platform_spells_it() {
     assert_eq!(palette.binding.as_deref(), Some(expected));
     session.shutdown();
 }
+
+#[test]
+fn the_menu_and_the_palette_agree_about_what_is_available() {
+    // #1158. The menu drew every registry command with a section, enabled,
+    // whatever the focused surface could run — so a build with no composer
+    // showed Send, Bold and the whole Format menu as live options. The
+    // palette was already hiding them. The two disagreed because only one of
+    // them was asking.
+    //
+    // Asserted as agreement rather than as a list, so it stays true as
+    // commands are added.
+    let session = session();
+    for context in [UiContext::List, UiContext::Composer, UiContext::Reader] {
+        let offered: Vec<String> = session
+            .palette_entries("", context)
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        for spec in session.commands() {
+            assert_eq!(
+                session.is_available(&spec.id, context),
+                offered.contains(&spec.id),
+                "`{}` is available={} in {context:?} but the palette {} it",
+                spec.id,
+                session.is_available(&spec.id, context),
+                if offered.contains(&spec.id) {
+                    "offers"
+                } else {
+                    "does not offer"
+                }
+            );
+        }
+    }
+    session.shutdown();
+}
+
+#[test]
+fn a_composer_command_is_unavailable_from_the_list() {
+    // The seventeen. `Send`, `Bold` and the rest are `Context::Composer`
+    // only, so a menu asking about the list gets `false` and draws them
+    // greyed rather than as live options against a build with no composer.
+    let session = session();
+    for id in ["send", "bold", "attach_file", "save_draft", "quote_block"] {
+        assert!(
+            !session.is_available(id, UiContext::List),
+            "`{id}` reported available from the message list"
+        );
+        assert!(
+            session.is_available(id, UiContext::Composer),
+            "`{id}` is a composer command and should be available there"
+        );
+    }
+    session.shutdown();
+}
+
+#[test]
+fn an_id_this_build_does_not_know_is_unavailable() {
+    // A menu built from a newer registry, or a typo. Neither should draw an
+    // enabled item.
+    let session = session();
+    assert!(!session.is_available("not_a_command", UiContext::List));
+    session.shutdown();
+}

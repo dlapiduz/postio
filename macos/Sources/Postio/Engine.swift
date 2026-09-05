@@ -93,6 +93,13 @@ final class Engine {
             // dispatch is the monitor's, above.
             MenuBar.install(
                 binding: { [weak self] command in self?.session?.binding(for: command) },
+                // Asked per item, each time a menu opens, against the context
+                // that has focus right now — which is what makes a menu item
+                // grey out as the keyboard moves between panes.
+                available: { [weak self] id in
+                    guard let self, let session = self.session else { return false }
+                    return session.isAvailable(id, in: self.context)
+                },
                 run: { [weak self] id in self?.run(id) }
             )
             // The platform observes and the engine is told. Callbacks arrive

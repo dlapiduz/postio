@@ -534,6 +534,14 @@ impl Session {
         self.snippet_for(message)
     }
 
+    /// Whether `id` can run in `context`. See [`Session::is_available`].
+    ///
+    /// What a menu asks before drawing an item enabled.
+    #[uniffi::method(name = "isAvailable")]
+    pub fn is_available_ffi(&self, id: String, context: crate::UiContext) -> bool {
+        self.is_available(&id, context)
+    }
+
     /// The palette's rows for `query`. See [`Session::palette_entries`].
     #[uniffi::method(name = "paletteEntries")]
     pub fn palette_entries_ffi(
@@ -1148,6 +1156,32 @@ impl Session {
                 postio_core::Scope::Unified
             }
         }
+    }
+
+    /// Whether `id` can run in `context`, given the open view.
+    ///
+    /// The same question `reachable_in` answers for the palette, asked one
+    /// command at a time — which is what a menu needs, because a menu draws
+    /// every item whether or not the focused surface can run it and has to
+    /// grey the ones it cannot.
+    ///
+    /// **The menu had no filter at all** (#1158): every registry command with
+    /// a menu section was drawn enabled, so a Mac showed Send, Bold and the
+    /// whole Format menu as live options against a build with no composer.
+    /// Seventeen of those are `Context::Composer`-only and the palette was
+    /// already hiding them — the two surfaces disagreed because only one of
+    /// them was asking.
+    ///
+    /// Asked here rather than answered in a frontend so they cannot disagree
+    /// again, and so a command added in Rust is filtered without a Swift
+    /// change — the same rule the menu's *contents* already follow (#657).
+    pub fn is_available(&self, id: &str, context: crate::UiContext) -> bool {
+        let Ok(id) = id.parse::<postio_core::ActionId>() else {
+            return false;
+        };
+        let scope = *self.account_scope.lock().expect("account scope lock");
+        postio_core::registry::reachable_in(postio_core::Context::from(context), scope)
+            .any(|spec| spec.id == id)
     }
 
     /// The palette's rows for `query`, best first.
