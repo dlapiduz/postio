@@ -241,6 +241,7 @@ impl Preset {
                     authorize: oauth.authorize.clone(),
                     token: oauth.token.clone(),
                     scopes: oauth.scopes.clone(),
+                    refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
                 }),
         }
     }
@@ -372,6 +373,40 @@ mod tests {
     /// "No personal data".
     fn address_in(domain: &str) -> String {
         format!("a@{domain}")
+    }
+
+    /// #954: a shipped row's stated refresh lifetime reaches the offer the
+    /// sign-in acts on.
+    ///
+    /// The whole data path in one assertion — TOML, schema, preset, offer.
+    /// Every piece of this is tested on invented rows elsewhere, which is
+    /// exactly the arrangement that can pass while the *shipped* table says
+    /// nothing: a field nobody filled in is indistinguishable from a field
+    /// nobody reads.
+    #[test]
+    fn a_shipped_row_carries_its_refresh_lifetime_through_to_the_offer() {
+        let stated: Vec<(&str, Option<u32>)> = presets()
+            .iter()
+            .filter_map(|preset| {
+                let offer = preset.settings_for(&address_in("example.test")).oauth?;
+                Some((preset.display_name(), offer.refresh_token_lifetime_days))
+            })
+            .collect();
+
+        assert!(
+            stated.iter().any(|(_, days)| *days == Some(7)),
+            "a provider stating seven days should say so: {stated:?}"
+        );
+        assert!(
+            stated.iter().any(|(_, days)| *days == Some(90)),
+            "and one stating ninety: {stated:?}"
+        );
+        // Deliberately not asserted here: that some shipped row states
+        // *nothing*. Both rows offering OAuth today state a lifetime, so
+        // that assertion would be about the table's current contents rather
+        // than about the code. The absent case is pinned where it belongs —
+        // on an invented row in `providers_toml`, and on the token source
+        // that must do nothing without one.
     }
 
     /// #94: an MX host resolves to the provider that publishes that suffix.

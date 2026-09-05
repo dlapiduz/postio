@@ -172,4 +172,10 @@ pub struct OAuthOffer {
     pub token: Option<String>,
     /// The scopes the sign-in requests.
     pub scopes: Vec<String>,
+    /// How many days the provider says the refresh grant lives, when it
+    /// says (#954). Carried through to the account row at sign-in, so the
+    /// engine can re-record the deadline on every refresh without the
+    /// preset table.
+    #[serde(default)]
+    pub refresh_token_lifetime_days: Option<u32>,
 }

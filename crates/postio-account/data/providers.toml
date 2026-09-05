@@ -84,6 +84,12 @@ issuer = "https://accounts.google.com"
 # verified client is #195's CASA process.
 scopes = ["https://mail.google.com/"]
 sources = ["own-client", "broker"]
+# Google expires a refresh token issued by an app still in "testing" after
+# seven days, and no token response ever mentions it -- the only source is
+# the provider's own documentation, which is why it is written down here
+# rather than derived (#954). Postio routes the account to "sign in again"
+# on this deadline instead of letting the next sync discover it.
+refresh_token_lifetime_days = 7
 
 [provider.office365]
 display_name = "Outlook / Microsoft 365"
@@ -109,6 +115,11 @@ auth = ["oauth2"]
 issuer = "https://login.microsoftonline.com/common/v2.0"
 scopes = ["https://outlook.office.com/IMAP.AccessAsUser.All", "https://outlook.office.com/SMTP.Send", "offline_access"]
 sources = ["own-client", "broker"]
+# Ninety days, and **sliding**: Microsoft resets the window on every use, so
+# an account that keeps syncing never reaches it. Postio re-records the
+# deadline on every successful refresh for exactly that reason -- writing it
+# only at sign-in would retire the accounts being used most (#954).
+refresh_token_lifetime_days = 90
 
 [provider.fastmail]
 display_name = "Fastmail"

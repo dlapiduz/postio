@@ -1,0 +1,14 @@
+-- How long this account's OAuth *refresh* grant lives, in days, when its
+-- provider states a lifetime (#954).
+--
+-- Not the access token's expiry: that arrives in every token response as
+-- `expires_in`, is an hour for the providers Postio ships, and is kept in
+-- the keyring beside the token it describes (#870). This is the grant's own
+-- lifetime -- the one a refresh cannot recover from, which no response ever
+-- mentions -- copied from the provider's preset row at sign-in so the engine
+-- can rebuild a token source at launch without the preset table or a network.
+--
+-- NULL means the provider states nothing, which is the ordinary case and
+-- must behave exactly as Postio did before this column existed: no early
+-- deadline, and a dead grant discovered when a refresh is refused.
+ALTER TABLE accounts ADD COLUMN oauth_refresh_lifetime_days INTEGER;

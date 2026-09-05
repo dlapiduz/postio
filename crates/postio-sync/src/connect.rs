@@ -574,6 +574,40 @@ mod tests {
     }
 
     #[test]
+    fn a_dead_refresh_grant_blocks_the_link_for_the_user_to_fix() {
+        // The last link in #954's chain. `OwnClientTokenSource` refuses a
+        // grant past its provider's stated lifetime, and this is what that
+        // refusal has to mean by the time it reaches the sidebar: blocked,
+        // needing credentials, not recovering on a timer -- which is what
+        // renders as "sign in again" (ADR 0005 Q10).
+        //
+        // Deliberately the same `Blocker::Authentication` a refused refresh
+        // already produces. This issue adds earliness, not a second failure
+        // path, so anything that learned to handle one handles both.
+        let mut state = Supervisor::new(ReconnectPolicy::default());
+        let dead = postio_account::backend::BackendError::Secret(
+            postio_account::secret::SecretError::GrantExpired {
+                account: "ada@example.com".to_owned(),
+            },
+        );
+
+        let moved = state.observe(&dead, at(0));
+
+        assert!(
+            matches!(moved, Some(Link::Blocked(Blocker::Authentication(_)))),
+            "a dead grant must block the link, not retry it: {moved:?}"
+        );
+        let Some(Link::Blocked(blocker)) = moved else {
+            unreachable!("asserted above")
+        };
+        assert!(blocker.needs_credentials(), "and say the user has to act");
+        assert!(
+            !Link::Blocked(blocker).recovers_on_its_own(),
+            "no amount of waiting renews a grant the provider has retired"
+        );
+    }
+
+    #[test]
     fn only_waiting_and_online_recover_on_their_own() {
         assert!(Link::Online { since: at(0) }.recovers_on_its_own());
         assert!(

@@ -140,6 +140,22 @@ pub struct OAuthRow {
     #[allow(dead_code)]
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// How many days this provider's **refresh** token lives, when the
+    /// provider states one.
+    ///
+    /// Not the access token's hour — that arrives in every token response as
+    /// `expires_in` and is persisted from there (#870). This is the grant's
+    /// own lifetime, the one whose expiry a refresh cannot recover from and
+    /// which no response ever mentions, so the only place it can come from is
+    /// the provider's documentation, written down here as data (#954).
+    ///
+    /// Absent means "no known lifetime", which must behave exactly as Postio
+    /// did before this field existed: nothing is marked stale early, and a
+    /// dead grant is still discovered the way it always was, by a refresh
+    /// being refused.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub refresh_token_lifetime_days: Option<u32>,
     /// Everything this schema does not name -- scanned for secret-looking
     /// keys and stripped in [`parse`], never otherwise read.
     #[serde(flatten)]
@@ -420,6 +436,69 @@ mod tests {
                 .issuer
                 .as_deref(),
             Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn a_row_may_state_how_long_its_refresh_token_lives() {
+        let parsed = parse(
+            r#"
+            [provider.test]
+            display_name = "Test"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["oauth2"]
+
+            [provider.test.oauth]
+            issuer = "https://example.com"
+            refresh_token_lifetime_days = 7
+            "#,
+        )
+        .expect("a stated refresh lifetime is valid");
+        assert_eq!(
+            parsed.rows["test"]
+                .oauth
+                .as_ref()
+                .unwrap()
+                .refresh_token_lifetime_days,
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn a_row_that_states_no_refresh_lifetime_has_none() {
+        // The default, and the one that must behave exactly as today: no
+        // deadline, so nothing is ever marked stale ahead of a real refusal.
+        let parsed = parse(
+            r#"
+            [provider.test]
+            display_name = "Test"
+            domains = ["example.com"]
+            imap_host = "imap.example.com"
+            imap_port = 993
+            imap_security = "tls"
+            smtp_host = "smtp.example.com"
+            smtp_port = 465
+            smtp_security = "tls"
+            auth = ["oauth2"]
+
+            [provider.test.oauth]
+            issuer = "https://example.com"
+            "#,
+        )
+        .expect("valid without one");
+        assert_eq!(
+            parsed.rows["test"]
+                .oauth
+                .as_ref()
+                .unwrap()
+                .refresh_token_lifetime_days,
+            None
         );
     }
 

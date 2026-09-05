@@ -344,6 +344,7 @@ async fn three_sessions_on_an_expired_token_cost_one_refresh() {
         token_url,
         "client-1",
         None,
+        None,
     ));
     let account = AccountKey::new(server.account());
     source

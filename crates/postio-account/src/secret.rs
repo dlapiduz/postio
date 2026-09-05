@@ -206,6 +206,19 @@ pub enum SecretError {
         account: String,
     },
 
+    /// The refresh grant itself has passed the lifetime its provider states.
+    ///
+    /// Distinct from [`Locked`](Self::Locked), which a user fixes by
+    /// unlocking, and from [`NotFound`](Self::NotFound), which means nothing
+    /// was ever stored. This one is recoverable only by signing in again, so
+    /// it is the one failure here that counts as an authentication failure
+    /// and routes the account to "sign in again" (#954).
+    #[error("the sign-in for {account} has expired; sign in again to keep this account syncing")]
+    GrantExpired {
+        /// The account whose grant has to be renewed.
+        account: String,
+    },
+
     /// No credential is stored for this account yet.
     #[error("no password is stored for {account}; add one and Postio will keep it in the keyring")]
     NotFound {
