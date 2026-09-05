@@ -122,6 +122,41 @@ pub enum Error {
     )]
     WrongStoreKey,
 
+    /// SQLCipher refused `PRAGMA key`, and it is not about the key.
+    ///
+    /// Its message — "PRAGMA key requires a key of one or more characters" —
+    /// reads as a claim that the key was empty, and that reading has cost
+    /// three passes at #710. The pragma prints it when the key string is
+    /// empty **or** when `sqlite3_key_v2` returns anything other than
+    /// `SQLITE_OK`, and Postio's key is a fixed-length hex rendering of a
+    /// `[u8; KEY_BYTES]`, which cannot be empty. So it is always the second
+    /// case: SQLCipher's one-time initialisation (`sqlcipher_extra_init` —
+    /// static mutexes, its private heap, the crypto provider and its first
+    /// draw of randomness) or this connection's codec setup failed.
+    ///
+    /// **The reason is already printed.** SQLCipher logs it to stderr before
+    /// returning, so a run that reports this has the diagnosis a few lines
+    /// above it: look for `sqlcipher_extra_init`, `sqlcipher_codec_ctx_init`
+    /// or `sqlcipherCodecAttach`.
+    ///
+    /// `sqlite3_initialize` retries the one-time init on its next call, so a
+    /// transient failure clears itself and later opens succeed — which is the
+    /// cluster-then-recover shape #710 keeps recording.
+    ///
+    /// A variant of its own rather than the [`Sqlite`](Self::Sqlite) it is
+    /// made from, for the same reason [`WrongStoreKey`](Self::WrongStoreKey)
+    /// is: the library's own sentence names the wrong thing, and that
+    /// sentence is what a reader acts on.
+    #[error(
+        "sqlcipher would not start its codec for this connection. This is not \
+         the store key: Postio writes a fixed-length key, and sqlcipher \
+         prints the same message for any refused key pragma. It has already \
+         logged the reason to stderr — look for `sqlcipher_extra_init`, \
+         `sqlcipher_codec_ctx_init` or `sqlcipherCodecAttach` — and it \
+         retries its one-time initialisation on the next open"
+    )]
+    CipherUnavailable,
+
     /// A stored message body could not be compressed or read back.
     ///
     /// The row and this build disagree about what is in the column: a frame

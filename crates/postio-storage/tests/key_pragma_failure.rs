@@ -75,3 +75,45 @@ fn the_key_pragma_error_also_means_the_codec_would_not_start() {
         "the same key must be accepted once the codec can start: {text:?}"
     );
 }
+
+#[test]
+fn a_codec_that_will_not_start_is_not_reported_as_a_key_problem() {
+    // `db.rs` says of this pragma: "`PRAGMA key` cannot fail: SQLCipher
+    // accepts any key and only discovers a wrong one when a page will not
+    // decrypt." The case above is that sentence being wrong, and this is what
+    // it costs: `Database::open` hands the caller SQLCipher's own text, which
+    // says the key needed "one or more characters" — so three passes at #710
+    // went looking at key derivation, which is the one place the fault
+    // cannot be.
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let lever = rusqlite::Connection::open(directory.path().join("lever.db")).expect("open");
+    lever
+        .execute_batch("PRAGMA cipher_default_page_size = 3;")
+        .expect("the lever");
+
+    let opened = postio_storage::Database::open(
+        directory.path().join("store.db"),
+        &postio_storage::test_support::key(),
+    );
+
+    // Put the global back before asserting, so a failure here cannot leave
+    // the rest of this binary running against a codec that cannot start.
+    lever
+        .execute_batch("PRAGMA cipher_default_page_size = 4096;")
+        .expect("the lever, put back");
+
+    let error = match opened {
+        Ok(_) => panic!("a codec that cannot start must not open a database"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        !error.contains("requires a key of one or more"),
+        "the error a caller sees must not be SQLCipher's text, which names \
+         the key: {error}"
+    );
+    assert!(
+        error.contains("sqlcipher") || error.contains("SQLCipher"),
+        "and it must say what did fail, so the log lines SQLCipher already \
+         printed can be found: {error}"
+    );
+}
