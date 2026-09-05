@@ -149,60 +149,30 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      - name: Enforce architectural invariants
-        run: python3 scripts/checks/check-crate-boundaries.py
-
-      - name: Enforce no personal data in the repository
-        # Output is redacted by default -- these logs are public. Run the
-        # script locally with --reveal to see the offending values.
-        # POSTIO_DENY_NAMES is optional: without it the reserved-domain rule
-        # still runs. A runner's git config is the bot's, so the git fallback
-        # cannot see a maintainer's name; set the secret to enable that rule.
+      # One step running every invariant `scripts/check.sh` knows about,
+      # rather than eight named here by hand (#1169). The eight used to be
+      # the only gate a PR opened without `issue-land.sh` ever met -- the
+      # documented route for a host that cannot build a crate the branch
+      # touches (#555) -- so a hand-opened PR could be green here and still
+      # be missing what the other eleven catch: an uncalled `pub fn` (#327,
+      # #416), a test file no suite lists (silence, not an error), a
+      # manifest section out of order, and so on. Every one of the
+      # nineteen is a read of the checked-out tree or the git history in
+      # it -- none needs a build -- so this job, which installs no GTK
+      # library and compiles nothing, is exactly where the full set
+      # belongs. Each check's own docstring under scripts/checks/ has its
+      # own story; this is deliberately not eight retellings of it.
+      #
+      # POSTIO_DENY_NAMES is optional: without it check-no-personal-data.py's
+      # reserved-domain rule still runs. A runner's git config is the bot's,
+      # so the git fallback cannot see a maintainer's name; set the secret to
+      # enable that rule. Output is redacted by default -- these logs are
+      # public. Run the script locally with --reveal to see the offending
+      # values.
+      - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
-        run: python3 scripts/checks/check-no-personal-data.py
-
-      - name: Refuse email's tracking mechanisms without recorded consent
-        # Read receipts and List-Unsubscribe One-Click both tell a sender that
-        # a real person read the message. Neither exists in Postio; this is
-        # what notices the day one arrives inside a patch about something
-        # else. See scripts/checks/check-no-silent-tracking.py and postio-qhz.2.
-        run: python3 scripts/checks/check-no-silent-tracking.py
-
-      - name: Enforce the lint floor
-        # `[workspace.lints]` is the only place the floor is set. This is what
-        # notices a new crate that forgets to inherit it -- a missing lint
-        # produces no output at all, so nothing else would. See #95.
-        run: python3 scripts/checks/check-lint-floor.py
-
-      - name: Refuse a floating rustc
-        # CI and every session must agree on one compiler. This is what
-        # notices a `rustup default stable` coming back into a workflow,
-        # where it would silently win over rust-toolchain.toml. Issue #38.
-        run: python3 scripts/checks/check-toolchain-pinned.py
-
-      - name: Refuse GTK initialization from a unit test
-        # `cargo test` runs a crate's unit tests on a thread pool in one
-        # process, and GTK may be initialized from one thread per process.
-        # A second one aborts the whole binary on a signal, taking every
-        # other test in the crate with it -- which is how this job first
-        # reported zero of postio-gtk's 305 passing tests. See #41.
-        run: python3 scripts/checks/check-no-gtk-init-in-unit-tests.py
-
-      - name: Refuse a second display-needing test in one integration binary
-        # The other half of the same rule. Cargo gives each integration test
-        # FILE its own process, but libtest still runs the tests inside it on
-        # a thread pool -- so two that initialize GTK race, and the loser
-        # returns through its own "no display" guard and is reported as a
-        # pass. Three files had been running half their cases. See #355.
-        run: python3 scripts/checks/check-one-gtk-test-per-binary.py
-
-      - name: Refuse a tokio await on the GTK main context
-        # `spawn_future_local` runs on the glib main loop, which has no tokio
-        # reactor. 0.1.0 awaited the keyring there and panicked with "there is
-        # no reactor running" the instant a login succeeded, with every gate
-        # green. See scripts/checks/check-runtime-crossings.py and #66.
-        run: python3 scripts/checks/check-runtime-crossings.py
+        run: scripts/check.sh
 
       # Every self-test under scripts/tests, discovered rather than listed,
       # and run several at a time.
