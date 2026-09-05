@@ -64,8 +64,25 @@ struct Shell: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 560)
         } detail: {
             reader
+                .onTapGesture { engine.context = .reader }
         }
         .navigationTitle("Postio")
+        // A half-typed sequence, shown while it waits. `g` on its own is a
+        // second of the application looking like it ignored a key, and the
+        // resolver reports the pending chords precisely so it does not have
+        // to be.
+        .overlay(alignment: .bottomTrailing) {
+            if let pending = engine.pendingChord {
+                Text(pending)
+                    .font(.system(.body, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                    .padding(12)
+                    .transition(.opacity)
+                    .accessibilityLabel("Waiting for the rest of \(pending)")
+            }
+        }
         // A notification click. The engine has already switched the list to
         // the folder; the sidebar selection and the reader follow so that all
         // three panes agree about what is being shown.
@@ -103,7 +120,17 @@ struct Shell: View {
                 )
             } else {
                 MessageListView(controller: controller)
-                    .onAppear { controller.onCursorChanged = { showing = $0 } }
+                    .onAppear {
+                        controller.onCursorChanged = { message in
+                            showing = message
+                            // The engine needs it too, and for a different
+                            // reason: the reader draws what the cursor is on,
+                            // and `aim` decides what a verb with nothing
+                            // marked acts on. Without this `a` archives
+                            // nothing at all.
+                            engine.cursorMoved(to: message)
+                        }
+                    }
             }
         case let .unavailable(reason):
             ContentUnavailableView {

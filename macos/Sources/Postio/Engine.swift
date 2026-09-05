@@ -45,6 +45,12 @@ final class Engine {
                 self?.open(mailbox: mailbox)
             }
             consumeEvents(from: session)
+            // Keystrokes, resolved by the core (#656). Installed only on the
+            // open path: with no session there is no keymap to ask and
+            // nothing for a command to act on, and a monitor that swallowed
+            // keys to answer nothing would make the unavailable screen
+            // unusable as well as empty.
+            installKeyboard(session)
             // The platform observes and the engine is told. Callbacks arrive
             // on a background queue and may repeat the same answer; the
             // boundary absorbs that, nudging a reconnect only on a real
@@ -79,6 +85,22 @@ final class Engine {
 
     private let notifications = MailNotifications()
     private let reachability = Reachability()
+    private var keys: KeyMonitor?
+
+    /// Which surface has focus, as the resolver understands it.
+    ///
+    /// Reported by the views as they take focus rather than inferred from the
+    /// responder chain: `UiContext` is Postio's vocabulary of surfaces and
+    /// AppKit knows nothing about it, so a mapping from view classes would be
+    /// this application guessing at its own state. The list is where the
+    /// keyboard starts.
+    var context: UiContext = .list
+
+    /// The chords of a half-typed sequence, for the shell to show.
+    ///
+    /// `nil` when nothing is pending. A sequence that is invisible while it
+    /// waits is a keyboard that feels like it stopped responding.
+    private(set) var pendingChord: String?
 
     /// Folders with no parent, in the order the store returned them.
     var folderRoots: [MailboxFfi] {
@@ -162,6 +184,33 @@ final class Engine {
         notifications.post(notification)
     }
 
+    /// Wire the `NSEvent` monitor to the boundary's resolver.
+    ///
+    /// Three lines of policy and no keymap: reduce, ask, act. The application
+    /// owns which surface has focus and whether somebody is typing, because
+    /// only it can see those; everything else is `postio_ui::keymap`'s.
+    private func installKeyboard(_ session: PostioSession) {
+        let monitor = KeyMonitor(
+            resolve: { [weak self] reduced, context, typing in
+                self?.session?.key(reduced, in: context, typing: typing) ?? .unhandled
+            },
+            run: { [weak self] id in self?.session?.invoke(id) },
+            pending: { [weak self] description in self?.pendingChord = description },
+            context: { [weak self] in self?.context ?? .list }
+        )
+        monitor.start()
+        keys = monitor
+    }
+
+    /// Say where the keyboard is, so a verb with nothing marked knows which
+    /// row it is about.
+    ///
+    /// The cursor, not the selection (`PRODUCT.md` §9). This is what makes `a`
+    /// archive the row being read rather than nothing at all.
+    func cursorMoved(to message: Int64?) {
+        session?.setCursor(message)
+    }
+
     /// Stop the engines and drop the store, in that order.
     ///
     /// Not a `deinit`: that is nonisolated and cannot touch main-actor state.
@@ -171,6 +220,8 @@ final class Engine {
     /// process exit is exactly when libcrypto goes away underneath a thread
     /// still encrypting a page.
     func shutdown() {
+        keys?.stop()
+        keys = nil
         reachability.stop()
         session?.shutdown()
         session = nil

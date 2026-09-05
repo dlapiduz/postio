@@ -236,6 +236,28 @@ fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
     }
 }
 
+/// The resolver these bindings make, for the running platform.
+///
+/// One place, called from both construction paths, because an in-memory
+/// session that resolved keys differently from a real one would make every
+/// keyboard test a test of the test harness. `Platform::host()` rather than a
+/// parameter: this is the *running* application's keymap, and the both-platform
+/// assertion belongs where it can be made without opening a session at all
+/// (`postio-ui`'s `every_default_binding_resolves_on_both_platforms`).
+///
+/// Problems are logged, never fatal. An override that cannot be used costs
+/// that command its key and nothing else; refusing to open the session over a
+/// mistyped `[keys]` entry would be a mail client held hostage by its own
+/// preferences file, which is the same call `load_key_bindings` makes above.
+fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
+    let keymap = postio_core::Keymap::resolve(keys);
+    let (resolver, problems) = postio_ui::keymap::Resolver::from_commands(&keymap);
+    for problem in &problems {
+        tracing::warn!(%problem, "a key binding could not be used");
+    }
+    resolver
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -305,6 +327,18 @@ pub struct Session {
     /// actually bound, and re-reading `config.toml` on every menu draw would
     /// be a file read per repaint.
     keys: postio_config::keys::KeyBindings,
+    /// The live keymap: the binding table, plus whatever sequence is
+    /// half-typed.
+    ///
+    /// **Held here, not in Swift** (ADR 0019 Q4). A sequence is state -- `g`
+    /// is pending until its second chord or the leader timeout -- and state
+    /// the frontend kept would be a second implementation of the trie the
+    /// moment either side was edited. So the frontend sends one reduced press
+    /// at a time and this remembers what it means.
+    ///
+    /// Built from the same `[keys]` above, resolved for the running platform,
+    /// so `mod+k` is ⌘K here and Ctrl+K on Linux from one table.
+    resolver: Mutex<postio_ui::keymap::Resolver>,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -379,6 +413,30 @@ impl Session {
     #[uniffi::method(name = "rowCount")]
     pub fn row_count_ffi(&self) -> u32 {
         self.row_count()
+    }
+
+    /// What one key press means here. See [`Session::key`].
+    ///
+    /// The frontend reduces its own event to these three things and asks;
+    /// it owns no keymap (ADR 0019 Q4). The answer says whether to swallow
+    /// the key: a command and a pending sequence are handled, and only
+    /// `Unhandled` may reach the toolkit.
+    #[uniffi::method(name = "key")]
+    pub fn key_ffi(
+        &self,
+        character: Option<String>,
+        name: Option<String>,
+        modifiers: crate::ModifiersFfi,
+        context: crate::UiContext,
+        in_text_entry: bool,
+    ) -> crate::KeyOutcomeFfi {
+        self.key(
+            character.as_deref(),
+            name.as_deref(),
+            modifiers,
+            context,
+            in_text_entry,
+        )
     }
 
     /// Run a command, aimed the way this view says it should be.
@@ -593,9 +651,11 @@ impl Session {
             let wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
+            let keys = load_key_bindings(options.config_text.as_deref());
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
-                keys: load_key_bindings(options.config_text.as_deref()),
+                resolver: Mutex::new(build_resolver(&keys)),
+                keys,
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
                 reachable: Mutex::new(Vec::new()),
@@ -649,6 +709,7 @@ impl Session {
             .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            resolver: Mutex::new(build_resolver(&keys)),
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
@@ -746,6 +807,68 @@ impl Session {
             // nothing left to run the verb on.
             tracing::debug!("the runtime has stopped and did not run that");
         }
+    }
+
+    /// Resolve one key press against the bindings in force.
+    ///
+    /// **The whole of the frontend's keyboard, and it decides nothing.** The
+    /// caller reduces its own event to the three things every toolkit can
+    /// supply -- the character the key would type, the key's name when it
+    /// types none, and the modifiers held -- and this hands them to
+    /// `postio_ui::keymap`, which owns the table, the chords, the sequences
+    /// and the leader timeout. `postio-gtk`'s `resolve_key` is the same shape
+    /// over GDK. Two adapters, one keymap; that is what keeps `[keys]`
+    /// meaning the same thing on both platforms (ADR 0019 Q4).
+    ///
+    /// `in_text_entry` is whether the focused surface takes text, and it is
+    /// the caller's to answer because only the caller can see its own focus.
+    /// Getting it wrong is the most visible bug this boundary can have: a
+    /// search field that archives mail on `a` reads as a broken application
+    /// rather than a misrouted key.
+    ///
+    /// Does **not** run the command. The caller needs the answer before it
+    /// acts on it -- a `Command` and a `Pending` are swallowed, an `Unhandled`
+    /// must propagate to whatever the toolkit would have done with the key --
+    /// and a method that both ran the verb and reported it would give the
+    /// caller no way to tell the third case from the first two.
+    pub fn key(
+        &self,
+        character: Option<&str>,
+        name: Option<&str>,
+        modifiers: crate::ModifiersFfi,
+        context: crate::UiContext,
+        in_text_entry: bool,
+    ) -> crate::KeyOutcomeFfi {
+        // A `String` crosses the boundary because a `char` has no uniffi
+        // type, and a frontend that sent two characters would otherwise
+        // silently bind the first. Take the whole scalar or nothing.
+        let character = match character.map(|text| {
+            let mut characters = text.chars();
+            (characters.next(), characters.next())
+        }) {
+            Some((Some(one), None)) => Some(one),
+            // A grapheme cluster, or an empty string: neither is a key a
+            // binding can name, and pretending otherwise would bind whichever
+            // half came first.
+            Some(_) => return crate::KeyOutcomeFfi::Unhandled,
+            None => None,
+        };
+
+        let Some(chord) =
+            postio_ui::keymap::Chord::from_platform_key(character, name, modifiers.into())
+        else {
+            // A dead key mid-composition, or a key this build has no name
+            // for. It has to propagate: a monitor that swallowed a
+            // composition would break every non-Latin keyboard.
+            return crate::KeyOutcomeFfi::Unhandled;
+        };
+
+        let context = postio_ui::keymap::KeyContext::from(postio_core::Context::from(context));
+        self.resolver
+            .lock()
+            .expect("resolver lock")
+            .press(&chord, context, in_text_entry, std::time::Instant::now())
+            .into()
     }
 
     /// Report where the keyboard is, so a verb with nothing marked knows

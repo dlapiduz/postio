@@ -70,6 +70,31 @@ impl From<postio_core::Context> for UiContext {
     }
 }
 
+impl From<UiContext> for postio_core::Context {
+    /// The way back, for a frontend reporting where the keyboard is.
+    ///
+    /// Written out rather than derived, and the pair is checked by
+    /// `every_context_survives_the_round_trip`: a mapping that silently sent
+    /// two surfaces to one would make a key resolve against the wrong context,
+    /// which looks like a binding that stopped working rather than like a
+    /// conversion bug.
+    fn from(context: UiContext) -> Self {
+        use postio_core::Context;
+        match context {
+            UiContext::List => Context::List,
+            UiContext::Conversation => Context::Conversation,
+            UiContext::Reader => Context::Reader,
+            UiContext::Composer => Context::Composer,
+            UiContext::Search => Context::Search,
+            UiContext::Palette => Context::Palette,
+            UiContext::Sidebar => Context::Sidebar,
+            UiContext::Parts => Context::Parts,
+            UiContext::Accounts => Context::Accounts,
+            UiContext::Keys => Context::Keys,
+        }
+    }
+}
+
 /// One row of the registry, on its way to a palette, a cheat sheet or a menu.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CommandSpecFfi {
@@ -136,6 +161,24 @@ mod tests {
     #[test]
     fn nothing_is_dropped_on_the_way_across() {
         assert_eq!(commands().len(), postio_core::registry::all().count());
+    }
+
+    #[test]
+    fn every_context_survives_the_round_trip() {
+        // Both directions are hand-written `match`es over ten variants, and
+        // the compiler checks that each is exhaustive but not that they are
+        // inverses. A pair that sent `Reader` out and `List` back would give
+        // the resolver the wrong context for every key pressed in the reading
+        // pane -- which reads as bindings that do not work, not as a
+        // conversion bug, and would be looked for in the keymap.
+        for context in postio_core::Context::ALL {
+            let crossed = UiContext::from(*context);
+            assert_eq!(
+                postio_core::Context::from(crossed),
+                *context,
+                "{context:?} did not come back as itself"
+            );
+        }
     }
 
     #[test]

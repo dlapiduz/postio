@@ -36,6 +36,7 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod event;
+mod keys;
 mod list;
 mod mailbox;
 mod reader;
@@ -43,6 +44,7 @@ mod registry;
 mod session;
 
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use reader::{InlinePart, RemoteImagesFfi};

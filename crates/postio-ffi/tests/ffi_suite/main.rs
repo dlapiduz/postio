@@ -18,6 +18,7 @@
 
 mod aiming;
 mod config;
+mod keys;
 mod list;
 mod reader;
 mod registry;

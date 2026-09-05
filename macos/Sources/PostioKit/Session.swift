@@ -104,6 +104,57 @@ public final class PostioSession {
         inner.resolveCid(message: message, contentId: contentId)
     }
 
+    /// What one key press means here.
+    ///
+    /// **The whole of this application's keyboard, and it decides nothing.**
+    /// `KeyEvent.reduce` turns an `NSEvent` into the three things every
+    /// toolkit can supply and this asks; `postio_ui::keymap` owns the table,
+    /// the chords, the sequences and the leader timeout, for both frontends
+    /// (ADR 0019 Q4). There is deliberately no Swift keymap to disagree with
+    /// it, and no `.keyboardShortcut`, which could express none of the three.
+    ///
+    /// `typing` is whether the focused surface takes text, and only the caller
+    /// can see that. It is the difference between a search field that takes
+    /// `a` and a list that archives on it.
+    public func key(
+        _ reduced: KeyEvent.Reduced,
+        in context: UiContext,
+        typing: Bool
+    ) -> KeyOutcomeFfi {
+        inner.key(
+            character: reduced.character,
+            name: reduced.name,
+            modifiers: reduced.modifiers,
+            context: context,
+            inTextEntry: typing
+        )
+    }
+
+    /// Run a command, aimed the way the current view says it should be.
+    ///
+    /// Nothing comes back, and that is the architecture rather than an
+    /// omission: a verb writes to SQLite, enqueues and returns, and what
+    /// happened arrives on `nextEvent`. The UI never awaits the network.
+    public func invoke(_ id: String) { inner.invoke(id: id) }
+
+    /// Report where the keyboard is, so a verb with nothing marked knows
+    /// which row it is about.
+    ///
+    /// The *cursor*, not the selection: `docs/PRODUCT.md` §9 keeps them
+    /// separate, and moving down the list must not build a selection.
+    public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
+
+    /// The binding in force for a command, for drawing an accelerator.
+    ///
+    /// The user's override if there is one, the built-in default otherwise,
+    /// and resolved for this platform — so a Mac gets `cmd+k` rather than the
+    /// `mod+k` the table stores. A menu that read `defaultBinding` directly
+    /// would show the wrong key for a rebound command, which is worse than
+    /// showing none.
+    public func binding(for command: String) -> String? {
+        inner.bindingFor(command: command)
+    }
+
     /// Start syncing every configured account; answers how many started.
     @discardableResult
     public func startSyncing() throws -> UInt32 { try inner.startSyncing() }
