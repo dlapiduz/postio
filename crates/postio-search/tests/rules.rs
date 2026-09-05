@@ -155,3 +155,65 @@ fn a_point_with_no_rules_says_so_before_any_work_is_done() {
          read a body back out of the store to match nothing against it"
     );
 }
+
+/// `stop` halts the rules below a match, and the rules above it are
+/// untouched (ADR 0008 Q4, #481).
+///
+/// At this layer rather than only in the sync suite, because this is where
+/// the decision is made: the sync pass runs whatever `matching` answers, so
+/// a `stop` that leaked one rule too far would be a filing bug found in a
+/// mailbox rather than a list found in a test.
+#[test]
+fn a_matching_rule_that_stops_hides_the_rules_below_it() {
+    let stopping = Rule {
+        stop: true,
+        ..rule("second", "from:ada")
+    };
+    let rules = [
+        rule("first", "from:ada"),
+        stopping,
+        rule("third", "from:ada"),
+    ];
+    let set = RuleSet::compile(&rules, today());
+    let message = a_message();
+    let subject = Subject::new(&message);
+
+    let fired: Vec<&str> = set
+        .matching(Stage::OnArrival, &subject)
+        .into_iter()
+        .map(|rule| rule.name.as_str())
+        .collect();
+    assert_eq!(
+        fired,
+        vec!["first", "second"],
+        "the stopping rule runs -- `stop` halts what is *below* it, not \
+         itself -- and the rule after it is not evaluated at all"
+    );
+}
+
+/// A rule carrying `stop` that does not match stops nothing.
+#[test]
+fn a_stop_on_a_rule_that_did_not_match_is_not_a_stop() {
+    let rules = [
+        Rule {
+            stop: true,
+            ..rule("others", "from:babbage")
+        },
+        rule("ada", "from:ada"),
+    ];
+    let set = RuleSet::compile(&rules, today());
+    let message = a_message();
+    let subject = Subject::new(&message);
+
+    let fired: Vec<&str> = set
+        .matching(Stage::OnArrival, &subject)
+        .into_iter()
+        .map(|rule| rule.name.as_str())
+        .collect();
+    assert_eq!(
+        fired,
+        vec!["ada"],
+        "`stop` is a property of a rule that *fired*: a rule the message did \
+         not select has decided nothing about the rules under it"
+    );
+}

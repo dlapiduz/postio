@@ -60,6 +60,7 @@ pub mod initial;
 pub mod order;
 pub mod resync;
 pub mod retry;
+mod rules;
 pub mod send;
 pub mod status;
 pub mod watch;
