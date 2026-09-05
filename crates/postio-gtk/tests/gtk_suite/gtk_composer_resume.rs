@@ -102,3 +102,67 @@ pub fn resuming_replaces_the_draft_the_composer_was_holding() {
     settle();
     assert_eq!(composer.test_subject(), "Tide gate interlock, revised");
 }
+
+/// #1196: `c` on a *closed* composer starts a blank message.
+///
+/// This is where #691's guarantee lives now. `composer::opening` used to
+/// decide between the kept draft and the asked-for one, and three unit tests
+/// held its exceptions in place; it returns `Fill` unconditionally since
+/// #1196, so asserting on it proves nothing any more. What can still fail is
+/// the widget.
+///
+/// Note what does *not* change: `c` while the composer is already open is
+/// still "show me the draft" — that is `open`'s own first branch, and the
+/// case above asserts it. The rule was always about the keyboard; it had
+/// grown to cover the draft as well.
+pub fn composing_after_a_kept_draft_starts_blank() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.present();
+    settle();
+    let composer = composer::install(&window);
+
+    composer.open(a_draft(
+        1,
+        "Thank you for your enrollment",
+        "quinn@example.net",
+    ));
+    settle();
+
+    // Escape keeps it. That is the autosave's doing, not the restore's --
+    // which is the whole reason the restore could go.
+    assert_eq!(composer.close(), composer::Closing::Keep);
+    settle();
+
+    composer.open(Draft::new(AccountId::UNASSIGNED));
+    settle();
+
+    assert_eq!(
+        composer.test_subject(),
+        "",
+        "compose means a new message. It used to reopen the last draft, \
+         which reads as the composer refusing to start one"
+    );
+
+    // Nothing was lost by starting fresh: the displaced draft is a row in
+    // Drafts, and naming it brings it back.
+    composer.resume(a_draft(
+        1,
+        "Thank you for your enrollment",
+        "quinn@example.net",
+    ));
+    settle();
+    assert_eq!(
+        composer.test_subject(),
+        "Thank you for your enrollment",
+        "the draft compose displaced is still resumable by name"
+    );
+}

@@ -214,3 +214,56 @@ pub fn the_toolbar_reaches_the_registry_commands_and_reflects_the_caret() {
         matches!(composer.document().blocks.first(), Some(Block::Quote(_)))
     });
 }
+
+/// #1197: the toolbar has a control for attaching a file, and it runs the
+/// registry command rather than a path of its own.
+///
+/// Everything behind it already worked — the command, its `mod+shift+a`
+/// binding, the file chooser, the drop target, and `postio-app`'s
+/// blob-store write. What was missing was any way to *find* it, which made
+/// the honest answer to "how do I attach a file" a keybinding you had to
+/// already know.
+pub fn the_toolbar_offers_attaching_a_file() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under the headless runner to exercise this)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let composer = composer::install(&window);
+    window.handle_key(
+        gdk::Key::from_name("c").unwrap(),
+        gdk::ModifierType::empty(),
+    );
+    pump();
+    assert!(composer.is_open());
+
+    let attach = find(&composer.clone().upcast(), "postio-toolbar-attach")
+        .expect("the composer toolbar has an attach control");
+    assert!(
+        attach.is_visible(),
+        "and it is on screen with the rest of them"
+    );
+
+    let tooltip = attach
+        .tooltip_text()
+        .map(|text| text.to_string())
+        .unwrap_or_default();
+    assert!(
+        tooltip.starts_with(postio_core::registry::get(postio_core::CommandId::AttachFile).title),
+        "the tooltip names the command from the registry, so the button and \
+         the key cannot come to say different things: {tooltip:?}"
+    );
+    assert!(
+        tooltip.contains('+'),
+        "and it says which key, which is the whole point of adding it: \
+         {tooltip:?}"
+    );
+}

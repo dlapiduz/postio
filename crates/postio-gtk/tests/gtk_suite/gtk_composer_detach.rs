@@ -33,7 +33,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::{CommandId, Context, registry};
-use postio_gtk::composer::{self, Closing, Field};
+use postio_gtk::composer::{self, Closing, Field, closing};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::{AccountId, Draft, EmailAddress, MessageBody};
@@ -357,14 +357,23 @@ pub fn the_composer_detaches_into_its_own_window_and_comes_back() {
     assert_eq!(window.context(), Context::List);
     assert!(!shell.has_css_class(composer::COMPOSING_CLASS));
 
+    // Kept, not discarded — asserted where keeping actually happens. It used
+    // to be asserted by pressing `c` and looking at what came back, which
+    // stopped being the instrument when `c` started meaning "a new message"
+    // (#1196). The guarantee is unchanged and is the autosave's: `Keep` is
+    // what sends the draft to the Drafts folder on the way out.
+    assert_eq!(
+        closing(&before),
+        Closing::Keep,
+        "Esc kept the draft — closing a detached composer is not discarding it"
+    );
     press(&window, "c", gdk::ModifierType::empty());
     settle();
     assert_eq!(
         composer.draft().subject,
-        before.subject,
-        "Esc kept the draft — closing a detached composer is not discarding it"
+        "",
+        "and `c` afterwards is a new message, not the one just kept"
     );
-    assert_eq!(composer.close(), Closing::Keep);
 
     // ── Sending from the detached window is how most pop-outs end, and it
     //    has to leave the application in exactly the state Esc leaves it ──
@@ -374,6 +383,15 @@ pub fn the_composer_detaches_into_its_own_window_and_comes_back() {
         move |draft| sent.borrow_mut().push(draft.clone())
     });
 
+    // Closed first: the composer is open on the blank composition `c` just
+    // started, and `open` on an open composer is a no-op that returns the
+    // keyboard rather than replacing what is being typed. (`resume` would
+    // not do it either — both drafts are unassigned, so it reads as a
+    // request for the one already showing.) Closing and opening is what a
+    // person does, and it is what this half of the test needs: a real draft
+    // to send.
+    composer.close();
+    settle();
     composer.open(started());
     settle();
     press(
@@ -414,11 +432,13 @@ pub fn the_composer_detaches_into_its_own_window_and_comes_back() {
 
     assert!(!composer.is_open(), "the window's close button closes it");
     assert!(!composer.is_detached());
-    press(&window, "c", gdk::ModifierType::empty());
-    settle();
+    // Kept, exactly as Esc keeps it — and asserted the same way the Esc
+    // case above is, on `closing`, which is what decides whether the
+    // autosave has anything to write. Pressing `c` and looking is no longer
+    // the instrument: `c` means a new message (#1196).
     assert_eq!(
-        composer.draft().subject,
-        started().subject,
+        closing(&started()),
+        Closing::Keep,
         "and keeps the draft, exactly as Esc does"
     );
 }

@@ -252,3 +252,78 @@ fn hit(id: i64) -> SearchHit {
         score: -1.0,
     }
 }
+
+/// #1195: a conversation is an occupant too, and the composer takes the pane
+/// from it.
+///
+/// The conversation pane arrived after #502 and never joined the registry —
+/// it set its own visibility and hid the reader by hand instead. So
+/// `set_composing(true)` hid the reader, which was already hidden, showed the
+/// composer, and left the conversation on screen above it: the composer drew
+/// in the bottom quarter of the window with the thread still filling the top.
+///
+/// The old code could not fail a test that asked "is the composer visible" —
+/// it was. What it fails is this one: **is anything else**.
+pub fn the_composer_takes_the_pane_from_a_conversation_and_gives_it_back() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let thread = ThreadId::new(7);
+    let row = |id: i64| crate::gtk_reader_pane_owner::conversation_row(id, thread);
+    window.show_conversation(vec![row(1), row(2)]);
+    pump();
+
+    let conversation = window.conversation().widget();
+    let composer = window.composer();
+    assert!(conversation.is_visible(), "the thread is on screen");
+
+    composer.open(Draft::new(postio_model::ids::AccountId::new(1)));
+    pump();
+
+    assert!(composer.is_visible(), "the composer took the pane");
+    assert!(
+        !conversation.is_visible(),
+        "and it took it *from* the conversation -- both visible is the \
+         composer drawn in a corner of the window with the thread above it"
+    );
+
+    composer.close();
+    pump();
+
+    assert!(!composer.is_visible(), "the composer gave the pane back");
+    assert!(
+        conversation.is_visible(),
+        "to the conversation it took it from, not to the single-message \
+         reader behind it"
+    );
+
+    window.destroy();
+}
+
+/// A row that stands for a message in `thread`.
+pub fn conversation_row(id: i64, thread: ThreadId) -> postio_gtk::list::Row {
+    postio_gtk::list::Row {
+        id: MessageId::new(id),
+        thread: Some(thread),
+        from: Some(EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")),
+        subject: Some("Radon reduction".into()),
+        preview: Some("A line of it.".into()),
+        received_at: chrono::Utc::now(),
+        seen: true,
+        flagged: false,
+        answered: false,
+        draft: false,
+        has_attachments: false,
+        thread_count: 2,
+        participants: Vec::new(),
+    }
+}

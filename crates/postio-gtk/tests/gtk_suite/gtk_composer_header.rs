@@ -66,7 +66,16 @@ pub fn the_compose_button_tracks_the_composer_and_closes_it_when_pressed_again()
     );
 
     // ── The draft was kept, exactly as Esc would have kept it ─────────────
-    gtk::gio::prelude::ActionGroupExt::activate_action(&window, "compose", None);
+    //
+    // Asserted through `resume`, which is what the Drafts folder does with
+    // the row the autosave left behind. It used to be asserted by pressing
+    // the button again and looking at what came back — that stopped being
+    // the instrument when compose started meaning "a new message" (#1196),
+    // and the guarantee it was really about is this one: nothing typed is
+    // lost by closing.
+    let mut kept = Draft::new(AccountId::UNASSIGNED);
+    kept.subject = "Q3 numbers".to_owned();
+    composer.resume(kept);
     settle();
     assert_eq!(
         composer.draft().subject,

@@ -311,6 +311,51 @@ pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
     ),
 ];
 
+/// Who to ask to run a `CommandId` one of this pane's bars carries.
+type CommandHandler = Box<dyn Fn(postio_core::CommandId)>;
+
+/// What a message offers when it is the only one there is.
+///
+/// #1173: a one-message thread drew both bars, so `Reply` appeared twice
+/// with `e` printed on each. The question it raised — *is a single message a
+/// degenerate conversation with a footer, or its own view with its own bar?*
+/// — is answered by `Design/screens/19-threaded-view-fixes.png`, which draws
+/// one bar at the foot of a single message reading `Reply · Reply all ·
+/// Forward · Archive`, and by `17-conversation-view.png`, which draws the
+/// footer's conversation verbs only on a thread that has a conversation in
+/// it.
+///
+/// So: its own view, and `Archive` joins the three. That answers the
+/// objection the issue raised against simply hiding the footer — archive is
+/// the verb people reach for most, and hiding the footer alone would have
+/// taken it away. `ArchiveThread` rather than `Archive` because a
+/// one-message thread *is* the message: the two verbs mean the same act
+/// here, and using the thread's own command keeps the button on the same
+/// path `A` already takes.
+pub const LONE_MESSAGE_ACTIONS: [crate::widgets::Action; 4] = [
+    crate::widgets::Action::new(
+        postio_core::CommandId::Reply,
+        "Reply",
+        "conversation-action-reply",
+    )
+    .primary(),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ReplyAll,
+        "Reply all",
+        "conversation-action-reply-all",
+    ),
+    crate::widgets::Action::new(
+        postio_core::CommandId::Forward,
+        "Forward",
+        "conversation-action-forward",
+    ),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ArchiveThread,
+        "Archive",
+        "conversation-action-archive",
+    ),
+];
+
 /// The conversation's own verbs, drawn in the footer.
 ///
 /// Reply, reply-all and forward are per *message* and live inside each entry
@@ -496,6 +541,13 @@ mod imp {
         /// where the conversation's own verbs live, as against the
         /// per-message ones inside each entry (#1006).
         pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
+        /// Who to ask to run a `CommandId` one of this pane's bars carries.
+        ///
+        /// The footer had none, so `Reply to conversation` and `Archive
+        /// thread` were buttons that did nothing when pressed — `ActionBar`
+        /// runs its handler list and the list was empty. Found while giving
+        /// the lone message's own `Archive` a path (#1173).
+        pub(super) on_command: RefCell<Vec<super::CommandHandler>>,
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.
         pub(super) scroller: gtk::ScrolledWindow,
@@ -586,6 +638,7 @@ mod imp {
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(crate::list_view::DWELL_TO_READ),
                 dividers: RefCell::new(Vec::new()),
+                on_command: RefCell::new(Vec::new()),
             }
         }
     }
@@ -623,6 +676,10 @@ mod imp {
             self.root.append(&self.scroller);
             self.root.append(&self.footer.widget());
             self.footer.set_visible(false);
+            self.footer.connect_command({
+                let view = view.clone();
+                move |command| view.emit_command(command.id())
+            });
             self.root.set_parent(&*view);
         }
 
@@ -699,7 +756,11 @@ impl ConversationView {
         self.cancel_dwell();
 
         imp.header.set_conversation(&messages, chrono::Local::now());
-        imp.footer.set_visible(!messages.is_empty());
+        // A footer for a *conversation*. One message is not one, and drawing
+        // both bars put `Reply` on screen twice with `e` on each (#1173);
+        // the lone message carries `Archive` in its own bar instead, so
+        // nothing is lost by the footer standing down.
+        imp.footer.set_visible(messages.len() > 1);
 
         let focus = opening_focus(&messages);
         let expanded = match focus {
@@ -711,7 +772,7 @@ impl ConversationView {
             // Numbered from one. Nothing draws the number since #1003 took
             // the column away, but a screen reader still says "3 of 8", which
             // is the position a sighted reader gets from the stack itself.
-            let entry = self.build_entry(row, index as u32 + 1);
+            let entry = self.build_entry(row, index as u32 + 1, messages.len() == 1);
             imp.stack.append(&entry.container());
             imp.entries.borrow_mut().push(entry);
             if expanded.get(index).copied().unwrap_or(false) {
@@ -1235,7 +1296,13 @@ impl ConversationView {
         imp.scroller.vadjustment().set_value(bounds.y() as f64);
     }
 
-    fn build_entry(&self, row: &Row, index: u32) -> imp::Entry {
+    /// One entry in the stack.
+    ///
+    /// `alone` is whether this message is the whole conversation, which
+    /// decides which verbs it carries: on its own it is a view in its own
+    /// right and takes `Archive` with it, because the footer that would
+    /// otherwise have carried that verb is not drawn (#1173).
+    fn build_entry(&self, row: &Row, index: u32, alone: bool) -> imp::Entry {
         let header = crate::thread_row::ThreadRowView::new();
         header.set_row(Some(row.clone()), index);
 
@@ -1252,10 +1319,25 @@ impl ConversationView {
         // no caps at all, in a pane whose whole point is that `e` acts on
         // whichever message you are looking at.
         let message = row.id;
-        let actions = crate::widgets::ActionBar::new(&MESSAGE_ACTIONS, "conversation-actions");
+        let actions = crate::widgets::ActionBar::new(
+            if alone {
+                &LONE_MESSAGE_ACTIONS[..]
+            } else {
+                &MESSAGE_ACTIONS[..]
+            },
+            "conversation-actions",
+        );
         actions.set_visible(false);
         let view = self.clone();
         actions.connect_command(move |command| {
+            // `Archive` is only ever in this bar when the message is the
+            // whole thread, where archiving it and archiving the thread are
+            // the same act — so it goes out on the conversation's own path
+            // rather than growing a second one.
+            if command.id() == postio_core::CommandId::ArchiveThread {
+                view.emit_command(command.id());
+                return;
+            }
             let kind = match command.id() {
                 postio_core::CommandId::Reply => ReplyKind::Reply,
                 postio_core::CommandId::ReplyAll => ReplyKind::ReplyAll,
@@ -1292,6 +1374,24 @@ impl ConversationView {
             shown: std::cell::Cell::new(false),
             container,
         }
+    }
+
+    /// Tells whoever is listening to run `command`.
+    ///
+    /// The pane raises `CommandId`s and runs none of them, the same
+    /// arrangement every other surface here has: `window.rs` owns the one
+    /// dispatch a keystroke, a menu item and a palette entry all go through,
+    /// and a second path from a button straight to the runtime is how two
+    /// surfaces come to disagree about what a verb means.
+    fn emit_command(&self, command: postio_core::CommandId) {
+        for handler in self.imp().on_command.borrow().iter() {
+            handler(command);
+        }
+    }
+
+    /// Who to ask to run a command one of this pane's bars carries.
+    pub fn connect_command(&self, handler: impl Fn(postio_core::CommandId) + 'static) {
+        self.imp().on_command.borrow_mut().push(Box::new(handler));
     }
 
     fn emit_action(&self, message: MessageId, kind: ReplyKind) {
