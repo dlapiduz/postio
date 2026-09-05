@@ -152,6 +152,19 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
     (
+        "gtk_composer_toolbar::the_toolbar_offers_attaching_a_file",
+        gtk_composer_toolbar::the_toolbar_offers_attaching_a_file as fn(),
+    ),
+    (
+        "gtk_composer_resume::composing_after_a_kept_draft_starts_blank",
+        gtk_composer_resume::composing_after_a_kept_draft_starts_blank as fn(),
+    ),
+    (
+        "gtk_reader_pane_owner::the_composer_takes_the_pane_from_a_conversation_and_gives_it_back",
+        gtk_reader_pane_owner::the_composer_takes_the_pane_from_a_conversation_and_gives_it_back
+            as fn(),
+    ),
+    (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
     ),

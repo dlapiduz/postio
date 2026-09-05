@@ -541,10 +541,10 @@ impl Window {
 
         let pane = self.conversation();
         pane.open(rows);
-        pane.widget().set_visible(true);
-        if let Some(reader) = self.imp().reader.get() {
-            reader.widget().set_visible(false);
-        }
+        // Said to the pane's one owner rather than done by hand: the reader
+        // is hidden because the arbiter shows exactly one occupant, and
+        // nothing here has to know that the reader is the one it displaces.
+        self.shell().set_conversing(true);
     }
 
     /// Whether the conversation pane is up and showing `thread`.
@@ -753,8 +753,21 @@ impl Window {
         let widget = pane.widget();
         widget.set_vexpand(true);
         widget.set_hexpand(true);
-        widget.set_visible(false);
         self.shell().reader().append(&widget);
+        // The arbiter owns whether this shows, exactly as it owns the reader
+        // beside it (#502). It did not, and the composer taking the pane
+        // therefore hid the reader — already hidden — and left the
+        // conversation on screen above it, sharing the pane (#1195).
+        self.shell()
+            .register_reader_occupant(crate::shell::ReaderOccupant::Conversation, &widget);
+        // Its bars raise commands and run none of them, like every other
+        // surface here. The footer's own two had no handler at all before
+        // this, so pressing `Archive thread` did nothing (#1173).
+        pane.connect_command(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |command| window.run(command)
+        ));
 
         let _ = self.imp().conversation.set(pane.clone());
         pane
@@ -917,16 +930,14 @@ impl Window {
         self.sync_reading_pane();
     }
 
-    /// Hide the conversation pane so the reader can have its place.
+    /// The pane is no longer open on a thread.
     ///
-    /// Only the manual half of [`Window::show_conversation`]'s swap is
-    /// undone here: the reader's own widget is the arbiter's to show, and
-    /// `claim_reading` follows every call to this — putting it back by hand
-    /// would also put it back while the composer holds the pane.
+    /// A flag, not a swap. `claim_reading` follows every call to this and is
+    /// what puts the reader up; saying so here as well would also say it
+    /// while the composer holds the pane, which is the whole reason the
+    /// arbiter exists (#502, #1195).
     fn take_pane_from_conversation(&self) {
-        if let Some(pane) = self.imp().conversation.get() {
-            pane.widget().set_visible(false);
-        }
+        self.shell().set_conversing(false);
     }
 
     /// Empty the reading pane — the folder changed, or the message went away.
