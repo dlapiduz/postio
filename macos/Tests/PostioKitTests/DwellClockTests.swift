@@ -5,8 +5,10 @@ import Testing
 
 /// Resting marks; sweeping does not (#71, #1159).
 ///
-/// Time is injected rather than waited for, so these assert the *rule* and
-/// run in microseconds. The rule is the one that matters: unread state is
+/// Time is injected rather than waited for, so these assert the wiring and
+/// run in microseconds. The *rule* — what to do about a cursor on nothing,
+/// and how long to wait — is `postio_ui::dwell`'s and is asserted there; what
+/// these hold is that this clock asks it and honours the answer. The rule is the one that matters: unread state is
 /// only a signal while it means "you have not looked at this", and a client
 /// that marks on arrival destroys it the first time somebody scrolls a
 /// mailbox end to end.
@@ -58,7 +60,7 @@ import Testing
     }
 
     private func clock(_ fake: Fake, marked: @escaping (Int64) -> Void) -> DwellClock {
-        DwellClock(delay: 1, schedule: { fake.schedule($0, $1) }, fired: marked)
+        DwellClock(schedule: { fake.schedule($0, $1) }, fired: marked)
     }
 
     @Test func restingOnAMessageMarksIt() {
