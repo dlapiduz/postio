@@ -185,6 +185,16 @@ public final class PostioSession {
         inner.snippetFor(message: message)
     }
 
+    /// Whether `id` can run in `context`, given the open view.
+    ///
+    /// What a menu asks before drawing an item enabled. The same question the
+    /// palette's filter answers, so the two cannot disagree — before #1158
+    /// only the palette was asking, and the menu drew Send and the whole
+    /// Format menu as live options against a build with no composer.
+    public func isAvailable(_ id: String, in context: UiContext) -> Bool {
+        inner.isAvailable(id: id, context: context)
+    }
+
     /// The palette's rows for `query`, best first.
     ///
     /// Already ranked and already filtered to what `context` can run.

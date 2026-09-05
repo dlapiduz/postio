@@ -23,8 +23,12 @@ import PostioKit
 @MainActor
 enum MenuBar {
     /// Build the bar and install it, routing every choice through `run`.
-    static func install(binding: @escaping (String) -> String?, run: @escaping (String) -> Void) {
-        let target = CommandTarget(run: run)
+    static func install(
+        binding: @escaping (String) -> String?,
+        available: @escaping (String) -> Bool,
+        run: @escaping (String) -> Void
+    ) {
+        let target = CommandTarget(run: run, available: available)
         Self.target = target
 
         let bar = NSMenu()
@@ -127,16 +131,30 @@ enum MenuBar {
 /// One target for the whole bar, carrying the registry id on the item itself,
 /// rather than a selector per command — which would be a list of commands
 /// written in Swift, and is exactly what #657 exists to prevent.
+///
+/// It is also what validates: `NSMenu` asks its items' target before opening,
+/// so this is where an item the build cannot run is greyed. The answer comes
+/// from the boundary, so the menu and the palette ask the same question and a
+/// command added in Rust is filtered with no Swift change (#1158).
 @MainActor
-private final class CommandTarget: NSObject {
+private final class CommandTarget: NSObject, NSMenuItemValidation {
     private let runner: (String) -> Void
+    private let available: (String) -> Bool
 
-    init(run: @escaping (String) -> Void) {
+    init(run: @escaping (String) -> Void, available: @escaping (String) -> Bool) {
         runner = run
+        self.available = available
     }
 
     @objc func run(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         runner(id)
+    }
+
+    /// AppKit asks this for every item whose target we are, each time a menu
+    /// is about to open.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let id = item.representedObject as? String else { return true }
+        return available(id)
     }
 }
