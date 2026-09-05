@@ -3006,6 +3006,7 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-model",
+ "postio-search",
  "thiserror",
 ]
 
