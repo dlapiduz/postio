@@ -234,12 +234,17 @@ echo
 # Keyed on what the host can actually build, not on `uname`: a Linux box
 # without the -dev packages is in exactly the same position, and would
 # otherwise pass a check that named an operating system. #555.
-MISSING_LIBS=""
-for lib in gtk4 libadwaita-1 webkitgtk-6.0; do
-    pkg-config --exists "$lib" 2>/dev/null || MISSING_LIBS="${MISSING_LIBS:+$MISSING_LIBS }$lib"
-done
-UNBUILDABLE=""
-[ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-gtk postio-app"
+#
+# Derived rather than named. The roots are the two crates whose system
+# libraries can be missing; the answer is those *plus everything that reaches
+# them*, which is not the same set -- `postio-bench` dev-depends on
+# `postio-gtk`, so it needs WebKit too and nothing in its own manifest says
+# so. A hardcoded pair was right the day it was written and would go wrong
+# the next time a crate dev-depends on the frontend, silently and only on
+# macOS (#1152). See `scripts/unbuildable-crates.sh`.
+MISSING_LIBS=$(scripts/unbuildable-crates.sh --libs)
+UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
+UNBUILDABLE="${UNBUILDABLE% }"
 
 BLOCKED=""
 for crate in $CRATES; do
@@ -445,7 +450,29 @@ if [ "$GATES_GREEN" != 1 ]; then
         #
         # `--lib` excludes doctests under either runner, so this tier loses
         # nothing by not calling run_doctests.
-        cargo test --workspace --lib
+        #
+        # Narrowed, not skipped, on a host missing the GTK libraries. The
+        # workspace *check* below is skipped outright there and that is the
+        # right call for a compile probe -- but this is the only real test
+        # gate a landing has, and skipping it would let a macOS session land
+        # with nothing run at all. Every crate the host can build still runs;
+        # the two it cannot are excluded by name and the PR already carries
+        # `needs-linux-verify` to say so.
+        #
+        # Without this a scripts-only change could not land from a Mac: no
+        # crate changed, so the #555 hard stop correctly did not fire, and
+        # then the tier compiled the whole workspace anyway and died on
+        # `glib-sys` (#1152). Excluding the two obvious crates is not enough
+        # either -- `postio-bench` dev-depends on `postio-gtk` and drags the
+        # stack back in -- which is why the list is derived.
+        SANITY_EXCLUDES=()
+        for crate in $UNBUILDABLE; do
+            SANITY_EXCLUDES+=(--exclude "$crate")
+        done
+        if [ ${#SANITY_EXCLUDES[@]} -gt 0 ]; then
+            echo "note: excluding ${UNBUILDABLE// /, } -- this host cannot build them."
+        fi
+        cargo test --workspace --lib ${SANITY_EXCLUDES[@]+"${SANITY_EXCLUDES[@]}"}
         echo "[timing] sanity tier: $(( $(date +%s) - PHASE_START ))s"
     fi
 
