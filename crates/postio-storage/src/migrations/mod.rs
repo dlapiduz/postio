@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 12] = [
+static MIGRATIONS: [Migration; 13] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -145,6 +145,11 @@ static MIGRATIONS: [Migration; 12] = [
         version: 12,
         name: "oauth_refresh_grant_lifetime",
         sql: include_str!("0012_oauth_refresh_grant_lifetime.sql"),
+    },
+    Migration {
+        version: 13,
+        name: "default_account",
+        sql: include_str!("0013_default_account.sql"),
     },
 ];
 

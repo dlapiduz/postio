@@ -23,6 +23,17 @@ fn an_account() -> Account {
     account
 }
 
+/// A second account, so "at most one is the default" means something.
+fn another_account() -> Account {
+    let mut account = Account::new(
+        "Fastmail",
+        EmailAddress::new(Some("Ada Norwood"), "ada@example.net"),
+    );
+    account.incoming.host = "imap.example.net".to_owned();
+    account.outgoing.host = "smtp.example.net".to_owned();
+    account
+}
+
 fn an_identity(address: &str) -> Identity {
     Identity::new(
         AccountId::UNASSIGNED,
@@ -812,5 +823,174 @@ fn deleting_the_default_signature_leaves_no_dangling_reference() {
         loaded.signatures.len(),
         1,
         "and the one that was not deleted is still there"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The default account (#960)
+// ---------------------------------------------------------------------------
+
+/// At most one account is the default, and setting it moves the marker.
+///
+/// The same invariant `Identity.is_default` has one level down, deliberately:
+/// #960's decision is that this is the same idea at the account level, so it
+/// is one concept to learn rather than two, and the composer's resolution
+/// reads as "default account, then that account's default identity".
+///
+/// Enforced in the repository rather than by a partial unique index, because
+/// what a caller asks for is "make this one the default" -- a constraint that
+/// merely refused the second `UPDATE` would leave the caller to clear the
+/// first, which is the race this exists to prevent.
+#[test]
+fn at_most_one_account_is_the_default_and_setting_it_moves_the_marker() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut first = an_account();
+    let first_id = accounts.create(&mut first).expect("create");
+    let mut second = another_account();
+    let second_id = accounts.create(&mut second).expect("create");
+
+    accounts.set_default(first_id).expect("mark the first");
+    accounts.set_default(second_id).expect("move it");
+
+    let marked: Vec<AccountId> = accounts
+        .list()
+        .expect("list")
+        .into_iter()
+        .filter(|account| account.is_default)
+        .map(|account| account.id)
+        .collect();
+    assert_eq!(
+        marked,
+        [second_id],
+        "exactly one account carries the marker, and it moved to the one \
+         last asked for"
+    );
+}
+
+/// A fresh store has no default, and that is a normal state.
+///
+/// #960: `None` is what every existing store has, and it must resolve to
+/// today's behaviour rather than to an error or a migration that picks one on
+/// the user's behalf -- choosing for them is what the issue exists to stop.
+#[test]
+fn a_new_account_is_not_the_default_until_somebody_says_so() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+
+    assert!(
+        !accounts
+            .get(id)
+            .expect("get")
+            .expect("the account")
+            .is_default,
+        "adding an account must not make it the default: an install with one \
+         account has never been asked the question"
+    );
+}
+
+/// Marking one is not a way to rewrite the rest of the row.
+#[test]
+fn set_default_flips_only_that_column() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+    let before = accounts.get(id).expect("get").expect("the account");
+
+    accounts.set_default(id).expect("mark it");
+
+    let after = accounts.get(id).expect("get").expect("the account");
+    assert!(after.is_default, "the marker is set");
+    assert_eq!(
+        Account {
+            is_default: before.is_default,
+            ..after
+        },
+        before,
+        "and nothing else about the account moved"
+    );
+}
+
+/// Asking for an account that is not there says so rather than clearing the
+/// marker nobody asked it to clear.
+///
+/// The dangerous shape is the one where the first statement -- clear every
+/// marker -- lands and the second finds no row: the store would be left with
+/// no default because a caller named a stale id. Both statements are in one
+/// transaction and a missing row rolls it back.
+#[test]
+fn set_default_on_a_missing_account_leaves_the_marker_where_it_was() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+    accounts.set_default(id).expect("mark it");
+
+    let missing = AccountId::new(id.get() + 404);
+    assert!(
+        accounts.set_default(missing).is_err(),
+        "a stale id is an error, not a silent clear"
+    );
+    assert!(
+        accounts
+            .get(id)
+            .expect("get")
+            .expect("the account")
+            .is_default,
+        "and the account that was the default still is: clearing every marker \
+         and then failing to set one would leave the store with no default \
+         because somebody named a row that is gone"
+    );
+}
+
+/// Removing the account takes the marker with it.
+///
+/// #960 asks that removal never leave a dangling marker. A column on
+/// `accounts` gets that by construction -- the row goes and the marker goes
+/// with it -- which is one of the reasons the decision put it there rather
+/// than in `config.toml`. The soft-delete window is deliberately *not* a
+/// clear: #464's removal is reversible from a toast, and a marker cleared on
+/// the way out would not come back when the account did.
+#[test]
+fn reaping_a_removed_account_takes_its_default_marker_with_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection);
+
+    let mut account = an_account();
+    let id = accounts.create(&mut account).expect("create");
+    accounts.set_default(id).expect("mark it");
+    accounts.mark_pending_deletion(id).expect("remove it");
+
+    assert!(
+        accounts
+            .get(id)
+            .expect("get")
+            .expect("still there until it is reaped")
+            .is_default,
+        "the marker survives the toast window, or undoing the removal would \
+         hand back an account that had quietly stopped being the default"
+    );
+
+    accounts.reap_pending_deletions().expect("reap");
+    assert!(accounts.get(id).expect("get").is_none(), "the row is gone");
+    assert!(
+        accounts
+            .list()
+            .expect("list")
+            .iter()
+            .all(|account| !account.is_default),
+        "and no marker outlives it"
     );
 }
