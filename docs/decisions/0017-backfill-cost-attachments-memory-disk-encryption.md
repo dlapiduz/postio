@@ -49,6 +49,17 @@ those 902 messages is 118 MB, of which 90 MB is raw source and 28 MB is the
 decoded text and HTML stored *alongside* it — every fetched message is
 currently stored **1.3 times**.
 
+**A fixed overhead this ADR did not originally count.** The header index
+(`message_headers` and `idx_message_headers_name`) costs **~3.7 KiB a
+message**, measured on a deliberately heavy fixture and gated at 5 KiB by
+[ADR 0027](0027-the-header-index-is-budgeted-per-message.md) Q2. On the
+81,744-message account above that is **approximately 310 MB**, or roughly a
+third on top of the metadata projection — and unlike a body or an attachment
+it is **not evictable**: it is derived from `messages.body_headers` and a
+`[storage] max_bytes` sweep that dropped it would break `header:` rather
+than reclaim something refetchable. Whatever `max_bytes` comes to mean, this
+is part of the floor rather than part of what can be freed.
+
 Three things follow immediately, and they are the whole of this ADR:
 
 1. **Ninety percent of a mailbox by weight is bytes FTS5 cannot index.** A PDF,
