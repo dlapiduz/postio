@@ -58,6 +58,7 @@ pub mod context;
 pub mod dispatch;
 pub mod event;
 pub mod invocation;
+pub mod menu;
 pub mod perf_budget;
 pub mod registry;
 pub mod state;

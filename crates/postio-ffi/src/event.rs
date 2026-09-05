@@ -135,6 +135,19 @@ pub enum UiEvent {
         /// The page whose rows are now resident.
         page: u32,
     },
+    /// The cursor moved, and to where.
+    ///
+    /// Raised by this boundary rather than by the engine: `j` and `k` move
+    /// the frontend's own state, and the frontend learns where they left it
+    /// the same way it learns everything else. `row` is where the cursor is;
+    /// `message` is what is there, and is `None` while that row's page is
+    /// still on its way — a real state, not an error.
+    CursorMoved {
+        /// The row, or `None` when the list has none.
+        row: Option<u32>,
+        /// The message on it, if its page has arrived.
+        message: Option<i64>,
+    },
     /// An account's connection changed.
     ConnectionChanged {
         /// The account.

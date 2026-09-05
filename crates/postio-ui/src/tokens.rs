@@ -390,6 +390,142 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     Ok(out)
 }
 
+/// The same tokens, as Swift the macOS frontend can compile.
+///
+/// A third emitter beside [`generate`] and [`generate_reader`], from the same
+/// parsed [`Tokens`] and the same required lists — so retuning the design
+/// system moves both frontends or fails the build for both. A Swift file with
+/// `#5980a6` typed into it would be a copy that is right on the day it is
+/// written; Ghostty hand-writes 921 lines of the equivalent and calls it their
+/// worst duplication.
+///
+/// Colours become `NSColor`, lengths `CGFloat`, font families `String`. What
+/// it does **not** yet emit is a dark variant: the GTK side resolves dark
+/// through a `postio-dark` class in `shell.css` rather than through tokens, so
+/// there is one set of values here to emit. A dark ramp is its own work on
+/// both sides.
+pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    // No separate required-token check: `Tokens::parse` already refuses a
+    // design system missing one, so anything that got this far has them.
+    let mut out = String::with_capacity(8 * 1024);
+    writeln!(out, "// GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(out, "// Source     : {source}").unwrap();
+    writeln!(out, "// Emitted by : crates/postio-ui/src/tokens.rs").unwrap();
+    writeln!(out, "// Regenerate : scripts/macos-build.sh").unwrap();
+    writeln!(out, "//").unwrap();
+    writeln!(
+        out,
+        "// Retune the design system's :root block and every value below follows —"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "// on both frontends at once, which is the point of it being generated."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "import AppKit").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "/// Postio's design tokens.").unwrap();
+    writeln!(out, "public enum PostioTokens {{").unwrap();
+
+    for name in tokens.names() {
+        let Some(value) = tokens.get(name) else {
+            continue;
+        };
+        let swift = swift_name(name);
+        if let Some(components) = colour(value) {
+            let (r, g, b, a) = components;
+            writeln!(
+                out,
+                "    /// `--postio-{name}`: `{value}`\n    public static let {swift} = NSColor(srgbRed: {r:.4}, green: {g:.4}, blue: {b:.4}, alpha: {a:.4})"
+            )
+            .unwrap();
+        } else if let Some(points) = length(value) {
+            writeln!(
+                out,
+                "    /// `--postio-{name}`: `{value}`\n    public static let {swift}: CGFloat = {points}"
+            )
+            .unwrap();
+        } else if name.starts_with("font-") && !name.ends_with("-weight") {
+            let family = value
+                .split(',')
+                .next()
+                .unwrap_or(value)
+                .trim()
+                .trim_matches('"');
+            writeln!(
+                out,
+                "    /// `--postio-{name}`: `{value}`\n    public static let {swift} = \"{family}\""
+            )
+            .unwrap();
+        }
+        // Anything else — shadows, weights, gradients — has no single AppKit
+        // equivalent and is deliberately not guessed at here. A wrong shadow
+        // is worse than none, and the ones that matter are drawn by hand.
+    }
+
+    writeln!(out, "}}").unwrap();
+    Ok(out)
+}
+
+/// `color-bg` becomes `colorBg`, so the Swift reads like Swift.
+fn swift_name(token: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut upper = false;
+    for ch in token.chars() {
+        if ch == '-' {
+            upper = true;
+        } else if upper {
+            out.extend(ch.to_uppercase());
+            upper = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// `#rrggbb` or `rgba(r, g, b, a)` as sRGB components in 0..=1.
+fn colour(value: &str) -> Option<(f32, f32, f32, f32)> {
+    let value = value.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        if hex.len() != 6 {
+            return None;
+        }
+        let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+        return Some((
+            channel(0)? as f32 / 255.0,
+            channel(2)? as f32 / 255.0,
+            channel(4)? as f32 / 255.0,
+            1.0,
+        ));
+    }
+    let inner = value.strip_prefix("rgba(")?.strip_suffix(')')?;
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    Some((
+        parts[0].parse::<f32>().ok()? / 255.0,
+        parts[1].parse::<f32>().ok()? / 255.0,
+        parts[2].parse::<f32>().ok()? / 255.0,
+        parts[3].parse::<f32>().ok()?,
+    ))
+}
+
+/// A CSS `px` length as points.
+///
+/// Fractional on purpose: the spacing ramp is `3.4px`, `6.8px`, `10.2px` — a
+/// geometric scale, not whole pixels. An earlier version parsed to `u32` and
+/// silently emitted *nothing* for every space token, which is the failure mode
+/// worth guarding: a generator that drops what it cannot convert produces a
+/// file that compiles and is missing half the design system.
+fn length(value: &str) -> Option<f32> {
+    value.trim().strip_suffix("px")?.trim().parse().ok()
+}
+
 /// Generate `data/reader-tokens.css` from the parsed design system: the
 /// `--r-*` custom properties `data/reader.css`'s structural rules reference.
 ///

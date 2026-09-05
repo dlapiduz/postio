@@ -236,6 +236,28 @@ fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
     }
 }
 
+/// The resolver these bindings make, for the running platform.
+///
+/// One place, called from both construction paths, because an in-memory
+/// session that resolved keys differently from a real one would make every
+/// keyboard test a test of the test harness. `Platform::host()` rather than a
+/// parameter: this is the *running* application's keymap, and the both-platform
+/// assertion belongs where it can be made without opening a session at all
+/// (`postio-ui`'s `every_default_binding_resolves_on_both_platforms`).
+///
+/// Problems are logged, never fatal. An override that cannot be used costs
+/// that command its key and nothing else; refusing to open the session over a
+/// mistyped `[keys]` entry would be a mail client held hostage by its own
+/// preferences file, which is the same call `load_key_bindings` makes above.
+fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
+    let keymap = postio_core::Keymap::resolve(keys);
+    let (resolver, problems) = postio_ui::keymap::Resolver::from_commands(&keymap);
+    for problem in &problems {
+        tracing::warn!(%problem, "a key binding could not be used");
+    }
+    resolver
+}
+
 /// The frontend's handle on the engine.
 ///
 /// Commands go down and events come up; nothing else crosses. The `Wiring`
@@ -274,6 +296,47 @@ pub struct Session {
     reachable: Mutex<Vec<postio_model::ids::AccountId>>,
     /// The row the keyboard is on, as the frontend last reported it.
     cursor: Mutex<Option<postio_model::ids::MessageId>>,
+    /// Where that row *is*, so motion and range extension have something to
+    /// count from.
+    ///
+    /// Held beside the id rather than derived from it: finding an id's
+    /// position means scanning the window, `j` happens on every keypress, and
+    /// a row whose page has not arrived has no id to be found by at all.
+    cursor_row: Mutex<Option<u32>>,
+    /// The current result set, ranked, when a search is what the list shows.
+    ///
+    /// `None` means the list is showing a folder. Ranked rather than sorted,
+    /// which is why no `ListScope` describes it: search hits come back in
+    /// relevance order and the store has no scope that lists them.
+    ///
+    /// Capped at `postio_session::search::HIT_LIMIT`, so holding it is
+    /// bounded — two hundred excerpts, not a mailbox. The *rows* are still
+    /// paged in behind the table exactly as a folder's are; what is resident
+    /// here is the ids and their excerpts.
+    hits: Mutex<Option<Vec<crate::search::Hit>>>,
+    /// The scope to come back to when a search is cleared.
+    ///
+    /// Held here rather than remembered by the frontend, because a frontend
+    /// that remembered it would own navigation state — and would then own it
+    /// differently from the GTK side. Clearing restores the previous scope
+    /// rather than reloading the world.
+    resting: Mutex<Option<postio_runtime::store::ListScope>>,
+    /// How many accounts the open view is about: one, or all of them.
+    ///
+    /// Resolved when the scope changes rather than on every palette keystroke:
+    /// a mailbox belongs to one account and the store is what knows which, and
+    /// the palette asks this on every character typed. It decides only whether
+    /// a command with `Requirement::SingleAccount` is offered — `Move` needs
+    /// somewhere in *that* account to put something, and a unified view has
+    /// no such somewhere (#182).
+    account_scope: Mutex<postio_core::Scope>,
+    /// Where a shift-extension started.
+    ///
+    /// The anchor is what makes shift *extend* rather than accumulate: the
+    /// range is always anchor-to-cursor, so shrinking it back unmarks the rows
+    /// it passed. Set on the first extension from wherever the cursor was, and
+    /// dropped whenever the selection is cleared or the list is re-scoped.
+    anchor: Mutex<Option<u32>>,
     /// Page reads still in flight, and how many have been issued in total.
     ///
     /// The first is what `settle_for_test` waits on. The second is how a test
@@ -282,6 +345,9 @@ pub struct Session {
     /// undo by asking again behind its back.
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     reads: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many reconnects this session has asked for, so a test can see the
+    /// nudge without needing a server to connect to.
+    reconnects: Arc<std::sync::atomic::AtomicUsize>,
     /// Whether the engine currently has no connection at all.
     ///
     /// Pushed down by the frontend rather than observed here: reachability is
@@ -302,6 +368,18 @@ pub struct Session {
     /// actually bound, and re-reading `config.toml` on every menu draw would
     /// be a file read per repaint.
     keys: postio_config::keys::KeyBindings,
+    /// The live keymap: the binding table, plus whatever sequence is
+    /// half-typed.
+    ///
+    /// **Held here, not in Swift** (ADR 0019 Q4). A sequence is state -- `g`
+    /// is pending until its second chord or the leader timeout -- and state
+    /// the frontend kept would be a second implementation of the trie the
+    /// moment either side was edited. So the frontend sends one reduced press
+    /// at a time and this remembers what it means.
+    ///
+    /// Built from the same `[keys]` above, resolved for the running platform,
+    /// so `mod+k` is ⌘K here and Ctrl+K on Linux from one table.
+    resolver: Mutex<postio_ui::keymap::Resolver>,
     /// Events this boundary raises itself, merged into the drain alongside
     /// the engine's. `PageReady` lives here rather than in `postio-core`
     /// because paging is how this frontend reads a list, not something the
@@ -378,6 +456,30 @@ impl Session {
         self.row_count()
     }
 
+    /// What one key press means here. See [`Session::key`].
+    ///
+    /// The frontend reduces its own event to these three things and asks;
+    /// it owns no keymap (ADR 0019 Q4). The answer says whether to swallow
+    /// the key: a command and a pending sequence are handled, and only
+    /// `Unhandled` may reach the toolkit.
+    #[uniffi::method(name = "key")]
+    pub fn key_ffi(
+        &self,
+        character: Option<String>,
+        name: Option<String>,
+        modifiers: crate::ModifiersFfi,
+        context: crate::UiContext,
+        in_text_entry: bool,
+    ) -> crate::KeyOutcomeFfi {
+        self.key(
+            character.as_deref(),
+            name.as_deref(),
+            modifiers,
+            context,
+            in_text_entry,
+        )
+    }
+
     /// Run a command, aimed the way this view says it should be.
     ///
     /// `id` is the registry's own name for the verb, as
@@ -387,6 +489,101 @@ impl Session {
     #[uniffi::method(name = "invoke")]
     pub fn invoke_ffi(&self, id: String) {
         self.invoke(&id);
+    }
+
+    /// Where the cursor is, as a row. See [`Session::cursor_row`].
+    #[uniffi::method(name = "cursorRow")]
+    pub fn cursor_row_ffi(&self) -> Option<u32> {
+        self.cursor_row()
+    }
+
+    /// The message the cursor is on, if its page has arrived.
+    #[uniffi::method(name = "cursorMessage")]
+    pub fn cursor_message_ffi(&self) -> Option<i64> {
+        self.cursor_message()
+    }
+
+    /// Run `query`, and show its hits. See [`Session::search`].
+    ///
+    /// Answers the generation the window is now on, exactly as
+    /// [`openScope`](Session::open_scope_ffi) does — the frontend reloads its
+    /// table against it and pages arrive behind, the same as for a folder.
+    #[uniffi::method(name = "search")]
+    pub fn search_ffi(&self, query: String) -> u64 {
+        self.search(&query)
+    }
+
+    /// Leave search and restore the scope that was open.
+    #[uniffi::method(name = "clearSearch")]
+    pub fn clear_search_ffi(&self) -> u64 {
+        self.clear_search()
+    }
+
+    /// Whether the list is showing search results rather than a folder.
+    #[uniffi::method(name = "isSearching")]
+    pub fn is_searching_ffi(&self) -> bool {
+        self.is_searching()
+    }
+
+    /// The excerpt for `message`, with the match located.
+    ///
+    /// Text and ranges, never marked-up text: each frontend marks it its own
+    /// way from one answer about what matched.
+    #[uniffi::method(name = "snippetFor")]
+    pub fn snippet_for_ffi(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.snippet_for(message)
+    }
+
+    /// The palette's rows for `query`. See [`Session::palette_entries`].
+    #[uniffi::method(name = "paletteEntries")]
+    pub fn palette_entries_ffi(
+        &self,
+        query: String,
+        context: crate::UiContext,
+    ) -> Vec<crate::PaletteEntryFfi> {
+        self.palette_entries(&query, context)
+    }
+
+    /// Every command reachable here, with the binding in force.
+    ///
+    /// The same list the palette reads, unfiltered — see
+    /// [`Session::cheat_sheet`].
+    #[uniffi::method(name = "cheatSheet")]
+    pub fn cheat_sheet_ffi(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
+        self.cheat_sheet(context)
+    }
+
+    /// Whether `message` is marked, for a row deciding how to draw itself.
+    ///
+    /// The *selection*, not the cursor. A table drawing its own selection
+    /// would be drawing the cursor and calling it a selection, which is the
+    /// conflation `PRODUCT.md` §9 forbids.
+    #[uniffi::method(name = "isSelected")]
+    pub fn is_selected_ffi(&self, message: i64) -> bool {
+        self.is_selected(message)
+    }
+
+    /// What to show above the list — "12 selected" — or nothing.
+    #[uniffi::method(name = "selectionSummary")]
+    pub fn selection_summary_ffi(&self) -> Option<String> {
+        self.selection_summary()
+    }
+
+    /// Put the cursor on `row` — what a click on the list means.
+    ///
+    /// Sets the position *and* the message, which
+    /// [`setCursor`](Session::set_cursor_ffi) does not: after a click, `j`
+    /// has to move from where the user clicked, and a boundary told only the
+    /// id would have to scan the window to find out where that was.
+    ///
+    /// Raises `CursorMoved`, the same as a keystroke would. A frontend that
+    /// only heard about keyboard moves would have two paths to keep in step.
+    #[uniffi::method(name = "setCursorRow")]
+    pub fn set_cursor_row_ffi(&self, row: Option<u32>) {
+        if self.cursor_row() == row {
+            return;
+        }
+        self.put_cursor_on(row);
     }
 
     /// Report which row the keyboard is on, or `None` for no row.
@@ -462,6 +659,12 @@ impl Session {
         self.set_offline(offline);
     }
 
+    /// Whether the platform has told us there is no connection.
+    #[uniffi::method(name = "isOffline")]
+    pub fn is_offline_ffi(&self) -> bool {
+        self.is_offline()
+    }
+
     /// Start syncing every configured account; answers how many started.
     ///
     /// Zero is not an error — a store with no account configured is the
@@ -476,6 +679,12 @@ impl Session {
     #[uniffi::method(name = "configuredAccounts")]
     pub fn configured_accounts_ffi(&self) -> u32 {
         self.configured_accounts()
+    }
+
+    /// Every folder of every enabled account, for the sidebar.
+    #[uniffi::method(name = "mailboxes")]
+    pub fn mailboxes_ffi(&self) -> Vec<crate::MailboxFfi> {
+        self.mailboxes()
     }
 
     /// The binding in force for a command, for drawing a native accelerator.
@@ -578,15 +787,23 @@ impl Session {
             let wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
+            let keys = load_key_bindings(options.config_text.as_deref());
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
-                keys: load_key_bindings(options.config_text.as_deref()),
+                resolver: Mutex::new(build_resolver(&keys)),
+                keys,
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
                 reachable: Mutex::new(Vec::new()),
                 cursor: Mutex::new(None),
+                cursor_row: Mutex::new(None),
+                account_scope: Mutex::new(postio_core::Scope::default()),
+                hits: Mutex::new(None),
+                resting: Mutex::new(None),
+                anchor: Mutex::new(None),
                 scope: Mutex::new(None),
                 in_flight: Arc::default(),
+                reconnects: Arc::default(),
                 offline: Arc::default(),
                 engines: Mutex::new(Vec::new()),
                 reads: Arc::default(),
@@ -633,15 +850,22 @@ impl Session {
             .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            resolver: Mutex::new(build_resolver(&keys)),
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
             selection: Mutex::new(postio_core::state::Selection::default()),
             reachable: Mutex::new(Vec::new()),
             cursor: Mutex::new(None),
+            cursor_row: Mutex::new(None),
+            account_scope: Mutex::new(postio_core::Scope::default()),
+            hits: Mutex::new(None),
+            resting: Mutex::new(None),
+            anchor: Mutex::new(None),
             scope: Mutex::new(None),
             in_flight: Arc::default(),
             reads: Arc::default(),
+            reconnects: Arc::default(),
             offline: Arc::default(),
             local: async_channel::unbounded(),
             events,
@@ -658,12 +882,33 @@ impl Session {
     /// `numberOfRows` is: a table asks how tall it is before it draws
     /// anything, and there is no version of that question which can await.
     pub fn open_scope(&self, scope: crate::ScopeFfi) -> u64 {
-        let listed: postio_runtime::store::ListScope = scope.into();
+        self.open_list_scope(scope.into())
+    }
+
+    /// [`open_scope`](Self::open_scope), for a scope already in the store's
+    /// own terms.
+    ///
+    /// Exists because leaving a search restores the scope it *remembered*,
+    /// which never had a `ScopeFfi` spelling — it came off this side. A
+    /// conversion back would be a second mapping to keep in step with the
+    /// first, for no caller that needs one.
+    fn open_list_scope(&self, listed: postio_runtime::store::ListScope) -> u64 {
         let Some((store, runtime)) = self.reader() else {
             return 0;
         };
         let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
         *self.scope.lock().expect("scope lock") = Some(listed);
+        // "These twelve" means something else the moment the list does, and an
+        // action carrying a selection across would land on mail the user
+        // cannot see. The cursor goes with it: it named a row in a list that
+        // no longer exists.
+        self.drop_selection_and_cursor();
+        // Opening a folder leaves a search, and there is nothing to come back
+        // to: the user chose this scope rather than dismissing the query.
+        *self.hits.lock().expect("hits lock") = None;
+        *self.resting.lock().expect("resting lock") = None;
+        *self.account_scope.lock().expect("account scope lock") =
+            self.resolve_account_scope(listed);
         self.list.lock().expect("list lock").reset(total)
     }
 
@@ -707,6 +952,27 @@ impl Session {
             return;
         };
 
+        // The commands that move this frontend's own state rather than the
+        // engine's, handled here and not sent down. `postio-gtk`'s
+        // `run_action` does exactly the same with the same ids -- the list
+        // walks its own rows, and `Command::NextMessage` reaching the engine
+        // would be a message to nobody.
+        //
+        // They live on *this* side of the boundary rather than in Swift
+        // because the cursor, the selection and the row window are all here.
+        // A frontend that moved them would need its own copy of all three,
+        // which is the second model ADR 0019 exists to prevent -- and the
+        // selection in particular is a predicate that must never be
+        // enumerated to be moved.
+        if self.handle_locally(id) {
+            return;
+        }
+
+        // Before the list lock: resolving may take it, and a verb aimed at a
+        // cursor whose page has landed since must find the message rather
+        // than silently act on nothing.
+        let cursor = self.resolve_cursor();
+
         let list = self.list.lock().expect("list lock");
         let selection = self.selection.lock().expect("selection lock");
         let aim = postio_core::aim::Aim {
@@ -717,7 +983,7 @@ impl Session {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
-            cursor: *self.cursor.lock().expect("cursor lock"),
+            cursor,
             rows: &*list,
         };
         let command = postio_core::aim::command_for(id, &aim);
@@ -729,6 +995,342 @@ impl Session {
             // nothing left to run the verb on.
             tracing::debug!("the runtime has stopped and did not run that");
         }
+    }
+
+    /// Resolve one key press against the bindings in force.
+    ///
+    /// **The whole of the frontend's keyboard, and it decides nothing.** The
+    /// caller reduces its own event to the three things every toolkit can
+    /// supply -- the character the key would type, the key's name when it
+    /// types none, and the modifiers held -- and this hands them to
+    /// `postio_ui::keymap`, which owns the table, the chords, the sequences
+    /// and the leader timeout. `postio-gtk`'s `resolve_key` is the same shape
+    /// over GDK. Two adapters, one keymap; that is what keeps `[keys]`
+    /// meaning the same thing on both platforms (ADR 0019 Q4).
+    ///
+    /// `in_text_entry` is whether the focused surface takes text, and it is
+    /// the caller's to answer because only the caller can see its own focus.
+    /// Getting it wrong is the most visible bug this boundary can have: a
+    /// search field that archives mail on `a` reads as a broken application
+    /// rather than a misrouted key.
+    ///
+    /// Does **not** run the command. The caller needs the answer before it
+    /// acts on it -- a `Command` and a `Pending` are swallowed, an `Unhandled`
+    /// must propagate to whatever the toolkit would have done with the key --
+    /// and a method that both ran the verb and reported it would give the
+    /// caller no way to tell the third case from the first two.
+    pub fn key(
+        &self,
+        character: Option<&str>,
+        name: Option<&str>,
+        modifiers: crate::ModifiersFfi,
+        context: crate::UiContext,
+        in_text_entry: bool,
+    ) -> crate::KeyOutcomeFfi {
+        // A `String` crosses the boundary because a `char` has no uniffi
+        // type, and a frontend that sent two characters would otherwise
+        // silently bind the first. Take the whole scalar or nothing.
+        let character = match character.map(|text| {
+            let mut characters = text.chars();
+            (characters.next(), characters.next())
+        }) {
+            Some((Some(one), None)) => Some(one),
+            // A grapheme cluster, or an empty string: neither is a key a
+            // binding can name, and pretending otherwise would bind whichever
+            // half came first.
+            Some(_) => return crate::KeyOutcomeFfi::Unhandled,
+            None => None,
+        };
+
+        let Some(chord) =
+            postio_ui::keymap::Chord::from_platform_key(character, name, modifiers.into())
+        else {
+            // A dead key mid-composition, or a key this build has no name
+            // for. It has to propagate: a monitor that swallowed a
+            // composition would break every non-Latin keyboard.
+            return crate::KeyOutcomeFfi::Unhandled;
+        };
+
+        let key_context = postio_ui::keymap::KeyContext::from(postio_core::Context::from(context));
+        let outcome = self.resolver.lock().expect("resolver lock").press(
+            &chord,
+            key_context,
+            in_text_entry,
+            std::time::Instant::now(),
+        );
+
+        // The silent path, and the one that is impossible to diagnose without
+        // it: a key that does nothing, with nothing said about why.
+        // `postio-gtk`'s `resolve_key` logs the same three inputs for the same
+        // reason -- "it randomly stopped working" becomes one line naming
+        // which of them it was. No message content: a chord, a context and a
+        // flag are not mail.
+        if matches!(outcome, postio_ui::keymap::Outcome::Unhandled) {
+            tracing::debug!(
+                chord = %chord,
+                ?context,
+                in_text_entry,
+                "key resolved to nothing"
+            );
+        }
+        outcome.into()
+    }
+
+    /// Run `id` here if it is this frontend's own state, and say whether it
+    /// was.
+    ///
+    /// The split is the one `PRODUCT.md` §9 draws and `postio-gtk` already
+    /// implements: **the cursor is not the selection**, and neither is
+    /// anything the engine knows about. Moving down a list and marking a row
+    /// are frontend state; archiving what is marked is not.
+    fn handle_locally(&self, id: postio_core::CommandId) -> bool {
+        use postio_core::CommandId as C;
+        match id {
+            C::NextMessage => self.move_cursor(1),
+            C::PrevMessage => self.move_cursor(-1),
+            C::FirstMessage => self.put_cursor_on(Some(0)),
+            C::LastMessage => {
+                let last = self.row_count().checked_sub(1);
+                self.put_cursor_on(last);
+            }
+            C::ToggleSelection => {
+                if let Some(message) = self.resolve_cursor() {
+                    // The anchor follows a deliberate mark: a shift-extension
+                    // afterwards runs from the row the user chose, not from
+                    // wherever a previous range happened to start.
+                    *self.anchor.lock().expect("anchor lock") =
+                        *self.cursor_row.lock().expect("cursor row lock");
+                    self.toggle_selection(message.get());
+                }
+            }
+            C::ExtendSelectionDown => self.extend(1),
+            C::ExtendSelectionUp => self.extend(-1),
+            C::SelectAll => self.select_all(),
+            // Escape means "get me out of here", and with mail marked the
+            // thing to get out of is the selection. Only then: an Escape that
+            // always cleared a selection would give the frontend no way to
+            // close anything else, so an empty selection falls through to the
+            // engine's own `Back`.
+            C::Back if !self.selection_is_empty() => self.clear_selection(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// How many accounts `scope` is about.
+    ///
+    /// A mailbox is one account's, and the store is what knows whose — so
+    /// this reads it, once, when the scope changes. Anything it cannot
+    /// resolve is `Unified`, which is the conservative answer: it withholds
+    /// the commands that need a single account rather than offering one that
+    /// would have nowhere to act.
+    fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
+        use postio_runtime::store::ListScope;
+        match scope {
+            ListScope::Account(account) | ListScope::Flagged(account) => {
+                postio_core::Scope::Account(account)
+            }
+            ListScope::Mailbox(mailbox) => {
+                let Some((database, _)) = self.store_and_blobs() else {
+                    return postio_core::Scope::Unified;
+                };
+                let Ok(connection) = database.connection() else {
+                    return postio_core::Scope::Unified;
+                };
+                postio_storage::repository::MailboxRepository::new(&connection)
+                    .get(mailbox)
+                    .ok()
+                    .flatten()
+                    .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
+                    .unwrap_or(postio_core::Scope::Unified)
+            }
+            ListScope::Unified | ListScope::Snoozed(_) | ListScope::Thread(_) => {
+                postio_core::Scope::Unified
+            }
+        }
+    }
+
+    /// The palette's rows for `query`, best first.
+    ///
+    /// **The matcher is `postio_ui::palette`'s.** Swift must not write its
+    /// own: the ranking is a product decision, and two rankings mean the same
+    /// query offers different things on each platform.
+    ///
+    /// Filtered to what `context` can actually run and to what the open scope
+    /// satisfies. Offering a command the focused surface will ignore is worse
+    /// than omitting it — the user presses Return, nothing happens, and that
+    /// reads as a broken application rather than an unavailable command.
+    pub fn palette_entries(
+        &self,
+        query: &str,
+        context: crate::UiContext,
+    ) -> Vec<crate::PaletteEntryFfi> {
+        let keymap = self.keymap();
+        postio_ui::palette::entries(
+            &keymap,
+            postio_core::Context::from(context),
+            *self.account_scope.lock().expect("account scope lock"),
+            query,
+        )
+        .into_iter()
+        .map(crate::PaletteEntryFfi::from)
+        .collect()
+    }
+
+    /// Every command with the binding actually in force, in cheat-sheet order.
+    ///
+    /// The same list the palette reads, unfiltered by a query — *"they are the
+    /// same list read two ways"* (#658). Building them separately would mean
+    /// two places deciding what "available here" means, and they would
+    /// disagree.
+    pub fn cheat_sheet(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
+        self.palette_entries("", context)
+    }
+
+    /// The bindings in force, resolved for this platform.
+    fn keymap(&self) -> postio_core::Keymap {
+        postio_core::Keymap::resolve(&self.keys)
+    }
+
+    /// Whether nothing is marked.
+    fn selection_is_empty(&self) -> bool {
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => marked.is_empty(),
+            postio_core::state::Selection::Everything { .. } => false,
+        }
+    }
+
+    /// Move the cursor by `delta` rows, clamped to the list.
+    ///
+    /// Clamped rather than wrapping: `j` at the bottom of a mailbox staying
+    /// where it is what every list on the platform does, and jumping to the
+    /// top would move the reader to a message the user did not ask for.
+    fn move_cursor(&self, delta: i64) {
+        let total = self.row_count();
+        if total == 0 {
+            return;
+        }
+        let at = match *self.cursor_row.lock().expect("cursor row lock") {
+            // No cursor yet: the first `j` lands on the first row rather than
+            // the second, and the first `k` on the last.
+            None => {
+                if delta > 0 {
+                    0
+                } else {
+                    total - 1
+                }
+            }
+            Some(row) => (row as i64 + delta).clamp(0, total as i64 - 1) as u32,
+        };
+        self.put_cursor_on(Some(at));
+    }
+
+    /// Put the cursor on `row`, and remember which message that is.
+    ///
+    /// Both, because they answer different questions: `aim` needs the id and
+    /// motion needs the position. A row whose page has not arrived has a
+    /// position and no id, which is a real state — the cursor is somewhere,
+    /// and what is there is still being read.
+    fn put_cursor_on(&self, row: Option<u32>) {
+        *self.cursor_row.lock().expect("cursor row lock") = row;
+        let message = row.and_then(|row| self.row_at(row)).map(|row| row.id);
+        *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
+        self.emit_local(UiEvent::CursorMoved { row, message });
+    }
+
+    /// Extend the selection by one row in `delta`'s direction.
+    ///
+    /// Anchor-to-cursor, always, which is what makes this *extend* rather
+    /// than accumulate: shrinking the range back unmarks the rows it passed,
+    /// the way every list on the platform behaves.
+    fn extend(&self, delta: i64) {
+        {
+            let mut anchor = self.anchor.lock().expect("anchor lock");
+            if anchor.is_none() {
+                *anchor = *self.cursor_row.lock().expect("cursor row lock");
+            }
+        }
+        self.move_cursor(delta);
+
+        let (Some(anchor), Some(cursor)) = (
+            *self.anchor.lock().expect("anchor lock"),
+            *self.cursor_row.lock().expect("cursor row lock"),
+        ) else {
+            return;
+        };
+        // `postio_ui::selection::range` rather than a loop here: it skips the
+        // rows whose pages have not arrived rather than waiting for them,
+        // which is the rule a selection that stutters would break.
+        let rows: Vec<Option<postio_model::ids::MessageId>> = (0..self.row_count())
+            .map(|row| self.list.lock().expect("list lock").peek(row))
+            .collect();
+        let marked = postio_ui::selection::range(&rows, anchor as usize, cursor as usize);
+        *self.selection.lock().expect("selection lock") =
+            postio_core::state::Selection::These(marked);
+    }
+
+    /// Where the cursor is, as a row.
+    pub fn cursor_row(&self) -> Option<u32> {
+        *self.cursor_row.lock().expect("cursor row lock")
+    }
+
+    /// The message the cursor is on, if its page has arrived.
+    pub fn cursor_message(&self) -> Option<i64> {
+        self.resolve_cursor().map(|message| message.get())
+    }
+
+    /// The cursor's message, filling the id in if its page has landed since.
+    ///
+    /// **The cursor is a row; the id is a cache of what is on it.** They are
+    /// set together, but a cursor can land on a row whose page is still in
+    /// flight — pressing `j` the instant a folder opens does exactly that —
+    /// and the id is `None` then. Nothing re-resolved it when the page
+    /// arrived, so the cursor stayed nameless and every verb aimed at it was
+    /// a silent no-op: `a` archived nothing, space marked nothing, and the
+    /// list looked like it had stopped responding to a keyboard it was in
+    /// fact reading perfectly.
+    ///
+    /// Resolved on read rather than pushed from the page delivery, because
+    /// delivery happens on the runtime's thread with only the window in hand,
+    /// and reaching back for the cursor from there would put a second lock
+    /// order into the one path that must not stall a redraw.
+    fn resolve_cursor(&self) -> Option<postio_model::ids::MessageId> {
+        if let Some(message) = *self.cursor.lock().expect("cursor lock") {
+            return Some(message);
+        }
+        let row = (*self.cursor_row.lock().expect("cursor row lock"))?;
+        // `peek`, not `row_at`: this must not start a fetch. It is called
+        // from `invoke` on every keystroke, and a verb that triggered a page
+        // read would be doing I/O to find out what it is about.
+        let found = self.list.lock().expect("list lock").peek(row)?;
+        *self.cursor.lock().expect("cursor lock") = Some(found);
+        Some(found)
+    }
+
+    /// Whether `message` is marked, for a row deciding how to draw itself.
+    ///
+    /// Answers correctly for a whole-view selection without enumerating it,
+    /// which is the point of the predicate: a row in `Everything` is marked
+    /// unless it is one of the few taken out.
+    pub fn is_selected(&self, message: i64) -> bool {
+        let message = postio_model::ids::MessageId::new(message);
+        match &*self.selection.lock().expect("selection lock") {
+            postio_core::state::Selection::These(marked) => marked.contains(&message),
+            postio_core::state::Selection::Everything { except } => !except.contains(&message),
+        }
+    }
+
+    /// What to show above the list — "12 selected" — or nothing.
+    ///
+    /// From the model, which knows the answer for a whole-view selection
+    /// without listing it. A frontend counting ids would be unable to draw
+    /// this at all for the selection that most needs it.
+    pub fn selection_summary(&self) -> Option<String> {
+        postio_ui::selection::summary(
+            &self.selection.lock().expect("selection lock"),
+            Some(self.row_count()),
+            &[],
+        )
     }
 
     /// Report where the keyboard is, so a verb with nothing marked knows
@@ -835,8 +1437,26 @@ impl Session {
         None
     }
 
+    /// Raise an event this boundary made up itself.
+    ///
+    /// The frontend's drain does not distinguish these from the engine's, and
+    /// should not: "the cursor moved" and "mail arrived" are both things that
+    /// happened, and a second channel would be a second thing to forget to
+    /// read. `try_send` because the channel is unbounded and the only way it
+    /// fails is a session that has already shut down.
+    fn emit_local(&self, event: UiEvent) {
+        let _ = self.local.0.try_send(event);
+    }
+
     /// Read one page into the window, behind the caller.
     fn fetch(&self, generation: u64, page: u32) {
+        // Search hits are ranked, not sorted, so no `ListScope` describes
+        // them and the store cannot page them. They are read by id instead --
+        // the same page of the same window, filled from a different call.
+        if self.hits.lock().expect("hits lock").is_some() {
+            self.fetch_hits(generation, page);
+            return;
+        }
         let Some((store, runtime)) = self.reader() else {
             return;
         };
@@ -872,6 +1492,187 @@ impl Session {
             }
             in_flight.fetch_sub(1, ordering);
         });
+    }
+
+    /// One page of the current result set, read by id.
+    ///
+    /// `message_rows` exists for exactly this: search hits come back in
+    /// relevance order, and asking the store for "rows 50..100 of this scope"
+    /// would re-sort them by date. So the window pages over the *ranking*,
+    /// and each page names the ids it wants.
+    fn fetch_hits(&self, generation: u64, page: u32) {
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let wanted: Vec<postio_model::ids::MessageId> = {
+            let held = self.hits.lock().expect("hits lock");
+            let Some(hits) = held.as_ref() else { return };
+            let first = (page * postio_ui::list::PAGE_SIZE) as usize;
+            hits.iter()
+                .skip(first)
+                .take(postio_ui::list::PAGE_SIZE as usize)
+                .map(|hit| postio_model::ids::MessageId::new(hit.message))
+                .collect()
+        };
+        if wanted.is_empty() {
+            return;
+        }
+
+        let local = self.local.0.clone();
+        let list = self.list.clone();
+        let in_flight = self.in_flight.clone();
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+
+        in_flight.fetch_add(1, ordering);
+        self.reads.fetch_add(1, ordering);
+        runtime.spawn(async move {
+            if let Ok(fetched) = store.message_rows(wanted.clone()).await {
+                // Back into the ranking's order. `message_rows` answers in
+                // whatever order the store finds them, and a page that
+                // re-sorted the ranking would put the best match wherever its
+                // date happened to fall -- which is the one thing a *ranked*
+                // list must not do.
+                let mut by_id: std::collections::HashMap<i64, crate::RowFfi> = fetched
+                    .into_iter()
+                    .map(|row| (row.id.get(), crate::RowFfi::from(row)))
+                    .collect();
+                let rows: Vec<crate::RowFfi> = wanted
+                    .iter()
+                    .filter_map(|id| by_id.remove(&id.get()))
+                    .collect();
+                let delivered = list
+                    .lock()
+                    .expect("list lock")
+                    .deliver(generation, page, rows);
+                if !delivered.stale {
+                    let _ = local.try_send(UiEvent::PageReady { page });
+                }
+            }
+            in_flight.fetch_sub(1, ordering);
+        });
+    }
+
+    /// Run `query`, and show its hits as the list.
+    ///
+    /// **One query language.** `postio-search` parses it, here, for both
+    /// frontends -- Swift does not re-implement operator parsing, or `from:`
+    /// would mean one thing on Linux and another on a Mac. The run is
+    /// `postio_session::search::execute`, the same function the GTK finder
+    /// calls, so the hit limit and the excerpt rule are one decision rather
+    /// than two.
+    ///
+    /// Blocking, like [`open_scope`](Self::open_scope) and for the same
+    /// reason: a table asks how tall it is before it draws anything. Local
+    /// search is budgeted under 100 ms (`PRODUCT.md` §1) and this is SQLite's
+    /// FTS5 index, never the network.
+    ///
+    /// The scope being left is remembered, so clearing comes back to it
+    /// rather than reloading the world.
+    pub fn search(&self, query: &str) -> u64 {
+        let Some((_, runtime)) = self.reader() else {
+            return 0;
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return 0;
+        };
+
+        // Remembered on the way *in* only: a second query typed while search
+        // results are on screen must not make the first search the thing to
+        // come back to.
+        {
+            let mut resting = self.resting.lock().expect("resting lock");
+            if resting.is_none() {
+                *resting = *self.scope.lock().expect("scope lock");
+            }
+        }
+
+        let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
+        let account = *self.account_scope.lock().expect("account scope lock");
+        let found = runtime.block_on(async {
+            let connection = database.connection().ok()?;
+            postio_session::search::execute(
+                &connection,
+                account,
+                &parsed,
+                postio_search::facets::Scope::AllMail,
+                postio_search::ResultOrder::Relevance,
+            )
+        });
+
+        let hits: Vec<crate::search::Hit> = found
+            .map(|results| {
+                results
+                    .hits
+                    .into_iter()
+                    .map(|hit| crate::search::Hit {
+                        message: hit.message_id.get(),
+                        snippet: crate::search::snippet_of(&hit.snippet),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let total = hits.len() as u32;
+        *self.hits.lock().expect("hits lock") = Some(hits);
+        // No `ListScope` describes a ranking, so there is none while a search
+        // is on screen. `aim` sees `None` and refuses a whole-view gesture,
+        // which is the conservative answer: "select everything matching this
+        // query" is a predicate the engine has no way to evaluate yet.
+        *self.scope.lock().expect("scope lock") = None;
+        self.drop_selection_and_cursor();
+        self.list.lock().expect("list lock").reset(total)
+    }
+
+    /// Leave search, and show what was on screen before it.
+    ///
+    /// Restores the previous scope rather than reloading the world, which is
+    /// the difference between `Escape` costing a `COUNT` against a mailbox the
+    /// user never left and costing nothing.
+    pub fn clear_search(&self) -> u64 {
+        if !self.is_searching() {
+            return self.list.lock().expect("list lock").generation();
+        }
+        *self.hits.lock().expect("hits lock") = None;
+        let resting = self.resting.lock().expect("resting lock").take();
+        match resting {
+            Some(scope) => self.open_list_scope(scope),
+            None => {
+                self.drop_selection_and_cursor();
+                self.list.lock().expect("list lock").reset(0)
+            }
+        }
+    }
+
+    /// The excerpt for `message`, when a search is what is on screen.
+    ///
+    /// `None` outside a search, and for a row that is not a hit. The text and
+    /// the match ranges cross separately so each frontend marks them its own
+    /// way -- GTK into Pango, Swift into an `AttributedString` -- from one
+    /// answer about what matched.
+    pub fn snippet_for(&self, message: i64) -> Option<crate::SnippetFfi> {
+        self.hits
+            .lock()
+            .expect("hits lock")
+            .as_ref()?
+            .iter()
+            .find(|hit| hit.message == message)
+            .map(|hit| hit.snippet.clone())
+    }
+
+    /// Whether the list is showing search results rather than a folder.
+    pub fn is_searching(&self) -> bool {
+        self.hits.lock().expect("hits lock").is_some()
+    }
+
+    /// Forget what was marked and where the keyboard was.
+    ///
+    /// Shared by every re-scoping, including into and out of a search: "these
+    /// twelve" means something else the moment the list does.
+    fn drop_selection_and_cursor(&self) {
+        *self.selection.lock().expect("selection lock") = postio_core::state::Selection::default();
+        *self.cursor.lock().expect("cursor lock") = None;
+        *self.cursor_row.lock().expect("cursor row lock") = None;
+        *self.anchor.lock().expect("anchor lock") = None;
     }
 
     /// The store and the runtime, while the session is open.
@@ -1016,6 +1817,46 @@ impl Session {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
+    }
+
+    /// Every folder of every enabled account, for the sidebar.
+    ///
+    /// Blocks on a local read, like `openScope` does and for the same reason:
+    /// a sidebar is drawn before anything can be selected in it, and the read
+    /// is a few milliseconds of SQLite rather than the network.
+    pub fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
+        let mut folders = Vec::new();
+        let Some((database, _)) = self.store_and_blobs() else {
+            return folders;
+        };
+        let Ok(connection) = database.connection() else {
+            return folders;
+        };
+        let Ok(accounts) =
+            postio_storage::repository::AccountRepository::new(&connection).list_enabled()
+        else {
+            return folders;
+        };
+        let Some((store, runtime)) = self.reader() else {
+            return folders;
+        };
+        for account in accounts {
+            if let Ok(found) = runtime.block_on(store.mailboxes(account.id)) {
+                // Ordered and split here rather than in the frontend.
+                // `postio_ui::sidebar` is the canvas' order -- Inbox first --
+                // and the rule that a role gets one row however many folders
+                // carry it. A frontend sorting for itself is a second answer
+                // to "where is my inbox", and the duplicate rule took a bug
+                // report to find (#501, #1155).
+                let (special, ordinary) = postio_ui::sidebar::sections(&found);
+                folders.extend(special.into_iter().map(|mailbox| crate::MailboxFfi {
+                    special: true,
+                    ..crate::MailboxFfi::from(mailbox)
+                }));
+                folders.extend(ordinary.into_iter().map(crate::MailboxFfi::from));
+            }
+        }
+        folders
     }
 
     /// The binding in force for a command, for drawing a native accelerator.
@@ -1171,8 +2012,72 @@ impl Session {
 
     /// Tell the engine whether the machine currently has a connection.
     pub fn set_offline(&self, offline: bool) {
-        self.offline
-            .store(offline, std::sync::atomic::Ordering::SeqCst);
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+        let was = self.offline.swap(offline, ordering);
+
+        // Only the transition back, and only when it really is one.
+        //
+        // `NWPathMonitor` repeats itself -- an interface changing while the
+        // path stays satisfied is a fresh callback with the same answer -- and
+        // reconnecting on each of those would hammer a server through exactly
+        // the flapping connection backoff exists to protect it from.
+        if was && !offline {
+            self.reconnect();
+        }
+    }
+
+    /// Whether the platform has told us there is no connection.
+    pub fn is_offline(&self) -> bool {
+        self.offline.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Ask every engine to try the folder in view again, now.
+    ///
+    /// The engine reconnects with backoff on its own and works with no
+    /// reachability signal at all, which is why this is a nudge rather than a
+    /// mechanism: all knowing buys is *promptness*. Waking a laptop syncs
+    /// immediately instead of at whatever backoff step the engine had reached,
+    /// which can be minutes.
+    ///
+    /// Failures are the engine's to report. It announces connection state and
+    /// progress as it goes, so a nudge that could not connect has already been
+    /// said once and must not be said twice.
+    fn reconnect(&self) {
+        self.reconnects
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let Some(mailbox) = self.open_mailbox() else {
+            // Nothing in view to refresh. The engines' own reconnect loops
+            // still run; this is the opportunistic half.
+            return;
+        };
+        let Some((_, runtime)) = self.reader() else {
+            return;
+        };
+        let engines = self.engines.lock().expect("engines lock").clone();
+        for engine in engines {
+            let engine = engine.clone();
+            runtime.spawn(async move {
+                let _ = engine.sync(mailbox).await;
+            });
+        }
+    }
+
+    /// The folder the window currently has open, if it is a folder.
+    ///
+    /// A search has no mailbox to refresh: its results came from the local
+    /// index, and re-running the query is the frontend's call, not a
+    /// reconnection's.
+    fn open_mailbox(&self) -> Option<postio_model::MailboxId> {
+        match *self.scope.lock().expect("scope lock") {
+            Some(postio_runtime::store::ListScope::Mailbox(mailbox)) => Some(mailbox),
+            _ => None,
+        }
+    }
+
+    /// How many reconnects have been asked for. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn reconnects_for_test(&self) -> usize {
+        self.reconnects.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The database and blob store, while the session is open.
@@ -1227,17 +2132,74 @@ impl Session {
         // Whichever speaks first. The engine's stream ends when the session
         // shuts down, and that is what must end the frontend's loop -- so a
         // closed engine stream wins even if the local one is merely idle.
-        tokio::select! {
+        let event = tokio::select! {
             engine = self.events.next() => engine.map(UiEvent::from),
             local = self.local.1.recv() => local.ok(),
-        }
+        }?;
+        self.recount_if_the_list_changed(&event);
+        Some(event)
     }
 
     /// [`next_event`](Self::next_event), for callers that are not async.
     ///
     /// Rust-only. Swift always awaits.
     pub fn next_event_blocking(&self) -> Option<UiEvent> {
-        self.events.next_blocking().map(UiEvent::from)
+        let event = self.events.next_blocking().map(UiEvent::from)?;
+        self.recount_if_the_list_changed(&event);
+        Some(event)
+    }
+
+    /// Re-count the open scope when an event says its contents moved.
+    ///
+    /// **`open_scope` counts once**, because a table asks how tall it is
+    /// before it draws and that question cannot await. Everything after that
+    /// arrives as an event — and a frontend's whole answer to an event is to
+    /// reload its table, which asks `row_count`, which reads the total that
+    /// one count set. Nothing ever set it again.
+    ///
+    /// So a folder opened while it was empty and filled a moment later by the
+    /// first sync stayed empty on screen: 99 messages in the store, "No
+    /// messages" in the list, every layer doing exactly what it was written
+    /// to do. Found by running the application against a real account (#1150);
+    /// invisible to every test, because no test had a list whose contents
+    /// changed after it was opened.
+    ///
+    /// It belongs here rather than in either frontend for the reason the whole
+    /// boundary does: the count is the window's, the window is here, and a
+    /// frontend that re-opened the scope to refresh it would be making a
+    /// navigation decision to fix a bookkeeping one. `postio-gtk`'s feed does
+    /// the same thing on the same events, one layer up.
+    ///
+    /// Deliberately not `PageReady` — that is this boundary telling itself a
+    /// page landed, and re-counting there would reset the window inside its
+    /// own fetch.
+    fn recount_if_the_list_changed(&self, event: &UiEvent) {
+        if !matches!(
+            event,
+            UiEvent::MessageListChanged { .. }
+                | UiEvent::MessagesChanged { .. }
+                | UiEvent::MessagesRemoved { .. }
+                | UiEvent::NewMail { .. }
+        ) {
+            return;
+        }
+        // A search holds its own ranking; its hits do not change because a
+        // folder did, and re-counting would reset the window to a folder's
+        // size while showing search results.
+        if self.is_searching() {
+            return;
+        }
+        let Some(scope) = *self.scope.lock().expect("scope lock") else {
+            return;
+        };
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let total = runtime.block_on(store.list_count(scope)).unwrap_or(0);
+        let mut list = self.list.lock().expect("list lock");
+        if list.total() != total {
+            list.reset(total);
+        }
     }
 
     /// Emits an event as the engine would.

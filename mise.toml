@@ -60,6 +60,7 @@ jq = "1.8.1"
 # pins the daemon's TMPDIR off the tmpfs. One shared daemon means one version
 # — a session on a different one restarts it under everybody else.
 sccache = "0.17.0"
+rust = "latest"
 
 # Not pinned here, on purpose: `cargo-deny`, `cargo-fuzz`, `cargo-mutants` and
 # `cargo-llvm-cov`. Each is a from-source cargo build measured in minutes, all

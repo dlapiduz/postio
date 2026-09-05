@@ -126,7 +126,14 @@ impl From<MessageSummary> for RowFfi {
         RowFfi {
             id: row.id.into(),
             thread: row.thread.map(Into::into),
-            from: row.from.map(|address| address.to_string()),
+            // `display()`, not `to_string()`. The second is the RFC form,
+            // `Ada Lovelace <ada@example.com>`, and a list drawing it spends
+            // the whole line on an address nobody reads and truncates the
+            // name. `postio-gtk`'s row calls `display()`; this called the
+            // other one, so the two frontends drew different senders for the
+            // same message (#1150) -- on a field whose doc comment says
+            // "already rendered for display".
+            from: row.from.map(|address| address.display().to_string()),
             subject: row.subject,
             preview: row.preview,
             received_at: row.received_at.timestamp(),

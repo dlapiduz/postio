@@ -1,0 +1,161 @@
+import PostioFFI
+
+/// Where the message list gets its rows.
+///
+/// A protocol so the table can be driven by something other than a live
+/// session. That is not a testing convenience bolted on afterwards: opening a
+/// session reads the store's key from the login Keychain, and an
+/// ad-hoc-signed build has a new code identity on every rebuild — so a test
+/// that needed one would raise a modal dialog on a developer's machine and
+/// hang every headless run.
+///
+/// The *model* behind this is tested in Rust, where it lives: `postio-ffi`
+/// asserts the paging, the read-ahead, the bounded cache and the generation
+/// guard. What Swift has to get right is narrower — how many rows to claim,
+/// what to draw when one is not here yet, and what to reload when it arrives —
+/// and none of that needs a real store to be wrong.
+public protocol MessageRowSource: AnyObject {
+    /// How many rows the list has. Never the length of an array: on the other
+    /// side this is a `COUNT`, and a hundred thousand rows are a number rather
+    /// than a hundred thousand structs.
+    var rowCount: UInt32 { get }
+
+    /// The row at `position`, or `nil` while its page is on its way.
+    ///
+    /// **Must not block.** This is called for every visible row on every
+    /// redraw, on the main thread. `nil` means draw a placeholder; the page is
+    /// already being fetched by the time this returns.
+    func row(at position: UInt32) -> RowFfi?
+
+    /// The search excerpt for `message`, when a search is what is on screen.
+    ///
+    /// `nil` in a folder. A row in search results shows *why it matched*
+    /// rather than its own preview, which is the difference between a result
+    /// list and a mailbox that happens to be shorter.
+    func snippet(for message: Int64) -> SnippetFfi?
+
+    /// Whether `message` is *marked*, which is not whether it is under the
+    /// cursor.
+    ///
+    /// `PRODUCT.md` §9 keeps the two apart, and this is the half
+    /// `NSTableView` does not have: its own selection is the cursor here, and
+    /// the marks are drawn from the model. Answered without enumerating a
+    /// whole-view selection, which is the point of it being a predicate.
+    func isSelected(_ message: Int64) -> Bool
+}
+
+/// A row source backed by the engine.
+public final class SessionRowSource: MessageRowSource {
+    private let session: PostioSession
+
+    public init(session: PostioSession) {
+        self.session = session
+    }
+
+    public var rowCount: UInt32 { session.rowCount }
+
+    public func row(at position: UInt32) -> RowFfi? { session.row(at: position) }
+
+    public func isSelected(_ message: Int64) -> Bool { session.isSelected(message) }
+
+    public func snippet(for message: Int64) -> SnippetFfi? { session.snippet(for: message) }
+}
+
+/// What one row shows, once the decisions are made.
+///
+/// Separated from the cell so the decisions are testable without AppKit: a
+/// row that has not arrived, a sender with no name, a conversation of one that
+/// should show no badge. Getting those wrong is invisible in a screenshot and
+/// obvious in an assertion.
+public struct RowPresentation: Equatable, Sendable {
+    /// Who it is from, or a placeholder while the page is in flight.
+    public let sender: String
+    /// The subject, or a stand-in when the message has none.
+    public let subject: String
+    /// The snippet under the subject. Empty when there is none.
+    public let preview: String
+    /// Whether to draw the unread marker.
+    public let unread: Bool
+    /// Whether to draw the flag.
+    public let flagged: Bool
+    /// The conversation-size badge, or `nil` when there is nothing to say.
+    public let threadBadge: String?
+    /// Whether this row is still waiting for its page.
+    public let isPlaceholder: Bool
+    /// The excerpt and its matches, when this row is a search hit.
+    ///
+    /// When it is set, the row draws this instead of `preview`: a result
+    /// showing its own first line rather than the text that matched it is a
+    /// result you have to open to understand.
+    public let snippet: SnippetFfi?
+    /// Whether this row is *marked* — part of the multi-message selection.
+    ///
+    /// Drawn separately from `NSTableView`'s own highlight, which is the
+    /// cursor. A table left to conflate the two makes shift-click destroy
+    /// what the user had built up, which is exactly what §9 forbids.
+    public let selected: Bool
+
+    /// The presentation for a row that has not arrived yet.
+    ///
+    /// Deliberately not blank: a row of empty strings and a row that is
+    /// genuinely empty look identical, and one of them is worth waiting for.
+    public static let placeholder = RowPresentation(
+        sender: "…",
+        subject: "…",
+        preview: "",
+        unread: false,
+        flagged: false,
+        threadBadge: nil,
+        isPlaceholder: true,
+        selected: false,
+        snippet: nil
+    )
+
+    public init(
+        sender: String,
+        subject: String,
+        preview: String,
+        unread: Bool,
+        flagged: Bool,
+        threadBadge: String?,
+        isPlaceholder: Bool,
+        selected: Bool = false,
+        snippet: SnippetFfi? = nil
+    ) {
+        self.sender = sender
+        self.subject = subject
+        self.preview = preview
+        self.unread = unread
+        self.flagged = flagged
+        self.threadBadge = threadBadge
+        self.isPlaceholder = isPlaceholder
+        self.selected = selected
+        self.snippet = snippet
+    }
+
+    /// How a delivered row is drawn.
+    public init(row: RowFfi, selected: Bool = false, snippet: SnippetFfi? = nil) {
+        self.selected = selected
+        self.snippet = snippet
+        // A message with no `From` is not a bug to hide: it happens, and
+        // "(no sender)" is more honest than a blank column that reads as a
+        // rendering failure.
+        sender = row.from?.nonEmpty ?? "(no sender)"
+        subject = row.subject?.nonEmpty ?? "(no subject)"
+        preview = row.preview ?? ""
+        unread = !row.seen
+        flagged = row.flagged
+        // A conversation of one is not a conversation. The badge means "there
+        // is more here than this", so at one it says nothing (ADR 0015).
+        threadBadge = row.threadCount > 1 ? String(row.threadCount) : nil
+        isPlaceholder = false
+    }
+}
+
+private extension String {
+    /// `nil` for a string that is empty or only whitespace.
+    var nonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}

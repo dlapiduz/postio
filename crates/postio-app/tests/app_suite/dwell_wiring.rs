@@ -43,18 +43,26 @@ use postio_storage::{BlobStore, Database, test_support};
 
 /// Short enough that the test does not spend a real second per assertion,
 /// long enough to stay distinguishable from "marked on arrival".
-// Long enough that one slow turn of the main loop cannot outlast it.
-//
-// The sweep below moves the cursor five times, pumping between each, and
-// asserts none of the rows it passed was marked read. At 80ms that held only
-// while a pump stayed under 80ms: on a loaded runner one took longer, the
-// clock legitimately expired mid-sweep, and the test reported the product
-// destroying unread state when the product had done exactly what it should.
-//
-// Sized for the slowest machine that runs this rather than the fastest. The
-// property is "moving cancels the clock", not any particular number of
-// milliseconds -- the same lesson as postio-config's watch debounce (#781).
-const DWELL: Duration = Duration::from_millis(500);
+const DWELL: Duration = Duration::from_millis(80);
+
+/// The delay the sweep runs under: longer than any stall a loaded machine can
+/// put between a keypress and the main loop noticing it.
+///
+/// Not a patience dial and not a timeout — nothing ever waits this long.
+/// `MessageListView::arm_dwell` re-reads the delay on every cursor report and
+/// cancels whatever was armed, so a sweep under thirty seconds cannot fire a
+/// dwell however long the machine stalls between keypresses. The phase becomes
+/// immune by construction rather than by being quick enough.
+///
+/// It used to sweep at `DWELL`, which was a bet that five keypresses and their
+/// repaints fit inside 80 ms of wall clock. They do on an idle workstation and
+/// they do not on a loaded one, and that is the whole of `dwell_wiring`'s
+/// contribution to #741: the assertion that fired was "marked read while the
+/// cursor was still moving", and the cursor *had* rested — for 160 ms, because
+/// the runner stalled between arming the clock and pumping the loop that reads
+/// it. Reproducible on demand with a `sleep` in exactly that gap, which is how
+/// this was finally pinned down.
+const NEVER_WHILE_SWEEPING: Duration = Duration::from_secs(30);
 
 /// Whether the store says `message` carries `\Seen`.
 fn is_read(database: &Database, message: MessageId) -> bool {
@@ -170,6 +178,11 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     // must stay off for a landing nobody chose — the same #71 rule the list
     // has always had, one surface over.
     let untouched: Vec<MessageId> = page(&database, inbox);
+    // A duration rather than `settle_until`, because there is no condition to
+    // wait for: this asserts that nothing happens, and the only way to give
+    // that room is to let a dwell that *would* have fired go by. Note which
+    // way load pushes it -- a slow machine makes this phase weaker, never
+    // redder, so it cannot be what fails intermittently.
     std::thread::sleep(DWELL * 4);
     while glib::MainContext::default().iteration(false) {}
     assert!(
@@ -194,7 +207,10 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     );
 
     // ── sweeping past rows marks none of them ────────────────────────────
-    // `j` five times with no pause, which is what holding the key is.
+    // `j` five times with no pause, which is what holding the key is. Under
+    // `NEVER_WHILE_SWEEPING` the pauses this loop cannot control -- a repaint,
+    // a page arriving, another session taking the CPU -- stop mattering.
+    list.set_dwell_delay(NEVER_WHILE_SWEEPING);
     for _ in 0..5 {
         list.next_row();
         while glib::MainContext::default().iteration(false) {}
@@ -207,6 +223,14 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     );
 
     // ── and resting marks the one it came to rest on ─────────────────────
+    // A delay short enough to wait for. `set_dwell_delay` is read at the next
+    // arm rather than applied to the clock already running, so the cursor has
+    // to move once more for it to take effect -- and that move also cancels
+    // the thirty-second clock the sweep left armed, which is what stops it
+    // marking a swept row long after this test has stopped looking.
+    list.set_dwell_delay(DWELL);
+    list.next_row();
+    while glib::MainContext::default().iteration(false) {}
     let resting = list.cursor_id().expect("the cursor is on a row");
     assert!(
         settle_until(|| is_read(&database, resting)),

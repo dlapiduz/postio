@@ -113,7 +113,7 @@ if [ "$PROVISION" = 1 ]; then
         echo "your shell history:  read -rs POSTIO_APP_PASSWORD && export POSTIO_APP_PASSWORD" >&2
         exit 2
     fi
-    exec cargo run --release -p postio-app --example provision
+    exec cargo run --release -p postio-session --bin postio-provision
 fi
 
 if [ "$SHOT" = 1 ]; then

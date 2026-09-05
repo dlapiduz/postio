@@ -45,9 +45,11 @@ pub mod egress;
 pub mod engine;
 pub mod logging;
 pub mod paths;
+pub mod provision;
 pub mod reachability;
 pub mod reading;
 pub mod refresh;
+pub mod search;
 
 use std::path::Path;
 use std::sync::Arc;

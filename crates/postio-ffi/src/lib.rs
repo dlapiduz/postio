@@ -36,15 +36,25 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod event;
+mod keys;
 mod list;
+mod logging;
+mod mailbox;
+mod palette;
 mod reader;
 mod registry;
+mod search;
 mod session;
 
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
+pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
+pub use logging::start_logging;
+pub use mailbox::{MailboxFfi, MailboxRoleFfi};
+pub use palette::PaletteEntryFfi;
 pub use reader::{InlinePart, RemoteImagesFfi};
-pub use registry::{CommandSpecFfi, UiContext, UiRecovery};
+pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
+pub use search::{MatchRangeFfi, SnippetFfi};
 pub use session::{Session, SessionError, SessionOptions};
 
 /// Every command the registry knows, in cheat-sheet order.

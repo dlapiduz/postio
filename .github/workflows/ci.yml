@@ -70,6 +70,11 @@ jobs:
     outputs:
       rust: ${{ steps.classify.outputs.rust }}
       docs: ${{ steps.classify.outputs.docs }}
+      # Declared, or `needs.changes.outputs.macos` is the empty string and the
+      # macOS job silently skips itself on every run -- reported as skipped,
+      # which the ruleset counts as passed. A gate that reports green having
+      # done nothing is exactly what #666's other half is about.
+      macos: ${{ steps.classify.outputs.macos }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -573,3 +578,81 @@ jobs:
       # the property this depends on (`actions/cache` preserving mtimes
       # through extraction) and what silently breaks if that ever stops
       # being true.
+
+  # The macOS half, and the link.
+  #
+  # ADR 0019 Q7 says how Linux stays green and this is the other direction:
+  # `postio-ffi` has no macOS-specific code, so the `test` job above already
+  # proves the *seam* on a cheap Linux runner. What a macOS runner adds is the
+  # Swift, the bindings generator's output, and the link between them — none of
+  # which anything else compiles. A Linux session cannot break the seam
+  # silently; without this, it can break the Swift silently.
+  #
+  # Gated on `macos`, which is not `rust`: Swift cannot reach a Rust build, so
+  # a Swift-only change skips the workspace suite entirely, and a `postio-ffi`
+  # change runs both because the bindings the Swift compiles against are
+  # regenerated from it (`scripts/ci-changes.sh`).
+  #
+  # macos-latest has an Aqua session, which is what
+  # `WindowServerRequiredTests` checks it still has: an ssh step or a
+  # `launchctl` context without one would make any Swift test that needs a
+  # window server skip and report success.
+  macos:
+    name: macOS build and Swift tests
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.macos == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The pin decides; see the note in the `fmt` job. `rust-toolchain.toml`
+      # is honoured by rustup on every platform, so there is no toolchain
+      # step here either — and `check-toolchain-pinned.py` refuses one.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-cc` and `postio-linker` as bare
+      # program names (#1101). `scripts/macos-build.sh` installs them itself,
+      # but doing it here too keeps the failure — if there is one — attached
+      # to a step that names it rather than to a cold cargo build.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # Xcode's own toolchain, outside any Nix-style environment. Ghostty hit
+      # this and hardcoded the fix in three places: a `swift` that is not the
+      # one `xcode-select` points at links against a different SDK and fails
+      # in a way that reads as a source error.
+      - name: Report the Swift toolchain
+        run: |
+          xcode-select --print-path
+          swift --version
+
+      # The whole chain: cargo, the bindings generator, the tokens, and
+      # `swift build`. Five joins, each of which fails in its own way — doing
+      # them by hand in the wrong order produces a Swift file that compiles
+      # against nothing, which is why the script exists.
+      - name: Build the macOS application
+        run: scripts/macos-build.sh
+
+      # Runs `macos-build.sh --lib-only` itself first, so this cannot test
+      # against a stale library.
+      - name: Swift tests
+        env:
+          CI: "true"
+        run: scripts/macos-test.sh
+
+      # The bundle is the deliverable, and it is the step that exercises the
+      # icon render and the ad-hoc signature — neither of which the build
+      # above touches, and both of which fail on their own terms.
+      - name: Assemble Postio.app
+        run: scripts/macos-bundle.sh

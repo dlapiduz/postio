@@ -15,6 +15,8 @@ pub mod conversation;
 pub mod format;
 pub mod keymap;
 pub mod list;
+pub mod palette;
 pub mod reader;
 pub mod selection;
+pub mod sidebar;
 pub mod tokens;

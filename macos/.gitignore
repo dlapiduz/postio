@@ -1,0 +1,11 @@
+# Build products. The bindings are generated from the Rust crate on every
+# build so the generator and the `uniffi` runtime cannot skew (#571), and the
+# xcframework is assembled from the staticlib.
+/Sources/PostioFFI/
+/Sources/postio_ffiFFI/
+/.build/
+/build/
+*.xcframework
+
+# Emitted from the design system on every build (#661).
+/Sources/PostioKit/Generated/
