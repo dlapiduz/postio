@@ -106,7 +106,18 @@ impl Modifiers {
             "ctrl" | "control" => Some(Self::CTRL),
             "alt" => Some(Self::ALT),
             "shift" => Some(Self::SHIFT),
-            "super" | "meta" => Some(Self::SUPER),
+            // `cmd` is Apple's ⌘ and is the same physical modifier X11 calls
+            // Super, so it is one bit rather than two. It has to be here and
+            // not only in `postio_config::keys::MODIFIERS`, because that
+            // module *produces* this spelling: `expand_mod` resolves `mod` to
+            // `cmd` on Apple (#669), so on that platform every `mod+…` default
+            // arrives at this function spelled this way. Without it all
+            // thirty-one of them were unparseable at once -- the palette,
+            // settings, select-all, send -- reported as keymap problems rather
+            // than as keys that did nothing, a long way from anywhere anyone
+            // would look. Nothing on Linux could see it: `expand_mod` writes
+            // `ctrl` there.
+            "super" | "meta" | "cmd" | "command" => Some(Self::SUPER),
             _ => None,
         }
     }

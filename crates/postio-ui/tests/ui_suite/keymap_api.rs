@@ -4,7 +4,8 @@
 //! with no toolkit and no display; `trigger_for_command` is what a frontend
 //! renders a native accelerator from.
 
-use postio_ui::keymap::{Chord, Key, KeyContext, Keymap, Modifiers, trigger_for_command};
+use postio_config::paths::Platform;
+use postio_ui::keymap::{Chord, Key, KeyContext, Keymap, Modifiers, Resolver, trigger_for_command};
 
 fn chord(text: &str) -> Chord {
     text.parse().expect("a chord")
@@ -111,4 +112,44 @@ fn the_trigger_follows_what_keys_binds() {
         trigger_for_command(&keymap, "archive"),
         Some(Chord::new(Key::Char('Y'), Modifiers::CTRL))
     );
+}
+
+#[test]
+fn the_primary_modifier_parses_the_way_this_platform_spells_it() {
+    // `mod` is the primary accelerator and `postio_config::keys::expand_mod`
+    // resolves it when the keymap is built: `ctrl` on freedesktop, **`cmd`**
+    // on Apple (#669). `postio_config::keys::MODIFIERS` accepts both spellings
+    // and `chord_problem` validates them, so `cmd+k` passes every check
+    // upstream of here.
+    //
+    // It has to parse *here* too. This resolver is the only thing that decides
+    // whether a chord matches, and a modifier it does not know makes the whole
+    // binding unparseable -- which on Apple is every `mod+…` default at once,
+    // reported as a keymap problem rather than as a key that does nothing, a
+    // long way from where anyone would look.
+    for spelling in ["cmd+k", "command+k"] {
+        assert_eq!(
+            spelling.parse::<Chord>(),
+            Ok(Chord::new(Key::Char('k'), Modifiers::SUPER)),
+            "{spelling} is a binding this build can be asked to resolve"
+        );
+    }
+}
+
+#[test]
+fn every_default_binding_resolves_on_both_platforms() {
+    // The class the test above is one member of, and the reason it is not
+    // enough on its own: the defaults live in the registry, `expand_mod` is
+    // applied to them per platform, and nothing else asserts that the two
+    // agree. A default spelled with a token this resolver cannot read is a
+    // command with no key on that platform, and the Linux gate cannot see it
+    // -- which is exactly the shape ADR 0019 Q7 says to guard against.
+    for platform in [Platform::Freedesktop, Platform::Apple] {
+        let keymap = postio_core::Keymap::resolve_on(&Default::default(), platform);
+        let (_, problems) = Resolver::from_commands(&keymap);
+        assert!(
+            problems.is_empty(),
+            "{platform:?} could not resolve its own defaults: {problems:?}"
+        );
+    }
 }

@@ -146,8 +146,12 @@ fn chord_problem(chord: &str) -> Option<String> {
             return Some(format!("`{chord}` has an empty modifier"));
         }
         if !MODIFIERS.contains(&modifier.to_ascii_lowercase().as_str()) {
+            // Listed from `MODIFIERS` rather than typed out, because the
+            // typed-out version was already wrong: it never mentioned `cmd`,
+            // which is the spelling `expand_mod` itself writes on Apple.
             return Some(format!(
-                "`{modifier}` is not a modifier; use mod, ctrl, alt, shift or super"
+                "`{modifier}` is not a modifier; use {}",
+                MODIFIERS.join(", ")
             ));
         }
     }
