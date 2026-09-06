@@ -780,7 +780,7 @@ impl Window {
         pane.connect_command(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |command| window.run(command)
+            move |command| window.act(command)
         ));
 
         let _ = self.imp().conversation.set(pane.clone());
