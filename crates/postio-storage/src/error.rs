@@ -122,6 +122,30 @@ pub enum Error {
     )]
     WrongStoreKey,
 
+    /// The key is right; the store was written before the page MAC changed.
+    ///
+    /// SQLCipher authenticates every page, and which MAC it used is written
+    /// into the database. Postio moved from SQLCipher 4's default HMAC-SHA512
+    /// to HMAC-SHA256, which is 1.7x cheaper on the page-read path wherever
+    /// the CPU has the SHA extensions (`hmac_cost.rs`), and a store made
+    /// before that cannot be read now.
+    ///
+    /// **A variant of its own, and this is the whole reason it exists.** The
+    /// symptom is identical to a wrong key — page 1 does not verify — so
+    /// without this the user is told their key belongs to another
+    /// installation, which is false and unactionable. There is nothing wrong
+    /// with the key or the mail; the file is in a format this build does not
+    /// read.
+    ///
+    /// Pre-v1 there is no migration: the mail is on the server, so the store
+    /// is rebuilt by resyncing rather than converted.
+    #[error(
+        "the local store was written before the page MAC changed and this \
+         build cannot read it. The key is correct and no mail has been lost -- \
+         the store is a cache of the server. Delete it and let it resync"
+    )]
+    StorePredatesPageMac,
+
     /// SQLCipher refused `PRAGMA key`, and it is not about the key.
     ///
     /// Its message — "PRAGMA key requires a key of one or more characters" —
