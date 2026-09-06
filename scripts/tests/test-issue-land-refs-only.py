@@ -37,6 +37,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 STUB_CHECKS = [
     "check-crate-boundaries.py",
@@ -151,7 +158,7 @@ def run_case(*, refs_only: bool) -> None:
     """One landing, in its own sandbox, with `--refs-only` or without."""
     prefix = f"[refs_only={refs_only}] "
     channel = pinned_channel()
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         target = base / "target"
         root = base / "repo"
@@ -241,7 +248,7 @@ def run_negation_case() -> None:
     """
     prefix = "[negation] "
     channel = pinned_channel()
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         target = base / "target"
         root = base / "repo"

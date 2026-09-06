@@ -36,6 +36,13 @@ HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 PERSONAL_DATA_CHECK = HERE / "checks" / "check-no-personal-data.py"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 # The five invariant checks this test is not about. `check-no-personal-data.py`
 # is deliberately left off this list -- it is the one under test, so it has to
@@ -129,7 +136,7 @@ def main() -> int:
 
     channel = pinned_channel()
 
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         target = base / "target"
         root = base / "repo"

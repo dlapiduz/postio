@@ -46,6 +46,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 STUB_CHECKS = [
     "check-crate-boundaries.py",
@@ -232,7 +239,7 @@ def workspace_tests(calls: str) -> list[str]:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
         # ── 1. a branch that adds a member runs the workspace tests ───────

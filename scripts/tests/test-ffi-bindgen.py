@@ -40,6 +40,13 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent.parent
 REPO_ROOT = SCRIPTS.parent
 BINDGEN = SCRIPTS / "ffi-bindgen.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 FAILURES: list[str] = []
 
@@ -66,7 +73,7 @@ def main() -> int:
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
 
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         out = Path(directory) / "bindings"
         result = subprocess.run(
             ["bash", str(BINDGEN), str(out)],
