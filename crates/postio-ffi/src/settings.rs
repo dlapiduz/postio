@@ -350,3 +350,12 @@ pub fn row_timestamp(received_at: i64) -> String {
     let received = chrono::DateTime::from_timestamp(received_at, 0).unwrap_or_default();
     postio_ui::row::timestamp(received, chrono::Local::now())
 }
+
+/// One key hint on the focused row: the key, and what it does.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RowHintFfi {
+    /// The key as the user would press it, from their own bindings.
+    pub key: String,
+    /// The verb, in the canvas' words — "reply", "archive".
+    pub label: String,
+}

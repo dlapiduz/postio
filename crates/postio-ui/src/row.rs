@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use postio_config::Density;
+use postio_core::{CommandId, Keymap};
 use postio_model::EmailAddress;
 
 /// Canvas 1b's row geometry for one density, in logical pixels.
@@ -119,6 +120,31 @@ pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
         _ if local.year() == now.year() => local.format("%-d %b").to_string(),
         _ => local.format("%-d %b %y").to_string(),
     }
+}
+
+/// The commands the focused row hints at, and the labels the canvas gives
+/// them — canvas order, not registry order.
+/// Two, not three. `t` used to be here, hinting at the drill-in column that
+/// a thread row could open; the conversation is what the reading pane shows
+/// the moment the cursor lands on the row, so there is no third verb to
+/// announce (#1003).
+const HINT_COMMANDS: [(CommandId, &str); 2] =
+    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
+
+/// The key hints the focused row announces, as `(key, label)` pairs.
+///
+/// Read from the keymap rather than from the registry's defaults, so a
+/// rebinding reaches the hint — a row that taught the wrong key would be
+/// worse than one that taught none.
+pub fn hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
+    HINT_COMMANDS
+        .iter()
+        .filter_map(|(command, label)| {
+            keymap
+                .binding(*command)
+                .map(|key| (key.to_string(), *label))
+        })
+        .collect()
 }
 
 #[cfg(test)]

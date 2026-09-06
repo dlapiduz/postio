@@ -169,7 +169,9 @@ public struct SettingsPaneView: View {
                         // cell rather than tabulated, so it cannot drift from
                         // what the list draws -- GTK says the same sentence
                         // from the same kind of measurement.
-                        Text("\(Int(MessageRowCell.preferredHeight(for: current.density)))px rows")
+                        Text(
+                            "\(Int(MessageRowCell.preferredHeight(for: current.density, reservingHints: current.showKeyHints)))px rows"
+                        )
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }

@@ -18,6 +18,8 @@ public final class MessageRowCell: NSTableCellView {
     /// The avatar chip: a tinted round square with two letters in it.
     private let avatar = NSView()
     private let avatarLabel = NSTextField(labelWithString: "")
+    /// `e reply   a archive` under the snippet, on the focused row only.
+    private let hintLine = NSTextField(labelWithString: "")
     /// The tint behind a *marked* row.
     ///
     /// Behind everything else and inset, so it reads as a state of the row
@@ -70,6 +72,7 @@ public final class MessageRowCell: NSTableCellView {
         let metrics = rowMetrics(density: density)
         preview.isHidden = !metrics.snippet
         stack?.spacing = CGFloat(metrics.subjectGap)
+        applyHints()
         padTop.constant = CGFloat(metrics.padY)
         padBottom.constant = -CGFloat(metrics.padY)
 
@@ -81,6 +84,34 @@ public final class MessageRowCell: NSTableCellView {
         avatar.layer?.cornerRadius = CGFloat(metrics.avatar) / 2
         avatarLabel.font = .systemFont(ofSize: CGFloat(metrics.avatar) * 0.4, weight: .medium)
         content?.spacing = CGFloat(metrics.gap)
+    }
+
+    /// The verbs this row would announce if it had the cursor.
+    ///
+    /// The same list for every row — they come from the keymap, not from the
+    /// message — so the controller hands one array to all of them and only
+    /// `focused` differs.
+    public var hints: [RowHintFfi] = [] {
+        didSet { applyHints() }
+    }
+
+    /// Whether this row has the cursor.
+    public var focused: Bool = false {
+        didSet { applyHints() }
+    }
+
+    /// What the hint line reads, or empty when there is none.
+    public var hintsForTesting: String { hintLine.isHidden ? "" : hintLine.stringValue }
+
+    private func applyHints() {
+        // Three ways to have no hint line, and they are all the same line of
+        // code: this row is not the focused one, the user turned hints off
+        // (#422 -- every binding stays in force, the row just stops naming
+        // them), or nothing is bound to the verbs at all.
+        let shows = focused && ui.showKeyHints && !hints.isEmpty
+        hintLine.isHidden = !shows
+        hintLine.stringValue = hints.map { "\($0.key) \($0.label)" }
+            .joined(separator: "   ")
     }
 
     /// Whether the chip is drawn. `sender_avatars` off means the row gets the
@@ -165,7 +196,11 @@ public final class MessageRowCell: NSTableCellView {
         top.spacing = PostioTokens.space2
         top.alignment = .centerY
 
-        let stack = NSStackView(views: [top, subject, preview])
+        hintLine.font = .systemFont(ofSize: 11)
+        hintLine.textColor = .tertiaryLabelColor
+        hintLine.isHidden = true
+
+        let stack = NSStackView(views: [top, subject, preview, hintLine])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = PostioTokens.space1
@@ -215,7 +250,10 @@ public final class MessageRowCell: NSTableCellView {
     /// Computed from the same tokens the layout uses, so the two cannot drift
     /// apart again, and `aRowIsTallEnoughForItsContents` measures a real laid
     /// out cell against it rather than trusting this arithmetic.
-    public static func preferredHeight(for density: DensityFfi = .airy) -> CGFloat {
+    public static func preferredHeight(
+        for density: DensityFfi = .airy,
+        reservingHints hints: Bool = false
+    ) -> CGFloat {
         let sender = NSFont(name: PostioTokens.fontBody, size: 13)
             ?? .systemFont(ofSize: 13, weight: .semibold)
         let subject = NSFont(name: PostioTokens.fontBody, size: 13) ?? .systemFont(ofSize: 13)
@@ -227,7 +265,14 @@ public final class MessageRowCell: NSTableCellView {
             + ceil(subject.boundingRectForFont.height)
             + (metrics.snippet ? ceil(preview.boundingRectForFont.height) : 0)
         let gaps = CGFloat(metrics.subjectGap) * (metrics.snippet ? 2 : 1)
-        return ceil(lines + gaps + CGFloat(metrics.padY) * 2)
+        // Reserved on every row, not added to the focused one: `NSTableView`
+        // draws a fixed height here, so a row that grew when it took the
+        // cursor would be a row that clipped instead.
+        let hintLine = hints
+            ? ceil(NSFont.systemFont(ofSize: 11).boundingRectForFont.height)
+                + CGFloat(metrics.hintsGap)
+            : 0
+        return ceil(lines + gaps + hintLine + CGFloat(metrics.padY) * 2)
     }
 
     /// What this cell is currently showing.

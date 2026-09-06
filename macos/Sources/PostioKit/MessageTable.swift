@@ -107,8 +107,17 @@ public final class MessageTableController: NSObject {
         set { ui.density = newValue }
     }
 
-    /// The row height this density asks for — what the table is set to.
-    public var rowHeight: CGFloat { MessageRowCell.preferredHeight(for: density) }
+    /// The row height this `[ui]` asks for — what the table is set to.
+    ///
+    /// Reserves the hint line when hints are on, because every row is the
+    /// same height and only the focused one reveals them. With hints off the
+    /// list gets that space back.
+    public var rowHeight: CGFloat {
+        MessageRowCell.preferredHeight(for: density, reservingHints: ui.showKeyHints)
+    }
+
+    /// The verbs the focused row announces, from the session's keymap.
+    public var hints: [RowHintFfi] = []
 
     /// The cell to draw into: `existing` if AppKit handed one back, else a new one.
     ///
@@ -147,16 +156,50 @@ public final class MessageTableController: NSObject {
             following = true
             tableView.deselectAll(nil)
             following = false
+            moveHints(to: nil)
             return
         }
         following = true
         tableView.selectRowIndexes(IndexSet(integer: Int(row)), byExtendingSelection: false)
         tableView.scrollRowToVisible(Int(row))
         following = false
+        moveHints(to: Int(row))
     }
 
     /// Whether the selection change now arriving is one we just made.
     private var following = false
+
+    /// The row the hints are currently drawn on, so the one they leave can be
+    /// redrawn too.
+    private var hintedRow: Int?
+
+    /// Which rows the last cursor move asked to be redrawn, for the test that
+    /// checks both ends of the move are covered.
+    public var repaintedForHintsForTesting: [Int] = []
+
+    /// Redraw the row that lost the hints and the one that gained them.
+    ///
+    /// Nothing else repaints on a cursor move: the list is windowed and
+    /// reloads when a page lands, not when the selection changes. Without
+    /// this the hints stay on the row the cursor left, which is worse than
+    /// not drawing them at all -- they point at the wrong message.
+    private func moveHints(to row: Int?) {
+        guard ui.showKeyHints else {
+            hintedRow = row
+            return
+        }
+        var touched: [Int] = []
+        if let was = hintedRow, was != row { touched.append(was) }
+        if let row, row != hintedRow { touched.append(row) }
+        hintedRow = row
+        repaintedForHintsForTesting = touched
+        guard let tableView, !touched.isEmpty else { return }
+        let rows = touched.filter { $0 >= 0 && $0 < tableView.numberOfRows }
+        tableView.reloadData(
+            forRowIndexes: IndexSet(rows),
+            columnIndexes: IndexSet(integer: 0)
+        )
+    }
 
     /// Reload exactly the rows a delivered page covers.
     ///
@@ -190,6 +233,7 @@ extension MessageTableController: NSTableViewDelegate {
         // move the boundary made.
         guard !following else { return }
         guard let table = notification.object as? NSTableView else { return }
+        moveHints(to: table.selectedRow < 0 ? nil : table.selectedRow)
         onCursorRowChanged?(table.selectedRow < 0 ? nil : UInt32(table.selectedRow))
         onCursorChanged?(messageAt(row: table.selectedRow))
     }
@@ -202,6 +246,10 @@ extension MessageTableController: NSTableViewDelegate {
     ) -> NSView? {
         let existing = tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self)
         let cell = cell(reusing: existing)
+        // The hints are the same for every row and only the focused one shows
+        // them; the cursor is the table's own selection, never the mark.
+        cell.hints = hints
+        cell.focused = tableView.selectedRow == row
         cell.show(presentation(at: UInt32(row)))
         return cell
     }

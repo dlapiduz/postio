@@ -95,11 +95,17 @@ import Testing
 
     @Test func theTableIsToldTheHeightTheDensityAsksFor() {
         let controller = MessageTableController(source: StubRowSource(rowCount: 0))
+        // Hints are on by default and their line is reserved on every row, so
+        // the table's height is the one that includes it.
         controller.density = .compact
-        #expect(controller.rowHeight == MessageRowCell.preferredHeight(for: .compact))
+        #expect(
+            controller.rowHeight
+                == MessageRowCell.preferredHeight(for: .compact, reservingHints: true))
 
         controller.density = .airy
-        #expect(controller.rowHeight == MessageRowCell.preferredHeight(for: .airy))
+        #expect(
+            controller.rowHeight
+                == MessageRowCell.preferredHeight(for: .airy, reservingHints: true))
     }
 
     @Test func theViewBuildsATableAtTheDensitysHeight() {
@@ -112,7 +118,7 @@ import Testing
         controller.density = .compact
         let scroll = MessageListView.makeTable(controller: controller)
         let table = scroll.documentView as? NSTableView
-        #expect(table?.rowHeight == MessageRowCell.preferredHeight(for: .compact))
+        #expect(table?.rowHeight == controller.rowHeight)
     }
 }
 
@@ -124,9 +130,11 @@ import Testing
         // at. GTK measures a real row for this rather than tabulating; so
         // does the pane, from the same cell the list makes.
         for density in [DensityFfi.airy, .comfortable, .compact] {
-            let shown = Int(MessageRowCell.preferredHeight(for: density))
             let controller = MessageTableController(source: StubRowSource(rowCount: 0))
             controller.density = density
+            let shown = Int(
+                MessageRowCell.preferredHeight(
+                    for: density, reservingHints: controller.ui.showKeyHints))
             #expect(CGFloat(shown) == controller.rowHeight.rounded(.down))
         }
     }

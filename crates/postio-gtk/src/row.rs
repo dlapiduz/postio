@@ -51,37 +51,21 @@ use postio_model::address::EmailAddress;
 use postio_ui::conversation::participants as participants_line;
 
 use crate::list::Row;
-
-/// The commands the focused row hints at, and the labels the canvas gives
-/// them — canvas order, not registry order.
-/// Two, not three. `t` used to be here, hinting at the drill-in column that
-/// a thread row could open; the conversation is what the reading pane shows
-/// the moment the cursor lands on the row, so there is no third verb to
-/// announce (#1003).
-const HINT_COMMANDS: [(CommandId, &str); 2] =
-    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
+// The hints moved to `postio_ui::row`: which two verbs a focused row
+// announces, and in what order, is a decision about teaching the keyboard --
+// not about how GTK draws text. Both frontends show the same two.
+pub use postio_ui::row::hints;
 
 /// The hints for a keymap alone.
 #[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap)
+    hints(keymap)
 }
 
 /// The hints a row shows. Every hint applies to every row now: none of them
 /// depends on whether the row stands for more than one message.
 fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap)
-}
-
-fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    HINT_COMMANDS
-        .iter()
-        .filter_map(|(command, label)| {
-            keymap
-                .binding(*command)
-                .map(|key| (key.to_string(), *label))
-        })
-        .collect()
+    hints(keymap)
 }
 
 /// [`hints_for`] against the registry's own bindings, for the tests that

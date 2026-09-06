@@ -80,6 +80,35 @@ import Testing
         }
     }
 
+    @Test func onlyTheFocusedRowTeachesTheKeyboard() {
+        // The hints exist to teach the keyboard by using the app. On every
+        // row at once they are noise; on none of them the keyboard has to be
+        // read about instead.
+        let hints = [RowHintFfi(key: "e", label: "reply")]
+
+        let focused = laidOut(appearance())
+        focused.hints = hints
+        focused.focused = true
+        focused.layoutSubtreeIfNeeded()
+        #expect(focused.hintsForTesting == "e reply")
+
+        let other = laidOut(appearance())
+        other.hints = hints
+        other.focused = false
+        #expect(other.hintsForTesting.isEmpty)
+    }
+
+    @Test func turningKeyHintsOffLeavesEveryBindingInForce() {
+        // #422: off only stops the row naming them, for someone who already
+        // knows the keyboard. Nothing about dispatch changes, so the only
+        // observable is that the row stops saying so.
+        let cell = laidOut(appearance())
+        cell.ui.showKeyHints = false
+        cell.hints = [RowHintFfi(key: "e", label: "reply")]
+        cell.focused = true
+        #expect(cell.hintsForTesting.isEmpty)
+    }
+
     @Test func aRowIsStillTallEnoughOnceTheChipIsInIt() {
         for density in [DensityFfi.airy, .comfortable, .compact] {
             let cell = laidOut(appearance(density: density))
@@ -109,5 +138,77 @@ import Testing
         let stale = MessageRowCell()
         stale.ui.senderAvatars = true
         #expect(controller.cell(reusing: stale).ui.senderAvatars == false)
+    }
+}
+
+/// The hint line's space, which every row pays for and one row uses.
+@MainActor
+@Suite struct KeyHintHeightTests {
+    @Test func theFocusedRowFitsItsHintsWithoutGrowing() {
+        // `NSTableView` draws a fixed height, so a row that grew when it took
+        // the cursor would clip instead. The space is reserved on every row.
+        for density in [DensityFfi.airy, .comfortable, .compact] {
+            let cell = MessageRowCell(frame: NSRect(x: 0, y: 0, width: 420, height: 200))
+            cell.ui = AppearanceFfi(
+                density: density, theme: .system, showHoverActions: true,
+                showKeyHints: true, senderAvatars: true
+            )
+            cell.hints = [RowHintFfi(key: "e", label: "reply"), RowHintFfi(key: "a", label: "archive")]
+            cell.focused = true
+            cell.show(
+                RowPresentation(
+                    sender: "Ada", subject: "Figures", preview: "…numbers",
+                    unread: false, flagged: false, threadBadge: nil,
+                    isPlaceholder: false, initials: "AL", time: "09:14"
+                )
+            )
+            cell.layoutSubtreeIfNeeded()
+
+            let declared = MessageRowCell.preferredHeight(for: density, reservingHints: true)
+            #expect(declared >= cell.fittingSize.height, "\(density) clips its hints")
+        }
+    }
+
+    @Test func turningHintsOffGivesTheListTheSpaceBack() {
+        for density in [DensityFfi.airy, .comfortable, .compact] {
+            #expect(
+                MessageRowCell.preferredHeight(for: density, reservingHints: false)
+                    < MessageRowCell.preferredHeight(for: density, reservingHints: true)
+            )
+        }
+    }
+}
+
+/// The cursor moving, and the two rows that have to be redrawn when it does.
+@MainActor
+@Suite struct HintRepaintTests {
+    private func controller() -> MessageTableController {
+        let controller = MessageTableController(source: StubRowSource(rowCount: 10))
+        let scroll = MessageListView.makeTable(controller: controller)
+        controller.tableView = scroll.documentView as? NSTableView
+        controller.tableView?.reloadData()
+        return controller
+    }
+
+    @Test func movingTheCursorRedrawsTheRowThatLostTheHintsAndTheOneThatGainedThem() {
+        // Nothing else repaints on a cursor move -- the list is windowed and
+        // reloads when a page lands, not when the selection changes. So
+        // without this the hints stay on the row the cursor left, which is
+        // worse than not drawing them: it points at the wrong message.
+        let controller = controller()
+        controller.showCursor(on: 3)
+        controller.repaintedForHintsForTesting = []
+
+        controller.showCursor(on: 4)
+        #expect(controller.repaintedForHintsForTesting.sorted() == [3, 4])
+    }
+
+    @Test func aCursorMoveWithNothingFocusedBeforeRedrawsOnlyTheNewRow() {
+        let controller = controller()
+        controller.showCursor(on: nil)
+        controller.repaintedForHintsForTesting = []
+
+        controller.showCursor(on: 2)
+        #expect(controller.repaintedForHintsForTesting == [2])
     }
 }

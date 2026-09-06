@@ -287,3 +287,26 @@ fn a_denser_row_is_shorter_and_the_tightest_one_drops_the_snippet() {
     assert!(airy.snippet && snug.snippet);
     assert!(!compact.snippet, "compact keeps the line it exists to drop");
 }
+
+#[test]
+fn the_row_hints_follow_the_users_own_bindings() {
+    // A row that taught the wrong key would be worse than one that taught
+    // none, so this reads the session's keymap rather than the registry's
+    // defaults.
+    let session = postio_ffi::Session::open(
+        postio_ffi::SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"x\"\n"),
+    )
+    .expect("a session with a rebinding");
+
+    let hints = session.row_hints();
+    let archive = hints
+        .iter()
+        .find(|hint| hint.label == "archive")
+        .expect("the row hints at archive");
+    assert_eq!(archive.key, "x");
+    assert!(
+        hints.iter().any(|hint| hint.label == "reply"),
+        "canvas 1b hints at two verbs, not one"
+    );
+    session.shutdown();
+}
