@@ -318,6 +318,16 @@ public final class PostioSession {
         inner.bindingFor(command: command)
     }
 
+    /// Every binding in force for a command, the primary first.
+    ///
+    /// Both of the canvas' keyboard layers, because they are two bindings on
+    /// one command rather than a mode: `e` replies and so does `⌘R`. A menu
+    /// draws the chord, the cheat sheet lists both, and neither decides which
+    /// exists.
+    public func bindings(for command: String) -> [String] {
+        inner.bindingsFor(command: command)
+    }
+
     /// Start syncing every configured account; answers how many started.
     @discardableResult
     public func startSyncing() throws -> UInt32 { try inner.startSyncing() }

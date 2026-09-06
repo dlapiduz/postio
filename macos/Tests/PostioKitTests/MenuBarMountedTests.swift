@@ -28,7 +28,7 @@ import Testing
         // that has never asked for one — which a test bundle has not.
         _ = NSApplication.shared
         MenuBar.install(
-            binding: { command in command == "reply" ? "cmd+r" : nil },
+            bindings: { command in command == "reply" ? ["e", "cmd+r"] : [] },
             available: { _ in true },
             run: { _ in }
         )

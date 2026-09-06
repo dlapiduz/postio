@@ -803,6 +803,13 @@ impl Session {
         self.binding_for(command)
     }
 
+    /// Every binding in force for a command, the primary first. See
+    /// [`bindings_for`](Self::bindings_for).
+    #[uniffi::method(name = "bindingsFor")]
+    pub fn bindings_for_ffi(&self, command: String) -> Vec<String> {
+        self.bindings_for(command)
+    }
+
     /// Every command the registry knows, in cheat-sheet order.
     #[uniffi::method(name = "commands")]
     pub fn commands_ffi(&self) -> Vec<crate::CommandSpecFfi> {
@@ -2188,6 +2195,24 @@ impl Session {
             return None;
         };
         self.keymap().binding(action).map(str::to_string)
+    }
+
+    /// Every binding in force for `command`, the primary first.
+    ///
+    /// A menu wants the chord and the cheat sheet wants the mnemonic, and
+    /// both are true at once: the canvas' two keyboard layers are two
+    /// bindings on one command (`e` and `⌘R`), not a mode. Which of them a
+    /// surface draws is that surface's business; which of them *exist* is
+    /// the registry's, and `mod` is already expanded for this platform.
+    pub fn bindings_for(&self, command: String) -> Vec<String> {
+        let Ok(action) = command.parse::<postio_core::ActionId>() else {
+            return Vec::new();
+        };
+        self.keymap()
+            .bindings(action)
+            .iter()
+            .map(|binding| binding.to_string())
+            .collect()
     }
 
     /// How many accounts are configured and enabled.

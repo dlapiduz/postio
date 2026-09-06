@@ -24,18 +24,27 @@ import Testing
         // Icons only, so the tooltip is the whole of what a person who does
         // not recognise the glyph has to go on.
         let item = ToolbarPlan.items[0]
-        #expect(ToolbarPlan.tooltip(for: item) { _ in "shift+cmd+a" } == "Archive (⇧⌘A)")
+        #expect(ToolbarPlan.tooltip(for: item) { _ in ["shift+cmd+a"] } == "Archive (⇧⌘A)")
     }
 
     @Test func aCommandWithNoBindingStillHasATooltip() {
         let item = ToolbarPlan.items[0]
-        #expect(ToolbarPlan.tooltip(for: item) { _ in nil } == "Archive")
+        #expect(ToolbarPlan.tooltip(for: item) { _ in [] } == "Archive")
+    }
+
+    @Test func aButtonWithBothLayersNamesTheChord() {
+        // Both are live — `a` archives and so does `⇧⌘A` — and the chord is
+        // what a tooltip on a Mac is expected to name.
+        let item = ToolbarPlan.items[0]
+        #expect(
+            ToolbarPlan.tooltip(for: item) { _ in ["a", "shift+cmd+a"] } == "Archive (⇧⌘A)"
+        )
     }
 
     @Test func aSequenceIsNotDrawnAsAnAccelerator() {
         // `g g` cannot be written as a chord, and half of it would name a key
         // that does something else.
         let item = ToolbarPlan.items[0]
-        #expect(ToolbarPlan.tooltip(for: item) { _ in "g g" } == "Archive")
+        #expect(ToolbarPlan.tooltip(for: item) { _ in ["g g"] } == "Archive")
     }
 }

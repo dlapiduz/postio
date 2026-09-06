@@ -46,8 +46,8 @@ public enum ToolbarPlan {
     /// default, so a rebound key is what the tooltip says — the same rule
     /// `MenuPlan` follows, and for the same reason: a control that names the
     /// wrong key is worse than one that names none.
-    public static func tooltip(for item: Item, binding: (String) -> String?) -> String {
-        guard let chord = binding(item.command).flatMap(MenuPlan.accelerator(from:)) else {
+    public static func tooltip(for item: Item, bindings: (String) -> [String]) -> String {
+        guard let chord = MenuPlan.accelerator(among: bindings(item.command)) else {
             return item.title
         }
         return "\(item.title) (\(chord))"

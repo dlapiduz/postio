@@ -256,16 +256,35 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
         keymap.command_for(Context::List, "a"),
         Some(ActionId::Builtin(CommandId::Delete))
     );
-    assert_eq!(
+    // Archive lost `a` and keeps its chord: the canvas' second keyboard layer
+    // means most commands have two bindings, so losing one is no longer the
+    // same as losing all of them.
+    assert_ne!(
         keymap.binding(CommandId::Archive),
+        Some("a"),
+        "the override took the key"
+    );
+    assert!(
+        keymap
+            .binding(CommandId::Archive)
+            .is_some_and(|binding| binding.ends_with("shift+a")),
+        "and what it keeps is the chord, which is not what was taken"
+    );
+
+    // A command whose *only* binding is taken is palette-only rather than
+    // dead, which is the case this test was written for. `d` is Delete's, and
+    // Delete has no second layer.
+    let keymap = Keymap::resolve(&bindings(&[("flag", "d")]));
+    assert_eq!(
+        keymap.binding(CommandId::Delete),
         None,
-        "and the command that lost the key is palette-only rather than dead"
+        "the command that lost its only key is palette-only rather than dead"
     );
     assert!(
         keymap
             .problems()
             .iter()
-            .any(|problem| problem.contains("archive")),
+            .any(|problem| problem.contains("delete")),
         "{:?}",
         keymap.problems()
     );
