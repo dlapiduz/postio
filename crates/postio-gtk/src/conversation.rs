@@ -312,7 +312,15 @@ pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
 ];
 
 /// Who to ask to run a `CommandId` one of this pane's bars carries.
-type CommandHandler = Box<dyn Fn(postio_core::CommandId)>;
+/// A whole [`Command`](postio_core::Command), not a
+/// [`CommandId`](postio_core::CommandId): which message a verb aims at is
+/// the substance for a pane that holds several.
+///
+/// `Archive thread` needs no target — the pane is the thread — but
+/// `Continue editing` does: a draft inside a longer thread is not the row
+/// the list cursor is on, so an untargeted open would resume whatever the
+/// list is pointing at (#1212).
+type CommandHandler = Box<dyn Fn(postio_core::Command)>;
 
 /// What a message offers when it is the only one there is.
 ///
@@ -349,6 +357,43 @@ pub const LONE_MESSAGE_ACTIONS: [crate::widgets::Action; 4] = [
         "Forward",
         "conversation-action-forward",
     ),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ArchiveThread,
+        "Archive",
+        "conversation-action-archive",
+    ),
+];
+
+/// What a draft offers: the one verb that is true of it.
+///
+/// #1212. A draft is a message you wrote and never sent, so reply, reply-all
+/// and forward are the correspondent's verbs and it has no correspondent yet
+/// — a `Reply` here would quote your own unsent text back at you. The verb
+/// that is right was already reachable and unannounced: activating the row
+/// resumes the composer on the draft, cancelling a queued send first.
+///
+/// `CommandId::OpenMessage` is that command, so the button and `Return`
+/// cannot come to mean different things and nothing new enters the registry.
+pub const DRAFT_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::Action::new(
+    postio_core::CommandId::OpenMessage,
+    "Continue editing",
+    "conversation-action-continue",
+)
+.primary()];
+
+/// A draft that is the whole thread — the Drafts folder, which is where
+/// nearly every draft is seen.
+///
+/// Archive joins it for the same reason it joins [`LONE_MESSAGE_ACTIONS`]:
+/// the footer stands down at n=1, and archive would otherwise have no control
+/// in the pane at all.
+pub const LONE_DRAFT_ACTIONS: [crate::widgets::Action; 2] = [
+    crate::widgets::Action::new(
+        postio_core::CommandId::OpenMessage,
+        "Continue editing",
+        "conversation-action-continue",
+    )
+    .primary(),
     crate::widgets::Action::new(
         postio_core::CommandId::ArchiveThread,
         "Archive",
@@ -702,7 +747,7 @@ mod imp {
             self.footer.set_visible(false);
             self.footer.connect_command({
                 let view = view.clone();
-                move |command| view.emit_command(command.id())
+                move |command| view.emit_command(command)
             });
             self.root.set_parent(&*view);
         }
@@ -1033,6 +1078,19 @@ impl ConversationView {
     }
 
     /// Whether `message` is showing its body.
+    /// Press a verb in `message`'s own bar, without a pointer. Test-facing.
+    pub fn press_entry_command(&self, message: MessageId, command: postio_core::CommandId) {
+        if let Some(entry) = self
+            .imp()
+            .entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.message == message)
+        {
+            entry.actions.press(command);
+        }
+    }
+
     pub fn is_expanded(&self, message: MessageId) -> bool {
         self.imp()
             .entries
@@ -1344,10 +1402,11 @@ impl ConversationView {
         // whichever message you are looking at.
         let message = row.id;
         let actions = crate::widgets::ActionBar::new(
-            if alone {
-                &LONE_MESSAGE_ACTIONS[..]
-            } else {
-                &MESSAGE_ACTIONS[..]
+            match (row.draft, alone) {
+                (true, true) => &LONE_DRAFT_ACTIONS[..],
+                (true, false) => &DRAFT_ACTIONS[..],
+                (false, true) => &LONE_MESSAGE_ACTIONS[..],
+                (false, false) => &MESSAGE_ACTIONS[..],
             },
             "conversation-actions",
         );
@@ -1359,7 +1418,16 @@ impl ConversationView {
             // the same act — so it goes out on the conversation's own path
             // rather than growing a second one.
             if command.id() == postio_core::CommandId::ArchiveThread {
-                view.emit_command(command.id());
+                view.emit_command(command);
+                return;
+            }
+            // Named, not left to the cursor: a draft inside a longer thread
+            // is not the row the list holds, and an untargeted open would
+            // resume whatever the list is pointing at instead (#1212).
+            if command.id() == postio_core::CommandId::OpenMessage {
+                view.emit_command(postio_core::Command::OpenMessage {
+                    message: Some(message),
+                });
                 return;
             }
             let kind = match command.id() {
@@ -1407,14 +1475,14 @@ impl ConversationView {
     /// dispatch a keystroke, a menu item and a palette entry all go through,
     /// and a second path from a button straight to the runtime is how two
     /// surfaces come to disagree about what a verb means.
-    fn emit_command(&self, command: postio_core::CommandId) {
+    fn emit_command(&self, command: postio_core::Command) {
         for handler in self.imp().on_command.borrow().iter() {
-            handler(command);
+            handler(command.clone());
         }
     }
 
     /// Who to ask to run a command one of this pane's bars carries.
-    pub fn connect_command(&self, handler: impl Fn(postio_core::CommandId) + 'static) {
+    pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
         self.imp().on_command.borrow_mut().push(Box::new(handler));
     }
 

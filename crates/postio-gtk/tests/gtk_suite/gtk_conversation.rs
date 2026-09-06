@@ -717,3 +717,68 @@ pub fn expand_all_is_offered_only_when_there_is_something_to_expand() {
 
     window.close();
 }
+
+/// A draft is offered the one verb that is true of it (#1212).
+///
+/// Nothing in the pane used to branch on `row.draft`, so a message *you*
+/// wrote and never sent was drawn under the ordinary bar: a primary `Reply`
+/// that would quote your own unsent text back at you, and a `Reply all`
+/// addressed to yourself. The list row knew — it draws the draft mark and
+/// says "Draft" to a screen reader — and the pane the row opens into did not.
+///
+/// The verb that is right was reachable and unannounced: activating the row
+/// resumes the composer on the draft. So the bar names it, and names the
+/// message, because a draft inside a longer thread is not the row the list
+/// cursor is on.
+pub fn a_draft_is_offered_continue_editing_and_no_reply() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+
+    let ran: Rc<RefCell<Vec<postio_core::Command>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&ran);
+    pane.connect_command(move |command| seen.borrow_mut().push(command));
+
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // A thread of two: a message and the unsent reply to it. The draft is
+    // not the row the list holds, which is what makes naming it matter.
+    let mut messages: Vec<Row> = (1..=2).map(|id| message(id, true)).collect();
+    messages[1].draft = true;
+    let draft = messages[1].id;
+    pane.open(messages);
+    crate::pump();
+
+    let found = reply_controls(&pane.widget());
+    assert!(
+        found.is_empty(),
+        "a draft was offered {found:?}: you do not reply to a message you \
+         wrote and never sent"
+    );
+
+    pane.focus_message(draft);
+    crate::pump();
+    pane.press_entry_command(draft, postio_core::CommandId::OpenMessage);
+    crate::pump();
+    assert_eq!(
+        ran.borrow().as_slice(),
+        [postio_core::Command::OpenMessage {
+            message: Some(draft)
+        }],
+        "`Continue editing` names the draft it is drawn on, so a draft that \
+         is not the thread's own row still opens the right one"
+    );
+
+    window.close();
+}

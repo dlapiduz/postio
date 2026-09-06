@@ -363,6 +363,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
     ),
     (
+        "gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply",
+        gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply as fn(),
+    ),
+    (
         "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
         gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
     ),
