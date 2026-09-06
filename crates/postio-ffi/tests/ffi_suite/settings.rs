@@ -287,3 +287,50 @@ fn a_denser_row_is_shorter_and_the_tightest_one_drops_the_snippet() {
     assert!(airy.snippet && snug.snippet);
     assert!(!compact.snippet, "compact keeps the line it exists to drop");
 }
+
+#[test]
+fn the_row_hints_follow_the_users_own_bindings() {
+    // A row that taught the wrong key would be worse than one that taught
+    // none, so this reads the session's keymap rather than the registry's
+    // defaults.
+    let session = postio_ffi::Session::open(
+        postio_ffi::SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"x\"\n"),
+    )
+    .expect("a session with a rebinding");
+
+    let hints = session.row_hints();
+    let archive = hints
+        .iter()
+        .find(|hint| hint.label == "archive")
+        .expect("the row hints at archive");
+    assert_eq!(archive.key, "x");
+    assert!(
+        hints.iter().any(|hint| hint.label == "reply"),
+        "canvas 1b hints at two verbs, not one"
+    );
+    session.shutdown();
+}
+
+#[test]
+fn a_rows_actions_are_registry_commands_the_keyboard_also_runs() {
+    // The point of crossing them rather than listing them in Swift: the mouse
+    // and the keyboard have to run the same verb for the same glyph, and a
+    // hover action with its own implementation would be a fourth way to
+    // archive that undo did not know about.
+    let actions = postio_ffi::row_actions();
+    let commands: Vec<&str> = actions.iter().map(|a| a.command.as_str()).collect();
+    assert_eq!(commands, ["archive", "flag", "delete"]);
+
+    let session =
+        postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory().with_config_for_test(""))
+            .expect("a session");
+    for action in &actions {
+        assert!(
+            session.binding_for(action.command.clone()).is_some(),
+            "{} is offered to the mouse but bound to no key",
+            action.command
+        );
+        assert!(!action.title.is_empty());
+    }
+    session.shutdown();
+}

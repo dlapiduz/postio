@@ -82,6 +82,12 @@ public struct RowPresentation: Equatable, Sendable {
     public let threadBadge: String?
     /// Whether this row is still waiting for its page.
     public let isPlaceholder: Bool
+    /// The two letters the avatar chip shows, from
+    /// `postio_ui::row::initials` — shared, so both platforms abbreviate a
+    /// sender the same way.
+    public let initials: String
+    /// When it arrived: `09:14` today, `Thu` this week, `12 Aug` beyond.
+    public let time: String
     /// The excerpt and its matches, when this row is a search hit.
     ///
     /// When it is set, the row draws this instead of `preview`: a result
@@ -120,7 +126,9 @@ public struct RowPresentation: Equatable, Sendable {
         threadBadge: String?,
         isPlaceholder: Bool,
         selected: Bool = false,
-        snippet: SnippetFfi? = nil
+        snippet: SnippetFfi? = nil,
+        initials: String = "?",
+        time: String = ""
     ) {
         self.sender = sender
         self.subject = subject
@@ -131,6 +139,8 @@ public struct RowPresentation: Equatable, Sendable {
         self.isPlaceholder = isPlaceholder
         self.selected = selected
         self.snippet = snippet
+        self.initials = initials
+        self.time = time
     }
 
     /// How a delivered row is drawn.
@@ -140,6 +150,10 @@ public struct RowPresentation: Equatable, Sendable {
         // A message with no `From` is not a bug to hide: it happens, and
         // "(no sender)" is more honest than a blank column that reads as a
         // rendering failure.
+        // Both from the shared crate: the letters so a mailing list reads as
+        // `LK` on either platform, and the time so `Thu` means the same week.
+        initials = row.initials
+        time = rowTimestamp(receivedAt: row.receivedAt)
         sender = row.from?.nonEmpty ?? "(no sender)"
         subject = row.subject?.nonEmpty ?? "(no subject)"
         preview = row.preview ?? ""

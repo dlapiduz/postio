@@ -85,6 +85,13 @@ pub struct RowFfi {
     pub is_thread: bool,
     /// Who it is from, already rendered for display.
     pub from: Option<String>,
+    /// The two letters the avatar chip shows for the sender.
+    ///
+    /// Derived here rather than in the frontend, from
+    /// `postio_ui::row::initials`, so both platforms abbreviate a name the
+    /// same way — a mailing list reads as `LK` on each rather than one of
+    /// them shrugging.
+    pub initials: String,
     /// The subject: the conversation's when there is one, else the message's.
     pub subject: Option<String>,
     /// The snippet under the subject.
@@ -133,6 +140,7 @@ impl From<MessageSummary> for RowFfi {
             // other one, so the two frontends drew different senders for the
             // same message (#1150) -- on a field whose doc comment says
             // "already rendered for display".
+            initials: postio_ui::row::initials(row.from.as_ref()),
             from: row.from.map(|address| address.display().to_string()),
             subject: row.subject,
             preview: row.preview,

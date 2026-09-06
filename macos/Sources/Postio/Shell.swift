@@ -225,6 +225,17 @@ struct Shell: View {
                     controller.onCursorRowChanged = { row in
                         engine.cursorClicked(row: row)
                     }
+                    // A hover action or a context-menu item acts on the row it
+                    // was asked on, not on wherever the cursor happens to be.
+                    // Moving the cursor there first is what makes that true
+                    // without a second, targeted dispatch path: the verb then
+                    // runs exactly as the keystroke would, undo included.
+                    controller.onRowAction = { command, row in
+                        controller.showCursor(on: UInt32(row))
+                        engine.cursorClicked(row: UInt32(row))
+                        engine.cursorMoved(to: controller.messageAt(row: row))
+                        engine.run(command)
+                    }
                 }
             }
         case let .unavailable(reason):

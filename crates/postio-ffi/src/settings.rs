@@ -338,3 +338,52 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
         snippet: metrics.snippet,
     }
 }
+
+/// The timestamp column for a row received at `received_at` (epoch seconds).
+///
+/// Takes the instant rather than answering once at row-build time, because
+/// "today" moves: a list left open across midnight would otherwise keep
+/// drawing `09:14` for a message that is now yesterday's. `postio_ui::row`
+/// owns the rule — clock today, weekday this week, date beyond, year past it.
+#[uniffi::export]
+pub fn row_timestamp(received_at: i64) -> String {
+    let received = chrono::DateTime::from_timestamp(received_at, 0).unwrap_or_default();
+    postio_ui::row::timestamp(received, chrono::Local::now())
+}
+
+/// One key hint on the focused row: the key, and what it does.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RowHintFfi {
+    /// The key as the user would press it, from their own bindings.
+    pub key: String,
+    /// The verb, in the canvas' words — "reply", "archive".
+    pub label: String,
+}
+
+/// One verb a row offers the mouse.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RowActionFfi {
+    /// The registry command it runs — `archive`, `flag`, `delete`.
+    ///
+    /// A command id, never a local implementation: a hover action that did
+    /// its own thing would be a fourth way to archive that undo did not know
+    /// about.
+    pub command: String,
+    /// What a screen reader calls it, and what the context menu says.
+    pub title: String,
+}
+
+/// The three verbs triage is made of, left to right.
+///
+/// The same three the keyboard runs with `a`, `s` and `d`, and the same three
+/// the bulk bar carries: one row or twenty, the mouse says the same thing.
+#[uniffi::export]
+pub fn row_actions() -> Vec<RowActionFfi> {
+    postio_ui::row::RowAction::ALL
+        .into_iter()
+        .map(|action| RowActionFfi {
+            command: action.command().as_str().to_string(),
+            title: action.title().to_string(),
+        })
+        .collect()
+}

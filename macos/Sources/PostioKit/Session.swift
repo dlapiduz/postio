@@ -73,6 +73,9 @@ public final class PostioSession {
     /// window cannot end up with two opinions of the same table.
     public func appearance() -> AppearanceFfi { inner.appearance() }
 
+    /// The verbs the focused row announces, from this session's bindings.
+    public func rowHints() -> [RowHintFfi] { inner.rowHints() }
+
     /// Show `scope`, and answer the generation the window is now on.
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }

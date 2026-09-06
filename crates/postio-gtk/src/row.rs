@@ -39,11 +39,10 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::{DateTime, Datelike, Local, Utc};
+use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
-use postio_core::{CommandId, Keymap};
-use postio_model::address::EmailAddress;
+use postio_core::Keymap;
 // The people in a conversation, short and newest-biased. The rule lives in
 // `postio-ui`: the list row and the conversation header both draw this line,
 // and two surfaces shortening the same names two ways is what moving it
@@ -51,37 +50,21 @@ use postio_model::address::EmailAddress;
 use postio_ui::conversation::participants as participants_line;
 
 use crate::list::Row;
-
-/// The commands the focused row hints at, and the labels the canvas gives
-/// them — canvas order, not registry order.
-/// Two, not three. `t` used to be here, hinting at the drill-in column that
-/// a thread row could open; the conversation is what the reading pane shows
-/// the moment the cursor lands on the row, so there is no third verb to
-/// announce (#1003).
-const HINT_COMMANDS: [(CommandId, &str); 2] =
-    [(CommandId::Reply, "reply"), (CommandId::Archive, "archive")];
+// The hints moved to `postio_ui::row`: which two verbs a focused row
+// announces, and in what order, is a decision about teaching the keyboard --
+// not about how GTK draws text. Both frontends show the same two.
+pub use postio_ui::row::hints;
 
 /// The hints for a keymap alone.
 #[cfg(test)]
 fn hints_for(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap)
+    hints(keymap)
 }
 
 /// The hints a row shows. Every hint applies to every row now: none of them
 /// depends on whether the row stands for more than one message.
 fn hints_for_row(keymap: &Keymap, _row: Option<&Row>) -> Vec<(String, &'static str)> {
-    filtered_hints(keymap)
-}
-
-fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
-    HINT_COMMANDS
-        .iter()
-        .filter_map(|(command, label)| {
-            keymap
-                .binding(*command)
-                .map(|key| (key.to_string(), *label))
-        })
-        .collect()
+    hints(keymap)
 }
 
 /// [`hints_for`] against the registry's own bindings, for the tests that
@@ -90,52 +73,11 @@ fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
 fn default_hints() -> Vec<(String, &'static str)> {
     hints_for(&Keymap::resolve(&Default::default()))
 }
-
-/// The initials the avatar chip shows for `from`.
-///
-/// Two letters: the initials of the first two words of a display name, or
-/// the first two letters of a single word. With no display name the local
-/// part stands in, which is what makes a mailing list read as `LK` rather
-/// than as a shrug.
-pub fn initials(from: Option<&EmailAddress>) -> String {
-    let Some(from) = from else {
-        return "?".to_string();
-    };
-    let source = match &from.name {
-        Some(name) if !name.trim().is_empty() => name.as_str(),
-        _ => from.local_part().unwrap_or(""),
-    };
-    let words: Vec<&str> = source
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    let letters: String = match words.as_slice() {
-        [] => return "?".to_string(),
-        [one] => one.chars().take(2).collect(),
-        [first, second, ..] => first
-            .chars()
-            .take(1)
-            .chain(second.chars().take(1))
-            .collect(),
-    };
-    letters.to_uppercase()
-}
-
-/// The timestamp column: relative for today, absolute beyond.
-///
-/// Canvas 1b draws `09:14` and `Thu`. Past the week it becomes a date, and
-/// past the year it carries the year, because "12 Aug" two years ago is a
-/// lie the eye believes.
-pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
-    let local = received.with_timezone(&now.timezone());
-    let days = (now.date_naive() - local.date_naive()).num_days();
-    match days {
-        0 => local.format("%H:%M").to_string(),
-        1..=6 => local.format("%a").to_string(),
-        _ if local.year() == now.year() => local.format("%-d %b").to_string(),
-        _ => local.format("%-d %b %y").to_string(),
-    }
-}
+// `initials` and `timestamp` moved to `postio_ui::row`: what two letters
+// stand for a sender, and whether a time reads as `09:14`, `Thu` or `12 Aug`,
+// are answers a mail client gives once. Two frontends deriving them apart is
+// the drift these moves exist to stop.
+pub use postio_ui::row::{initials, timestamp};
 
 /// What a screen reader says for `row`.
 ///
@@ -335,10 +277,10 @@ impl Palette {
             flag_mark: probe.display().pipe_icon("starred-symbolic"),
             answered_mark: probe.display().pipe_icon("mail-replied-symbolic"),
             draft_mark: probe.display().pipe_icon("document-edit-symbolic"),
-            archive: probe.display().action_icon(RowAction::Archive.icon(false)),
-            flagged: probe.display().action_icon(RowAction::Flag.icon(true)),
-            unflagged: probe.display().action_icon(RowAction::Flag.icon(false)),
-            trash: probe.display().action_icon(RowAction::Delete.icon(false)),
+            archive: probe.display().action_icon(icon(RowAction::Archive, false)),
+            flagged: probe.display().action_icon(icon(RowAction::Flag, true)),
+            unflagged: probe.display().action_icon(icon(RowAction::Flag, false)),
+            trash: probe.display().action_icon(icon(RowAction::Delete, false)),
         };
         probe.set_css_classes(&[]);
         palette
@@ -390,45 +332,22 @@ const ACTION: f32 = 16.0;
 /// Between one hover action and the next.
 const ACTION_GAP: f32 = 10.0;
 
-/// What the row offers under the pointer, in the order they are drawn.
+// `RowAction` moved to `postio_ui::row`: which three verbs a row offers, what
+// they are called and which command each runs are decisions, not drawing.
+pub use postio_ui::row::RowAction;
+
+/// A hover action's glyph, for the toolkit that draws glyphs by name.
 ///
-/// The three verbs triage is made of, and the same three the bulk bar
-/// carries — one row or twenty, the mouse says the same thing. Each is a
-/// registry command, never a local implementation: `a`, `s` and `d` mean
-/// exactly this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RowAction {
-    /// Archive this message — `a`.
-    Archive,
-    /// Flag or unflag it — `s`.
-    Flag,
-    /// Move it to the trash — `d`.
-    Delete,
-}
-
-impl RowAction {
-    /// Every action, left to right.
-    pub const ALL: [RowAction; 3] = [RowAction::Archive, RowAction::Flag, RowAction::Delete];
-
-    /// The icon that says what it does.
-    fn icon(self, flagged: bool) -> &'static str {
-        match self {
-            RowAction::Archive => "postio-archive-symbolic",
-            // The state, not the verb: a flagged message offers to unflag,
-            // and the glyph has to say which way it would go.
-            RowAction::Flag if flagged => "starred-symbolic",
-            RowAction::Flag => "non-starred-symbolic",
-            RowAction::Delete => "user-trash-symbolic",
-        }
-    }
-
-    /// What a screen reader would call it, for whoever offers it another way.
-    pub fn title(self) -> &'static str {
-        match self {
-            RowAction::Archive => "Archive",
-            RowAction::Flag => "Flag",
-            RowAction::Delete => "Delete",
-        }
+/// A free function rather than a method, and it stays here: a GTK symbolic
+/// icon name is not an SF Symbol, and the shared crate should carry neither.
+fn icon(action: RowAction, flagged: bool) -> &'static str {
+    match action {
+        RowAction::Archive => "postio-archive-symbolic",
+        // The state, not the verb: a flagged message offers to unflag, and
+        // the glyph has to say which way it would go.
+        RowAction::Flag if flagged => "starred-symbolic",
+        RowAction::Flag => "non-starred-symbolic",
+        RowAction::Delete => "user-trash-symbolic",
     }
 }
 
@@ -1494,29 +1413,16 @@ struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test-only since #1221 moved `initials`, `timestamp` and
+    // `RowAction` to `postio-ui`: the widget names none of these
+    // any more, only these assertions do.
     use chrono::{Local, TimeZone, Utc};
+    use postio_model::address::EmailAddress;
     use postio_model::ids::MessageId;
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
-    }
-
-    #[test]
-    fn initials_are_the_canvas_two_letters() {
-        assert_eq!(
-            initials(Some(&addr(Some("Lena Tomlin"), "lena@example.com"))),
-            "LT"
-        );
-        assert_eq!(
-            initials(Some(&addr(Some("Nadia Okafor"), "nadia@example.com"))),
-            "NO"
-        );
-        assert_eq!(
-            initials(Some(&addr(Some("lkml"), "lkml@example.org"))),
-            "LK"
-        );
-        assert_eq!(initials(Some(&addr(None, "buildbot@example.net"))), "BU");
-        assert_eq!(initials(None), "?");
     }
 
     #[test]

@@ -13,7 +13,7 @@ import PostioFFI
 /// the two things this needs — real cell reuse, and explicit scroll-anchor
 /// control when new mail arrives at the top.
 @MainActor
-public final class MessageTableController: NSObject {
+public final class MessageTableController: NSObject, NSMenuDelegate {
     /// Where rows come from.
     public var source: MessageRowSource {
         didSet { tableView?.reloadData() }
@@ -87,16 +87,96 @@ public final class MessageTableController: NSObject {
     /// the cells: a density applied only to *new* cells leaves every recycled
     /// row at the old one, and the list shows two densities at once until it
     /// is scrolled twice.
-    public var density: DensityFfi = .airy {
+    public var ui: AppearanceFfi = AppearanceFfi(
+        density: .airy,
+        theme: .system,
+        showHoverActions: true,
+        showKeyHints: true,
+        senderAvatars: true
+    ) {
         didSet {
-            guard density != oldValue else { return }
+            guard ui != oldValue else { return }
             tableView?.rowHeight = rowHeight
             tableView?.reloadData()
         }
     }
 
-    /// The row height this density asks for — what the table is set to.
-    public var rowHeight: CGFloat { MessageRowCell.preferredHeight(for: density) }
+    /// Shorthand for the field that changes the row's height.
+    public var density: DensityFfi {
+        get { ui.density }
+        set { ui.density = newValue }
+    }
+
+    /// The row height this `[ui]` asks for — what the table is set to.
+    ///
+    /// Reserves the hint line when hints are on, because every row is the
+    /// same height and only the focused one reveals them. With hints off the
+    /// list gets that space back.
+    public var rowHeight: CGFloat {
+        MessageRowCell.preferredHeight(for: density, reservingHints: ui.showKeyHints)
+    }
+
+    /// The verbs the focused row announces, from the session's keymap.
+    public var hints: [RowHintFfi] = []
+
+    /// Run a verb on a row, whichever way the mouse asked for it.
+    ///
+    /// Carries the row rather than acting on the cursor: a context menu is
+    /// about the message it was opened on, which is the whole difference
+    /// between it and a keystroke.
+    public var onRowAction: ((String, Int) -> Void)?
+
+    /// The three verbs, as a menu for `row`.
+    ///
+    /// Built from `row_actions()` — registry command ids, shared with the
+    /// keyboard — rather than a list kept here, so the mouse and the keyboard
+    /// cannot run different verbs for the same word.
+    public static func rowMenu(for row: Int, flagged: Bool) -> NSMenu {
+        let menu = NSMenu()
+        for action in rowActions() {
+            // The state, not the verb: a flagged message offers to unflag,
+            // and the word has to say which way it would go.
+            let title = action.command == "flag" && flagged ? "Unflag" : action.title
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(MessageTableController.runRowAction(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = action.command
+            item.tag = row
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Rebuild the context menu for whichever row was right-clicked.
+    ///
+    /// `clickedRow` rather than the selection: a context menu is about the
+    /// message it was opened on.
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let tableView, tableView.clickedRow >= 0 else { return }
+        for item in self.menu(forRow: tableView.clickedRow)?.items ?? [] {
+            menu.addItem(item)
+        }
+    }
+
+    /// The menu for `row`, targeted at this controller.
+    ///
+    /// Present whatever `show_hover_actions` says: off means the mouse
+    /// reaches the same verbs another way, never through nothing.
+    public func menu(forRow row: Int) -> NSMenu? {
+        let flagged = source.row(at: UInt32(row))?.flagged ?? false
+        let menu = Self.rowMenu(for: row, flagged: flagged)
+        for item in menu.items { item.target = self }
+        return menu
+    }
+
+    /// Run the verb a menu item stands for.
+    @objc public func runRowAction(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? String else { return }
+        onRowAction?(command, sender.tag)
+    }
 
     /// The cell to draw into: `existing` if AppKit handed one back, else a new one.
     ///
@@ -106,14 +186,14 @@ public final class MessageTableController: NSObject {
     /// *this* takes the offer is ours, and is the half that can be got wrong.
     public func cell(reusing existing: NSView?) -> MessageRowCell {
         if let reused = existing as? MessageRowCell {
-            // Reused cells carry the density they were last drawn at, so this
+            // Reused cells carry whatever they were last drawn with, so this
             // has to be set on the way out rather than at creation.
-            reused.density = density
+            reused.ui = ui
             return reused
         }
         let made = MessageRowCell()
         made.identifier = Self.cellIdentifier
-        made.density = density
+        made.ui = ui
         cellsCreated += 1
         return made
     }
@@ -135,16 +215,50 @@ public final class MessageTableController: NSObject {
             following = true
             tableView.deselectAll(nil)
             following = false
+            moveHints(to: nil)
             return
         }
         following = true
         tableView.selectRowIndexes(IndexSet(integer: Int(row)), byExtendingSelection: false)
         tableView.scrollRowToVisible(Int(row))
         following = false
+        moveHints(to: Int(row))
     }
 
     /// Whether the selection change now arriving is one we just made.
     private var following = false
+
+    /// The row the hints are currently drawn on, so the one they leave can be
+    /// redrawn too.
+    private var hintedRow: Int?
+
+    /// Which rows the last cursor move asked to be redrawn, for the test that
+    /// checks both ends of the move are covered.
+    public var repaintedForHintsForTesting: [Int] = []
+
+    /// Redraw the row that lost the hints and the one that gained them.
+    ///
+    /// Nothing else repaints on a cursor move: the list is windowed and
+    /// reloads when a page lands, not when the selection changes. Without
+    /// this the hints stay on the row the cursor left, which is worse than
+    /// not drawing them at all -- they point at the wrong message.
+    private func moveHints(to row: Int?) {
+        guard ui.showKeyHints else {
+            hintedRow = row
+            return
+        }
+        var touched: [Int] = []
+        if let was = hintedRow, was != row { touched.append(was) }
+        if let row, row != hintedRow { touched.append(row) }
+        hintedRow = row
+        repaintedForHintsForTesting = touched
+        guard let tableView, !touched.isEmpty else { return }
+        let rows = touched.filter { $0 >= 0 && $0 < tableView.numberOfRows }
+        tableView.reloadData(
+            forRowIndexes: IndexSet(rows),
+            columnIndexes: IndexSet(integer: 0)
+        )
+    }
 
     /// Reload exactly the rows a delivered page covers.
     ///
@@ -178,6 +292,7 @@ extension MessageTableController: NSTableViewDelegate {
         // move the boundary made.
         guard !following else { return }
         guard let table = notification.object as? NSTableView else { return }
+        moveHints(to: table.selectedRow < 0 ? nil : table.selectedRow)
         onCursorRowChanged?(table.selectedRow < 0 ? nil : UInt32(table.selectedRow))
         onCursorChanged?(messageAt(row: table.selectedRow))
     }
@@ -190,6 +305,12 @@ extension MessageTableController: NSTableViewDelegate {
     ) -> NSView? {
         let existing = tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self)
         let cell = cell(reusing: existing)
+        // The hints are the same for every row and only the focused one shows
+        // them; the cursor is the table's own selection, never the mark.
+        cell.hints = hints
+        cell.focused = tableView.selectedRow == row
+        // The cell knows the verb, only this knows which row it is drawing.
+        cell.onAction = { [weak self] command in self?.onRowAction?(command, row) }
         cell.show(presentation(at: UInt32(row)))
         return cell
     }

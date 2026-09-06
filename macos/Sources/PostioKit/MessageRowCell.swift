@@ -14,6 +14,23 @@ public final class MessageRowCell: NSTableCellView {
     private let preview = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let flag = NSImageView()
+    private let time = NSTextField(labelWithString: "")
+    /// The avatar chip: a tinted round square with two letters in it.
+    private let avatar = NSView()
+    private let avatarLabel = NSTextField(labelWithString: "")
+    /// `e reply   a archive` under the snippet, on the focused row only.
+    private let hintLine = NSTextField(labelWithString: "")
+    /// The three verbs under the pointer, in `RowAction::ALL` order.
+    private let actions = NSStackView()
+    /// Whether the row this cell is drawing is flagged, so the flag button
+    /// can say which way it would go.
+    private var isFlagged = false
+
+    /// Run a verb on the row this cell is drawing.
+    ///
+    /// The controller fills this in per row, because the cell knows the verb
+    /// and only the controller knows which row it is.
+    public var onAction: ((String) -> Void)?
     /// The tint behind a *marked* row.
     ///
     /// Behind everything else and inset, so it reads as a state of the row
@@ -23,9 +40,13 @@ public final class MessageRowCell: NSTableCellView {
     /// The vertical stack, kept so density can retune its spacing rather than
     /// rebuild the cell.
     private var stack: NSStackView?
-    private lazy var padTop = stack!.topAnchor.constraint(
+    /// The horizontal pair: the chip and the text column beside it.
+    private var content: NSStackView?
+    private lazy var avatarWidth = avatar.widthAnchor.constraint(equalToConstant: 30)
+    private lazy var avatarHeight = avatar.heightAnchor.constraint(equalToConstant: 30)
+    private lazy var padTop = content!.topAnchor.constraint(
         equalTo: topAnchor, constant: PostioTokens.space2)
-    private lazy var padBottom = stack!.bottomAnchor.constraint(
+    private lazy var padBottom = content!.bottomAnchor.constraint(
         lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2)
 
     /// How much of canvas 1b's row anatomy to draw.
@@ -35,8 +56,23 @@ public final class MessageRowCell: NSTableCellView {
     /// the same thing on both platforms rather than "a bit tighter, somehow".
     /// The visible part is the snippet: the tightest density drops it, which
     /// is what makes it the tightest.
-    public var density: DensityFfi = .airy {
+    public var ui: AppearanceFfi = AppearanceFfi(
+        density: .airy,
+        theme: .system,
+        showHoverActions: true,
+        showKeyHints: true,
+        senderAvatars: true
+    ) {
         didSet { applyDensity() }
+    }
+
+    /// Shorthand for the one field most of this cell cares about.
+    ///
+    /// `ui` rather than `appearance` because `NSView.appearance` is
+    /// `NSAppearance` and shadowing it compiles into something else entirely.
+    public var density: DensityFfi {
+        get { ui.density }
+        set { ui.density = newValue }
     }
 
     /// Whether the snippet line is drawn. Read back rather than inferred, so
@@ -47,8 +83,116 @@ public final class MessageRowCell: NSTableCellView {
         let metrics = rowMetrics(density: density)
         preview.isHidden = !metrics.snippet
         stack?.spacing = CGFloat(metrics.subjectGap)
+        applyHints()
+        applyActions()
         padTop.constant = CGFloat(metrics.padY)
         padBottom.constant = -CGFloat(metrics.padY)
+
+        // The chip is square and the density decides how big — 30/26/22,
+        // the same numbers GTK lays out with.
+        avatar.isHidden = !ui.senderAvatars
+        avatarWidth.constant = CGFloat(metrics.avatar)
+        avatarHeight.constant = CGFloat(metrics.avatar)
+        avatar.layer?.cornerRadius = CGFloat(metrics.avatar) / 2
+        avatarLabel.font = .systemFont(ofSize: CGFloat(metrics.avatar) * 0.4, weight: .medium)
+        content?.spacing = CGFloat(metrics.gap)
+    }
+
+    /// The verbs this row would announce if it had the cursor.
+    ///
+    /// The same list for every row — they come from the keymap, not from the
+    /// message — so the controller hands one array to all of them and only
+    /// `focused` differs.
+    public var hints: [RowHintFfi] = [] {
+        didSet { applyHints() }
+    }
+
+    /// Whether this row has the cursor.
+    public var focused: Bool = false {
+        didSet { applyHints() }
+    }
+
+    /// What the hint line reads, or empty when there is none.
+    public var hintsForTesting: String { hintLine.isHidden ? "" : hintLine.stringValue }
+
+    private func applyHints() {
+        // Three ways to have no hint line, and they are all the same line of
+        // code: this row is not the focused one, the user turned hints off
+        // (#422 -- every binding stays in force, the row just stops naming
+        // them), or nothing is bound to the verbs at all.
+        let shows = focused && ui.showKeyHints && !hints.isEmpty
+        hintLine.isHidden = !shows
+        hintLine.stringValue = hints.map { "\($0.key) \($0.label)" }
+            .joined(separator: "   ")
+    }
+
+    /// Whether the pointer is over this row.
+    ///
+    /// Set by the tracking area; a property rather than a method so a test
+    /// can put the cell in the state without a real pointer.
+    public var hovered: Bool = false {
+        didSet { applyActions() }
+    }
+
+    /// Whether the hover actions are absent.
+    public var actionsAreHiddenForTesting: Bool { actions.isHidden }
+
+    private func applyActions() {
+        actions.isHidden = !(hovered && ui.showHoverActions)
+        // The flag button is the only one whose glyph depends on the row.
+        for case let button as NSButton in actions.arrangedSubviews
+        where button.identifier?.rawValue == "flag" {
+            button.image = NSImage(
+                systemSymbolName: Self.symbol(for: "flag", flagged: isFlagged),
+                accessibilityDescription: isFlagged ? "Unflag" : "Flag"
+            )
+        }
+    }
+
+    /// The macOS glyph for a verb — GTK's `icon` answers the same question in
+    /// symbolic icon names, and neither belongs in the shared crate.
+    static func symbol(for command: String, flagged: Bool) -> String {
+        switch command {
+        case "archive": return "archivebox"
+        case "flag": return flagged ? "flag.slash" : "flag"
+        case "delete": return "trash"
+        default: return "questionmark"
+        }
+    }
+
+    @objc private func runAction(_ sender: NSButton) {
+        guard let command = sender.identifier?.rawValue else { return }
+        onAction?(command)
+    }
+
+    // The pointer, for the actions that appear under it. Rebuilt on every
+    // layout because the cell is reused and its bounds move with the row.
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self
+            )
+        )
+    }
+
+    public override func mouseEntered(with event: NSEvent) { hovered = true }
+
+    public override func mouseExited(with event: NSEvent) { hovered = false }
+
+    /// Whether the chip is drawn. `sender_avatars` off means the row gets the
+    /// space back, not that it draws an empty circle.
+    public var avatarIsHiddenForTesting: Bool { avatar.isHidden }
+
+    /// The chip's side, for asserting it follows the density.
+    public var avatarSizeForTesting: CGFloat { avatarWidth.constant }
+
+    /// What the row is currently showing, beyond its three text lines.
+    public var drawnForTesting: (initials: String, time: String) {
+        (avatarLabel.stringValue, time.stringValue)
     }
 
     public override init(frame: NSRect) {
@@ -94,22 +238,79 @@ public final class MessageRowCell: NSTableCellView {
         flag.image = NSImage(systemSymbolName: "flag.fill", accessibilityDescription: "Flagged")
         flag.contentTintColor = .systemOrange
 
-        let top = NSStackView(views: [unreadDot, sender, badge, flag])
+        time.font = .systemFont(ofSize: 11)
+        time.textColor = .secondaryLabelColor
+        // The sender stretches and the time is pushed to the trailing edge,
+        // which is where canvas 1b puts it.
+        sender.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        time.setContentHuggingPriority(.required, for: .horizontal)
+        time.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        avatar.wantsLayer = true
+        avatar.layer?.backgroundColor = PostioTokens.colorAccent.withAlphaComponent(0.22).cgColor
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        avatarLabel.alignment = .center
+        avatarLabel.textColor = .secondaryLabelColor
+        avatarLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatar.addSubview(avatarLabel)
+        NSLayoutConstraint.activate([
+            avatarWidth,
+            avatarHeight,
+            avatarLabel.centerXAnchor.constraint(equalTo: avatar.centerXAnchor),
+            avatarLabel.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
+        ])
+
+        let top = NSStackView(views: [unreadDot, sender, badge, flag, actions, time])
         top.orientation = .horizontal
         top.spacing = PostioTokens.space2
         top.alignment = .centerY
 
-        let stack = NSStackView(views: [top, subject, preview])
+        actions.orientation = .horizontal
+        actions.spacing = PostioTokens.space1
+        actions.isHidden = true
+        for action in rowActions() {
+            let button = NSButton()
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.image = NSImage(
+                systemSymbolName: Self.symbol(for: action.command, flagged: false),
+                accessibilityDescription: action.title
+            )
+            button.imagePosition = .imageOnly
+            button.target = self
+            button.action = #selector(runAction(_:))
+            button.identifier = NSUserInterfaceItemIdentifier(action.command)
+            // Named for whoever reaches these another way -- the same verb the
+            // keyboard runs, so it has to be called the same thing.
+            button.setAccessibilityLabel(action.title)
+            actions.addArrangedSubview(button)
+        }
+
+        hintLine.font = .systemFont(ofSize: 11)
+        hintLine.textColor = .tertiaryLabelColor
+        hintLine.isHidden = true
+
+        let stack = NSStackView(views: [top, subject, preview, hintLine])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = PostioTokens.space1
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
         self.stack = stack
+
+        // The chip sits beside the whole text column, top-aligned, which is
+        // the anatomy canvas 1b draws.
+        let content = NSStackView(views: [avatar, stack])
+        content.orientation = .horizontal
+        content.alignment = .top
+        content.spacing = PostioTokens.space2
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        self.content = content
         NSLayoutConstraint.activate([
             // Spacing from the design system rather than numbers chosen here.
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space3),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
+            content.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -PostioTokens.space3),
             padTop,
             padBottom,
 
@@ -139,7 +340,10 @@ public final class MessageRowCell: NSTableCellView {
     /// Computed from the same tokens the layout uses, so the two cannot drift
     /// apart again, and `aRowIsTallEnoughForItsContents` measures a real laid
     /// out cell against it rather than trusting this arithmetic.
-    public static func preferredHeight(for density: DensityFfi = .airy) -> CGFloat {
+    public static func preferredHeight(
+        for density: DensityFfi = .airy,
+        reservingHints hints: Bool = false
+    ) -> CGFloat {
         let sender = NSFont(name: PostioTokens.fontBody, size: 13)
             ?? .systemFont(ofSize: 13, weight: .semibold)
         let subject = NSFont(name: PostioTokens.fontBody, size: 13) ?? .systemFont(ofSize: 13)
@@ -151,7 +355,14 @@ public final class MessageRowCell: NSTableCellView {
             + ceil(subject.boundingRectForFont.height)
             + (metrics.snippet ? ceil(preview.boundingRectForFont.height) : 0)
         let gaps = CGFloat(metrics.subjectGap) * (metrics.snippet ? 2 : 1)
-        return ceil(lines + gaps + CGFloat(metrics.padY) * 2)
+        // Reserved on every row, not added to the focused one: `NSTableView`
+        // draws a fixed height here, so a row that grew when it took the
+        // cursor would be a row that clipped instead.
+        let hintLine = hints
+            ? ceil(NSFont.systemFont(ofSize: 11).boundingRectForFont.height)
+                + CGFloat(metrics.hintsGap)
+            : 0
+        return ceil(lines + gaps + hintLine + CGFloat(metrics.padY) * 2)
     }
 
     /// What this cell is currently showing.
@@ -190,6 +401,10 @@ public final class MessageRowCell: NSTableCellView {
             preview.isHidden = !drawsSnippet || presentation.preview.isEmpty
         }
 
+        isFlagged = presentation.flagged
+        applyActions()
+        avatarLabel.stringValue = presentation.initials
+        time.stringValue = presentation.time
         unreadDot.isHidden = !presentation.unread
         flag.isHidden = !presentation.flagged
         badge.stringValue = presentation.threadBadge ?? ""
