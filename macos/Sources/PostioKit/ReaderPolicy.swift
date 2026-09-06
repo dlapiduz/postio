@@ -15,8 +15,20 @@ public final class ReaderNavigationPolicy: NSObject, WKNavigationDelegate, WKUID
     /// privacy check can see.
     private let openExternally: (URL) -> Void
 
+    /// Called when a document has finished loading, so a caller that has to
+    /// size the view to its content knows there is content to measure.
+    ///
+    /// The conversation pane stacks bodies and each one is exactly as tall as
+    /// what it holds — a scroll view inside a scroll view is the shape every
+    /// mail client that gets this wrong has.
+    public var didFinish: ((WKWebView) -> Void)?
+
     public init(openExternally: @escaping (URL) -> Void) {
         self.openExternally = openExternally
+    }
+
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        didFinish?(webView)
     }
 
     /// The async form, deliberately.

@@ -185,6 +185,45 @@ pub fn date_span(first: DateTime<Local>, last: DateTime<Local>, now: DateTime<Lo
     }
 }
 
+/// When one message arrived, as its own header says it: `Mon 25 Aug at 12:00`.
+///
+/// Longer than the list's timestamp on purpose, and the difference is what
+/// each is for. A list row is scanned by the dozen and says the least that
+/// distinguishes one from its neighbours — `10:40`, `25 Aug`. A message
+/// header is read once, about the message you are actually reading, and it is
+/// where "which Tuesday was that" gets answered.
+///
+/// Today and yesterday are words rather than dates: naming the weekday of a
+/// message that arrived this morning tells the reader nothing they do not
+/// already know. Anything older carries its weekday, which is what a bare
+/// date does not answer, and anything from another year carries the year —
+/// a header reading `25 Aug` about a message from 2019 is the kind of wrong
+/// that takes a while to notice.
+pub fn message_when(at: DateTime<Local>, now: DateTime<Local>) -> String {
+    let time = at.format("%H:%M");
+    let days = now
+        .date_naive()
+        .signed_duration_since(at.date_naive())
+        .num_days();
+    if days == 0 {
+        return format!("Today at {time}");
+    }
+    if days == 1 {
+        return format!("Yesterday at {time}");
+    }
+    let weekday = at.format("%a");
+    if at.year() == now.year() {
+        format!("{weekday} {} {} at {time}", at.day(), month(at))
+    } else {
+        format!(
+            "{weekday} {} {} {} at {time}",
+            at.day(),
+            month(at),
+            at.year()
+        )
+    }
+}
+
 /// The three-letter month, in the canvas's own casing.
 fn month(at: DateTime<Local>) -> String {
     at.format("%b").to_string()
@@ -658,6 +697,40 @@ mod tests {
             ("Ada Norwood", "ada@example.com"),
         ]);
         assert_eq!(run_summary(5, &senders), "5 earlier messages · Ada, Bo");
+    }
+
+    // -- when one message arrived (#1259) ---------------------------------
+
+    #[test]
+    fn a_message_from_today_does_not_name_the_day() {
+        let now = at(2026, 8, 25);
+        let arrived = now - chrono::Duration::hours(2);
+        assert_eq!(message_when(arrived, now), "Today at 10:00");
+    }
+
+    #[test]
+    fn yesterday_is_a_word_rather_than_a_date() {
+        let now = at(2026, 8, 25);
+        let arrived = at(2026, 8, 24);
+        assert_eq!(message_when(arrived, now), "Yesterday at 12:00");
+    }
+
+    #[test]
+    fn anything_older_carries_its_weekday() {
+        // The header is read once, about the message you are reading: which
+        // day of the week it was is the thing a date alone does not answer.
+        let now = at(2026, 8, 25);
+        let arrived = at(2026, 8, 10);
+        assert_eq!(message_when(arrived, now), "Mon 10 Aug at 12:00");
+    }
+
+    #[test]
+    fn a_message_from_another_year_says_which() {
+        // `25 Aug` about a message from last year is the kind of wrong that
+        // takes a while to notice.
+        let now = at(2026, 1, 3);
+        let arrived = at(2025, 12, 28);
+        assert_eq!(message_when(arrived, now), "Sun 28 Dec 2025 at 12:00");
     }
 
     #[test]

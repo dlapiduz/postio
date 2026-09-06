@@ -193,3 +193,61 @@ fn a_thread_that_is_not_there_reads_as_empty_rather_than_stale() {
     );
     assert_eq!(conversation.focus, None);
 }
+
+// -- the folded run (canvas turn 8a) -----------------------------------------
+
+/// A row from `sender`, for a run's summary line.
+fn row(id: i64, sender: &str) -> postio_ffi::RowFfi {
+    postio_ffi::RowFfi {
+        id,
+        thread: Some(1),
+        is_thread: false,
+        from: Some(sender.to_owned()),
+        from_address: Some(format!("{}@example.com", sender.to_lowercase())),
+        initials: sender.chars().take(1).collect(),
+        subject: Some("Radon reduction".to_owned()),
+        preview: None,
+        received_at: 1_770_000_000 + id,
+        seen: true,
+        flagged: false,
+        answered: false,
+        draft: false,
+        has_attachments: false,
+        thread_count: 6,
+    }
+}
+
+#[test]
+fn three_collapsed_messages_in_a_row_become_one_divider() {
+    let rows = vec![
+        row(1, "Ada"),
+        row(2, "Bo"),
+        row(3, "Ada"),
+        row(4, "Quinn"),
+        row(5, "Ada"),
+    ];
+    let runs = postio_ffi::conversation_runs(rows, vec![true, false, false, false, true]);
+
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].start, 1);
+    assert_eq!(runs[0].count, 3);
+    assert_eq!(
+        runs[0].summary, "3 earlier messages · Bo, Ada, Quinn",
+        "a divider names how many it hides and who is in it"
+    );
+}
+
+#[test]
+fn two_collapsed_messages_are_left_as_two_lines() {
+    // A divider hides its messages behind a click, so it has to save more
+    // lines than it costs. Two become one plus a gesture, which is no saving.
+    let rows = vec![row(1, "Ada"), row(2, "Bo"), row(3, "Ada")];
+    let runs = postio_ffi::conversation_runs(rows, vec![true, false, false]);
+    assert!(runs.is_empty());
+}
+
+#[test]
+fn a_conversation_with_nothing_folded_has_no_dividers() {
+    let rows = vec![row(1, "Ada"), row(2, "Bo")];
+    assert!(postio_ffi::conversation_runs(rows, vec![true, true]).is_empty());
+}

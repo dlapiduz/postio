@@ -56,6 +56,7 @@ private func makeRow(
         // what these tests are about.
         isThread: isThread,
         from: from,
+        fromAddress: from.map { "\($0.lowercased().replacingOccurrences(of: " ", with: "."))@example.com" },
         initials: "AL",
         subject: subject,
         preview: preview,

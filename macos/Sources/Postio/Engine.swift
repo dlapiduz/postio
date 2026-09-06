@@ -176,6 +176,13 @@ final class Engine {
     private(set) var requested: (mailbox: Int64, message: Int64?)?
     private(set) var requestedToken = 0
 
+    /// The conversation the reading pane is showing (#1263).
+    ///
+    /// Held by the engine rather than by the view so that an event can fill
+    /// it: the read is asynchronous, and a pane that owned the model would
+    /// have to be on screen at the moment the answer arrived.
+    let conversation = ConversationModel()
+
     private let notifications = MailNotifications()
     private let reachability = Reachability()
     private var keys: KeyMonitor?
@@ -350,6 +357,14 @@ final class Engine {
             // between the list and the "No messages" plate around it.
             listVersion += 1
             controller.tableView?.reloadData()
+        case let .conversationReady(thread):
+            // The read that `cursorMoved` started has landed. Checked against
+            // what the pane is now showing: a cursor that moved on while the
+            // store was reading must not have the old conversation drawn
+            // under it.
+            if let read = session?.conversation, read.thread == thread, showingThread == thread {
+                conversation.show(read)
+            }
         case let .cursorMoved(row, message):
             // Every move re-arms, and a move to a row whose page has not
             // arrived cancels: a clock armed against an unknown message would
@@ -361,6 +376,7 @@ final class Engine {
             // table catching up with where it ended.
             controller.showCursor(on: row)
             cursorShowing = message
+            openConversation(atRow: row)
         case .mailboxesChanged:
             mailboxes = session?.mailboxes ?? []
         default:
@@ -449,6 +465,14 @@ final class Engine {
             // completing its first layout -- the app runs, logs and draws
             // nothing. Bisected 2026-09-05; see the note in docs/notes/.
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case Intercepted.expandAll:
+            conversation.expandAll()
+        case Intercepted.toggleFold:
+            conversation.toggleFocused()
+        case Intercepted.nextInConversation:
+            conversation.focusNext()
+        case Intercepted.prevInConversation:
+            conversation.focusPrevious()
         case Intercepted.back where showingPalette || showingCheatSheet:
             // Escape means "get me out of here", and the innermost "here" is
             // whichever of these is open.
@@ -478,6 +502,27 @@ final class Engine {
         controller.tableView?.reloadData()
     }
 
+    /// The conversation the pane has been asked for, so a read that lands
+    /// late can be dropped rather than drawn.
+    private(set) var showingThread: Int64?
+
+    /// Show the conversation the row at `row` belongs to.
+    ///
+    /// Every row in a folder stands for a conversation (ADR 0015), and a
+    /// message row in a search result still belongs to one — so this is what
+    /// landing on a row means in both. A row with no thread leaves the pane
+    /// showing the message itself, which is the honest answer for mail that
+    /// threading could not place.
+    private func openConversation(atRow row: UInt32?) {
+        guard let session, let row, let thread = session.row(at: row)?.thread else {
+            showingThread = nil
+            return
+        }
+        guard thread != showingThread else { return }
+        showingThread = thread
+        session.openConversation(thread)
+    }
+
     /// Say where the keyboard is, so a verb with nothing marked knows which
     /// row it is about.
     ///
@@ -493,6 +538,7 @@ final class Engine {
     /// moves from: `j` after a click has to step from where the click landed.
     func cursorClicked(row: UInt32?) {
         session?.setCursorRow(row)
+        openConversation(atRow: row)
     }
 
     /// Stop the engines and drop the store, in that order.

@@ -77,7 +77,10 @@ struct Shell: View {
             reader
                 .onTapGesture { engine.focus(.reader) }
         }
-        .navigationTitle("Postio")
+        // No `navigationTitle`. The canvas' title bar is empty: this
+        // application's name belongs in the menu bar and the About window,
+        // and a window that announces which program it is spends a line of
+        // chrome telling you something you knew when you opened it.
         // The palette, over everything, with the keyboard in it. `context`
         // follows so the resolver answers for the surface that actually has
         // focus -- a palette that still resolved keys as the list would
@@ -253,7 +256,18 @@ struct Shell: View {
             // Nothing to say yet, and "no message selected" would be a claim
             // about a store that has not been opened.
             Color.clear
+        } else if let session = engine.session, engine.conversation.conversation != nil {
+            // The whole conversation, stacked (ADR 0015 Q4). The list stays a
+            // list: there is no drill-in, and nothing about this pane is a
+            // second place mail is listed.
+            ConversationView(
+                session: session,
+                model: engine.conversation,
+                run: { engine.run($0) }
+            )
         } else if let session = engine.session, let showing {
+            // A message that threading could not place belongs to no
+            // conversation, and the honest thing to draw is the message.
             // Remote images blocked. `PRODUCT.md`'s "nothing leaves this
             // machine that the user did not ask for" starts at the tracking
             // pixel, and per-sender allowing is its own work.

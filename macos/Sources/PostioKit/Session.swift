@@ -83,6 +83,37 @@ public final class PostioSession {
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }
 
+    /// Read a conversation into the reading pane.
+    ///
+    /// Returns at once. `UiEvent.conversationReady` says when there is
+    /// something to draw and `conversation` is what to draw — the same
+    /// local-first shape every other read here has: nothing awaits I/O.
+    ///
+    /// The list is untouched. A conversation is what the *pane* shows; the
+    /// list stays the list, and there is no drill-in on either platform.
+    public func openConversation(_ thread: Int64) { inner.openConversation(thread: thread) }
+
+    /// The conversation the pane is showing, folded — `nil` until one has
+    /// been asked for.
+    ///
+    /// Already stacked, already focused, already expanded to the cap. **None
+    /// of that is Swift's to decide**: which messages open is what an open
+    /// conversation costs, one web view each, and `postio_ui::conversation`
+    /// answers it for both frontends.
+    public var conversation: ConversationFfi? { inner.conversation() }
+
+    /// Which runs of collapsed messages fold into one divider.
+    ///
+    /// Asked again on every expand and collapse, because that is when the
+    /// answer changes. The three-in-a-row minimum and the eliding of the
+    /// names are the boundary's, not this frontend's.
+    /// Static because it is a function, not a question about this session:
+    /// it reads no store and holds no state, and a conversation pane asks it
+    /// on every keystroke that changes what is open.
+    public static func runs(rows: [RowFfi], expanded: [Bool]) -> [RunFfi] {
+        conversationRuns(rows: rows, expanded: expanded)
+    }
+
     /// How many rows the current scope has.
     ///
     /// A `COUNT` on the other side, not the length of anything: a hundred

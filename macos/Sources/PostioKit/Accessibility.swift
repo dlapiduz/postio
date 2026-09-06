@@ -119,10 +119,18 @@ public enum Intercepted {
     /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
     public static let settings = "settings"
+    /// The conversation pane's own four. They are commands like any other —
+    /// bound, rebindable, in the menu — but what they act on is a fold this
+    /// frontend is holding, so the boundary has nothing to do with them.
+    public static let expandAll = "expand_all"
+    public static let toggleFold = "toggle_fold"
+    public static let nextInConversation = "next_in_conversation"
+    public static let prevInConversation = "prev_in_conversation"
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
+        expandAll, toggleFold, nextInConversation, prevInConversation,
     ]
 }
 

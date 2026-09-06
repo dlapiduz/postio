@@ -15,15 +15,26 @@ public struct ReaderView: NSViewRepresentable {
     private let session: PostioSession
     private let message: Int64?
     private let remoteImages: RemoteImagesFfi
+    private let onHeight: ((CGFloat) -> Void)?
 
-    public init(session: PostioSession, message: Int64?, remoteImages: RemoteImagesFfi = .blocked) {
+    /// `onHeight` is how a *stacked* reader is drawn: inside a conversation
+    /// the pane scrolls and each body is sized to its content, so the height
+    /// has to be measured from the laid-out document. Left `nil` the view
+    /// fills whatever it is given, which is what a single-message pane wants.
+    public init(
+        session: PostioSession,
+        message: Int64?,
+        remoteImages: RemoteImagesFfi = .blocked,
+        onHeight: ((CGFloat) -> Void)? = nil
+    ) {
         self.session = session
         self.message = message
         self.remoteImages = remoteImages
+        self.onHeight = onHeight
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(session: session)
+        Coordinator(session: session, onHeight: onHeight)
     }
 
     public func makeNSView(context: Context) -> WKWebView {
@@ -75,15 +86,33 @@ public struct ReaderView: NSViewRepresentable {
         private var showingRemote: RemoteImagesFfi = .blocked
         private let gate = RenderGate()
         private var pending: Task<Void, Never>?
+        private let onHeight: ((CGFloat) -> Void)?
 
-        init(session: PostioSession) {
+        init(session: PostioSession, onHeight: ((CGFloat) -> Void)? = nil) {
             self.session = session
+            self.onHeight = onHeight
             cid = CidSchemeHandler(session: session)
-            policy = ReaderNavigationPolicy { url in
+            let policy = ReaderNavigationPolicy { url in
                 // POSTIO-CONSENT: only from a link the user activated inside a
                 // message they are reading. The pane does not navigate; the
                 // URL goes to whatever the user has chosen as their browser.
                 NSWorkspace.shared.open(url)
+            }
+            self.policy = policy
+            guard let onHeight else { return }
+            // Measured in the client's own content world, which runs even
+            // though the *page* has no JavaScript: `allowsContentJavaScript`
+            // is about the sender's markup, and nothing here executes any of
+            // it. The measurement is the only thing this asks the document.
+            policy.didFinish = { view in
+                view.evaluateJavaScript(
+                    "document.documentElement.scrollHeight",
+                    in: nil,
+                    in: .defaultClient
+                ) { result in
+                    let measured = (try? result.get()) as? Double
+                    onHeight(BodyHeight.clamped(measured ?? 0))
+                }
             }
         }
 

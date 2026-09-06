@@ -106,3 +106,64 @@ fn local(seconds: i64) -> DateTime<Local> {
             .naive_utc(),
     )
 }
+
+/// A run of collapsed messages, folded behind one divider.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RunFfi {
+    /// The first message of the run, as an index into the conversation's rows.
+    pub start: u32,
+    /// How many messages it hides.
+    pub count: u32,
+    /// What the divider says: `5 earlier messages · Tessa, Mara`.
+    pub summary: String,
+}
+
+/// Which runs of collapsed messages are long enough to fold into a divider.
+///
+/// A free function rather than session state, because the answer changes on
+/// every expand and collapse — this is asked as someone reads, not once when
+/// the conversation opens. It is still not the frontend's to decide: the
+/// three-in-a-row minimum, and the eliding of the names on the divider, are
+/// `postio_ui::conversation`'s, and a Swift reimplementation would be a
+/// second rule to keep in step.
+///
+/// `expanded` is one flag per row of `rows`, in the same order.
+#[uniffi::export]
+pub fn conversation_runs(rows: Vec<RowFfi>, expanded: Vec<bool>) -> Vec<RunFfi> {
+    let collapsed: Vec<bool> = expanded.iter().map(|open| !open).collect();
+    postio_ui::conversation::collapsed_runs(&collapsed, postio_ui::conversation::RUN_MINIMUM)
+        .into_iter()
+        .map(|range| {
+            let senders: Vec<postio_model::address::EmailAddress> = rows
+                .get(range.clone())
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|row| {
+                    let address = row.from_address.clone()?;
+                    Some(postio_model::address::EmailAddress::new(
+                        row.from.as_deref(),
+                        address,
+                    ))
+                })
+                .collect();
+            RunFfi {
+                start: range.start as u32,
+                count: range.len() as u32,
+                summary: postio_ui::conversation::run_summary(range.len(), &senders),
+            }
+        })
+        .collect()
+}
+
+/// When one message arrived, as its own header says it: `Mon 25 Aug at 12:00`.
+///
+/// A free function for the same reason [`conversation_runs`] is: it is a
+/// rendering of a timestamp, not a question about a session. The wording is
+/// `postio_ui::conversation`'s, so both frontends' message headers read the
+/// same — a header is where "which Tuesday was that" gets answered, and two
+/// platforms answering it differently is exactly the drift ADR 0019 Q6 is
+/// about.
+#[uniffi::export]
+pub fn message_when(received_at: i64) -> String {
+    postio_ui::conversation::message_when(local(received_at), Local::now())
+}
