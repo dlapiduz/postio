@@ -44,6 +44,17 @@
 #      check that quietly answers "nothing here" is worse than no check,
 #      because it is the one you believe.
 #
+# A warning to whoever comes next, paid for twice: **neither unwinder gets
+# out of `sha512_block_data_order_avx2`.** Frame pointers invent callers
+# there (see below); DWARF declines to, which is more honest and equally
+# useless -- it reports the symbol with 54% self and 54% children, meaning
+# no parent was attributed to any of it. `sqlite3_step` collects 1.8%. So a
+# profile can say the burn is SQLCipher page decryption under a btree walk,
+# and cannot say which query asked for it. Naming the query wants a
+# different instrument -- SQLite's own trace hook, which
+# `postio_storage::test_support::counting` already uses -- not a third
+# unwinder.
+#
 # Why --call-graph dwarf rather than -g: the burn lands inside
 # `sha512_block_data_order_avx2`, OpenSSL's hand-written AVX2 assembly, which
 # keeps no frame pointer. Frame-pointer unwinding does not fail there, it
@@ -75,7 +86,14 @@ ARM_TIME=20
 # Fewest samples worth calling a profile. Below this the percentages are
 # noise: one sample in fifty is 2%, and reading a top ten off that is how an
 # investigation gets sent somewhere there was never any evidence for.
-MIN_SAMPLES=500
+#
+# Lower than it would be for a flat profile, because DWARF changes the
+# arithmetic: each sample carries a 16 KB stack copy, so the same ring holds
+# far fewer of them -- an 81% burst produced 248 samples in 4 MB where the
+# frame-pointer run produced 7,000 in 1 MB. Rejecting 248 stacks as "thin"
+# threw away the better capture of the two. `-m 64M` above is the other half
+# of that fix.
+MIN_SAMPLES=150
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -100,7 +118,7 @@ say() { echo "$(date +%H:%M:%S) $*" | tee -a "$log"; }
 
 # --overwrite keeps only the most recent buffer and writes nothing until
 # signalled; --switch-output=signal is what turns SIGUSR2 into a dump.
-sudo -n perf record -F 499 --call-graph dwarf,16384 -p "$pid" \
+sudo -n perf record -F 499 --call-graph dwarf,16384 -m 64M -p "$pid" \
      --overwrite --switch-output=signal \
      -o "$out/ring.data" -- sleep 100000 >/dev/null 2>&1 &
 sleep 3
