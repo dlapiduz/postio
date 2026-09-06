@@ -18,6 +18,7 @@ base64 = "0.22"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 thiserror = "2.0.20"
 postio-body = { version = "0.2.0", path = "../postio-body" }
+postio-config = { version = "0.2.0", path = "../postio-config" }
 postio-core = { version = "0.2.0", path = "../postio-core" }
 postio-model = { version = "0.2.0", path = "../postio-model" }
 

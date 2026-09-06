@@ -189,69 +189,11 @@ pub fn accessible_label(row: &Row) -> String {
     }
     parts.join(", ")
 }
-
-/// Canvas 1b's row geometry for one density, in logical pixels.
-///
-/// Type and colour come from the cascade ([`Palette`]); this is the layout
-/// the snapshot arranges them in, which a hand-drawn widget owns the way a
-/// `GtkBox` owns its spacing. The airy numbers are measured straight off the
-/// canvas; the other two tighten the same anatomy rather than changing it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Metrics {
-    /// Space above and below the row's content.
-    pub pad_y: f32,
-    /// How far in the content starts, accent edge included, so a row does
-    /// not shift sideways when the selection lands on it.
-    pub inset: f32,
-    /// The avatar chip, square.
-    pub avatar: f32,
-    /// Between the avatar and the text column.
-    pub gap: f32,
-    /// Between the sender line and the subject.
-    pub subject_gap: f32,
-    /// Between the snippet and the key hints the focused row reveals.
-    pub hints_gap: f32,
-    /// Whether the snippet line is drawn at all.
-    pub snippet: bool,
-}
-
-impl Metrics {
-    /// The geometry `density` asks for.
-    pub fn for_density(density: Density) -> Self {
-        match density {
-            Density::Airy => Metrics {
-                pad_y: 11.0,
-                inset: 21.0,
-                avatar: 30.0,
-                gap: 12.0,
-                subject_gap: 3.0,
-                hints_gap: 7.0,
-                snippet: true,
-            },
-            Density::Comfortable => Metrics {
-                pad_y: 8.0,
-                inset: 18.0,
-                avatar: 26.0,
-                gap: 10.0,
-                subject_gap: 2.0,
-                hints_gap: 5.0,
-                snippet: true,
-            },
-            // The tightest setting is for triage, where the question is how
-            // many subjects fit on screen. The snippet is the line that
-            // costs the most and answers it least.
-            Density::Compact => Metrics {
-                pad_y: 5.0,
-                inset: 15.0,
-                avatar: 22.0,
-                gap: 9.0,
-                subject_gap: 1.0,
-                hints_gap: 4.0,
-                snippet: false,
-            },
-        }
-    }
-}
+// Canvas 1b's row geometry moved to `postio_ui::row`: it is plain numbers
+// keyed off a density, and the macOS list needs the same ones or "compact"
+// means two different things on two platforms. Re-exported so this module
+// reads as it did.
+pub use postio_ui::row::Metrics;
 
 /// One role's resolved paint: what the cascade says this text is.
 #[derive(Clone, Debug)]
