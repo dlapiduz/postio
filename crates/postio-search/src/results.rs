@@ -114,6 +114,24 @@ pub struct SearchResults {
 
 /// The most `total_hits` will ever count exactly. See
 /// [`SearchResults::total_hits_capped`].
+///
+/// **Ten thousand, and lowering it was tried and reverted.** The count is the
+/// most expensive statement in a broad search -- measured at 152ms of a 241ms
+/// search for `the` on a real store, against 74ms for the fetch -- and the
+/// exact number buys little: nobody navigates by the difference between
+/// "3,843 results" and "1,000+".
+///
+/// But the count is not only shown. `RANK_BY_RELEVANCE_LIMIT` (2,000) and
+/// `PROBED_FORM_LIMIT` (8,000) both read it to choose a query plan, and a cap
+/// below either silently pins every broad search to one side of those
+/// thresholds: at 1,000 the count saturates before it can distinguish 3,843
+/// matches from 10,000, so the probed shape is never chosen and `the` goes
+/// from 74ms to 1.26s. Cheapening the display would have cost an order of
+/// magnitude on exactly the queries it was meant to help.
+///
+/// Any future attempt has to separate the two readers first: a cheap
+/// "how broad is this" signal for the planner, and a cap for the display.
+/// FTS5 offers no cheap count, which is what makes that hard.
 pub const TOTAL_HITS_CAP: u64 = 10_000;
 
 #[cfg(test)]
