@@ -30,6 +30,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 SCRIPT = Path(__file__).resolve().parent.parent / "unbuildable-crates.sh"
 FAILURES: list[str] = []
 
@@ -76,7 +82,7 @@ def stubs(missing: list[str]) -> Path:
 def run(missing: list[str], *args: str) -> list[str]:
     directory = stubs(missing)
     environment = dict(os.environ, PATH=f"{directory}:{os.environ['PATH']}")
-    result = subprocess.run(
+    result = patience.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True, text=True, timeout=60, env=environment,
     )

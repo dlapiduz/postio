@@ -32,6 +32,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 CHECK = HERE / "checks" / "check-one-gtk-test-per-binary.py"
 SIBLING = HERE / "checks" / "check-no-gtk-init-in-unit-tests.py"
@@ -65,7 +71,7 @@ def build_repo(root: Path, test_source: str) -> None:
 
 
 def run_check(root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return patience.run(
         [sys.executable, "scripts/checks/" + CHECK.name],
         cwd=root,
         capture_output=True,

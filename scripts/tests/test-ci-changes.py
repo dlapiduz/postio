@@ -27,12 +27,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 SCRIPT = Path(__file__).resolve().parent.parent / "ci-changes.sh"
 FAILURES: list[str] = []
 
 
 def classify(event: str, files: list[str]) -> dict[str, str]:
-    result = subprocess.run(
+    result = patience.run(
         ["bash", str(SCRIPT), event],
         input="\n".join(files) + ("\n" if files else ""),
         capture_output=True, text=True, timeout=30,

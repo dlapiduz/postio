@@ -22,6 +22,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "ci-tooling-needed.sh"
 
@@ -33,7 +39,7 @@ def decide(files: list[str] | None, event: str = "pull_request") -> str:
     input, which the script reads as "cannot prove anything" -- see the case
     about it below."""
     text = "" if files is None else "".join(f"{name}\n" for name in files)
-    result = subprocess.run(
+    result = patience.run(
         ["bash", str(SCRIPT), event],
         input=text,
         capture_output=True,

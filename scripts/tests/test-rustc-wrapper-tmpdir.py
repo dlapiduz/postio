@@ -38,6 +38,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 WRAPPER = HERE / "rustc-wrapper.sh"
 
@@ -76,7 +82,7 @@ def run(
         (stub_dir / "sccache").chmod(0o755)
     else:
         (stub_dir / "sccache").unlink(missing_ok=True)
-    return subprocess.run(
+    return patience.run(
         ["bash", str(WRAPPER), str(target)],
         env=environment,
         capture_output=True,
@@ -151,7 +157,7 @@ def main() -> int:
         environment_home["PATH"] = f"{stub_dir}:/usr/bin:/bin"
         environment_home["TMPDIR"] = str(worktree_tmp)
         environment_home.pop("SCCACHE_DIR", None)
-        defaulted = subprocess.run(
+        defaulted = patience.run(
             ["bash", str(WRAPPER), str(rustc)],
             env=environment_home,
             capture_output=True,

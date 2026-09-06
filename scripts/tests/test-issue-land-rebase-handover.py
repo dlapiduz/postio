@@ -40,6 +40,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
@@ -250,7 +256,7 @@ def land(
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
     environment.update(extra_env or {})
-    return subprocess.run(
+    return patience.run(
         ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file"],
         cwd=root,
         env=environment,

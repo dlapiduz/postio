@@ -42,6 +42,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 WRAPPER = HERE / "rustc-wrapper.sh"
 
@@ -62,7 +68,7 @@ def run(stub_dir: Path, out_dir: Path | None) -> list[str]:
     environment.pop("OUT_DIR", None)
     if out_dir is not None:
         environment["OUT_DIR"] = str(out_dir)
-    result = subprocess.run(
+    result = patience.run(
         ["bash", str(WRAPPER), "rustc", "--crate-name", "probe", "src/lib.rs"],
         env=environment,
         capture_output=True,

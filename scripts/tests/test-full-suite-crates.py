@@ -22,6 +22,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 REPO = HERE.parent
 SCRIPT = HERE / "full-suite-crates.sh"
@@ -30,7 +36,7 @@ FAILURES: list[str] = []
 
 
 def chosen(crates: list[str]) -> list[str]:
-    result = subprocess.run(
+    result = patience.run(
         ["bash", str(SCRIPT)],
         input="".join(f"{name}\n" for name in crates),
         capture_output=True,
@@ -112,7 +118,7 @@ def main() -> int:
     # Every crate the deny-list names has to exist, or it is silently
     # protecting nothing -- a rename would leave the slow suite running on
     # every landing and the list claiming otherwise.
-    denied = subprocess.run(
+    denied = patience.run(
         ["bash", str(SCRIPT), "--slow"],
         capture_output=True,
         text=True,

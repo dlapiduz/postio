@@ -35,9 +35,19 @@ revisited.
 
 # Scope
 
-`Instant::now() + ...` only: the deadline shape all three of #957's cases
-use. `tokio::time::timeout` is the same hazard on the async side and is not
-covered yet; see the issue.
+Two shapes, one rule.
+
+**Rust**: `Instant::now() + ...`, which all three of #957's cases use.
+`tokio::time::timeout` is the same hazard on the async side and is not covered
+yet; see the issue.
+
+**Python**: `subprocess.run(..., timeout=...)` under `scripts/tests`. The 81
+self-tests there shell out to the scripts they cover, and their deadlines were
+written by hand and reachable by nothing -- #1243 is one expiring on a runner
+that builds 81 sandboxes four at a time, on a branch that touched nothing to
+do with its subject. They go through `scripts/lib/patience.py` now, which
+scales the deadline and reports an expiry as an expiry (#1249). This is what
+stops the next one being written straight to `subprocess`.
 
 # Exit status
 
@@ -46,9 +56,11 @@ covered yet; see the issue.
 
 from __future__ import annotations
 
+import io
 import re
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 # Where `Instant::now()` is mentioned at all -- the cheap first pass.
@@ -143,11 +155,80 @@ def offenders(path: Path) -> list[tuple[int, str]]:
     return found
 
 
+def python_offenders(path: str) -> list[tuple[int, str]]:
+    """`subprocess.run(..., timeout=...)` calls the dial cannot reach.
+
+    Tokenized rather than matched line by line: several of these self-tests
+    embed whole Python and shell fixtures in string literals, and a regex
+    reads those as code. The codemod that introduced `patience.run` learned
+    that the expensive way -- its first pass inserted an import into the middle
+    of a fixture in three files, because they contain `import` at column zero
+    inside a triple-quoted string.
+    """
+    source = Path(path).read_text(encoding="utf-8", errors="replace")
+    if "subprocess.run" not in source:
+        return []
+    lines = source.splitlines()
+    try:
+        tokens = [
+            t
+            for t in tokenize.generate_tokens(io.StringIO(source).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE,
+                              tokenize.INDENT, tokenize.DEDENT)
+        ]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Not this check's business to fail on a file that will not parse;
+        # running it is what reports that.
+        return []
+
+    found = []
+    for i, token in enumerate(tokens):
+        if not (token.type == tokenize.NAME and token.string == "subprocess"):
+            continue
+        if i + 3 >= len(tokens):
+            continue
+        if not (
+            tokens[i + 1].string == "."
+            and tokens[i + 2].string == "run"
+            and tokens[i + 3].string == "("
+        ):
+            continue
+        depth = 0
+        timed = False
+        for j in range(i + 3, len(tokens)):
+            text = tokens[j].string
+            if text in "([{":
+                depth += 1
+            elif text in ")]}":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif (
+                tokens[j].type == tokenize.NAME
+                and text == "timeout"
+                and j + 1 < len(tokens)
+                and tokens[j + 1].string == "="
+            ):
+                timed = True
+        if not timed:
+            continue
+        line = token.start[0]
+        window = "\n".join(lines[max(0, line - 1 - LOOKBACK) : line])
+        if MARKER.search(window):
+            continue
+        if BARE_MARKER.search(window):
+            found.append((line, "POSTIO-FIXED-DEADLINE with no reason"))
+            continue
+        found.append((line, "subprocess.run(timeout=...) -- use patience.run"))
+    return found
+
+
 def main() -> int:
     try:
         # git pathspec `*` matches `/` too, so one pattern reaches
         # `tests/suite/case.rs` as well as `tests/case.rs`.
         sources = sorted(set(tracked("crates/*/tests/*.rs")))
+        self_tests = sorted(set(tracked("scripts/tests/*.py")))
     except CheckError as error:
         print(f"cannot run the check: {error}", file=sys.stderr)
         return 2
@@ -156,10 +237,17 @@ def main() -> int:
         f"{path}:{line}: {text}"
         for path in sources
         for line, text in offenders(path)
+    ] + [
+        f"{path}:{line}: {text}"
+        for path in self_tests
+        for line, text in python_offenders(path)
     ]
 
     if not problems:
-        print(f"test-deadlines-scale check passed ({len(sources)} test files).")
+        print(
+            "test-deadlines-scale check passed "
+            f"({len(sources)} test files, {len(self_tests)} self-tests)."
+        )
         return 0
 
     print("test-deadlines-scale check FAILED\n", file=sys.stderr)
@@ -177,7 +265,14 @@ def main() -> int:
         "Or, where the duration is what the test asserts -- a debounce, a\n"
         "grace period, a negative assertion whose strength is the time it\n"
         "waited -- say so, with the reason:\n\n"
-        "    // POSTIO-FIXED-DEADLINE: the debounce window is the subject here.\n",
+        "    // POSTIO-FIXED-DEADLINE: the debounce window is the subject here.\n\n"
+        "In a self-test under scripts/tests, the same rule reads:\n\n"
+        "    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / \"lib\"))\n"
+        "    import patience\n\n"
+        "    patience.run([...], timeout=30)\n\n"
+        "`timeout` stays the number that is right on an idle machine; the dial\n"
+        "is what makes it right on a busy one, and an expiry then reports as an\n"
+        "expiry rather than as the script answering wrongly.\n",
         file=sys.stderr,
     )
     return 1

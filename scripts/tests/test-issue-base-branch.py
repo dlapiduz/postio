@@ -29,6 +29,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 CLAIM = HERE / "issue-claim.sh"
 LAND = HERE / "issue-land.sh"
@@ -204,7 +210,7 @@ def env_for(root: Path, base: Path, stub_dir: Path) -> dict[str, str]:
 
 
 def run(script: str, args: list[str], cwd: Path, environment: dict[str, str], timeout: int = 180):
-    return subprocess.run(
+    return patience.run(
         ["bash", str(cwd / "scripts" / script) if (cwd / "scripts" / script).exists() else script, *args],
         cwd=cwd,
         env=environment,

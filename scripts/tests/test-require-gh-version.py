@@ -48,6 +48,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 REQUIRE_GH = HERE / "lib" / "require-gh.sh"
 # Sourced immediately after `set -euo pipefail`, checked dynamically below
@@ -89,7 +95,7 @@ def run(args: list[str], stub_dir: Path, version: str) -> subprocess.CompletedPr
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["GH_STUB_VERSION"] = version
-    return subprocess.run(
+    return patience.run(
         args, env=environment, capture_output=True, text=True, timeout=30
     )
 

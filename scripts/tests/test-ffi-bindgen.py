@@ -37,6 +37,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 SCRIPTS = Path(__file__).resolve().parent.parent
 REPO_ROOT = SCRIPTS.parent
 BINDGEN = SCRIPTS / "ffi-bindgen.sh"
@@ -75,7 +81,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         out = Path(directory) / "bindings"
-        result = subprocess.run(
+        result = patience.run(
             ["bash", str(BINDGEN), str(out)],
             cwd=REPO_ROOT,
             env=environment,

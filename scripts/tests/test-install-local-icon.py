@@ -28,6 +28,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "install-local.sh"
 
@@ -90,7 +96,7 @@ def run(*args: str) -> tuple[subprocess.CompletedProcess, Path]:
     # this variable deliberately in both directions.
     env["POSTIO_SKIP_DEP_CHECK"] = "1"
 
-    proc = subprocess.run(
+    proc = patience.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True,
         text=True,

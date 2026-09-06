@@ -39,6 +39,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
@@ -181,7 +187,7 @@ def land(root: Path, target: Path, stub_dir: Path, origin: Path):
     # so it is cut short here: what is under test is that the failure is still
     # detected, not how long the script is willing to wait for it.
     environment["POSTIO_MERGED_TIMEOUT"] = "2"
-    return subprocess.run(
+    return patience.run(
         ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file"],
         cwd=root, env=environment, capture_output=True, text=True, timeout=90,
     )

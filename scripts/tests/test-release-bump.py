@@ -24,6 +24,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "release-bump.py"
 
@@ -100,7 +106,7 @@ def world(base: Path) -> Path:
 
 
 def run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return patience.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=root,
         capture_output=True,

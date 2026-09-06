@@ -37,6 +37,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 WRAPPER = HERE / "cc-wrapper.sh"
 
@@ -85,7 +91,7 @@ def run(
         ccache.chmod(0o755)
     else:
         ccache.unlink(missing_ok=True)
-    return subprocess.run(
+    return patience.run(
         ["bash", str(WRAPPER), *args],
         env=environment,
         capture_output=True,

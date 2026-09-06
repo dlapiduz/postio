@@ -35,6 +35,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_CLAIM = HERE / "issue-claim.sh"
 ISSUE_RELEASE = HERE / "issue-release.sh"
@@ -136,7 +142,7 @@ def run_claim(repo: Path, stub_dir: Path, base: Path, *args: str):
     environment["POSTIO_MAIN_CHECKOUT"] = str(repo)
     environment["POSTIO_WORKTREES"] = str(base / "worktrees")
     environment["POSTIO_CLAIMS"] = str(base / "claims")
-    return subprocess.run(
+    return patience.run(
         ["bash", str(repo / "scripts" / "issue-claim.sh"), *args],
         cwd=repo,
         env=environment,
