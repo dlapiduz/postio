@@ -49,14 +49,29 @@ FAILURES: list[str] = []
 # is generous on an idle box and not obviously generous on that one. Nothing on
 # the branch touched sccache.
 # second reading differs from the first.
+# The counter advances *before* anything is printed, and that ordering is the
+# whole of a flake this test had.
+#
+# `executed()` in the script under test reads the stub through
+# `awk '/Compile requests executed/ { print $NF; exit }'`. That `exit` closes
+# the pipe after the first line, so the stub's second `printf` takes SIGPIPE
+# and dies -- and when the increment came last, it died before reaching it.
+# Whether it got there was scheduling, so the counter sometimes did not move
+# between the script's two readings, and a daemon that was answering was
+# reported WEDGED. Reproduced 2 runs in 12 under load on a workstation, once
+# on CI, and never on an idle box (#1243, #1254).
+#
+# Writing first cannot lose that race, and the *printed* value is unchanged --
+# still the count as of this call, which is what "the counter moved since the
+# last reading" means.
 SCCACHE_STUB = """#!/usr/bin/env bash
 if [ "${1:-}" = "--show-stats" ]; then
     count="$(cat "$COUNTER_FILE")"
-    printf 'Compile requests executed %s\\n' "$count"
-    printf 'Max cache size                       %s\\n' "$MAX_SIZE"
     if [ "${COUNTER_MOVES:-0}" = "1" ]; then
         printf '%s' "$((count + 7))" > "$COUNTER_FILE"
     fi
+    printf 'Compile requests executed %s\\n' "$count"
+    printf 'Max cache size                       %s\\n' "$MAX_SIZE"
     exit 0
 fi
 exit 0
