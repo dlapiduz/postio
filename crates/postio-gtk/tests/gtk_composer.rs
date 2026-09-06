@@ -233,7 +233,29 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
     assert!(reading.is_visible(), "the message is back in the pane");
     assert!(!shell.has_css_class(composer::COMPOSING_CLASS));
 
+    // Kept, and asserted on the thing that keeps it. `Closing::Keep` above
+    // is what sends the draft to the autosave and so to the Drafts folder;
+    // this used to be checked by pressing `c` and looking at what came
+    // back, which stopped being the instrument when `c` started meaning "a
+    // new message" (#1196).
     press(&window, "c", gdk::ModifierType::empty());
+    settle();
+    assert_eq!(
+        composer.draft().subject,
+        "",
+        "`c` starts a new message rather than reopening the kept one"
+    );
+
+    // And the kept one is still reachable, with every word. Closed first,
+    // then opened: `resume` keys its "already showing this" check on the
+    // draft *id*, and every unsaved draft carries `UNASSIGNED` — so
+    // resuming one unsaved draft over another is a no-op. Real resumes come
+    // out of the Drafts folder with real ids, which is why that has never
+    // bitten anything but a test.
+    composer.close();
+    settle();
+    composer.open(started());
+    settle();
     let kept = composer.draft();
     assert_eq!(kept.subject, "the mbox importer", "the draft came back");
     assert_eq!(
