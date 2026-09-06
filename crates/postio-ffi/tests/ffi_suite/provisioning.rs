@@ -22,16 +22,37 @@ fn a_session() -> (std::sync::Arc<Session>, postio_storage::Database) {
     (session, database)
 }
 
+/// An address at whichever provider the preset table happens to ship first.
+///
+/// Read out of the table rather than written down, for two reasons. The
+/// repository is public and its fixtures may not name real domains, and —
+/// more to the point — a test naming a provider would be the same mistake
+/// the code is forbidden to make: providers are data, and this proves the
+/// *table* is consulted rather than that one row exists.
+fn an_address_at_a_known_provider() -> (String, String) {
+    let preset = postio_account::discovery::presets()
+        .first()
+        .expect("the preset table ships at least one provider");
+    let domain = preset
+        .domains()
+        .first()
+        .expect("a preset claims at least one domain")
+        .clone();
+    (
+        format!("someone@{domain}"),
+        preset.display_name().to_owned(),
+    )
+}
+
 #[test]
 fn an_address_at_a_known_provider_is_recognised_and_says_which() {
-    // The verdict strip. Named from the preset table's own display name, so
-    // adding a provider is a data change and this keeps working.
-    let hint = provider_hint("mara@gmail.com".to_owned());
+    let (address, provider) = an_address_at_a_known_provider();
+    let hint = provider_hint(address);
 
-    assert_eq!(hint.route, RouteFfi::Gmail);
+    assert_eq!(hint.provider, provider, "the strip names what it found");
     assert!(
-        hint.verdict.contains("Gmail") || hint.verdict.contains("Google"),
-        "the strip names what it found: {}",
+        hint.verdict.contains(&provider),
+        "and says so in a sentence: {}",
         hint.verdict
     );
     assert!(!hint.imap_host.is_empty(), "and it knows where to connect");
@@ -150,7 +171,8 @@ fn an_account_with_no_host_is_refused_rather_than_written_half_made() {
 fn the_hint_is_a_record_the_sheet_can_draw_without_asking_again() {
     // Everything step 1 draws comes from one call: the verdict, which route
     // to pre-focus, and the servers to fill in.
-    let hint: ProviderHintFfi = provider_hint("mara@gmail.com".to_owned());
+    let (address, _) = an_address_at_a_known_provider();
+    let hint: ProviderHintFfi = provider_hint(address);
     assert!(hint.imap_port > 0);
     assert!(hint.smtp_port > 0);
     assert!(!hint.provider.is_empty());
