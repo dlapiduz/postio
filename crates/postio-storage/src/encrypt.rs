@@ -340,6 +340,16 @@ fn export(plaintext: &Connection, destination: &Path, master: &StoreKey) -> Resu
         *hex
     ))?;
     drop(hex);
+    // Schema-qualified, and it has to be: `PRAGMA cipher_hmac_algorithm`
+    // applies to `main`, so without the qualifier the store this migration
+    // *creates* would be written under SQLCipher's default MAC while every
+    // later open expects `PageMac::Sha256` -- which is a migration that
+    // produces a database it cannot then read. Set before the export, because
+    // it decides how pages are authenticated as they are written.
+    plaintext.execute_batch(&format!(
+        "PRAGMA encrypted.cipher_hmac_algorithm = {};",
+        crate::db::PageMac::Sha256.pragma()
+    ))?;
     let exported = plaintext.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()));
     // Detach whatever happened, or the connection keeps a handle on a file the
     // caller is about to delete.

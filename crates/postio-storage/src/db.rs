@@ -78,9 +78,24 @@ pub const WAL_SIZE_LIMIT: u64 = 16 * 1024 * 1024;
 ///   Part of the threat model, not a tuning knob: an encrypted database whose
 ///   sort scratch spills to disk in the clear has encrypted the wrong thing
 ///   (ADR 0014).
-/// * `cache_size = -16000` — negative means KiB, not pages: 16 MiB regardless of
-///   page size. This is the first lever if a bench trips, because under
-///   SQLCipher every page miss costs a decrypt rather than a `memcpy`.
+/// * `cache_size = -65536` — negative means KiB, not pages: 64 MiB regardless
+///   of page size. Under SQLCipher a page miss costs a decrypt *and* an
+///   HMAC verification rather than a `memcpy`, so this is the first lever
+///   when a read path trips.
+///
+///   It was 16 MiB, and both numbers have a bench behind them. `sync_writes`
+///   tested 16 MiB against a 131 MB store in 2026-08 and found per-message
+///   *write* cost flat across it — "raising `cache_size` is not the lever" —
+///   and that finding stands for what it measured. `cache_pressure` measures
+///   the *read* path at 400,000 messages and finds 24% between 16 and 64 MiB,
+///   with the smallest cache repeated last as a control. Writes append; reads
+///   scatter across a b-tree, which is where a cache holding 1.6% of the store
+///   stops helping.
+///
+///   A cap, not a reservation: SQLite grows the cache lazily, so a store
+///   smaller than 64 MiB never allocates it and nothing pays for this until
+///   the mailbox is large enough to need it. Four connections, so the ceiling
+///   across the pool is 256 MiB.
 /// * `busy_timeout` — a writer waiting behind another writer retries for five
 ///   seconds instead of returning `SQLITE_BUSY` to the UI.
 ///
@@ -136,7 +151,7 @@ PRAGMA journal_size_limit = 16777216;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
-PRAGMA cache_size = -16000;
+PRAGMA cache_size = -65536;
 PRAGMA busy_timeout = 5000;
 ";
 
@@ -277,8 +292,63 @@ unsafe extern "C" {
 /// # Errors
 ///
 /// [`Error::WrongStoreKey`] if the database will not decrypt under `key`, and
+/// Which MAC authenticates every page.
+///
+/// A **format** choice rather than a tuning knob: SQLCipher writes the
+/// algorithm into the database, so a store made under one cannot be read
+/// under the other. That is why [`Pool`] discovers it rather than assuming it.
+///
+/// SQLCipher 4 defaults to [`Sha512`](Self::Sha512). On any CPU with the SHA
+/// extensions that is the one part of the page path with no hardware behind
+/// it: `sha_ni` accelerates SHA-1 and SHA-256, AES-NI accelerates the cipher,
+/// and nothing accelerates SHA-512. A profile of a 957 MiB mailbox put 45.9%
+/// of its samples in `sha512_block_data_order_avx2` against 2.7% in
+/// `aesni_cbc_encrypt`; `hmac_cost.rs` measures the swap at 1.7x on the
+/// page-read path.
+///
+/// Not a universal win, and the bench says so: without those extensions
+/// SHA-512 is normally the faster of the two, being 64-bit work. This picks
+/// the one that wins on the hardware Postio ships to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageMac {
+    /// What a new store gets.
+    Sha256,
+    /// SQLCipher's own default, and what every store made before this change
+    /// carries. Read, never written.
+    Sha512,
+}
+
+impl PageMac {
+    /// What `PRAGMA cipher_hmac_algorithm` calls it.
+    pub(crate) fn pragma(self) -> &'static str {
+        match self {
+            Self::Sha256 => "HMAC_SHA256",
+            Self::Sha512 => "HMAC_SHA512",
+        }
+    }
+
+    /// What every store this build opens or creates is authenticated with.
+    ///
+    /// One format, not a menu. Pre-v1 there is nothing deployed to protect and
+    /// the store is a cache of the server, so a database in the older format is
+    /// rebuilt by resyncing rather than carried. [`Sha512`](Self::Sha512)
+    /// survives only so a store in it can be *recognised* and said so, which is
+    /// the difference between "delete it and resync" and a false claim that the
+    /// key is wrong.
+    pub(crate) const CURRENT: Self = Self::Sha256;
+}
+
 /// [`Error::Sqlite`] if a pragma is refused.
 pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
+    configure_as(connection, key, PageMac::CURRENT)
+}
+
+/// [`configure`], for a store under a named [`PageMac`].
+///
+/// Separate because the MAC is a property of the *file*: a pool that opened a
+/// store written under SHA-512 has to keep configuring every later connection
+/// the same way, or the second checkout fails where the first succeeded.
+pub fn configure_as(connection: &Connection, key: &Subkey, mac: PageMac) -> Result<()> {
     // Before the key, which is what SQLCipher requires of this one.
     connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
 
@@ -293,6 +363,11 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
             Error::Sqlite(error)
         }
     })?;
+
+    // After the key and before anything reads a page, which is what SQLCipher
+    // requires of this one: it decides how pages are authenticated, so it
+    // cannot be changed once one has been read.
+    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {};", mac.pragma()))?;
 
     // The probe. `sqlite_schema` lives on page 1, so this is the cheapest read
     // that proves the key: one page, already in cache for everything after it.
@@ -406,7 +481,7 @@ impl Location {
         ))
     }
 
-    fn open(&self, key: &Subkey) -> Result<Connection> {
+    fn open(&self, key: &Subkey, mac: PageMac) -> Result<Connection> {
         let connection = match self {
             Self::File(path) => Connection::open(path)?,
             Self::Memory(uri) => Connection::open_with_flags(
@@ -417,7 +492,7 @@ impl Location {
                     | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?,
         };
-        configure(&connection, key)?;
+        configure_as(&connection, key, mac)?;
         Ok(connection)
     }
 
@@ -426,6 +501,25 @@ impl Location {
             Self::File(path) => Some(path),
             Self::Memory(_) => None,
         }
+    }
+}
+
+/// Turn "page 1 did not verify" into the reason it did not.
+///
+/// A wrong key and a store in the older page MAC fail identically — the MAC
+/// covers the page, so neither verifies — and the difference matters entirely
+/// to the person reading the message. One says their mail belongs to another
+/// installation; the other says the cache is stale and will rebuild itself.
+///
+/// Only ever called on the failure path, so a store in the current format
+/// pays nothing for it.
+fn explain_failure(location: &Location, key: &Subkey, failure: Error) -> Error {
+    if !matches!(failure, Error::WrongStoreKey) {
+        return failure;
+    }
+    match location.open(key, PageMac::Sha512) {
+        Ok(_) => Error::StorePredatesPageMac,
+        Err(_) => failure,
     }
 }
 
@@ -691,9 +785,16 @@ impl Pool {
         // touch libcrypto. See the function's own docs for the coredump.
         silence_openssl_atexit();
 
+        // One open, in the one format this build writes. A failure here is
+        // where a store in the older MAC is recognised and named, rather than
+        // being reported as somebody else's key.
+        let probe = location
+            .open(&key, PageMac::CURRENT)
+            .map_err(|error| explain_failure(&location, &key, error))?;
+
         let keeper = match location {
             Location::File(_) => None,
-            Location::Memory(_) => Some(location.open(&key)?),
+            Location::Memory(_) => Some(probe),
         };
 
         Ok(Self {
@@ -794,7 +895,7 @@ impl Pool {
                         state.interactive_waiting -= 1;
                     }
                     drop(state);
-                    return match self.inner.location.open(&self.inner.key) {
+                    return match self.inner.location.open(&self.inner.key, PageMac::CURRENT) {
                         Ok(connection) => Ok(self.guard(connection)),
                         Err(error) => {
                             self.lock().live -= 1;

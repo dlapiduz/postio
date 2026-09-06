@@ -248,6 +248,16 @@ pub fn unconverted_store(path: &Path) -> Database {
             .execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))
             .expect("the store key");
         drop(hex);
+        // The page MAC this build writes. Without it the store would be
+        // authenticated with SQLCipher's own default and refused on reopen as
+        // predating the MAC change -- which is a *different* old shape from
+        // the one this helper exists to build.
+        connection
+            .execute_batch(&format!(
+                "PRAGMA cipher_hmac_algorithm = {};",
+                crate::db::PageMac::CURRENT.pragma()
+            ))
+            .expect("the page MAC");
         // Every pragma the pool applies. What makes this store the old
         // shape is what is *missing*: `Database::from_location_with_guard`
         // asks for `auto_vacuum = INCREMENTAL` before it migrates, and this

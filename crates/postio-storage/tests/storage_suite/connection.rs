@@ -111,6 +111,15 @@ fn a_file_backed_connection_carries_postios_pragmas() {
         "cache_size is negative, i.e. expressed in KiB rather than pages"
     );
     assert!(
+        -pragmas.cache_size >= 65_536,
+        "at least 64 MiB of page cache. Under SQLCipher a miss costs a decrypt \
+         and an HMAC verification, and a cache holding a small fraction of a \
+         large store re-pays that for pages it has already seen -- \
+         `cache_pressure.rs` measures 24% between 16 and 64 MiB at 400,000 \
+         messages. It is a cap rather than a reservation, so a small store \
+         never allocates it"
+    );
+    assert!(
         pragmas.busy_timeout >= 1_000,
         "a busy timeout the pool can actually wait out"
     );
