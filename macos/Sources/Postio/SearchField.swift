@@ -19,6 +19,12 @@ struct SearchField: View {
     /// generation the boundary answered with.
     let reload: () -> Void
     let dismiss: () -> Void
+    /// Whether the field should take the keyboard.
+    ///
+    /// Driven from the engine so that `/` and `⌥⌘F` land here: the field is
+    /// always on screen now (canvas screen 25 puts it in the toolbar), so
+    /// "open search" means "focus this" rather than "reveal something".
+    @Binding var wantsFocus: Bool
 
     @State private var query = ""
     /// Bumped when a search runs, so the readout re-reads. `searchOutcome`
@@ -83,7 +89,15 @@ struct SearchField: View {
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .onAppear { focused = true }
+        .onChange(of: wantsFocus) { _, wanted in
+            if wanted { focused = true }
+        }
+        .onChange(of: focused) { _, has in
+            // Losing the keyboard is leaving search as far as the *keyboard*
+            // is concerned; the results stay on screen until they are
+            // cleared, which is what a search field on a toolbar means.
+            if !has { wantsFocus = false }
+        }
         // Reading `ran` here is what makes the readout above re-evaluate:
         // `searchOutcome` reads through to the boundary, which SwiftUI has no
         // way to observe on its own.

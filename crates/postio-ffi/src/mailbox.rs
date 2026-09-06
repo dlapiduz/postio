@@ -70,6 +70,12 @@ pub struct MailboxFfi {
     /// Whether the folder can hold messages. A `\Noselect` folder is a
     /// container in the hierarchy and opening it shows nothing.
     pub selectable: bool,
+    /// When a sync pass over this folder last *completed*, in seconds.
+    ///
+    /// `None` for a folder that has never finished one — which is a state a
+    /// new account is in for the whole of its first pass, and the one the
+    /// footer most has to distinguish from "nothing is happening".
+    pub last_synced_at: Option<i64>,
     /// Whether this row belongs in the sidebar's special-use section.
     ///
     /// Decided by `postio_ui::sidebar`, not by the frontend, and it is not
@@ -95,6 +101,7 @@ impl From<Mailbox> for MailboxFfi {
             unread: mailbox.counts.unread,
             total: mailbox.counts.total,
             selectable: mailbox.selectable,
+            last_synced_at: mailbox.last_synced_at.map(|at| at.timestamp()),
             special: false,
         }
     }

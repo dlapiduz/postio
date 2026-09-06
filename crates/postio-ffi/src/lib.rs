@@ -49,6 +49,7 @@ mod registry;
 mod search;
 mod session;
 mod settings;
+mod sidebar;
 
 pub use account::AccountFfi;
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
@@ -69,6 +70,7 @@ pub use settings::{
     settings_appearance, settings_group_label, settings_humanize_interval, settings_load,
     settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
 };
+pub use sidebar::{ActivityFfi, sidebar_status};
 
 /// Every command the registry knows, in cheat-sheet order.
 ///
