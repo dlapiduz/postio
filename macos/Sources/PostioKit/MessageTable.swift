@@ -13,7 +13,7 @@ import PostioFFI
 /// the two things this needs — real cell reuse, and explicit scroll-anchor
 /// control when new mail arrives at the top.
 @MainActor
-public final class MessageTableController: NSObject {
+public final class MessageTableController: NSObject, NSMenuDelegate {
     /// Where rows come from.
     public var source: MessageRowSource {
         didSet { tableView?.reloadData() }
@@ -118,6 +118,65 @@ public final class MessageTableController: NSObject {
 
     /// The verbs the focused row announces, from the session's keymap.
     public var hints: [RowHintFfi] = []
+
+    /// Run a verb on a row, whichever way the mouse asked for it.
+    ///
+    /// Carries the row rather than acting on the cursor: a context menu is
+    /// about the message it was opened on, which is the whole difference
+    /// between it and a keystroke.
+    public var onRowAction: ((String, Int) -> Void)?
+
+    /// The three verbs, as a menu for `row`.
+    ///
+    /// Built from `row_actions()` — registry command ids, shared with the
+    /// keyboard — rather than a list kept here, so the mouse and the keyboard
+    /// cannot run different verbs for the same word.
+    public static func rowMenu(for row: Int, flagged: Bool) -> NSMenu {
+        let menu = NSMenu()
+        for action in rowActions() {
+            // The state, not the verb: a flagged message offers to unflag,
+            // and the word has to say which way it would go.
+            let title = action.command == "flag" && flagged ? "Unflag" : action.title
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(MessageTableController.runRowAction(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = action.command
+            item.tag = row
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Rebuild the context menu for whichever row was right-clicked.
+    ///
+    /// `clickedRow` rather than the selection: a context menu is about the
+    /// message it was opened on.
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let tableView, tableView.clickedRow >= 0 else { return }
+        for item in self.menu(forRow: tableView.clickedRow)?.items ?? [] {
+            menu.addItem(item)
+        }
+    }
+
+    /// The menu for `row`, targeted at this controller.
+    ///
+    /// Present whatever `show_hover_actions` says: off means the mouse
+    /// reaches the same verbs another way, never through nothing.
+    public func menu(forRow row: Int) -> NSMenu? {
+        let flagged = source.row(at: UInt32(row))?.flagged ?? false
+        let menu = Self.rowMenu(for: row, flagged: flagged)
+        for item in menu.items { item.target = self }
+        return menu
+    }
+
+    /// Run the verb a menu item stands for.
+    @objc public func runRowAction(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? String else { return }
+        onRowAction?(command, sender.tag)
+    }
 
     /// The cell to draw into: `existing` if AppKit handed one back, else a new one.
     ///
@@ -250,6 +309,8 @@ extension MessageTableController: NSTableViewDelegate {
         // them; the cursor is the table's own selection, never the mark.
         cell.hints = hints
         cell.focused = tableView.selectedRow == row
+        // The cell knows the verb, only this knows which row it is drawing.
+        cell.onAction = { [weak self] command in self?.onRowAction?(command, row) }
         cell.show(presentation(at: UInt32(row)))
         return cell
     }

@@ -56,6 +56,12 @@ public struct MessageListView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         controller.tableView = table
+        // The mouse's path to the three verbs. Present whatever
+        // `show_hover_actions` says: off means the mouse reaches them another
+        // way, never through nothing.
+        let menu = NSMenu()
+        menu.delegate = controller
+        table.menu = menu
         return scroll
     }
 

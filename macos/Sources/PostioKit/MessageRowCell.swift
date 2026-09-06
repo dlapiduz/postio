@@ -20,6 +20,17 @@ public final class MessageRowCell: NSTableCellView {
     private let avatarLabel = NSTextField(labelWithString: "")
     /// `e reply   a archive` under the snippet, on the focused row only.
     private let hintLine = NSTextField(labelWithString: "")
+    /// The three verbs under the pointer, in `RowAction::ALL` order.
+    private let actions = NSStackView()
+    /// Whether the row this cell is drawing is flagged, so the flag button
+    /// can say which way it would go.
+    private var isFlagged = false
+
+    /// Run a verb on the row this cell is drawing.
+    ///
+    /// The controller fills this in per row, because the cell knows the verb
+    /// and only the controller knows which row it is.
+    public var onAction: ((String) -> Void)?
     /// The tint behind a *marked* row.
     ///
     /// Behind everything else and inset, so it reads as a state of the row
@@ -73,6 +84,7 @@ public final class MessageRowCell: NSTableCellView {
         preview.isHidden = !metrics.snippet
         stack?.spacing = CGFloat(metrics.subjectGap)
         applyHints()
+        applyActions()
         padTop.constant = CGFloat(metrics.padY)
         padBottom.constant = -CGFloat(metrics.padY)
 
@@ -113,6 +125,63 @@ public final class MessageRowCell: NSTableCellView {
         hintLine.stringValue = hints.map { "\($0.key) \($0.label)" }
             .joined(separator: "   ")
     }
+
+    /// Whether the pointer is over this row.
+    ///
+    /// Set by the tracking area; a property rather than a method so a test
+    /// can put the cell in the state without a real pointer.
+    public var hovered: Bool = false {
+        didSet { applyActions() }
+    }
+
+    /// Whether the hover actions are absent.
+    public var actionsAreHiddenForTesting: Bool { actions.isHidden }
+
+    private func applyActions() {
+        actions.isHidden = !(hovered && ui.showHoverActions)
+        // The flag button is the only one whose glyph depends on the row.
+        for case let button as NSButton in actions.arrangedSubviews
+        where button.identifier?.rawValue == "flag" {
+            button.image = NSImage(
+                systemSymbolName: Self.symbol(for: "flag", flagged: isFlagged),
+                accessibilityDescription: isFlagged ? "Unflag" : "Flag"
+            )
+        }
+    }
+
+    /// The macOS glyph for a verb — GTK's `icon` answers the same question in
+    /// symbolic icon names, and neither belongs in the shared crate.
+    static func symbol(for command: String, flagged: Bool) -> String {
+        switch command {
+        case "archive": return "archivebox"
+        case "flag": return flagged ? "flag.slash" : "flag"
+        case "delete": return "trash"
+        default: return "questionmark"
+        }
+    }
+
+    @objc private func runAction(_ sender: NSButton) {
+        guard let command = sender.identifier?.rawValue else { return }
+        onAction?(command)
+    }
+
+    // The pointer, for the actions that appear under it. Rebuilt on every
+    // layout because the cell is reused and its bounds move with the row.
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self
+            )
+        )
+    }
+
+    public override func mouseEntered(with event: NSEvent) { hovered = true }
+
+    public override func mouseExited(with event: NSEvent) { hovered = false }
 
     /// Whether the chip is drawn. `sender_avatars` off means the row gets the
     /// space back, not that it draws an empty circle.
@@ -191,10 +260,31 @@ public final class MessageRowCell: NSTableCellView {
             avatarLabel.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
         ])
 
-        let top = NSStackView(views: [unreadDot, sender, badge, flag, time])
+        let top = NSStackView(views: [unreadDot, sender, badge, flag, actions, time])
         top.orientation = .horizontal
         top.spacing = PostioTokens.space2
         top.alignment = .centerY
+
+        actions.orientation = .horizontal
+        actions.spacing = PostioTokens.space1
+        actions.isHidden = true
+        for action in rowActions() {
+            let button = NSButton()
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.image = NSImage(
+                systemSymbolName: Self.symbol(for: action.command, flagged: false),
+                accessibilityDescription: action.title
+            )
+            button.imagePosition = .imageOnly
+            button.target = self
+            button.action = #selector(runAction(_:))
+            button.identifier = NSUserInterfaceItemIdentifier(action.command)
+            // Named for whoever reaches these another way -- the same verb the
+            // keyboard runs, so it has to be called the same thing.
+            button.setAccessibilityLabel(action.title)
+            actions.addArrangedSubview(button)
+        }
 
         hintLine.font = .systemFont(ofSize: 11)
         hintLine.textColor = .tertiaryLabelColor
@@ -311,6 +401,8 @@ public final class MessageRowCell: NSTableCellView {
             preview.isHidden = !drawsSnippet || presentation.preview.isEmpty
         }
 
+        isFlagged = presentation.flagged
+        applyActions()
         avatarLabel.stringValue = presentation.initials
         time.stringValue = presentation.time
         unreadDot.isHidden = !presentation.unread
