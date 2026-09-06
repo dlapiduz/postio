@@ -221,24 +221,15 @@ jobs:
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
         run: |
-          ls scripts/tests/*.py | sort > /tmp/self-tests
-          echo "running $(wc -l < /tmp/self-tests) self-tests, four at a time"
-          # `-P4` and not more: several of these build a cargo sandbox, and
-          # .cargo/config.toml already pins two jobs per cargo.
-          if ! xargs -P4 -I{} -a /tmp/self-tests \
-              sh -c 'python3 "$1" >"/tmp/$(basename "$1").log" 2>&1 || { echo "FAILED: $1"; exit 1; }' _ {}; then
-            echo
-            echo "::error::a tooling self-test failed; its output follows"
-            for log in /tmp/test-*.log; do
-              name=$(basename "$log" .log)
-              grep -q "" "$log" || continue
-              if ! grep -qE "passed|ok\b" "$log"; then
-                echo "--- $name ---"
-                tail -n 40 "$log"
-              fi
-            done
-            exit 1
-          fi
+          # A script, not fifteen lines here, for the reason
+          # `ci-tooling-needed.sh` is one: an inline step cannot be tested,
+          # which is a poor property for the step that keeps the tooling
+          # honest. This one used to decide which failing logs to print by
+          # grepping their content for `ok`, and since every self-test prints
+          # `ok` per passing case it skipped the log of anything that failed
+          # after getting one case right -- announcing a failure and then
+          # printing nothing (#1257).
+          scripts/run-self-tests.sh --logs /tmp/self-test-logs
 
       - name: Assert CI never runs the network-touching tests
         run: |
