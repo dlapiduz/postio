@@ -20,7 +20,7 @@
 use gtk::glib;
 use postio_gtk::window::Window;
 use postio_storage::Database;
-use postio_storage::repository::MailboxRepository;
+use postio_storage::repository::{AccountRepository, MailboxRepository};
 
 use crate::Wiring;
 
@@ -28,6 +28,9 @@ use crate::Wiring;
 /// background backfill from its own context menu.
 pub fn install(window: &Window, wiring: &Wiring) {
     let database = wiring.database.clone();
+    // Once at startup, so a store that already has an excluded folder says so
+    // before anybody touches the menu.
+    tell_the_settings_panel(window, &database);
     // Weak: the window owns the sidebar that owns this handler (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.sidebar().connect_backfill_exclusion_changed({
@@ -61,4 +64,39 @@ fn refresh(window: &Window, database: &Database, id: postio_model::ids::MailboxI
     if let Ok(all) = mailboxes.list_for_account(mailbox.account_id) {
         window.sidebar().set_mailboxes(&all);
     }
+    tell_the_settings_panel(window, database);
+}
+
+/// Hands the settings panel the folders that no longer backfill.
+///
+/// ADR 0030 Q5: a rule staged on the body over an excluded folder does not
+/// run late, it does not run — `seed` queues nothing at all for one, so the
+/// body it waits for is never fetched. The panel says so on the line beside
+/// the rule, and cannot work it out for itself: `backfill_excluded` is a
+/// column, and `postio-gtk` may not read SQL.
+///
+/// Across every account, because `config.toml` is one file for all of them —
+/// a rule is not written per account, so neither is the warning. Paths
+/// rather than ids, deduplicated, in the order the folders are listed: what
+/// the user sees in the sidebar is what they read here.
+fn tell_the_settings_panel(window: &Window, database: &Database) {
+    let Ok(connection) = database.connection() else {
+        return;
+    };
+    let mailboxes = MailboxRepository::new(&connection);
+    let Ok(accounts) = AccountRepository::new(&connection).list() else {
+        return;
+    };
+    let mut excluded: Vec<String> = Vec::new();
+    for account in accounts {
+        let Ok(all) = mailboxes.list_for_account(account.id) else {
+            continue;
+        };
+        for mailbox in all.into_iter().filter(|mailbox| mailbox.backfill_excluded) {
+            if !excluded.contains(&mailbox.path) {
+                excluded.push(mailbox.path);
+            }
+        }
+    }
+    window.settings().set_backfill_excluded(&excluded);
 }

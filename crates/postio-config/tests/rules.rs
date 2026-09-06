@@ -328,3 +328,61 @@ query   = "body:invoice"
         checked.validation.notes()
     );
 }
+
+/// A `forward:` rule gets the same note, from the same mechanism (ADR 0030).
+///
+/// The note answers "when does this run", and until ADR 0030 that question
+/// had one source: the query. A rule that forwards runs at the body point
+/// whatever its query says, because it needs the message it is sending on —
+/// so a rule whose query reads as header-only would sit there apparently
+/// broken, mail unforwarded, with the file saying nothing.
+///
+/// ADR 0008 Q3's own reasoning, one requirement further: the user writing the
+/// rule is told when it will run at the moment they write it, rather than
+/// discovering it from a timestamp later.
+#[test]
+fn a_forwarding_rule_says_when_it_will_run_too() {
+    let text = r#"[[rules]]
+name    = "digest"
+query   = "from:lists@example.com"
+actions = ["forward:ada@example.com"]
+"#;
+    let checked = postio_config::validate::check_str(text);
+
+    assert!(
+        checked.validation.is_valid(),
+        "a forwarding rule is a working rule: {:?}",
+        checked.validation.errors()
+    );
+    let notes = checked.validation.notes();
+    assert_eq!(
+        notes.len(),
+        1,
+        "the rule's query is header-only and it still waits for the body, \
+         which is exactly the case a user cannot see from the file: {notes:?}"
+    );
+    assert!(
+        notes[0].message.contains("after the body is fetched"),
+        "{:?}",
+        notes[0].message
+    );
+    assert!(notes[0].path.contains("digest"), "{:?}", notes[0].path);
+}
+
+/// And a disabled one carries no note: it does not run at all, and saying
+/// when it would have is noise.
+#[test]
+fn a_disabled_forwarding_rule_carries_no_note() {
+    let text = r#"[[rules]]
+name    = "digest"
+query   = "from:lists@example.com"
+actions = ["forward:ada@example.com"]
+enabled = false
+"#;
+    let checked = postio_config::validate::check_str(text);
+    assert!(
+        checked.validation.notes().is_empty(),
+        "{:?}",
+        checked.validation.notes()
+    );
+}

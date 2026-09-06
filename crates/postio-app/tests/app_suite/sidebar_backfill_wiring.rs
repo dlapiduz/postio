@@ -123,6 +123,24 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
          not wait for Event::MailboxesChanged from a sync pass that never runs here"
     );
 
+    // ── and a rule that waits for a body says the body is not coming ────
+    // ADR 0030 Q5. The settings panel cannot read the column — `postio-gtk`
+    // may not touch SQL — so this is the wiring that carries it there, and a
+    // setter nothing calls is the failure this project ships.
+    window.settings().set_text(
+        "[[rules]]\nname = \"digest\"\nquery = \"from:lists@example.com\"\n\
+         actions = [\"forward:ada@example.com\"]\n",
+    );
+    assert!(
+        settle_until(|| {
+            let footer = window.settings().footer_text();
+            footer.contains("digest") && footer.contains(&inbox.path)
+        }),
+        "a folder was excluded from backfill and the rule that waits for a \
+         body from it says nothing: {:?}",
+        window.settings().footer_text()
+    );
+
     bridge.shutdown();
 }
 

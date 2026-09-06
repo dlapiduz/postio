@@ -12,7 +12,10 @@
 //! Every action reaches [`postio_storage::actions`] — the same verb the
 //! command bus calls when a person presses `a` — which is what makes `trash`
 //! recoverable the same way a hand-trashed message is, by construction rather
-//! than by a test that happens to agree.
+//! than by a test that happens to agree. `forward:` is the same sentence one
+//! step further out: it goes through the draft and the queue a person's send
+//! goes through, so a forwarded message is in Sent and there is no second
+//! outbound path.
 //!
 //! # What a rule does not do
 //!
