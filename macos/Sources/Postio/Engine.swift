@@ -269,6 +269,24 @@ final class Engine {
         mailboxes.filter { !$0.special && $0.parent == nil }
     }
 
+    /// The accounts that have ordinary folders to show, in the order the
+    /// boundary listed them.
+    var accountsWithFolders: [AccountFfi] {
+        let present = Set(folderRoots.map(\.account))
+        return accounts.filter { present.contains($0.id) }
+    }
+
+    /// Whether a sync pass is running now.
+    ///
+    /// From `SyncProgress`, which arrives while a pass is in flight and stops
+    /// when it is done — the presence of progress is the answer to "is
+    /// anything happening", which is the trap `postio-gtk`'s footer fell into
+    /// by reading a `last_synced_at` that only moves when a pass *completes*.
+    private(set) var syncing = false
+
+    /// Whether the platform has told the engine there is no connection.
+    var isOffline: Bool { session?.isOffline ?? false }
+
     /// The children of `parent`, ordinary folders only.
     func children(of parent: Int64) -> [MailboxFfi] {
         mailboxes.filter { !$0.special && $0.parent == parent }
@@ -377,6 +395,12 @@ final class Engine {
             controller.showCursor(on: row)
             cursorShowing = message
             openConversation(atRow: row)
+        case let .syncProgress(_, done, total):
+            syncing = done < total
+        case .connectionChanged:
+            // A connection that has gone means nothing is in flight, whatever
+            // the last progress event said.
+            if isOffline { syncing = false }
         case .mailboxesChanged:
             mailboxes = session?.mailboxes ?? []
         default:
@@ -465,6 +489,12 @@ final class Engine {
             // completing its first layout -- the app runs, logs and draws
             // nothing. Bisected 2026-09-05; see the note in docs/notes/.
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case Intercepted.toggleSidebar:
+            // AppKit's own action rather than a piece of state here: a split
+            // view controller owns whether its sidebar is collapsed, and a
+            // second opinion in Swift would be one the window ignores.
+            NSApp.sendAction(
+                #selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
         case Intercepted.expandAll:
             conversation.expandAll()
         case Intercepted.toggleFold:

@@ -122,6 +122,7 @@ public enum Intercepted {
     /// The conversation pane's own four. They are commands like any other —
     /// bound, rebindable, in the menu — but what they act on is a fold this
     /// frontend is holding, so the boundary has nothing to do with them.
+    public static let toggleSidebar = "toggle_sidebar"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
     public static let nextInConversation = "next_in_conversation"
@@ -130,7 +131,7 @@ public enum Intercepted {
     /// Every id above, for the test that checks they still exist.
     public static let all = [
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
-        expandAll, toggleFold, nextInConversation, prevInConversation,
+        toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
     ]
 }
 

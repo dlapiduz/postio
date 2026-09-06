@@ -42,21 +42,30 @@ struct Shell: View {
                     // The special-use folders first, in the order the
                     // boundary gave them — Inbox at the top, one row per
                     // role. Nothing is sorted here; see `Engine.specialFolders`.
-                    ForEach(engine.specialFolders, id: \.id) { folder in
-                        FolderRow(folder: folder, children: [])
+                    Section("Favorites") {
+                        ForEach(engine.specialFolders, id: \.id) { folder in
+                            FolderRow(folder: folder, children: [])
+                        }
                     }
-                    if !engine.specialFolders.isEmpty, !engine.folderRoots.isEmpty {
-                        Divider().padding(.vertical, 4)
-                    }
-                    // Then the ordinary folders, each with its children under
-                    // it. The tree is rebuilt here from the flat list's parent
-                    // ids — flattening it for display would turn a tidy
-                    // account into slash-separated strings.
-                    ForEach(engine.folderRoots, id: \.id) { folder in
-                        FolderRow(folder: folder, children: engine.children(of: folder.id))
+                    // Then the account's own folders, each account a group
+                    // and each folder with its children under it. The tree is
+                    // rebuilt here from the flat list's parent ids —
+                    // flattening it for display would turn a tidy account
+                    // into slash-separated strings.
+                    if !engine.folderRoots.isEmpty {
+                        Section("On My Mac") {
+                            ForEach(engine.accountsWithFolders, id: \.id) { account in
+                                AccountFolders(
+                                    address: account.address,
+                                    roots: engine.folderRoots.filter { $0.account == account.id },
+                                    children: { engine.children(of: $0) }
+                                )
+                            }
+                        }
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { footer }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
             .accessibilityLabel(Pane.sidebar.label)
             .onTapGesture { engine.focus(.sidebar) }
@@ -76,6 +85,55 @@ struct Shell: View {
         } detail: {
             reader
                 .onTapGesture { engine.focus(.reader) }
+        }
+        .toolbar {
+            // The sidebar toggle first, where every Mac window puts it. The
+            // registry command runs the same AppKit action, so the button and
+            // `\` are one behaviour rather than two.
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    engine.run("toggle_sidebar")
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help("Show or hide the sidebar")
+                .accessibilityLabel("Show or hide the sidebar")
+            }
+            // Icons only, in the canvas' order, every one a registry command
+            // with a tooltip that names the key it is bound to.
+            ToolbarItemGroup {
+                ForEach(ToolbarPlan.items, id: \.command) { item in
+                    Button {
+                        engine.run(item.command)
+                    } label: {
+                        Image(systemName: item.symbol)
+                    }
+                    .help(
+                        ToolbarPlan.tooltip(for: item) { command in
+                            engine.session?.binding(for: command)
+                        }
+                    )
+                    .accessibilityLabel(item.title)
+                    .disabled(!available(item.command))
+                }
+            }
+            // The most prominent control in the window, at the trailing edge
+            // (canvas screen 25). On screen always: before this, search was a
+            // keystroke with nothing to announce it (#1260).
+            ToolbarItem(placement: .primaryAction) {
+                if let session = engine.session {
+                    SearchField(
+                        session: session,
+                        reload: { engine.listChanged() },
+                        dismiss: { engine.dismissOverlays() },
+                        wantsFocus: Binding(
+                            get: { engine.showingSearch },
+                            set: { engine.showingSearch = $0 }
+                        )
+                    )
+                    .frame(minWidth: 220, idealWidth: 320)
+                }
+            }
         }
         // No `navigationTitle`. The canvas' title bar is empty: this
         // application's name belongs in the menu bar and the About window,
@@ -148,6 +206,50 @@ struct Shell: View {
         }
     }
 
+    /// The line under the folders: a state dot and a sentence.
+    ///
+    /// Redrawn on a timer because the sentence ages — "synced 40s" is only
+    /// true for a second. Every fifteen seconds rather than every second: the
+    /// line is glanced at, and a footer that repaints at 1 Hz is a window
+    /// that never settles.
+    private var footer: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { timeline in
+            HStack(spacing: PostioTokens.space2) {
+                Circle()
+                    .fill(
+                        SidebarFooter.isResting(offline: engine.isOffline, syncing: engine.syncing)
+                            ? Color.secondary
+                            : Color(nsColor: PostioTokens.colorAccent)
+                    )
+                    .frame(width: 7, height: 7)
+                Text(
+                    SidebarFooter.status(
+                        mailboxes: engine.mailboxes,
+                        offline: engine.isOffline,
+                        syncing: engine.syncing,
+                        now: timeline.date
+                    )
+                )
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, PostioTokens.space4)
+            .padding(.vertical, PostioTokens.space3)
+            .background(.bar)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// Whether a toolbar button should be live.
+    ///
+    /// The same question the palette's filter and the menu ask, so the three
+    /// cannot disagree about what this view can do.
+    private func available(_ command: String) -> Bool {
+        engine.session?.isAvailable(command, in: engine.context) ?? false
+    }
+
     /// Reopen the folder that was open, or the inbox if it is gone.
     private func restoreFolder() {
         guard selectedFolder == nil, !engine.mailboxes.isEmpty else { return }
@@ -184,15 +286,9 @@ struct Shell: View {
                 )
             } else {
                 VStack(spacing: 0) {
-                    // `/` opens it, over the list it filters.
-                    if engine.showingSearch, let session = engine.session {
-                        SearchField(
-                            session: session,
-                            reload: { engine.listChanged() },
-                            dismiss: { engine.dismissOverlays() }
-                        )
-                        Divider()
-                    }
+                    // No search strip here any more: the field lives in the
+                    // toolbar, where the canvas puts it and where it is
+                    // visible without a keystroke.
                     // "12 selected", when there is a selection to say it
                     // about. From the model, which knows the answer for a
                     // whole-view selection without enumerating it -- a count

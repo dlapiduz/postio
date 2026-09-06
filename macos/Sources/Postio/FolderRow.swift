@@ -2,6 +2,33 @@ import PostioFFI
 import PostioKit
 import SwiftUI
 
+/// One account's folders, under its address.
+///
+/// A group rather than a flat run, because "On My Mac" holds every account at
+/// once and two accounts with a `Projects` folder each are otherwise two rows
+/// with the same name and no way to tell them apart.
+struct AccountFolders: View {
+    let address: String
+    let roots: [MailboxFfi]
+    let children: (Int64) -> [MailboxFfi]
+
+    /// Open by default: a person who has one account should not have to
+    /// click to see their own folders.
+    @State private var expanded = true
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            ForEach(roots, id: \.id) { folder in
+                FolderRow(folder: folder, children: children(folder.id))
+            }
+        } label: {
+            Text(address)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+}
+
 /// One folder in the sidebar, and its children.
 ///
 /// Named and iconed from its **role** where it has one. `PRODUCT.md` says the
