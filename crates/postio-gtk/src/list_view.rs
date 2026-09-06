@@ -1795,12 +1795,11 @@ fn drag_payload() -> gdk::ContentProvider {
 }
 
 /// Which command a hover action runs.
+///
+/// The mapping is `RowAction::command`, shared, so the mouse and the keyboard
+/// cannot end up running different verbs for the same glyph.
 fn command_for(action: crate::row::RowAction) -> CommandId {
-    match action {
-        crate::row::RowAction::Archive => CommandId::Archive,
-        crate::row::RowAction::Flag => CommandId::Flag,
-        crate::row::RowAction::Delete => CommandId::Delete,
-    }
+    action.command()
 }
 
 /// Whether a command is one that acts on the message under the pointer.

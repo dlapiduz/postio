@@ -147,6 +147,49 @@ pub fn hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
         .collect()
 }
 
+/// What the row offers under the pointer, in the order they are drawn.
+///
+/// The three verbs triage is made of, and the same three the bulk bar
+/// carries — one row or twenty, the mouse says the same thing. Each is a
+/// registry command, never a local implementation: `a`, `s` and `d` mean
+/// exactly this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAction {
+    /// Archive this message — `a`.
+    Archive,
+    /// Flag or unflag it — `s`.
+    Flag,
+    /// Move it to the trash — `d`.
+    Delete,
+}
+
+impl RowAction {
+    /// Every action, left to right.
+    pub const ALL: [RowAction; 3] = [RowAction::Archive, RowAction::Flag, RowAction::Delete];
+
+    /// What a screen reader would call it, for whoever offers it another way.
+    pub fn title(self) -> &'static str {
+        match self {
+            RowAction::Archive => "Archive",
+            RowAction::Flag => "Flag",
+            RowAction::Delete => "Delete",
+        }
+    }
+
+    /// Which registry command it runs.
+    ///
+    /// Never a local implementation: `a`, `s` and `d` mean exactly this, and a
+    /// hover action that did its own thing would be a fourth way to archive
+    /// that undo did not know about.
+    pub fn command(self) -> CommandId {
+        match self {
+            RowAction::Archive => CommandId::Archive,
+            RowAction::Flag => CommandId::Flag,
+            RowAction::Delete => CommandId::Delete,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

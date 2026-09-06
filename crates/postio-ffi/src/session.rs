@@ -1,6 +1,5 @@
 //! Opening a session, draining its events, and shutting it down.
 
-use postio_config::paths::Platform;
 use std::sync::{Arc, Mutex};
 
 use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
@@ -1967,7 +1966,19 @@ impl Session {
     /// way to know which key `mod` means, and that decision belongs to the
     /// core anyway.
     pub fn binding_for(&self, command: String) -> Option<String> {
-        self.keys.binding_on(&command, Platform::host())
+        // The *resolved* keymap, not the override table. `KeyBindings` knows
+        // only what `postio-config`'s own short list of defaults says, which
+        // is 24 commands out of about eighty (#1227) -- so this answered
+        // `None` for `delete`, `flag`, `send` and 53 others whose keys work,
+        // and the menu drew no accelerator for any of them.
+        //
+        // `Keymap::resolve` is defaults-from-the-registry plus the user's
+        // overrides, with `mod` already expanded for this platform, which is
+        // exactly what a menu wants to draw.
+        let Ok(action) = command.parse::<postio_core::ActionId>() else {
+            return None;
+        };
+        self.keymap().binding(action).map(str::to_string)
     }
 
     /// How many accounts are configured and enabled.

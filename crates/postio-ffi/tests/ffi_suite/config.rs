@@ -126,3 +126,27 @@ fn a_mod_override_reaches_swift_as_this_platforms_accelerator() {
     );
     session.shutdown();
 }
+
+#[test]
+fn every_command_with_a_default_key_reports_it() {
+    // #1227: `KeyBindings::binding_on` reads `postio-config`'s own short
+    // table, which knows 24 commands; the registry declares defaults for
+    // about eighty. So the menu asked what key `delete` had, was told none,
+    // and drew no accelerator for a key that works.
+    let session =
+        Session::open(SessionOptions::in_memory().with_config_for_test("")).expect("a session");
+
+    let silent: Vec<String> = postio_ffi::commands()
+        .into_iter()
+        .filter(|spec| !spec.default_binding.is_empty())
+        .filter(|spec| session.binding_for(spec.id.clone()).is_none())
+        .map(|spec| spec.id)
+        .collect();
+
+    assert!(
+        silent.is_empty(),
+        "{} commands have a default key the frontend cannot find: {silent:?}",
+        silent.len()
+    );
+    session.shutdown();
+}

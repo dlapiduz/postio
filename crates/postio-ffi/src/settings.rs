@@ -359,3 +359,31 @@ pub struct RowHintFfi {
     /// The verb, in the canvas' words — "reply", "archive".
     pub label: String,
 }
+
+/// One verb a row offers the mouse.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RowActionFfi {
+    /// The registry command it runs — `archive`, `flag`, `delete`.
+    ///
+    /// A command id, never a local implementation: a hover action that did
+    /// its own thing would be a fourth way to archive that undo did not know
+    /// about.
+    pub command: String,
+    /// What a screen reader calls it, and what the context menu says.
+    pub title: String,
+}
+
+/// The three verbs triage is made of, left to right.
+///
+/// The same three the keyboard runs with `a`, `s` and `d`, and the same three
+/// the bulk bar carries: one row or twenty, the mouse says the same thing.
+#[uniffi::export]
+pub fn row_actions() -> Vec<RowActionFfi> {
+    postio_ui::row::RowAction::ALL
+        .into_iter()
+        .map(|action| RowActionFfi {
+            command: action.command().as_str().to_string(),
+            title: action.title().to_string(),
+        })
+        .collect()
+}

@@ -278,10 +278,10 @@ impl Palette {
             flag_mark: probe.display().pipe_icon("starred-symbolic"),
             answered_mark: probe.display().pipe_icon("mail-replied-symbolic"),
             draft_mark: probe.display().pipe_icon("document-edit-symbolic"),
-            archive: probe.display().action_icon(RowAction::Archive.icon(false)),
-            flagged: probe.display().action_icon(RowAction::Flag.icon(true)),
-            unflagged: probe.display().action_icon(RowAction::Flag.icon(false)),
-            trash: probe.display().action_icon(RowAction::Delete.icon(false)),
+            archive: probe.display().action_icon(icon(RowAction::Archive, false)),
+            flagged: probe.display().action_icon(icon(RowAction::Flag, true)),
+            unflagged: probe.display().action_icon(icon(RowAction::Flag, false)),
+            trash: probe.display().action_icon(icon(RowAction::Delete, false)),
         };
         probe.set_css_classes(&[]);
         palette
@@ -333,45 +333,22 @@ const ACTION: f32 = 16.0;
 /// Between one hover action and the next.
 const ACTION_GAP: f32 = 10.0;
 
-/// What the row offers under the pointer, in the order they are drawn.
+// `RowAction` moved to `postio_ui::row`: which three verbs a row offers, what
+// they are called and which command each runs are decisions, not drawing.
+pub use postio_ui::row::RowAction;
+
+/// A hover action's glyph, for the toolkit that draws glyphs by name.
 ///
-/// The three verbs triage is made of, and the same three the bulk bar
-/// carries — one row or twenty, the mouse says the same thing. Each is a
-/// registry command, never a local implementation: `a`, `s` and `d` mean
-/// exactly this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RowAction {
-    /// Archive this message — `a`.
-    Archive,
-    /// Flag or unflag it — `s`.
-    Flag,
-    /// Move it to the trash — `d`.
-    Delete,
-}
-
-impl RowAction {
-    /// Every action, left to right.
-    pub const ALL: [RowAction; 3] = [RowAction::Archive, RowAction::Flag, RowAction::Delete];
-
-    /// The icon that says what it does.
-    fn icon(self, flagged: bool) -> &'static str {
-        match self {
-            RowAction::Archive => "postio-archive-symbolic",
-            // The state, not the verb: a flagged message offers to unflag,
-            // and the glyph has to say which way it would go.
-            RowAction::Flag if flagged => "starred-symbolic",
-            RowAction::Flag => "non-starred-symbolic",
-            RowAction::Delete => "user-trash-symbolic",
-        }
-    }
-
-    /// What a screen reader would call it, for whoever offers it another way.
-    pub fn title(self) -> &'static str {
-        match self {
-            RowAction::Archive => "Archive",
-            RowAction::Flag => "Flag",
-            RowAction::Delete => "Delete",
-        }
+/// A free function rather than a method, and it stays here: a GTK symbolic
+/// icon name is not an SF Symbol, and the shared crate should carry neither.
+fn icon(action: RowAction, flagged: bool) -> &'static str {
+    match action {
+        RowAction::Archive => "postio-archive-symbolic",
+        // The state, not the verb: a flagged message offers to unflag, and
+        // the glyph has to say which way it would go.
+        RowAction::Flag if flagged => "starred-symbolic",
+        RowAction::Flag => "non-starred-symbolic",
+        RowAction::Delete => "user-trash-symbolic",
     }
 }
 
