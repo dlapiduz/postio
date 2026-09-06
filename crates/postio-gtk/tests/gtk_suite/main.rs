@@ -159,6 +159,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
     ),
     (
+        "gtk_conversation::a_row_knows_whether_the_message_is_the_users_own",
+        gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
+    ),
+    (
         "gtk_settings_sync::the_pane_shows_the_files_values",
         gtk_settings_sync::the_pane_shows_the_files_values as fn(),
     ),
