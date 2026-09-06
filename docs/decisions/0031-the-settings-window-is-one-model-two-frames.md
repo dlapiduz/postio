@@ -1,10 +1,10 @@
-# ADR 0030 — The settings window is one model in two frames
+# ADR 0031 — The settings window is one model in two frames
 
 - **Status:** Accepted (2026-09-06)
 - **Date:** 2026-09-06
 - **Decision by:** `/ux-architect`, on [#1156](https://github.com/dlapiduz/postio/issues/1156), after the maintainer confirmed the macOS build should get a real settings screen with structured panes rather than a raw config-file editor.
 - **Issue:** [#1156](https://github.com/dlapiduz/postio/issues/1156)
-- **Supersedes an earlier draft** of this decision numbered 0029, which collided with [ADR 0029](0029-one-control-vocabulary.md) and argued from a premise that stopped being true while it was being written. Both corrections are in Q1.
+- **Supersedes an earlier draft** of this decision numbered 0029, then 0030, each of which collided with an ADR that landed on main first ([ADR 0029](0029-one-control-vocabulary.md) and argued from a premise that stopped being true while it was being written. Both corrections are in Q1.
 - **Related:** [ADR 0029](0029-one-control-vocabulary.md) (which control a setting gets — binding here too), [ADR 0019](0019-macos-frontend.md) Q1 (Native), canvas 3f, `Design/screens/22`, [#1179](https://github.com/dlapiduz/postio/issues/1179) (the GTK window this follows)
 - **Decision:** **the settings *model* is shared and the *frame* is each platform's own.** The eight sections, their order, their two headings, their labels, their descriptions and the table each one writes all live in `postio_ui::settings`; so does every rule about what a change does to the file. What each frontend owns is the widget tree and the icon set. **Swift parses no TOML and writes none.**
 

@@ -116,7 +116,7 @@ public enum Intercepted {
     public static let cyclePane = "cycle_pane"
     public static let cyclePaneBack = "cycle_pane_back"
     public static let focusSidebar = "focus_sidebar"
-    /// The Settings window. Both frontends put settings in a window; ADR 0030
+    /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
     public static let settings = "settings"
 

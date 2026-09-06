@@ -5,7 +5,7 @@ import SwiftUI
 /// The settings window's model: the file, what is wrong with it, and the way
 /// a change gets back to disk.
 ///
-/// **It parses no TOML and writes no TOML** (ADR 0030). Every value it shows
+/// **It parses no TOML and writes no TOML** (ADR 0031). Every value it shows
 /// came from `postio_config` through the boundary, and every change goes back
 /// the same way — `settingsPatchAppearance` rewrites one table with
 /// `toml_edit`'s document model and leaves the rest of the file byte for

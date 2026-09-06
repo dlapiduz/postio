@@ -1,6 +1,6 @@
 //! Settings, as a frontend reads and writes them.
 //!
-//! **Swift never parses or writes TOML** (ADR 0030). That is not a style
+//! **Swift never parses or writes TOML** (ADR 0031). That is not a style
 //! preference: `config.toml` is the settings store, it is a file a person
 //! edits by hand, and a second writer with its own idea of key order and
 //! comment survival would rewrite work nobody asked it to touch. So the
