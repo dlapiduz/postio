@@ -63,7 +63,7 @@ impl Section {
     /// so matching is by prefix, not by literal line. `Privacy` never
     /// appears at all, the same as `Accounts` since #470: the nav item
     /// stays and points at a structured widget instead of any text.
-    fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         match self {
             Section::Ui => "ui",
             Section::Keys => "keys",
