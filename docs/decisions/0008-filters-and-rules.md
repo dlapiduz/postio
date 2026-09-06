@@ -119,6 +119,13 @@ A parsed query's fact requirement is computable from its fields —
   settings panel's validity line, which `postio-config` already has for
   `rejected_secrets`.
 
+> **Extended by [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)
+> (2026-09-06).** The derivation above reads the *query* only, which was the
+> whole question while every action was a local mutation. `forward:` needs a
+> body to *carry out*, so a stage is now the later of what the query needs and
+> what the actions need, and a rule stages as a whole — its actions never split
+> across the two points.
+
 ---
 
 ## Q4 — Rules are an ordered array; `[filters]` stays what it is
@@ -192,6 +199,11 @@ archive          trash          forward:<address>          stop
     than dropping the mail.
   A forwarded message appears in Sent like any other, because the send goes
   through the ordinary operation queue. It is not invisible.
+  **When it runs is
+  [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)**: a rule
+  carrying `forward:` is staged on the body, because a forward with no body is
+  a forward of nothing, and it waits for the backfill lane rather than
+  fetching for itself.
 
 > **Restated by [ADR 0028](0028-a-rule-runs-the-same-verb-a-keystroke-does.md)
 > (2026-09-04), because #481 transcribed the second guard inverted.** The guard
