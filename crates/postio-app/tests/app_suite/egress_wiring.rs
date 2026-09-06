@@ -116,7 +116,9 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
     // ── 3. opening settings lists it ─────────────────────────────────────
     window.act(postio_core::Command::Settings);
     settle();
-    let listed = find(&window.clone().upcast(), &|widget| {
+    // From the panel, not from the main window: settings is a window of its
+    // own since #1179, so its widgets are no longer descendants of this one.
+    let listed = find(&window.settings().upcast(), &|widget| {
         widget.has_css_class("postio-settings-egress-row")
     });
     assert!(
