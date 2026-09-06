@@ -34,6 +34,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/drop-workspace-artifacts.sh"
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
+# Resolved, because `git rev-parse --show-toplevel` resolves too and the two
+# are compared. On macOS `/var` is a symlink to `/private/var`, so an
+# unresolved `$TMPDIR` here and a resolved toplevel there never match, and
+# `--reuse` refuses a worktree that is plainly under this directory (#1208).
+[ -d "$WORKTREES" ] && WORKTREES="$(cd "$WORKTREES" && pwd -P)"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
 # Which label marks an issue as claimable. `${READY_LABELS[0]}` (`ready`) for
@@ -294,6 +299,44 @@ fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
 
+# Copy a directory, sharing blocks where the filesystem can.
+#
+# `cp -a --reflink=auto` is GNU, and BSD `cp` rejects it outright -- so on
+# macOS every seed failed its usage check and fell back to a cold build, which
+# is the 11-to-19 minutes this whole feature exists to avoid (#1208). The
+# fallback hid it: the claim still worked, just slowly, and said so in a line
+# that reads as an unlucky filesystem rather than as a flag that never had a
+# chance.
+#
+# APFS clones with `cp -c`, which is the same copy-on-write bargain. Plain
+# `cp -R` last, because a slow seed still beats a cold build.
+# Decided once, on a scratch directory, rather than by retrying per copy: a
+# candidate that genuinely cannot be copied has to fail *once* so `seed_target`
+# falls through to an older sibling (#1190). Trying three flag sets against the
+# real source would turn one doomed copy into three and skip the fallthrough.
+CP_CLONE_FLAGS=""
+detect_clone_flags() {
+    local probe
+    probe="$(mktemp -d)" || { CP_CLONE_FLAGS="-R"; return; }
+    mkdir -p "$probe/src"
+    if cp -a --reflink=auto "$probe/src" "$probe/gnu" 2>/dev/null; then
+        CP_CLONE_FLAGS="-a --reflink=auto"
+    elif cp -Rc "$probe/src" "$probe/bsd" 2>/dev/null; then
+        CP_CLONE_FLAGS="-Rc"
+    else
+        CP_CLONE_FLAGS="-R"
+    fi
+    rm -rf "$probe"
+}
+
+clone_tree() { # <src> <dst>
+    [ -n "$CP_CLONE_FLAGS" ] || detect_clone_flags
+    # Unquoted on purpose: the flags are this script's own, and one of them is
+    # two words.
+    # shellcheck disable=SC2086
+    cp $CP_CLONE_FLAGS "$1" "$2"
+}
+
 # Seed a fresh worktree's target/debug from the newest sibling's (#1102).
 #
 # A cold target/ is 11 to 19 minutes before the first gate can say anything,
@@ -359,7 +402,7 @@ seed_target() { # <tree>
         SEED_CANDIDATE="$src"
         mkdir -p "$1/target"
         started=$(date +%s)
-        if error="$(cp -a --reflink=auto "$src" "$1/target/debug" 2>&1)"; then
+        if error="$(clone_tree "$src" "$1/target/debug" 2>&1)"; then
             # The sibling's own crates have *its* path baked in; drop them so
             # cargo rebuilds ours and keeps the dependencies (lib/ says why).
             drop_workspace_artifacts "$1/target"
@@ -652,6 +695,8 @@ while IFS=$'\t' read -r NUM TITLE; do
         # (env!("CARGO_MANIFEST_DIR")) and cargo will not notice. Drop
         # them; the dependencies -- the expensive part -- stay warm.
         drop_workspace_artifacts "$TREE/target"
+        # SwiftPM has the same problem and none of the upside: see lib/.
+        drop_swift_build "$TREE"
     else
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
         seed_target "$TREE"
