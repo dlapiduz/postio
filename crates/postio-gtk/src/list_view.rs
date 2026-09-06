@@ -64,21 +64,11 @@ type CommandHandler = Box<dyn Fn(Command)>;
 /// been read. See [`DWELL_TO_READ`].
 type DwellHandler = Box<dyn Fn(MessageId)>;
 
-/// How long the cursor rests on a message before it counts as read (#71).
-///
-/// Marking on arrival is what this number exists to avoid: scrolling from one
-/// end of a mailbox to the other passes over every message in between, and
-/// marking all of them destroys the unread state as a signal — the one thing
-/// it is for. A dwell means "the cursor stayed here long enough that a person
-/// could have read it".
-///
-/// A second is about the shortest value that cleanly separates the two
-/// gestures. A held `j` repeats roughly every 30ms, so a sweep of fifty
-/// messages rests nowhere and marks nothing; reading deliberately, even
-/// quickly, leaves the cursor still for longer than this on anything worth
-/// looking at. Much shorter starts catching the sweep, and much longer leaves
-/// mail you plainly read still bold, which reads as the app not keeping up.
-pub const DWELL_TO_READ: std::time::Duration = std::time::Duration::from_millis(1_000);
+// Moved to `postio-ui` in #1159 so the macOS frontend reads the same number
+// and the same arming rule rather than choosing its own -- on the one rule
+// where being wrong deletes something. Re-exported so every reference in this
+// crate, and `gtk_dwell.rs`, still reads.
+pub use postio_ui::dwell::DWELL_TO_READ;
 
 /// The verbs the bulk bar carries, in the order they appear.
 ///
@@ -135,6 +125,15 @@ mod imp {
         ///
         /// [`cursor_moved`]: Self::cursor_moved
         pub(super) reported: Cell<Option<MessageId>>,
+        /// Which question [`reported`](Self::reported) answers: the model's
+        /// generation at the moment it was reported.
+        ///
+        /// A generation is a *question* — this folder, this search — and a
+        /// cursor only means a message inside the answer to one. `set_source`
+        /// asks a new one and announces it the same way a reorder does, as a
+        /// full replace, so without this the pin below would drag the folder's
+        /// cursor into a search that happened to match it.
+        pub(super) reported_at: Cell<u64>,
         /// Whether the user has put the cursor anywhere yet.
         ///
         /// `SingleSelection` autoselects row 0 the moment the model has rows,
@@ -161,6 +160,16 @@ mod imp {
         /// Since #601 made the autoselect report at all, this is what keeps
         /// that from being visible.
         pub(super) pending_select: Cell<bool>,
+        /// The `items_changed` handler that seek is waiting on, so it can be
+        /// given up.
+        ///
+        /// A seek outlives the call that started it — it is waiting for a
+        /// page — and in that window the cursor can be moved by somebody
+        /// else: a key, a click, a reload. Whoever moves it last is right, so
+        /// the wait has to be droppable rather than merely self-cancelling.
+        /// Holding the handler here also means a second seek replaces the
+        /// first instead of stacking another listener on the model.
+        pub(super) pending_seek: RefCell<Option<glib::SignalHandlerId>>,
         /// Subscribers to "the cursor rested here long enough to have been
         /// read". See [`DWELL_TO_READ`].
         pub(super) dwelled: RefCell<Vec<DwellHandler>>,
@@ -217,8 +226,10 @@ mod imp {
                 activated: RefCell::new(Vec::new()),
                 cursor_moved: RefCell::new(Vec::new()),
                 reported: Cell::new(None),
+                reported_at: Cell::new(0),
                 landed: Cell::new(false),
                 pending_select: Cell::new(false),
+                pending_seek: RefCell::new(None),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(DWELL_TO_READ),
@@ -599,6 +610,7 @@ impl MessageListView {
         else {
             return;
         };
+        imp.reported_at.set(imp.model.generation());
         if imp.reported.replace(Some(row.id)) == Some(row.id) {
             return;
         }
@@ -836,42 +848,72 @@ impl MessageListView {
     /// until page 0 is actually resident, whether or not it turned out to
     /// hold `message`.
     pub fn select_message(&self, message: MessageId) {
+        self.seek_cursor(message, Landing::Chosen);
+    }
+
+    /// Put the cursor back on `message` after a reload moved the rows under
+    /// it, without claiming a person put it there.
+    ///
+    /// The other half of the pin. Restoring the cursor goes through the same
+    /// machinery a keystroke does, and that machinery records that somebody
+    /// chose this row -- which is what #71's dwell waits for. A reload is not
+    /// a choice: the cursor it puts back is the cursor that was already
+    /// there, autoselect's or a person's, and it has to stay whichever it
+    /// was. Otherwise a launch that syncs marks unread mail read.
+    fn restore_cursor(&self, message: MessageId) {
+        self.seek_cursor(message, Landing::Kept);
+    }
+
+    /// [`select_message`](Self::select_message) and
+    /// [`restore_cursor`](Self::restore_cursor), which differ only in what
+    /// the landing means.
+    fn seek_cursor(&self, message: MessageId, landing: Landing) {
+        // Whatever asked for this seek is more recent than whatever asked for
+        // the last one, so an earlier wait is stale.
+        self.abandon_seek();
         if let Some(position) = self.imp().model.position_of(message) {
-            self.move_cursor_to(position);
+            self.place_cursor(position, landing);
             return;
         }
         self.imp().pending_select.set(true);
         let _ = self.model().item(0);
-        let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
         let id = self.imp().model.connect_items_changed(glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            #[strong]
-            handler,
             move |model, _, _, _| {
                 if let Some(position) = model.position_of(message) {
-                    // Cleared first: `move_cursor_to` reports, and this
+                    // Given up first: `place_cursor` reports, and this
                     // landing is the one that was being waited for.
-                    pane.imp().pending_select.set(false);
-                    pane.move_cursor_to(position);
+                    pane.abandon_seek();
+                    pane.place_cursor(position, landing);
                 } else if !model.resident_pages().contains(&0) {
                     // The page that would hold it has not landed yet -- this
                     // was the count arriving, or an unrelated page. Keep
                     // waiting for the one that matters.
-                    return;
                 } else {
                     // Page 0 arrived without it: moved, deleted, or
                     // overtaken. The cursor stays where it is, and the row it
                     // is on is now worth showing like any other.
-                    pane.imp().pending_select.set(false);
+                    pane.abandon_seek();
                     pane.report_cursor();
-                }
-                if let Some(id) = handler.borrow_mut().take() {
-                    pane.imp().model.disconnect(id);
                 }
             }
         ));
-        *handler.borrow_mut() = Some(id);
+        *self.imp().pending_seek.borrow_mut() = Some(id);
+    }
+
+    /// Stop waiting for a seek's page, and stop suppressing the reading pane.
+    ///
+    /// Called both by the seek that lands and by anything that outranks one
+    /// still in flight. Disconnecting from inside the handler's own emission
+    /// is fine — the emission finishes, and taking the id first is what keeps
+    /// a second call from disconnecting a handler that is already gone.
+    fn abandon_seek(&self) {
+        let imp = self.imp();
+        if let Some(id) = imp.pending_seek.borrow_mut().take() {
+            imp.model.disconnect(id);
+        }
+        imp.pending_select.set(false);
     }
 
     /// Activate the row the cursor is on, exactly as `Return` does.
@@ -934,6 +976,7 @@ impl MessageListView {
             return;
         }
         let to = to as u32;
+        self.abandon_seek();
         imp.landed.set(true);
         imp.cursor.set_selected(to);
         imp.view.scroll_to(to, gtk::ListScrollFlags::FOCUS, None);
@@ -1282,23 +1325,35 @@ impl MessageListView {
                 //
                 // Discriminated from a page delivery by length: `invalidate`
                 // re-announces the whole model, a delivered page announces
-                // `PAGE_SIZE` of it. `select_message` does the rest, which is
+                // `PAGE_SIZE` of it. `restore_cursor` does the rest, which is
                 // to wait for the page carrying that id and suppress the
-                // reading pane until it lands, so nothing flashes on the way.
+                // reading pane until it lands, so nothing flashes on the way
+                // -- and to leave `landed` alone, because putting the cursor
+                // back is not somebody choosing a row.
                 //
-                // Only once the cursor is somewhere the *user* put it.
-                // `SingleSelection` autoselects row 0 the moment the model has
-                // rows, and that cursor means "the top of the list" rather
-                // than a message -- pinning it by identity would keep new mail
-                // arriving at the top from ever being shown (#750).
+                // Only within one question, which is what the generation
+                // says: `set_source` -- a folder switch, a search -- is a full
+                // replace too, and the cursor it is carrying belongs to the
+                // answer that is being thrown away. `app_suite/search_results`
+                // is what that costs: the folder's cursor happened to be on a
+                // hit, and the result list opened on it rather than on the
+                // best match.
+                //
+                // Whoever put the cursor there. The autoselect's landing on
+                // row 0 is still a message being shown to a person, and at
+                // launch it is the *only* one -- which is the case #1177
+                // reports, and the case a pin gated on `landed` cannot help.
+                // New mail arriving at the top is untouched by this: an
+                // insertion is `items_changed(0, 0, n)`, so the guard below
+                // never fires on one and #750's reveal still happens.
                 if position == 0
                     && removed == added
                     && added > 0
                     && added == pane.imp().model.n_items()
-                    && pane.imp().landed.get()
+                    && pane.imp().reported_at.get() == pane.imp().model.generation()
                     && let Some(reading) = pane.imp().reported.get()
                 {
-                    pane.select_message(reading);
+                    pane.restore_cursor(reading);
                 }
                 pane.report_cursor()
             }
@@ -1558,6 +1613,11 @@ impl MessageListView {
         // plate. A click is a person choosing a row, which is exactly what
         // the flag means.
         imp.landed.set(true);
+        // The click is also the most recent thing anybody asked for, so a
+        // seek still waiting for a page is stale -- the same rule
+        // `place_cursor` applies to a key, on the one path to the cursor that
+        // does not go through it.
+        self.abandon_seek();
         imp.anchor.set(Some(position));
         imp.selected.clear();
         // Clicking the row the cursor is already on changes no position and
@@ -1581,8 +1641,26 @@ impl MessageListView {
 
     /// Move the keyboard to `position`, and the focus with it.
     fn move_cursor_to(&self, position: u32) {
+        self.place_cursor(position, Landing::Chosen);
+    }
+
+    /// [`move_cursor_to`](Self::move_cursor_to), saying whether the landing
+    /// is a person's.
+    ///
+    /// Every way of reaching a row but a plain click comes through here, and
+    /// all of them but one are a choice. The exception is a reload putting
+    /// the cursor back where it already was.
+    fn place_cursor(&self, position: u32, landing: Landing) {
         let imp = self.imp();
-        imp.landed.set(true);
+        if landing == Landing::Chosen {
+            // A person moving the cursor outranks a reload that is still
+            // waiting for a page: putting it back when that page lands would
+            // undo the move they had just made, a second or two later. That
+            // is `app_suite/search_results.rs` -- `j` through the results
+            // while the result set is still arriving.
+            self.abandon_seek();
+            imp.landed.set(true);
+        }
         imp.cursor.set_selected(position);
         imp.view
             .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
@@ -1853,6 +1931,25 @@ pub fn context_menu_model(commands: &Keymap) -> gio::Menu {
         menu.append_item(&item);
     }
     menu
+}
+
+/// What a cursor landing means, which is not the same question as where it
+/// landed.
+///
+/// The flag behind it (`landed`) gates #71's dwell-to-read and the
+/// conversation pane's own opening dwell (#755): showing a message is not
+/// reading it, and only a landing somebody asked for starts a clock. So the
+/// distinction has to survive the one path that moves the cursor without
+/// anybody asking — a reload putting it back on the message it was already
+/// on (#1177).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Landing {
+    /// A person put the cursor here: a key, a click, a notification, a
+    /// command naming a message.
+    Chosen,
+    /// The cursor was already on this message and the rows moved underneath
+    /// it. Whatever the landing meant before, it still means that.
+    Kept,
 }
 
 /// What a press on a row means.

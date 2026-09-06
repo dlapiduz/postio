@@ -45,6 +45,9 @@ rusqlite = { version = "0.40.2", features = [
     # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
     "trace",
 ] }
+# `smtp_wait_cpu.rs` implements `SmtpConnector`, which is `#[async_trait]`.
+# Already in the lock via postio-smtp, so it costs no extra compile.
+async-trait = "0.1.92"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

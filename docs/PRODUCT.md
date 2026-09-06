@@ -248,7 +248,9 @@ from the registry by a test that fails when the file drifts. They are not
 repeated here, for the same reason they are not repeated anywhere else.
 
 Worth knowing before reading that table: `e` replies and `a` archives, `A`
-archives a thread, `u` undoes, `t` opens a thread. The original brief proposed
+archives a thread, `u` undoes, and `J`/`K` walk a thread in the reading pane
+— `t` was the drill-in column's key and went with it (ADR 0015 Q4's
+supersession note, #1003). The original brief proposed
 `r` for reply and `u` for mark-unread; the design canvas is newer and won, and
 that is now simply what the bindings are. Every one is overridable from
 `[keys]` in `config.toml`, keyed by command id — which makes command ids a file
@@ -452,8 +454,8 @@ nightly and reporting rather than gating.
 | Local search | **< 100 ms** |
 | Transitions | **≤ 100 ms, or absent** |
 
-Pane switches and thread drill-in use *no* transition, and
-`prefers-reduced-motion` is always honoured.
+Pane switches use *no* transition, and `prefers-reduced-motion` is always
+honoured.
 
 **A mailbox is never loaded into memory.** The message list is windowed over
 paged SQLite, and "select all" is a predicate — `Everything { except }` — not a

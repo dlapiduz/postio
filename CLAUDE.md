@@ -289,6 +289,15 @@ chore ci build revert`, scope the crate without prefix (or `workspace`, `ci`,
 72. Every commit ends with `Refs: #<issue>`; the PR body's `Closes: #<issue>`
 does the closing. Every commit is green for the crates it touches.
 
+**Never write a closing keyword in a commit body, not even to deny it.**
+GitHub acts on `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved
+#<n>` and does not read the negation in front of it, so *"this does not close
+#1216"* closes #1216 — which is how a p1 investigation with an unmet
+acceptance line came to be closed by the commit saying it was not finishing
+it. Write **"does not finish #1216"**, "leaves #1216 open", or just
+`Refs: #1216`. `issue-land.sh --refs-only` refuses the landing rather than
+letting it through.
+
 Standing authorisation: committing, pushing your own issue branch, and
 `--force-with-lease` on it after the land script rebases. Not authorised
 without asking: pushing `main`, adding remotes, rewriting shared history,
@@ -401,8 +410,9 @@ and `/steward` (the two loops that watch the backlog and the execution).
 
 Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
 (`Design/Mail Client.dc.html`, direction PLATE 1b) — spacing, color,
-proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo, `t`
-thread; all rebindable, table generated into `docs/keybindings.md`. Compose
+proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo,
+`J`/`K` walk a thread; all rebindable, table generated into
+`docs/keybindings.md`. Compose
 takes over the reading pane. The sidebar says "Flagged". v1 scope: Linux,
 IMAP+SMTP, one provider preset table, no AI (deferred to epic E12). OAuth is
 in scope — ADR 0006, tracked under #2.

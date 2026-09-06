@@ -312,14 +312,22 @@ pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
 ];
 
 /// Who to ask to run a `CommandId` one of this pane's bars carries.
-type CommandHandler = Box<dyn Fn(postio_core::CommandId)>;
+/// A whole [`Command`](postio_core::Command), not a
+/// [`CommandId`](postio_core::CommandId): which message a verb aims at is
+/// the substance for a pane that holds several.
+///
+/// `Archive thread` needs no target — the pane is the thread — but
+/// `Continue editing` does: a draft inside a longer thread is not the row
+/// the list cursor is on, so an untargeted open would resume whatever the
+/// list is pointing at (#1212).
+type CommandHandler = Box<dyn Fn(postio_core::Command)>;
 
 /// What a message offers when it is the only one there is.
 ///
 /// #1173: a one-message thread drew both bars, so `Reply` appeared twice
 /// with `e` printed on each. The question it raised — *is a single message a
 /// degenerate conversation with a footer, or its own view with its own bar?*
-/// — is answered by `Design/screens/19-threaded-view-fixes.png`, which draws
+/// — is answered by `Design/screens/19-threaded-view.png`, which draws
 /// one bar at the foot of a single message reading `Reply · Reply all ·
 /// Forward · Archive`, and by `17-conversation-view.png`, which draws the
 /// footer's conversation verbs only on a thread that has a conversation in
@@ -356,26 +364,80 @@ pub const LONE_MESSAGE_ACTIONS: [crate::widgets::Action; 4] = [
     ),
 ];
 
-/// The conversation's own verbs, drawn in the footer.
+/// What a draft offers: the one verb that is true of it.
 ///
-/// Reply, reply-all and forward are per *message* and live inside each entry
-/// ([`MESSAGE_ACTIONS`]); everything else is the conversation's (ADR 0015
-/// Q4). `Reply to conversation` is the same command `e` runs and aims at the
-/// same message — the focused one — so the button and the key cannot
-/// diverge.
-pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 2] = [
+/// #1212. A draft is a message you wrote and never sent, so reply, reply-all
+/// and forward are the correspondent's verbs and it has no correspondent yet
+/// — a `Reply` here would quote your own unsent text back at you. The verb
+/// that is right was already reachable and unannounced: activating the row
+/// resumes the composer on the draft, cancelling a queued send first.
+///
+/// `CommandId::OpenMessage` is that command, so the button and `Return`
+/// cannot come to mean different things and nothing new enters the registry.
+pub const DRAFT_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::Action::new(
+    postio_core::CommandId::OpenMessage,
+    "Continue editing",
+    "conversation-action-continue",
+)
+.primary()];
+
+/// A draft that is the whole thread — the Drafts folder, which is where
+/// nearly every draft is seen.
+///
+/// Archive joins it for the same reason it joins [`LONE_MESSAGE_ACTIONS`]:
+/// the footer stands down at n=1, and archive would otherwise have no control
+/// in the pane at all.
+pub const LONE_DRAFT_ACTIONS: [crate::widgets::Action; 2] = [
     crate::widgets::Action::new(
-        postio_core::CommandId::Reply,
-        "Reply to conversation",
-        "conversation-footer-reply",
+        postio_core::CommandId::OpenMessage,
+        "Continue editing",
+        "conversation-action-continue",
     )
     .primary(),
     crate::widgets::Action::new(
         postio_core::CommandId::ArchiveThread,
-        "Archive thread",
-        "conversation-footer-archive",
+        "Archive",
+        "conversation-action-archive",
     ),
 ];
+
+/// The thread's own verbs, drawn in the footer.
+///
+/// Reply, reply-all and forward are per *message* and live inside each entry
+/// ([`MESSAGE_ACTIONS`]); everything else is the thread's (ADR 0015 Q4). So
+/// one verb, and a verb is drawn on the thing it acts on.
+///
+/// **There is no `Reply to conversation` here** (#1173). It ran
+/// `CommandId::Reply` aimed at the *focused* message — the same command and
+/// the same key as the bar drawn on that message — under a label naming a
+/// scope Postio does not have: you reply to a message, never to a thread. A
+/// pinned control drawn a pane away from the message it will answer is the
+/// mistake ADR 0015 Q4 gives as its own reason for making the reply verbs
+/// per-message, *"answering the wrong message of a conversation is a real and
+/// common mistake"*, and it is worse than the bar it duplicated because it
+/// does not show you which message you are about to answer. At n=1 that read
+/// as two identical buttons stacked on each other; at n>1 it is the same
+/// defect with a pane's height between them, which is why it survived three
+/// issues.
+///
+/// Nothing becomes mouse-only or keyboard-only by its going. The pane scrolls
+/// the focused message into view and expands it (ADR 0015 Q4 §Focus), so the
+/// bar drawn on it is on screen wherever focus is, and `e`, the palette and
+/// the message's own menu all still reach reply.
+///
+/// Not [`primary`](crate::widgets::Action::primary): the pane's primary verb
+/// is Reply, and it is drawn on the message. A filled archive button as the
+/// most prominent control in the reading pane inverts that.
+///
+/// `Design/screens/17-conversation-view.png` still draws the footer with a
+/// `Reply to conversation`. The canvas is authority on spacing, colour and
+/// proportion; this is a behaviour call, and the screen as drawn puts two
+/// controls on one command and one key.
+pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::Action::new(
+    postio_core::CommandId::ArchiveThread,
+    "Archive thread",
+    "conversation-footer-archive",
+)];
 
 /// The pane's own header: what conversation this is, and how much of it.
 ///
@@ -450,6 +512,10 @@ impl Header {
             return;
         }
         self.root.set_visible(true);
+        // Nothing to expand in a thread of one: it opens expanded, so the
+        // button would be offered with nothing left to do (#1173). The same
+        // n=1 surface as the footer standing down.
+        self.expand_all.widget().set_visible(rows.len() > 1);
         self.subject.set_label(
             rows.iter()
                 .find_map(|row| row.subject.as_deref())
@@ -500,6 +566,11 @@ impl Header {
         self.subject.label().to_string()
     }
 
+    /// Whether `Expand all` is on offer. Test-facing.
+    pub fn offers_expand_all(&self) -> bool {
+        self.expand_all.widget().is_visible()
+    }
+
     /// Re-cap `Expand all` from the live keymap.
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
         self.expand_all
@@ -537,16 +608,14 @@ mod imp {
         /// it survives scrolling. Nothing else on screen says what you are
         /// reading once the drill-in column's header went (#1004).
         pub(super) header: super::Header,
-        /// `Reply to conversation` and `Archive thread`, pinned below —
-        /// where the conversation's own verbs live, as against the
-        /// per-message ones inside each entry (#1006).
+        /// `Archive thread`, pinned below — where the thread's own verbs
+        /// live, as against the per-message ones inside each entry (#1006).
         pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
         /// Who to ask to run a `CommandId` one of this pane's bars carries.
         ///
-        /// The footer had none, so `Reply to conversation` and `Archive
-        /// thread` were buttons that did nothing when pressed — `ActionBar`
-        /// runs its handler list and the list was empty. Found while giving
-        /// the lone message's own `Archive` a path (#1173).
+        /// The footer had none, so its buttons did nothing when pressed —
+        /// `ActionBar` runs its handler list and the list was empty. Found
+        /// while giving the lone message's own `Archive` a path (#1173).
         pub(super) on_command: RefCell<Vec<super::CommandHandler>>,
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.
@@ -678,7 +747,7 @@ mod imp {
             self.footer.set_visible(false);
             self.footer.connect_command({
                 let view = view.clone();
-                move |command| view.emit_command(command.id())
+                move |command| view.emit_command(command)
             });
             self.root.set_parent(&*view);
         }
@@ -1009,6 +1078,19 @@ impl ConversationView {
     }
 
     /// Whether `message` is showing its body.
+    /// Press a verb in `message`'s own bar, without a pointer. Test-facing.
+    pub fn press_entry_command(&self, message: MessageId, command: postio_core::CommandId) {
+        if let Some(entry) = self
+            .imp()
+            .entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.message == message)
+        {
+            entry.actions.press(command);
+        }
+    }
+
     pub fn is_expanded(&self, message: MessageId) -> bool {
         self.imp()
             .entries
@@ -1320,10 +1402,11 @@ impl ConversationView {
         // whichever message you are looking at.
         let message = row.id;
         let actions = crate::widgets::ActionBar::new(
-            if alone {
-                &LONE_MESSAGE_ACTIONS[..]
-            } else {
-                &MESSAGE_ACTIONS[..]
+            match (row.draft, alone) {
+                (true, true) => &LONE_DRAFT_ACTIONS[..],
+                (true, false) => &DRAFT_ACTIONS[..],
+                (false, true) => &LONE_MESSAGE_ACTIONS[..],
+                (false, false) => &MESSAGE_ACTIONS[..],
             },
             "conversation-actions",
         );
@@ -1335,7 +1418,16 @@ impl ConversationView {
             // the same act — so it goes out on the conversation's own path
             // rather than growing a second one.
             if command.id() == postio_core::CommandId::ArchiveThread {
-                view.emit_command(command.id());
+                view.emit_command(command);
+                return;
+            }
+            // Named, not left to the cursor: a draft inside a longer thread
+            // is not the row the list holds, and an untargeted open would
+            // resume whatever the list is pointing at instead (#1212).
+            if command.id() == postio_core::CommandId::OpenMessage {
+                view.emit_command(postio_core::Command::OpenMessage {
+                    message: Some(message),
+                });
                 return;
             }
             let kind = match command.id() {
@@ -1383,14 +1475,14 @@ impl ConversationView {
     /// dispatch a keystroke, a menu item and a palette entry all go through,
     /// and a second path from a button straight to the runtime is how two
     /// surfaces come to disagree about what a verb means.
-    fn emit_command(&self, command: postio_core::CommandId) {
+    fn emit_command(&self, command: postio_core::Command) {
         for handler in self.imp().on_command.borrow().iter() {
-            handler(command);
+            handler(command.clone());
         }
     }
 
     /// Who to ask to run a command one of this pane's bars carries.
-    pub fn connect_command(&self, handler: impl Fn(postio_core::CommandId) + 'static) {
+    pub fn connect_command(&self, handler: impl Fn(postio_core::Command) + 'static) {
         self.imp().on_command.borrow_mut().push(Box::new(handler));
     }
 

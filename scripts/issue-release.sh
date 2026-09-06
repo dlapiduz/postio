@@ -16,6 +16,16 @@ REPO_ROOT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
+# A claim lock is an empty directory with `issue-<n>.owner` beside it naming
+# the worktree that took it (#1218, #1230). Empty so that `rmdir` alone drops
+# it -- which is what every copy of these scripts older than #1230 does, and
+# there is always one, in the main checkout or in a worktree cut before the
+# change.
+drop_lock() {
+    rmdir "$1" 2>/dev/null || true
+    rm -f "$1.owner" 2>/dev/null || true
+}
+
 if [ "${1:-}" = "--stale" ]; then
     # A claim is not stale because it is quiet. A session can spend hours on
     # one issue -- reading, waiting on CI, running a suite -- and leave no
@@ -41,7 +51,7 @@ if [ "${1:-}" = "--stale" ]; then
         state=$(gh issue view "$num" --json state,labels \
             --jq '"\(.state) \([.labels[].name] | join(","))"' 2>/dev/null || echo "")
         if [ -n "$state" ] && ! printf '%s' "$state" | grep -q "in-progress"; then
-            rmdir "$claim" 2>/dev/null || true
+            drop_lock "$claim"
             echo "cleared orphaned lock on #$num (no longer claimed)"
             found=1
             continue
@@ -71,7 +81,7 @@ print(int((now - since).total_seconds()) // 86400)' "$since")
             fi
         fi
 
-        rmdir "$claim" 2>/dev/null || true
+        drop_lock "$claim"
         gh issue edit "$num" --remove-assignee @me --remove-label in-progress \
             >/dev/null 2>&1 || true
         echo "released abandoned claim on #$num"
@@ -165,7 +175,7 @@ if [ -d "$TREE" ]; then
         && echo "deleted local branch $BRANCH"
 fi
 
-rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
+drop_lock "$CLAIMS/issue-$NUM"
 
 if [ "$ABANDON" = 1 ]; then
     gh issue edit "$NUM" --remove-assignee @me --remove-label in-progress >/dev/null
