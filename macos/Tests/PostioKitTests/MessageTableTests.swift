@@ -44,6 +44,7 @@ private func makeRow(
     seen: Bool = true,
     flagged: Bool = false,
     threadCount: UInt32 = 1,
+    participants: String = "",
     isThread: Bool = false
 ) -> RowFfi {
     RowFfi(
@@ -66,7 +67,8 @@ private func makeRow(
         answered: false,
         draft: false,
         hasAttachments: false,
-        threadCount: threadCount
+        threadCount: threadCount,
+        participants: participants
     )
 }
 

@@ -214,6 +214,7 @@ fn row(id: i64, sender: &str) -> postio_ffi::RowFfi {
         draft: false,
         has_attachments: false,
         thread_count: 6,
+        participants: String::new(),
     }
 }
 

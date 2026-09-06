@@ -250,3 +250,75 @@ fn a_sender_crosses_as_the_name_a_person_reads() {
     );
     session.shutdown();
 }
+
+// -- who is in a conversation (#1265) ----------------------------------------
+
+/// A thread row names everyone in the conversation, not its newest sender.
+///
+/// The list's row stands for a whole conversation (ADR 0015), and the canvas
+/// draws `Tessa Vaughn, Mara, Pinepoint` where a message row draws one name.
+/// The boundary carried only the representative's sender, so the macOS list
+/// drew one name per conversation and no second frontend could have done
+/// better.
+#[test]
+fn a_thread_row_names_the_people_in_the_conversation() {
+    use chrono::TimeZone;
+    use postio_model::{EmailAddress, Thread};
+    use postio_storage::repository::ThreadRepository;
+
+    let database = test_support::memory();
+    let mailbox = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+
+        let mut thread = Thread::new(account.id);
+        thread.subject = Some("radon reduction".to_owned());
+        let threads = ThreadRepository::new(&connection);
+        threads.create(&mut thread).expect("a thread");
+
+        let messages = MessageRepository::new(&connection);
+        for (index, sender) in ["Tessa Vaughn", "Mara Ostwald", "Pinepoint Radon"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut message = Message::new(
+                account.id,
+                inbox,
+                Utc.timestamp_opt(1_770_000_000 + index as i64, 0)
+                    .single()
+                    .expect("a real time"),
+            );
+            message.subject = Some("Radon reduction".to_owned());
+            message.from = vec![EmailAddress::new(
+                Some(sender),
+                format!("{index}@example.com"),
+            )];
+            messages.create(&mut message).expect("a message");
+            threads.add_message(thread.id, message.id).expect("add");
+        }
+        inbox
+    };
+
+    let session = Session::open(SessionOptions::in_memory_with(database))
+        .expect("a session over the seeded store");
+    session.open_scope(ScopeFfi::Mailbox {
+        mailbox: mailbox.into(),
+    });
+    let _ = session.row_at(0);
+    session.settle_for_test();
+
+    let row = session.row_at(0).expect("the conversation row");
+    assert_eq!(
+        session.row_count(),
+        1,
+        "a folder lists one row per conversation"
+    );
+    assert!(row.is_thread);
+    assert_eq!(
+        row.participants, "Tessa, Mara, Pinepoint",
+        "the row says who is in the conversation, shortened the way the \
+         conversation header shortens them"
+    );
+    assert_eq!(row.thread_count, 3);
+    session.shutdown();
+}

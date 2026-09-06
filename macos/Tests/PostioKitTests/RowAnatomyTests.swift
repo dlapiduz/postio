@@ -211,4 +211,62 @@ import Testing
         controller.showCursor(on: 2)
         #expect(controller.repaintedForHintsForTesting == [2])
     }
+
+    // -- a conversation row names the people in it (#1265) -----------------
+
+    @Test func aThreadRowNamesTheConversationRatherThanItsNewestSender() {
+        // Every row in a folder stands for a conversation (ADR 0015), and the
+        // canvas draws `Tessa Vaughn, Mara, Pinepoint` where a message row
+        // draws one name. Drawing only the representative's sender loses the
+        // one fact that tells two threads on the same subject apart.
+        let row = RowFfi(
+            id: 1,
+            thread: 7,
+            isThread: true,
+            from: "Pinepoint Radon",
+            fromAddress: "hello@pinepoint-radon.example",
+            initials: "TV",
+            subject: "Radon reduction",
+            preview: "I am following up",
+            receivedAt: 1_770_000_000,
+            seen: false,
+            flagged: false,
+            answered: false,
+            draft: false,
+            hasAttachments: false,
+            threadCount: 8,
+            participants: "Tessa, Mara, Pinepoint"
+        )
+
+        let presentation = RowPresentation(row: row)
+
+        #expect(presentation.sender == "Tessa, Mara, Pinepoint")
+        #expect(presentation.threadBadge == "8")
+    }
+
+    @Test func aMessageRowStillNamesItsSender() {
+        // A query view lists messages, not conversations, and a message row
+        // carries no participants — the discriminator, not an empty field to
+        // fall through.
+        let row = RowFfi(
+            id: 1,
+            thread: 7,
+            isThread: false,
+            from: "Pinepoint Radon",
+            fromAddress: "hello@pinepoint-radon.example",
+            initials: "PR",
+            subject: "Radon reduction",
+            preview: "I am following up",
+            receivedAt: 1_770_000_000,
+            seen: true,
+            flagged: false,
+            answered: false,
+            draft: false,
+            hasAttachments: false,
+            threadCount: 8,
+            participants: ""
+        )
+
+        #expect(RowPresentation(row: row).sender == "Pinepoint Radon")
+    }
 }

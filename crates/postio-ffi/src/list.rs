@@ -127,6 +127,16 @@ pub struct RowFfi {
     pub has_attachments: bool,
     /// How many messages the conversation holds; the badge appears above one.
     pub thread_count: u32,
+    /// Who is in the conversation, elided: `Tessa, Mara, Pinepoint`.
+    ///
+    /// Empty on a message row, and that is how the two are told apart — the
+    /// same rule `postio_gtk::list::Row` states about its own participants.
+    /// Already shortened here rather than crossing as a list of addresses,
+    /// because how a crowd of names is shortened is a decision both frontends
+    /// have to make the same way (`postio_ui::conversation::participants`),
+    /// and the row is the only thing that knows how much room there is for
+    /// what is left.
+    pub participants: String,
 }
 
 impl ListRow for RowFfi {
@@ -187,6 +197,7 @@ impl From<MessageSummary> for RowFfi {
             has_attachments: row.has_attachments,
             thread_count: row.thread_count,
             is_thread: false,
+            participants: String::new(),
         }
     }
 }
@@ -210,6 +221,7 @@ impl From<ThreadSummary> for RowFfi {
         base.seen = row.unread_count == 0;
         base.thread_count = row.message_count;
         base.is_thread = true;
+        base.participants = postio_ui::conversation::participants(&row.participants);
         base
     }
 }
