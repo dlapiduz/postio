@@ -38,6 +38,8 @@
 //! Passing the pump in keeps one primitive for every suite instead of one for
 //! the GTK crates and another for everyone else.
 
+pub mod cpu;
+
 use std::time::{Duration, Instant};
 
 /// How long a wait may take before it is a failure, in milliseconds.
