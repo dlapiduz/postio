@@ -56,6 +56,7 @@ private func makeRow(
         // what these tests are about.
         isThread: isThread,
         from: from,
+        initials: "AL",
         subject: subject,
         preview: preview,
         receivedAt: 0,

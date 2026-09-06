@@ -338,3 +338,15 @@ pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
         snippet: metrics.snippet,
     }
 }
+
+/// The timestamp column for a row received at `received_at` (epoch seconds).
+///
+/// Takes the instant rather than answering once at row-build time, because
+/// "today" moves: a list left open across midnight would otherwise keep
+/// drawing `09:14` for a message that is now yesterday's. `postio_ui::row`
+/// owns the rule — clock today, weekday this week, date beyond, year past it.
+#[uniffi::export]
+pub fn row_timestamp(received_at: i64) -> String {
+    let received = chrono::DateTime::from_timestamp(received_at, 0).unwrap_or_default();
+    postio_ui::row::timestamp(received, chrono::Local::now())
+}

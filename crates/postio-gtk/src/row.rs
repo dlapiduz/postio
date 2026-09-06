@@ -90,52 +90,11 @@ fn filtered_hints(keymap: &Keymap) -> Vec<(String, &'static str)> {
 fn default_hints() -> Vec<(String, &'static str)> {
     hints_for(&Keymap::resolve(&Default::default()))
 }
-
-/// The initials the avatar chip shows for `from`.
-///
-/// Two letters: the initials of the first two words of a display name, or
-/// the first two letters of a single word. With no display name the local
-/// part stands in, which is what makes a mailing list read as `LK` rather
-/// than as a shrug.
-pub fn initials(from: Option<&EmailAddress>) -> String {
-    let Some(from) = from else {
-        return "?".to_string();
-    };
-    let source = match &from.name {
-        Some(name) if !name.trim().is_empty() => name.as_str(),
-        _ => from.local_part().unwrap_or(""),
-    };
-    let words: Vec<&str> = source
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    let letters: String = match words.as_slice() {
-        [] => return "?".to_string(),
-        [one] => one.chars().take(2).collect(),
-        [first, second, ..] => first
-            .chars()
-            .take(1)
-            .chain(second.chars().take(1))
-            .collect(),
-    };
-    letters.to_uppercase()
-}
-
-/// The timestamp column: relative for today, absolute beyond.
-///
-/// Canvas 1b draws `09:14` and `Thu`. Past the week it becomes a date, and
-/// past the year it carries the year, because "12 Aug" two years ago is a
-/// lie the eye believes.
-pub fn timestamp(received: DateTime<Utc>, now: DateTime<Local>) -> String {
-    let local = received.with_timezone(&now.timezone());
-    let days = (now.date_naive() - local.date_naive()).num_days();
-    match days {
-        0 => local.format("%H:%M").to_string(),
-        1..=6 => local.format("%a").to_string(),
-        _ if local.year() == now.year() => local.format("%-d %b").to_string(),
-        _ => local.format("%-d %b %y").to_string(),
-    }
-}
+// `initials` and `timestamp` moved to `postio_ui::row`: what two letters
+// stand for a sender, and whether a time reads as `09:14`, `Thu` or `12 Aug`,
+// are answers a mail client gives once. Two frontends deriving them apart is
+// the drift these moves exist to stop.
+pub use postio_ui::row::{initials, timestamp};
 
 /// What a screen reader says for `row`.
 ///
@@ -1499,24 +1458,6 @@ mod tests {
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
         EmailAddress::new(name, address)
-    }
-
-    #[test]
-    fn initials_are_the_canvas_two_letters() {
-        assert_eq!(
-            initials(Some(&addr(Some("Lena Tomlin"), "lena@example.com"))),
-            "LT"
-        );
-        assert_eq!(
-            initials(Some(&addr(Some("Nadia Okafor"), "nadia@example.com"))),
-            "NO"
-        );
-        assert_eq!(
-            initials(Some(&addr(Some("lkml"), "lkml@example.org"))),
-            "LK"
-        );
-        assert_eq!(initials(Some(&addr(None, "buildbot@example.net"))), "BU");
-        assert_eq!(initials(None), "?");
     }
 
     #[test]

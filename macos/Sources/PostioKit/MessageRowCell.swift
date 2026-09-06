@@ -14,6 +14,10 @@ public final class MessageRowCell: NSTableCellView {
     private let preview = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let flag = NSImageView()
+    private let time = NSTextField(labelWithString: "")
+    /// The avatar chip: a tinted round square with two letters in it.
+    private let avatar = NSView()
+    private let avatarLabel = NSTextField(labelWithString: "")
     /// The tint behind a *marked* row.
     ///
     /// Behind everything else and inset, so it reads as a state of the row
@@ -23,9 +27,13 @@ public final class MessageRowCell: NSTableCellView {
     /// The vertical stack, kept so density can retune its spacing rather than
     /// rebuild the cell.
     private var stack: NSStackView?
-    private lazy var padTop = stack!.topAnchor.constraint(
+    /// The horizontal pair: the chip and the text column beside it.
+    private var content: NSStackView?
+    private lazy var avatarWidth = avatar.widthAnchor.constraint(equalToConstant: 30)
+    private lazy var avatarHeight = avatar.heightAnchor.constraint(equalToConstant: 30)
+    private lazy var padTop = content!.topAnchor.constraint(
         equalTo: topAnchor, constant: PostioTokens.space2)
-    private lazy var padBottom = stack!.bottomAnchor.constraint(
+    private lazy var padBottom = content!.bottomAnchor.constraint(
         lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2)
 
     /// How much of canvas 1b's row anatomy to draw.
@@ -35,8 +43,23 @@ public final class MessageRowCell: NSTableCellView {
     /// the same thing on both platforms rather than "a bit tighter, somehow".
     /// The visible part is the snippet: the tightest density drops it, which
     /// is what makes it the tightest.
-    public var density: DensityFfi = .airy {
+    public var ui: AppearanceFfi = AppearanceFfi(
+        density: .airy,
+        theme: .system,
+        showHoverActions: true,
+        showKeyHints: true,
+        senderAvatars: true
+    ) {
         didSet { applyDensity() }
+    }
+
+    /// Shorthand for the one field most of this cell cares about.
+    ///
+    /// `ui` rather than `appearance` because `NSView.appearance` is
+    /// `NSAppearance` and shadowing it compiles into something else entirely.
+    public var density: DensityFfi {
+        get { ui.density }
+        set { ui.density = newValue }
     }
 
     /// Whether the snippet line is drawn. Read back rather than inferred, so
@@ -49,6 +72,27 @@ public final class MessageRowCell: NSTableCellView {
         stack?.spacing = CGFloat(metrics.subjectGap)
         padTop.constant = CGFloat(metrics.padY)
         padBottom.constant = -CGFloat(metrics.padY)
+
+        // The chip is square and the density decides how big — 30/26/22,
+        // the same numbers GTK lays out with.
+        avatar.isHidden = !ui.senderAvatars
+        avatarWidth.constant = CGFloat(metrics.avatar)
+        avatarHeight.constant = CGFloat(metrics.avatar)
+        avatar.layer?.cornerRadius = CGFloat(metrics.avatar) / 2
+        avatarLabel.font = .systemFont(ofSize: CGFloat(metrics.avatar) * 0.4, weight: .medium)
+        content?.spacing = CGFloat(metrics.gap)
+    }
+
+    /// Whether the chip is drawn. `sender_avatars` off means the row gets the
+    /// space back, not that it draws an empty circle.
+    public var avatarIsHiddenForTesting: Bool { avatar.isHidden }
+
+    /// The chip's side, for asserting it follows the density.
+    public var avatarSizeForTesting: CGFloat { avatarWidth.constant }
+
+    /// What the row is currently showing, beyond its three text lines.
+    public var drawnForTesting: (initials: String, time: String) {
+        (avatarLabel.stringValue, time.stringValue)
     }
 
     public override init(frame: NSRect) {
@@ -94,7 +138,29 @@ public final class MessageRowCell: NSTableCellView {
         flag.image = NSImage(systemSymbolName: "flag.fill", accessibilityDescription: "Flagged")
         flag.contentTintColor = .systemOrange
 
-        let top = NSStackView(views: [unreadDot, sender, badge, flag])
+        time.font = .systemFont(ofSize: 11)
+        time.textColor = .secondaryLabelColor
+        // The sender stretches and the time is pushed to the trailing edge,
+        // which is where canvas 1b puts it.
+        sender.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        time.setContentHuggingPriority(.required, for: .horizontal)
+        time.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        avatar.wantsLayer = true
+        avatar.layer?.backgroundColor = PostioTokens.colorAccent.withAlphaComponent(0.22).cgColor
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        avatarLabel.alignment = .center
+        avatarLabel.textColor = .secondaryLabelColor
+        avatarLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatar.addSubview(avatarLabel)
+        NSLayoutConstraint.activate([
+            avatarWidth,
+            avatarHeight,
+            avatarLabel.centerXAnchor.constraint(equalTo: avatar.centerXAnchor),
+            avatarLabel.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
+        ])
+
+        let top = NSStackView(views: [unreadDot, sender, badge, flag, time])
         top.orientation = .horizontal
         top.spacing = PostioTokens.space2
         top.alignment = .centerY
@@ -104,12 +170,22 @@ public final class MessageRowCell: NSTableCellView {
         stack.alignment = .leading
         stack.spacing = PostioTokens.space1
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
         self.stack = stack
+
+        // The chip sits beside the whole text column, top-aligned, which is
+        // the anatomy canvas 1b draws.
+        let content = NSStackView(views: [avatar, stack])
+        content.orientation = .horizontal
+        content.alignment = .top
+        content.spacing = PostioTokens.space2
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        self.content = content
         NSLayoutConstraint.activate([
             // Spacing from the design system rather than numbers chosen here.
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space3),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
+            content.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -PostioTokens.space3),
             padTop,
             padBottom,
 
@@ -190,6 +266,8 @@ public final class MessageRowCell: NSTableCellView {
             preview.isHidden = !drawsSnippet || presentation.preview.isEmpty
         }
 
+        avatarLabel.stringValue = presentation.initials
+        time.stringValue = presentation.time
         unreadDot.isHidden = !presentation.unread
         flag.isHidden = !presentation.flagged
         badge.stringValue = presentation.threadBadge ?? ""

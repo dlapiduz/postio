@@ -87,12 +87,24 @@ public final class MessageTableController: NSObject {
     /// the cells: a density applied only to *new* cells leaves every recycled
     /// row at the old one, and the list shows two densities at once until it
     /// is scrolled twice.
-    public var density: DensityFfi = .airy {
+    public var ui: AppearanceFfi = AppearanceFfi(
+        density: .airy,
+        theme: .system,
+        showHoverActions: true,
+        showKeyHints: true,
+        senderAvatars: true
+    ) {
         didSet {
-            guard density != oldValue else { return }
+            guard ui != oldValue else { return }
             tableView?.rowHeight = rowHeight
             tableView?.reloadData()
         }
+    }
+
+    /// Shorthand for the field that changes the row's height.
+    public var density: DensityFfi {
+        get { ui.density }
+        set { ui.density = newValue }
     }
 
     /// The row height this density asks for — what the table is set to.
@@ -106,14 +118,14 @@ public final class MessageTableController: NSObject {
     /// *this* takes the offer is ours, and is the half that can be got wrong.
     public func cell(reusing existing: NSView?) -> MessageRowCell {
         if let reused = existing as? MessageRowCell {
-            // Reused cells carry the density they were last drawn at, so this
+            // Reused cells carry whatever they were last drawn with, so this
             // has to be set on the way out rather than at creation.
-            reused.density = density
+            reused.ui = ui
             return reused
         }
         let made = MessageRowCell()
         made.identifier = Self.cellIdentifier
-        made.density = density
+        made.ui = ui
         cellsCreated += 1
         return made
     }

@@ -59,9 +59,9 @@ pub use search::{MatchRangeFfi, SnippetFfi};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, DensityFfi, GroupFfi, RowMetricsFfi, SettingsError, SettingsSectionFfi,
-    SettingsStatusFfi, ThemeFfi, row_metrics, settings_appearance, settings_group_label,
-    settings_humanize_interval, settings_load, settings_patch_appearance, settings_path,
-    settings_save, settings_sections, settings_status,
+    SettingsStatusFfi, ThemeFfi, row_metrics, row_timestamp, settings_appearance,
+    settings_group_label, settings_humanize_interval, settings_load, settings_patch_appearance,
+    settings_path, settings_save, settings_sections, settings_status,
 };
 
 /// Every command the registry knows, in cheat-sheet order.
