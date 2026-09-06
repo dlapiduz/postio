@@ -4,7 +4,7 @@
 - **Date:** 2026-09-06
 - **Decision by:** `/ux-architect`, on [#1156](https://github.com/dlapiduz/postio/issues/1156), after the maintainer confirmed the macOS build should get a real settings screen with structured panes rather than a raw config-file editor.
 - **Issue:** [#1156](https://github.com/dlapiduz/postio/issues/1156)
-- **Supersedes an earlier draft** of this decision numbered 0029, then 0030, each of which collided with an ADR that landed on main first ([ADR 0029](0029-one-control-vocabulary.md) and argued from a premise that stopped being true while it was being written. Both corrections are in Q1.
+- **Supersedes earlier drafts** of this decision numbered 0029 and then 0030. Both numbers were taken by ADRs that landed on main while this branch was open ([ADR 0029](0029-one-control-vocabulary.md), [ADR 0030](0030-a-rule-stages-where-it-can-be-carried-out.md)), and the draft also argued from a premise that stopped being true while it was being written. Q1 has that correction; the renumbering is just what parallel sessions cost.
 - **Related:** [ADR 0029](0029-one-control-vocabulary.md) (which control a setting gets — binding here too), [ADR 0019](0019-macos-frontend.md) Q1 (Native), canvas 3f, `Design/screens/22`, [#1179](https://github.com/dlapiduz/postio/issues/1179) (the GTK window this follows)
 - **Decision:** **the settings *model* is shared and the *frame* is each platform's own.** The eight sections, their order, their two headings, their labels, their descriptions and the table each one writes all live in `postio_ui::settings`; so does every rule about what a change does to the file. What each frontend owns is the widget tree and the icon set. **Swift parses no TOML and writes none.**
 
