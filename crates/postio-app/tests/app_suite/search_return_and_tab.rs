@@ -49,6 +49,38 @@ fn list_has_keyboard(window: &Window) -> bool {
     list.is_focus() || list.focus_child().is_some()
 }
 
+/// Everything that could explain `list_has_keyboard` answering `false`.
+///
+/// This case failed once on CI and has not been reproduced -- 20 runs on this
+/// workstation, 10 of them under a load average of 7, all green, with software
+/// rendering forced (#1252). The message it failed with named the symptom and
+/// nothing else, so the run proved only that focus was somewhere unspecified.
+///
+/// The next occurrence should not cost that. `grab_focus` fails rather than
+/// panics when a widget is unmapped, unrealised, insensitive or not focusable,
+/// and `postio_app::search`'s Tab handler answers `true` without consulting it
+/// -- so "claimed but did not move" is exactly the state a failed grab leaves
+/// behind, and these are the facts that separate the reasons for one.
+fn focus_diagnosis(window: &Window) -> String {
+    let list = window.list();
+    // Disambiguated: `GtkWindowExt` and `RootExt` both offer `focus`, and they
+    // mean the same widget here -- the one the keyboard is on in this window.
+    let holder = gtk::prelude::GtkWindowExt::focus(window)
+        .map(|widget| widget.type_().name().to_string())
+        .unwrap_or_else(|| "nothing".to_owned());
+    format!(
+        "focus is on {holder}; list: is_focus={} focus_child={} mapped={} realized={} can_focus={} sensitive={}; window: mapped={} active={}",
+        list.is_focus(),
+        list.focus_child().is_some(),
+        list.is_mapped(),
+        list.is_realized(),
+        list.can_focus(),
+        list.is_sensitive(),
+        window.is_mapped(),
+        window.is_active(),
+    )
+}
+
 pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     // A guarded temporary, as every other case here uses. This built its own
     // path under `temp_dir()` and never removed it, so each run left a
@@ -151,7 +183,8 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
     );
     assert!(
         list_has_keyboard(&window),
-        "Tab claimed the keyboard but did not move it to the message list"
+        "Tab claimed the keyboard but did not move it to the message list. {}",
+        focus_diagnosis(&window)
     );
 
     bridge.shutdown();
