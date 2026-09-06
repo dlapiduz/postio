@@ -17,6 +17,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 MUTANTS = HERE / "mutants.sh"
 
@@ -62,7 +68,7 @@ def run(
     # scripts/mutants.sh here would read and write this repository's own
     # docs/mutants-baseline.txt. Running the sandboxed copy under
     # repo/scripts/ instead makes it resolve entirely inside the sandbox.
-    return subprocess.run(
+    return patience.run(
         ["bash", str(repo / "scripts" / "mutants.sh"), *args],
         env=environment,
         capture_output=True,

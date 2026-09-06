@@ -24,6 +24,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "wait-for-checks.sh"
 
@@ -102,7 +108,7 @@ def run(
         env["POSTIO_CHECKS_REGISTER_TIMEOUT"] = str(register_timeout)
         env["POSTIO_CHECKS_POLL"] = "1"
         env["POSTIO_CI_WORKFLOWS_DIR"] = str(workflows_dir)
-        return subprocess.run(
+        return patience.run(
             ["bash", str(SCRIPT), "https://example.com/pr/1"],
             capture_output=True,
             text=True,

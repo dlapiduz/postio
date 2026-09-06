@@ -31,6 +31,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_RELEASE = HERE / "issue-release.sh"
 
@@ -97,7 +103,7 @@ def release(root: Path, repo: Path, *args: str) -> subprocess.CompletedProcess:
     environment["POSTIO_CLAIMS"] = str(root / "claims")
     (root / "worktrees").mkdir(exist_ok=True)
     (root / "claims").mkdir(exist_ok=True)
-    return subprocess.run(
+    return patience.run(
         ["bash", str(ISSUE_RELEASE), "42", *args],
         capture_output=True,
         text=True,

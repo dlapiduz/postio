@@ -27,6 +27,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 SCRIPTS = Path(__file__).resolve().parent.parent
 ROOT = SCRIPTS.parent
 INSTALL = SCRIPTS / "install-shims.sh"
@@ -48,7 +54,7 @@ def case(name: str, condition: bool, detail: str) -> None:
 def install(cargo_home: Path) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment["CARGO_HOME"] = str(cargo_home)
-    return subprocess.run(
+    return patience.run(
         ["bash", str(INSTALL)],
         env=environment,
         capture_output=True,

@@ -25,6 +25,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 COVERAGE = HERE / "coverage.sh"
 
@@ -68,7 +74,7 @@ exit 99
 def run(env_extra: dict[str, str], args: list[str]) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.update(env_extra)
-    return subprocess.run(
+    return patience.run(
         ["bash", str(COVERAGE), *args],
         env=environment,
         capture_output=True,

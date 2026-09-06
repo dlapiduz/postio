@@ -33,6 +33,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_CLAIM = HERE / "issue-claim.sh"
 
@@ -116,7 +122,7 @@ def claim(repo: Path, base: Path, stub_dir: Path, *args: str):
     environment["POSTIO_CLAIMS"] = str(base / "claims")
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
-    return subprocess.run(
+    return patience.run(
         ["bash", str(repo / "scripts" / "issue-claim.sh"), *args],
         cwd=repo, env=environment, capture_output=True, text=True, timeout=120,
     )

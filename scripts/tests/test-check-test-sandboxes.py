@@ -18,6 +18,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 CHECK = HERE / "checks" / "check-test-sandboxes.py"
@@ -52,7 +58,6 @@ GOOD_CALL = "dir=" + "SANDBOXES"
 
 FIXED = f'''import tempfile
 from pathlib import Path
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
@@ -75,7 +80,7 @@ def run_against(body: str) -> subprocess.CompletedProcess[str]:
         # anything, so the sandbox needs to be a repository that ignores it.
         subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
         (root / ".gitignore").write_text("/target\n", encoding="utf-8")
-        return subprocess.run(
+        return patience.run(
             [sys.executable, str(root / "scripts" / "checks" / CHECK.name)],
             capture_output=True,
             text=True,

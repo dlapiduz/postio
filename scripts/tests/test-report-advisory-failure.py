@@ -26,6 +26,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "report-advisory-failure.sh"
 
@@ -61,7 +67,7 @@ def run(*, output: str, existing_json: str) -> tuple[subprocess.CompletedProcess
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["STUB_DIR"] = str(stub_dir)
 
-    proc = subprocess.run(
+    proc = patience.run(
         ["bash", str(SCRIPT), str(output_file), "https://example.com/run/1"],
         capture_output=True,
         text=True,

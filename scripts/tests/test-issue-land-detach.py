@@ -27,6 +27,12 @@ import tempfile
 import time
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 FAILURES: list[str] = []
@@ -58,7 +64,7 @@ def main() -> int:
         git_dir = Path(git("rev-parse", "--absolute-git-dir", cwd=repo))
 
         started = time.monotonic()
-        result = subprocess.run(
+        result = patience.run(
             ["bash", "scripts/issue-land.sh", "--detach", "--gates-only"],
             cwd=repo, capture_output=True, text=True, timeout=60,
         )
@@ -82,7 +88,7 @@ def main() -> int:
         case("the log ends with the child's exit status", "issue-land exit 2" in text,
              f"log:\n{text}")
 
-        status = subprocess.run(
+        status = patience.run(
             ["bash", "scripts/issue-land.sh", "--status"],
             cwd=repo, capture_output=True, text=True, timeout=30,
         )
@@ -93,7 +99,7 @@ def main() -> int:
 
         # Nothing to report is an answer, not an error.
         (log).unlink()
-        status = subprocess.run(
+        status = patience.run(
             ["bash", "scripts/issue-land.sh", "--status"],
             cwd=repo, capture_output=True, text=True, timeout=30,
         )

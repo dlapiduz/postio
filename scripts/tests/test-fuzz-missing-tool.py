@@ -30,6 +30,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 HERE = Path(__file__).resolve().parent.parent
 FUZZ = HERE / "fuzz.sh"
 
@@ -61,7 +67,7 @@ def main() -> int:
         environment["PATH"] = f"{binaries}:/usr/bin:/bin"
         environment["STUB_DIR"] = str(stub_dir)
 
-        result = subprocess.run(
+        result = patience.run(
             ["bash", str(FUZZ), "parse_message"],
             env=environment,
             capture_output=True,

@@ -20,6 +20,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 CHECK = Path(__file__).resolve().parent.parent / "checks" / "check-notes-index.py"
 FAILURES: list[str] = []
 
@@ -31,7 +37,7 @@ def case(name: str, condition: bool, detail: str) -> None:
 
 
 def run(root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return patience.run(
         ["python3", str(CHECK), "--root", str(root)],
         capture_output=True, text=True, timeout=30,
     )

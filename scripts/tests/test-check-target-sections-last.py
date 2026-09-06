@@ -16,6 +16,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
+# runs every `scripts/tests/*.py` it finds as a self-test.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
+
 ROOT = Path(__file__).resolve().parents[2]
 CHECK = ROOT / "scripts" / "checks" / "check-target-sections-last.py"
 
@@ -79,7 +85,7 @@ def sandbox(tmp: Path, manifest: str) -> Path:
 
 
 def run(root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return patience.run(
         [sys.executable, str(root / "scripts" / "checks" / CHECK.name)],
         capture_output=True,
         text=True,
