@@ -50,7 +50,7 @@ earlier project name — use `postio`.
 
 **Hard constraints from the user.** (1) TDD is mandatory — failing test
 first, then implementation. (2) The app must feel instant — transitions
-`<=100ms` or absent, pane switches and thread drill-in use *no* transition,
+`<=100ms` or absent, pane switches use *no* transition,
 and the PRODUCT.md §18 budgets (`<500ms` start, `<16ms` interaction, `<100ms`
 search) are enforced by criterion benches that fail CI, not checked by hand
 at the end.

@@ -121,8 +121,8 @@ Check any new widget at all three.
 
 ## 4. Motion: snappy or nothing
 
-Transitions are **≤100ms or absent**. Pane switches and thread drill-in use
-*no* transition at all — instant. Honor `prefers-reduced-motion` everywhere.
+Transitions are **≤100ms or absent**. Pane switches use *no* transition at
+all — instant. Honor `prefers-reduced-motion` everywhere.
 
 The budget is a functional requirement, not a preference: <500ms to usable UI,
 <16ms for ordinary interaction. Two implications for how you build widgets:

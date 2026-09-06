@@ -144,14 +144,14 @@ shows sync state at all, it must handle all four.
 Screens are reviewed in isolation and then feel wrong in sequence. Walk the
 whole path:
 
-> `/` → type → results → `Enter` opens → `t` drills into the thread →
-> `e` replies → `Ctrl+Enter` sends → `Esc` returns
+> `/` → type → results → `Enter` opens the thread in the reading pane →
+> `J`/`K` walk it → `e` replies → `Ctrl+Enter` sends → `Esc` returns
 
 At each step ask:
 
 - **Where am I, and how do I get back?** `Esc` should be a reliable exit
-  everywhere, and returning should restore position — canvas 3a is explicit
-  that thread drill-in keeps your place.
+  everywhere, and returning should restore position — the list keeps its
+  scroll and its cursor while the reading pane changes under it.
 - **Did the app tell me what happened?** Every action produces visible
   feedback. Silent success is indistinguishable from a bug.
 - **Did I lose anything?** Selection, scroll position, a half-written draft,
