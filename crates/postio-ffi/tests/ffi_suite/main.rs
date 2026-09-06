@@ -23,6 +23,7 @@ mod conversation;
 mod dwell;
 mod keys;
 mod list;
+mod notice;
 mod palette;
 mod reader;
 mod registry;

@@ -379,6 +379,14 @@ pub struct Session {
     /// the composer's footer says where a draft lives, and a footer naming a
     /// path the draft is not in is worse than no footer.
     store_at: std::path::PathBuf,
+    /// Where the remote-image grants live: beside the store, because they
+    /// are state Postio writes rather than configuration a person edits.
+    ///
+    /// Resolved once, at open, rather than derived from `store_at` on each
+    /// use: an in-memory store has no directory to be beside, and deriving
+    /// one gave every test in a run the same file — so a grant made by one
+    /// test was in force for the next.
+    allow_list_at: std::path::PathBuf,
     hits: Mutex<Option<Vec<crate::search::Hit>>>,
     /// What the last search turned out to be, for the field's readout.
     ///
@@ -572,6 +580,24 @@ impl Session {
     #[uniffi::method(name = "sendDraft")]
     pub fn send_draft_ffi(&self, draft: crate::DraftFfi) -> Option<String> {
         self.send_draft(draft)
+    }
+
+    /// What this message's reader is holding back, or `None` when nothing is.
+    #[uniffi::method(name = "readerNotice")]
+    pub fn reader_notice_ffi(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
+        self.reader_notice(message)
+    }
+
+    /// Always allow this address's remote images, across restarts.
+    #[uniffi::method(name = "allowSender")]
+    pub fn allow_sender_ffi(&self, address: String) {
+        self.allow_sender(address);
+    }
+
+    /// Always allow every address at this domain.
+    #[uniffi::method(name = "allowDomain")]
+    pub fn allow_domain_ffi(&self, domain: String) {
+        self.allow_domain(domain);
     }
 
     /// How many rows the current scope has — a table's `numberOfRows`.
@@ -1005,6 +1031,17 @@ impl Session {
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 conversation: Arc::default(),
                 store_at: std::path::PathBuf::from(":memory:"),
+                // A file of its own per session: an in-memory store has no
+                // directory to sit beside, and one shared path made a grant
+                // from one test true for the next.
+                allow_list_at: std::env::temp_dir().join(format!(
+                    "postio-allowed-{}-{}.toml",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|since| since.as_nanos())
+                        .unwrap_or_default()
+                )),
                 hits: Mutex::new(None),
                 outcome: Mutex::new(None),
                 resting: Mutex::new(None),
@@ -1065,6 +1102,11 @@ impl Session {
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
             conversation: Arc::default(),
+            allow_list_at: store_at
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(&store_at)
+                .join("allowed-senders.toml"),
             store_at,
             hits: Mutex::new(None),
             outcome: Mutex::new(None),
@@ -1133,6 +1175,94 @@ impl Session {
     /// [`conversation_ffi`](Self::conversation_ffi).
     pub fn conversation(&self) -> Option<crate::ConversationFfi> {
         self.conversation.lock().expect("conversation lock").clone()
+    }
+
+    /// What the reader is holding back for `message`. See
+    /// [`reader_notice_ffi`](Self::reader_notice_ffi).
+    ///
+    /// Rendered with images blocked whatever the sender's standing is: the
+    /// question this answers is "what would be loaded", and asking it of an
+    /// already-allowed render would answer "nothing" and take the notice off
+    /// screen — which is where a person goes to take a grant back.
+    pub fn reader_notice(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        let source = postio_storage::repository::MessageRepository::new(&connection)
+            .get(postio_model::ids::MessageId::new(message))
+            .ok()??;
+        let postio_session::reading::Body::Ready { body, .. } =
+            postio_session::reading::load_body_or_reason(
+                &connection,
+                source.id,
+                self.offline.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        else {
+            return None;
+        };
+
+        let rendered = postio_ui::reader::document::body_html(
+            &body,
+            postio_body::RemoteImages::Blocked,
+            postio_ui::reader::document::Rendering::Original,
+        );
+        let summary = rendered.held_back.summary();
+        if summary.is_empty() {
+            return None;
+        }
+        let sender = source
+            .from
+            .first()
+            .map(|address| address.address.to_lowercase())
+            .unwrap_or_default();
+        let domain = sender
+            .rsplit_once('@')
+            .map(|(_, domain)| domain.to_owned())
+            .unwrap_or_default();
+        Some(crate::ReaderNoticeFfi {
+            summary: format!("{summary} blocked"),
+            allowed: self.allow_list().is_allowed(&sender),
+            sender,
+            domain,
+        })
+    }
+
+    /// Always allow `address`. See [`allow_sender_ffi`](Self::allow_sender_ffi).
+    pub fn allow_sender(&self, address: String) {
+        self.amend_allow_list(|list| list.allow(&address));
+    }
+
+    /// Always allow `domain`. See [`allow_domain_ffi`](Self::allow_domain_ffi).
+    pub fn allow_domain(&self, domain: String) {
+        self.amend_allow_list(|list| list.allow_domain(&domain));
+    }
+
+    /// The standing grants, read fresh.
+    ///
+    /// Not cached: the file is small, this is asked once per message drawn,
+    /// and a cached copy is a copy that can disagree with the settings pane
+    /// that revokes a grant.
+    fn allow_list(&self) -> postio_ui::allowlist::AllowList {
+        postio_ui::allowlist::AllowList::load_from(&self.allow_list_path())
+    }
+
+    /// Read, change, write. Best-effort: a grant that could not be written
+    /// is one the user will be asked about again, which is the safe failure.
+    fn amend_allow_list(&self, change: impl FnOnce(&mut postio_ui::allowlist::AllowList)) {
+        let path = self.allow_list_path();
+        let mut list = postio_ui::allowlist::AllowList::load_from(&path);
+        change(&mut list);
+        if let Err(error) = list.save_to(&path) {
+            tracing::error!(%error, "the remote-image allow list could not be saved");
+        }
+    }
+
+    /// Where the grants live.
+    ///
+    /// Beside the store rather than in `config.toml`: it is state the
+    /// application writes, not configuration a person edits, and mixing the
+    /// two would mean Postio rewriting a file the user owns.
+    fn allow_list_path(&self) -> std::path::PathBuf {
+        self.allow_list_at.clone()
     }
 
     /// A new message. See [`new_draft_ffi`](Self::new_draft_ffi).

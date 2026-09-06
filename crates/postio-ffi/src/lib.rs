@@ -62,7 +62,7 @@ pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use palette::PaletteEntryFfi;
-pub use reader::{InlinePart, RemoteImagesFfi};
+pub use reader::{InlinePart, ReaderNoticeFfi, RemoteImagesFfi, middle_truncate};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};

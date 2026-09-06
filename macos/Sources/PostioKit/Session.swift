@@ -328,6 +328,22 @@ public final class PostioSession {
         inner.bindingsFor(command: command)
     }
 
+    /// What the reader is holding back for `message`, or `nil` when nothing
+    /// is — a notice with nothing to report teaches people to dismiss the
+    /// one that matters.
+    public func readerNotice(_ message: Int64) -> ReaderNoticeFfi? {
+        inner.readerNotice(message: message)
+    }
+
+    /// Always allow this address's remote images, across restarts.
+    ///
+    /// POSTIO-CONSENT: only ever from the popover's own item, which names
+    /// the address it is about.
+    public func allowSender(_ address: String) { inner.allowSender(address: address) }
+
+    /// Always allow every address at this domain.
+    public func allowDomain(_ domain: String) { inner.allowDomain(domain: domain) }
+
     // -- writing mail (#1272) ---------------------------------------------
 
     /// A new message, from the account that would send it.
