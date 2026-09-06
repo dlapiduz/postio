@@ -610,6 +610,47 @@ if [ "$AHEAD" = 0 ]; then
     exit 2
 fi
 
+# A commit body that says "this does not close #N" closes #N (#1234).
+#
+# GitHub scans commit messages on the default branch for
+# `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved #<n>` and acts
+# on the keyword. It does not read the negation in front of it. So the sentence
+# a deliberately-partial commit most wants to write is the one that closes the
+# issue it is declining to finish -- and it did: #1216, a p1 investigation with
+# an unmet acceptance line, closed on merge by the commit saying it was not
+# finishing it, under a PR body this script had carefully written as `Refs`.
+#
+# `--refs-only` is the caller stating the intent, which is what makes this
+# checkable at all: the flag and the commit body contradict each other, and
+# only one of them is what the author meant.
+#
+# Scoped to the issue being landed. A commit that closes some *other* issue is
+# ordinary -- a rider closed alongside its anchor, something finished on the
+# way past -- and must keep working.
+if [ "$REFS_ONLY" = 1 ] && [ -n "$ISSUE" ]; then
+    # `#$ISSUE([^0-9]|$)` rather than a `\b`: word boundaries are a GNU
+    # extension and this file is checked for BSD portability.
+    CLOSING=$(git log "origin/$BASE..HEAD" --format=%B \
+        | grep -inE "(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#$ISSUE([^0-9]|$)" \
+        || true)
+    if [ -n "$CLOSING" ]; then
+        echo >&2
+        echo "This is a --refs-only landing, but a commit body would close #$ISSUE anyway:" >&2
+        printf '%s\n' "$CLOSING" | sed 's/^/    /' >&2
+        echo >&2
+        echo "GitHub acts on the keyword and does not read the negation in front" >&2
+        echo "of it, so \"does not close #$ISSUE\" closes #$ISSUE on merge. The PR" >&2
+        echo "body this script writes says \"Refs: #$ISSUE\"; the commit would" >&2
+        echo "override it." >&2
+        echo >&2
+        echo "Reword and amend -- these say the same thing and do not close it:" >&2
+        echo "    does not finish #$ISSUE" >&2
+        echo "    leaves #$ISSUE open" >&2
+        echo "    Refs: #$ISSUE" >&2
+        exit 2
+    fi
+fi
+
 # Rebase onto current main before pushing. Other sessions land while you
 # work -- four commits arrived during one recent piece of work -- and a branch
 # built on a stale base means CI tests a combination that will never exist,

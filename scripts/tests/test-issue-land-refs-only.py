@@ -124,7 +124,11 @@ def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[bytes]:
 
 
 def land(
-    root: Path, target: Path, stub_dir: Path, extra_args: list[str]
+    root: Path,
+    target: Path,
+    stub_dir: Path,
+    extra_args: list[str],
+    message: str = "feat(dummy): add a file",
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.pop("RUSTUP_TOOLCHAIN", None)
@@ -134,7 +138,7 @@ def land(
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
     return subprocess.run(
-        ["bash", "scripts/issue-land.sh", "-m", "feat(dummy): add a file", "--no-merge", *extra_args],
+        ["bash", "scripts/issue-land.sh", "-m", message, "--no-merge", *extra_args],
         cwd=root,
         env=environment,
         capture_output=True,
@@ -221,6 +225,96 @@ def run_case(*, refs_only: bool) -> None:
             )
 
 
+def run_negation_case() -> None:
+    """A `--refs-only` landing whose commit body would close the issue anyway.
+
+    GitHub scans commit messages for `close|closes|closed|fix|...|resolved
+    #<n>` and acts on the keyword without reading the negation in front of it.
+    So the sentence a deliberately-partial commit most wants to write —
+    "this does not close #1216" — is the one that closes it, and it did:
+    #1216 is a p1 investigation with an unmet acceptance line, closed on merge
+    by the commit that said it was not finishing it, under a PR body that had
+    been careful to say `Refs` (#1234).
+
+    `--refs-only` is the caller stating the intent, so the two can be checked
+    against each other.
+    """
+    prefix = "[negation] "
+    channel = pinned_channel()
+    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+        base = Path(directory)
+        target = base / "target"
+        root = base / "repo"
+        origin = base / "origin.git"
+        stub_dir = base / "stub"
+        (stub_dir / "bin").mkdir(parents=True)
+        gh = stub_dir / "bin" / "gh"
+        gh.write_text(GH_STUB, encoding="utf-8")
+        gh.chmod(0o755)
+        (stub_dir / "calls").write_text("", encoding="utf-8")
+
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        root.mkdir()
+        build_sandbox(root, channel)
+        git("init", "-q", "-b", "main", cwd=root)
+        git("config", "user.email", "test@example.com", cwd=root)
+        git("config", "user.name", "Test", cwd=root)
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "init", cwd=root)
+        git("remote", "add", "origin", str(origin), cwd=root)
+        git("push", "-q", "origin", "main", cwd=root)
+        git("checkout", "-q", "-b", "issue-1189-refs-only-check", cwd=root)
+        (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
+
+        message = (
+            "feat(dummy): add a file\n\n"
+            "This does not close #1189: the acceptance is not met.\n"
+        )
+        result = land(root, target, stub_dir, ["--refs-only"], message)
+        records = (stub_dir / "calls").read_bytes().split(b"\0")
+        calls = [record.decode("utf-8") for record in records if record]
+        output = result.stdout + result.stderr
+
+        expect(
+            f"{prefix}the landing is refused",
+            result.returncode != 0,
+            f"a --refs-only landing whose commit body closes #1189 went "
+            f"through:\n{output}",
+        )
+        expect(
+            f"{prefix}nothing was pushed",
+            not [call for call in calls if call.startswith("pr create")],
+            f"a PR was opened for it anyway:\n{calls}",
+        )
+        expect(
+            f"{prefix}it says what to write instead",
+            "#1189" in output and "Refs:" in output,
+            f"the refusal did not name the issue and a wording that works:"
+            f"\n{output}",
+        )
+
+        # Take the advice the refusal gave, which is the other half of it
+        # being useful: the reworded body must land.
+        git("commit", "-q", "--amend", "-m",
+            "feat(dummy): add a file\n\nThis does not finish #1189: the "
+            "acceptance is not met.\n", cwd=root)
+
+        # A commit that closes some *other* issue is ordinary: a rider closed
+        # alongside the anchor, a fix that finishes something else on the way
+        # past. Only the issue being landed is the contradiction.
+        git("commit", "-q", "--allow-empty", "-m",
+            "chore(dummy): tidy up\n\nCloses #4242\n", cwd=root)
+        (root / "dummy" / "src" / "another.rs").write_text("// nothing\n", encoding="utf-8")
+        result = land(root, target, stub_dir, ["--refs-only"], "feat(dummy): more")
+        expect(
+            f"{prefix}the reworded body lands, and another issue's Closes is "
+            f"left alone",
+            result.returncode == 0,
+            f"the wording the refusal recommended, or a commit closing #4242, "
+            f"blocked a landing for #1189:\n{result.stdout}\n{result.stderr}",
+        )
+
+
 def expect(case: str, condition: bool, detail: str) -> None:
     if condition:
         print(f"  ok: {case}")
@@ -233,6 +327,7 @@ def main() -> int:
     print("issue-land --refs-only self-test")
     run_case(refs_only=True)
     run_case(refs_only=False)
+    run_negation_case()
 
     print()
     if FAILURES:
