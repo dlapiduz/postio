@@ -1097,13 +1097,33 @@ pub async fn fetch_body(
 pub struct BodyFetch {
     /// What became of the body.
     pub outcome: Outcome,
-    /// The rules that matched now that the body is local (ADR 0008 Q3).
+    /// The rules that matched now that the body is local (ADR 0008 Q3), and
+    /// whose actions this fetch carried out.
     ///
     /// Only [`Stage::OnBody`] ones. A header-only rule already ran in the
     /// pass that inserted this message and must not run again — which is
     /// what makes "evaluated exactly once" true without anything having to
     /// remember what was evaluated.
     pub fired: Vec<RuleHit>,
+    /// Where a rule moved the message, when one did.
+    ///
+    /// Said out loud because nothing downstream can work it out. The arrival
+    /// point never needed this: its actions run inside the sync pass, and the
+    /// caller announces the mailbox it has just synced either way. A body
+    /// fetch announces only its own progress, so a rule filing a message here
+    /// would move it out from under a list that never heard — the shape of
+    /// bug this project ships, where each layer is right and nothing joins
+    /// them up.
+    pub relocated: Option<Relocated>,
+}
+
+/// A message a rule moved, and the two mailboxes that changed because of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Relocated {
+    /// The mailbox the message left.
+    pub from: MailboxId,
+    /// The mailbox it is in now.
+    pub to: MailboxId,
 }
 
 /// [`fetch_body`], evaluating the rules that were waiting for this body.
@@ -1127,6 +1147,7 @@ pub async fn fetch_body_with_rules(
         return Ok(BodyFetch {
             outcome: Outcome::Gone,
             fired: Vec::new(),
+            relocated: None,
         });
     };
 
@@ -1155,6 +1176,7 @@ pub async fn fetch_body_with_rules(
                 )
                 .await?,
                 fired: Vec::new(),
+                relocated: None,
             });
         }
         // The text axis, when the header sync left us a map of where the words
@@ -1173,12 +1195,16 @@ pub async fn fetch_body_with_rules(
                 connection, blobs, backend, request, message, inline_cap, cancel,
             )
             .await?;
-            let fired = if matches!(outcome, Outcome::Stored { .. }) && !body_was_local {
+            let ran = if matches!(outcome, Outcome::Stored { .. }) && !body_was_local {
                 fired_on_body(connection, rules, message_id)?
             } else {
-                Vec::new()
+                RulesRan::default()
             };
-            return Ok(BodyFetch { outcome, fired });
+            return Ok(BodyFetch {
+                outcome,
+                fired: ran.fired,
+                relocated: ran.relocated,
+            });
         }
         // The block and nothing else, for a row that can get one no other
         // way. Deliberately does not touch the body: the words are already on
@@ -1194,6 +1220,7 @@ pub async fn fetch_body_with_rules(
                         reason: "the header block could not be fetched".to_owned(),
                     },
                     fired: Vec::new(),
+                    relocated: None,
                 });
             };
             let bytes = block.text.len() as u64;
@@ -1204,6 +1231,7 @@ pub async fn fetch_body_with_rules(
             return Ok(BodyFetch {
                 outcome: Outcome::Stored { bytes },
                 fired: Vec::new(),
+                relocated: None,
             });
         }
         // Every byte: asked for, or the only answer left for a row whose
@@ -1336,19 +1364,21 @@ pub async fn fetch_body_with_rules(
     // Skipped entirely when no rule needs a body, which is the ordinary
     // case and is what `RuleSet::has` is for -- otherwise every backfilled
     // message would pay a read to match nothing.
-    let fired = if body_was_local {
-        Vec::new()
+    let ran = if body_was_local {
+        RulesRan::default()
     } else {
         fired_on_body(connection, rules, request.message)?
     };
 
     Ok(BodyFetch {
         outcome: Outcome::Stored { bytes },
-        fired,
+        fired: ran.fired,
+        relocated: ran.relocated,
     })
 }
 
-/// The rules that were waiting for this message's body, now that it is local.
+/// The rules that were waiting for this message's body, run now that it is
+/// local.
 ///
 /// Read back through the repository rather than matched against the parse
 /// still in hand: what a rule is asked about has to be what the store holds,
@@ -1357,28 +1387,88 @@ pub async fn fetch_body_with_rules(
 /// Skipped entirely when no rule needs a body, which is the ordinary case —
 /// otherwise every backfilled message would pay a read to match nothing
 /// against.
+///
+/// # The actions run here, in one transaction
+///
+/// The arrival point has carried actions out since #481; this one reported
+/// and did nothing, which was invisible for as long as every body-staged rule
+/// was one somebody wrote to file mail on its contents. ADR 0030 makes it
+/// load-bearing — `forward:` stages here whatever its query says — so a body
+/// point that only reports is a rule that never runs.
+///
+/// One transaction for the whole set, which is ADR 0008 Q6's "no partial
+/// application" and the same shape the arrival point has: there the
+/// transaction is the insert's, here it is opened for the actions, because
+/// the body is already stored and committed by the time a rule can be
+/// answered about it.
+///
+/// No write-gate permit, unlike the arrival pass, because this whole module
+/// takes none: a body fetch already writes the blob and the row without one,
+/// and a permit around the actions alone would be the smallest write in the
+/// path standing aside while the largest does not. Giving the backfill a gate
+/// is its own change (#425 is the arrival side of it).
 fn fired_on_body(
     connection: &Connection,
     rules: &RuleSet,
     message: postio_model::MessageId,
-) -> Result<Vec<RuleHit>> {
+) -> Result<RulesRan> {
     if !rules.has(Stage::OnBody) {
-        return Ok(Vec::new());
+        return Ok(RulesRan::default());
     }
     let messages = MessageRepository::new(connection);
     let Some(stored) = messages.get(message)? else {
-        return Ok(Vec::new());
+        return Ok(RulesRan::default());
     };
     let body = messages.body(message)?;
     let text = body.as_ref().and_then(|body| body.text.as_deref());
-    Ok(rules
-        .matching(Stage::OnBody, &Subject::new(&stored).with_body(text))
-        .into_iter()
+    let matched = rules.matching(Stage::OnBody, &Subject::new(&stored).with_body(text));
+    if matched.is_empty() {
+        return Ok(RulesRan::default());
+    }
+    let hits: Vec<RuleHit> = matched
+        .iter()
         .map(|rule| RuleHit {
             message,
             rule: rule.name.clone(),
         })
-        .collect())
+        .collect();
+    let actions: Vec<postio_model::rule::Action> = matched
+        .iter()
+        .flat_map(|rule| rule.actions.iter().cloned())
+        .collect();
+
+    // One timestamp for the whole set, exactly as the arrival pass takes one
+    // per batch: it stamps the queue rows these actions enqueue, and rows
+    // written together having one timestamp is what keeps the queue's
+    // "enqueue order is the order the user acted in" ordering true for a rule.
+    let now = Utc::now();
+    let account = stored.account_id;
+    let was_in = stored.mailbox_id;
+    let mut stored = stored;
+    let unit =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)
+            .map_err(postio_storage::Error::from)?;
+    crate::rules::apply(&unit, account, &mut stored, &actions, now)?;
+    unit.commit().map_err(postio_storage::Error::from)?;
+
+    Ok(RulesRan {
+        fired: hits,
+        // `apply` keeps its copy of the message honest as it goes, so this is
+        // where the message ended up rather than where the first `move:`
+        // aimed -- two actions that both relocate leave one relocation, from
+        // where it started to where it stopped.
+        relocated: (stored.mailbox_id != was_in).then_some(Relocated {
+            from: was_in,
+            to: stored.mailbox_id,
+        }),
+    })
+}
+
+/// What the body point did, on the way to a [`BodyFetch`].
+#[derive(Debug, Clone, Default)]
+struct RulesRan {
+    fired: Vec<RuleHit>,
+    relocated: Option<Relocated>,
 }
 
 /// A stored header block into `message_headers`, after the commit point.

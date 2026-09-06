@@ -57,6 +57,7 @@ struct Local {
     #[allow(dead_code)]
     database: TempDatabase,
     connection: postio_storage::PooledConnection,
+    blobs: postio_storage::BlobStore,
     account: Account,
     inbox: Mailbox,
 }
@@ -66,12 +67,50 @@ fn local() -> Local {
     let connection = database.connection().expect("checkout");
     let account = test_support::account(&connection);
     let inbox = test_support::mailbox(&connection, &account, INBOX);
+    let blobs = postio_storage::BlobStore::open(
+        database.directory().join("blobs"),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
     Local {
         database,
         connection,
+        blobs,
         account,
         inbox,
     }
+}
+
+/// Fetch the fixture message's body, running the rules that were waiting for
+/// it — the second of the two evaluation points.
+async fn body_lands(local: &Local, rules: &RuleSet) -> postio_sync::backfill::BodyFetch {
+    let backend = server().await;
+    let message = stored(local);
+    postio_sync::backfill::fetch_body_with_rules(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &postio_sync::backfill::BodyRequest {
+            message: message.id,
+            mailbox: local.inbox.id,
+            path: local.inbox.path.clone(),
+            uid: Uid::new(1),
+            remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:1")),
+            size: note().len() as u64,
+            received_at: at(1),
+            want: postio_sync::backfill::Want::Text,
+        },
+        None,
+        rules,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("the body arrives")
+}
+
+/// The rule names a [`body_lands`] fetch reported.
+fn names(fetch: &postio_sync::backfill::BodyFetch) -> Vec<&str> {
+    fetch.fired.iter().map(|hit| hit.rule.as_str()).collect()
 }
 
 /// A rule selecting the fixture message, carrying `actions` in order.
@@ -444,4 +483,104 @@ fn a_label(local: &Local, name: &str) -> Label {
         .create(&mut label)
         .expect("create a label");
     label
+}
+
+/// A rule that waited for the body carries its actions out when it arrives
+/// (ADR 0030).
+///
+/// The arrival point has run actions since #481; the body point only ever
+/// *reported* which rules matched. That gap is invisible for as long as every
+/// body-staged rule is one somebody wrote to file mail on its contents — the
+/// report goes to the log and the mail sits where it was. ADR 0030 makes it
+/// load-bearing: `forward:` stages here whatever its query says, so a body
+/// point that reports and does not act is a rule that never runs.
+#[tokio::test]
+async fn a_rule_that_waited_for_the_body_carries_its_actions_out() {
+    let local = local();
+    let rules = compile(&[rule_matching("bodies", "body:short", &["flag"])]);
+
+    let message = arrive(&local, &rules).await;
+    assert!(
+        !message.flags.contains(&Flag::Flagged),
+        "the body rule cannot have run on arrival -- its body was not local, \
+         so this test would prove nothing about the body point"
+    );
+
+    let fetch = body_lands(&local, &rules).await;
+    assert_eq!(names(&fetch), vec!["bodies"], "the rule has to match");
+
+    assert!(
+        stored(&local).flags.contains(&Flag::Flagged),
+        "the body landed, the rule matched, and nothing carried its actions \
+         out: a rule staged on the body reports and does nothing"
+    );
+}
+
+/// And through the same verbs, so the server hears about it too.
+#[tokio::test]
+async fn a_body_staged_action_enqueues_the_operation_the_server_needs() {
+    let local = local();
+    let rules = compile(&[rule_matching("bodies", "body:short", &["flag"])]);
+    arrive(&local, &rules).await;
+    body_lands(&local, &rules).await;
+
+    let flag_writes = queued(&local)
+        .into_iter()
+        .filter(|operation| matches!(operation, Operation::SetFlags { .. }))
+        .count();
+    assert_eq!(
+        flag_writes, 1,
+        "local-first is both halves at the body point as well: the row and \
+         the queue row (ARCHITECTURE.md §1)"
+    );
+}
+
+/// A body-staged rule that moves mail says which mailbox it left (#1142).
+///
+/// Nothing downstream can emit a precise event otherwise. The arrival point
+/// never had this problem — its actions run inside the sync pass, which
+/// announces the mailbox it just synced — while a body fetch announces only
+/// its own progress, so a rule that filed a message at this point would move
+/// it out from under a list that never heard.
+#[tokio::test]
+async fn a_body_staged_move_says_which_mailbox_the_message_left() {
+    let local = local();
+    let lists = test_support::mailbox(&local.connection, &local.account, "Lists");
+    let rules = compile(&[rule_matching("bodies", "body:short", &["move:Lists"])]);
+
+    arrive(&local, &rules).await;
+    let fetch = body_lands(&local, &rules).await;
+
+    assert_eq!(names(&fetch), vec!["bodies"], "the rule has to match");
+    assert_eq!(
+        fetch.relocated,
+        Some(postio_sync::backfill::Relocated {
+            from: local.inbox.id,
+            to: lists.id,
+        }),
+        "the message was filed into another folder and the fetch reported \
+         nothing about it, so both lists are stale until something else \
+         happens to reload them"
+    );
+    assert_eq!(
+        stored(&local).mailbox_id,
+        lists.id,
+        "the move has to have actually happened"
+    );
+}
+
+/// A body-staged rule that changes nothing about where the message lives
+/// reports no relocation, so the blunt event is not emitted for a flag.
+#[tokio::test]
+async fn a_body_staged_flag_is_not_a_relocation() {
+    let local = local();
+    let rules = compile(&[rule_matching("bodies", "body:short", &["flag"])]);
+    arrive(&local, &rules).await;
+
+    assert_eq!(
+        body_lands(&local, &rules).await.relocated,
+        None,
+        "a flag leaves the message exactly where it was: reporting a move \
+         here would cost every list a full reload per flagged body"
+    );
 }
