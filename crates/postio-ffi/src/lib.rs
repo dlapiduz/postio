@@ -36,6 +36,7 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod account;
+mod conversation;
 mod dwell;
 mod event;
 mod keys;
@@ -50,6 +51,7 @@ mod session;
 mod settings;
 
 pub use account::AccountFfi;
+pub use conversation::ConversationFfi;
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};

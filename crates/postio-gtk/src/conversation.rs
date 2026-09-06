@@ -37,7 +37,7 @@ pub use postio_ui::conversation::{
     EAGER_EXPANSION_CAP, Order, arrange, correspondents, expanded_on_open, opening_focus,
 };
 
-/// The four facts the shared rules read off a row.
+/// The three facts the shared rules read off a row.
 impl postio_ui::conversation::ConversationMessage for Row {
     fn seen(&self) -> bool {
         self.seen
@@ -49,10 +49,6 @@ impl postio_ui::conversation::ConversationMessage for Row {
 
     fn ordinal(&self) -> i64 {
         self.id.into()
-    }
-
-    fn sender(&self) -> Option<&postio_model::address::EmailAddress> {
-        self.from.as_ref()
     }
 }
 

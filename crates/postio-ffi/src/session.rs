@@ -61,6 +61,14 @@ impl SessionError {
     }
 }
 
+/// How many messages of one conversation are read at once.
+///
+/// A conversation is bounded where a mailbox is not, so this is a ceiling
+/// against the pathological thread rather than a page size — nothing pages
+/// through it, and the pane stacks what comes back. 500 is what the GTK
+/// frontend uses for the same read.
+const THREAD_LIMIT: u32 = 500;
+
 /// How to open a session.
 ///
 /// Not a `uniffi::Record`: it can carry a caller-supplied runtime and command
@@ -360,6 +368,13 @@ pub struct Session {
     /// bounded — two hundred excerpts, not a mailbox. The *rows* are still
     /// paged in behind the table exactly as a folder's are; what is resident
     /// here is the ids and their excerpts.
+    /// The conversation the reading pane is showing, once its read lands.
+    ///
+    /// Held here rather than paged through `list`: the list is the list, and
+    /// a pane that borrowed the window would have to put the folder back
+    /// afterwards. A conversation is bounded — a thread, not a mailbox — so
+    /// holding it whole breaks no promise §18 makes.
+    conversation: Arc<Mutex<Option<crate::ConversationFfi>>>,
     hits: Mutex<Option<Vec<crate::search::Hit>>>,
     /// What the last search turned out to be, for the field's readout.
     ///
@@ -504,6 +519,24 @@ impl Session {
     #[uniffi::method(name = "openScope")]
     pub fn open_scope_ffi(&self, scope: crate::ScopeFfi) -> u64 {
         self.open_scope(scope)
+    }
+
+    /// Read a conversation into the reading pane.
+    ///
+    /// Returns at once; `ConversationReady` says when there is something to
+    /// draw, and [`conversation`](Self::conversation_ffi) is what to draw.
+    /// The list is untouched — a conversation is what the *pane* is showing,
+    /// and the list stays the list (#1003).
+    #[uniffi::method(name = "openConversation")]
+    pub fn open_conversation_ffi(&self, thread: i64) {
+        self.open_conversation(thread);
+    }
+
+    /// The conversation the pane is showing, folded — `None` until one has
+    /// been asked for.
+    #[uniffi::method(name = "conversation")]
+    pub fn conversation_ffi(&self) -> Option<crate::ConversationFfi> {
+        self.conversation()
     }
 
     /// How many rows the current scope has — a table's `numberOfRows`.
@@ -928,6 +961,7 @@ impl Session {
                 cursor: Mutex::new(None),
                 cursor_row: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
+                conversation: Arc::default(),
                 hits: Mutex::new(None),
                 outcome: Mutex::new(None),
                 resting: Mutex::new(None),
@@ -986,6 +1020,7 @@ impl Session {
             cursor: Mutex::new(None),
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
+            conversation: Arc::default(),
             hits: Mutex::new(None),
             outcome: Mutex::new(None),
             resting: Mutex::new(None),
@@ -1011,6 +1046,48 @@ impl Session {
     /// anything, and there is no version of that question which can await.
     pub fn open_scope(&self, scope: crate::ScopeFfi) -> u64 {
         self.open_list_scope(scope.into())
+    }
+
+    /// Read `thread` and hold it for the pane. See
+    /// [`open_conversation_ffi`](Self::open_conversation_ffi).
+    pub fn open_conversation(&self, thread: i64) {
+        let Some((store, runtime)) = self.reader() else {
+            return;
+        };
+        let held = self.conversation.clone();
+        let local = self.local.0.clone();
+        let in_flight = self.in_flight.clone();
+        let ordering = std::sync::atomic::Ordering::SeqCst;
+
+        in_flight.fetch_add(1, ordering);
+        runtime.spawn(async move {
+            let request = postio_runtime::store::PageRequest {
+                scope: postio_runtime::store::ListScope::Thread(thread.into()),
+                offset: 0,
+                limit: THREAD_LIMIT,
+            };
+            // An unreadable thread folds to an empty conversation rather than
+            // leaving the last one on screen: a pane still drawing the
+            // previous conversation under a new selection is worse than an
+            // empty one, because it looks like an answer.
+            let rows = match store.list_page(request).await {
+                Ok(page) => crate::list::rows_of(page),
+                Err(error) => {
+                    tracing::debug!(%error, thread, "the conversation could not be read");
+                    Vec::new()
+                }
+            };
+            let folded = crate::conversation::fold(thread, rows, chrono::Local::now());
+            *held.lock().expect("conversation lock") = Some(folded);
+            let _ = local.try_send(UiEvent::ConversationReady { thread });
+            in_flight.fetch_sub(1, ordering);
+        });
+    }
+
+    /// What the pane should draw. See
+    /// [`conversation_ffi`](Self::conversation_ffi).
+    pub fn conversation(&self) -> Option<crate::ConversationFfi> {
+        self.conversation.lock().expect("conversation lock").clone()
     }
 
     /// [`open_scope`](Self::open_scope), for a scope already in the store's

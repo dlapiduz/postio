@@ -122,6 +122,17 @@ pub enum UiEvent {
         /// The newly delivered messages.
         messages: Vec<i64>,
     },
+    /// The conversation asked for has been read and can now be drawn.
+    ///
+    /// Boundary-local, for the same reason [`UiEvent::PageReady`] is: the
+    /// reading pane's read is this frontend's, and the engine has no event
+    /// for it. Carries the thread so a pane that has moved on can drop a
+    /// read that arrived late rather than drawing the wrong conversation
+    /// under someone's cursor.
+    ConversationReady {
+        /// The conversation that was read.
+        thread: i64,
+    },
     /// A page of list rows arrived and its rows can now be drawn.
     ///
     /// Boundary-local: `postio-core` has no such event and should not gain

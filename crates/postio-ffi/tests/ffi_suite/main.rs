@@ -18,6 +18,7 @@
 
 mod aiming;
 mod config;
+mod conversation;
 mod dwell;
 mod keys;
 mod list;
