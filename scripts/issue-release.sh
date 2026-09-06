@@ -16,13 +16,14 @@ REPO_ROOT="${POSTIO_MAIN_CHECKOUT:-$HOME/src/postio}"
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
-# A claim lock holds an `owner` file naming the worktree that took it (#1218),
-# and `rmdir` refuses a directory with a file in it -- so every drop goes
-# through this. A lock that cannot be dropped is an issue nobody can claim
-# again.
+# A claim lock is an empty directory with `issue-<n>.owner` beside it naming
+# the worktree that took it (#1218, #1230). Empty so that `rmdir` alone drops
+# it -- which is what every copy of these scripts older than #1230 does, and
+# there is always one, in the main checkout or in a worktree cut before the
+# change.
 drop_lock() {
-    rm -f "$1/owner" 2>/dev/null || true
     rmdir "$1" 2>/dev/null || true
+    rm -f "$1.owner" 2>/dev/null || true
 }
 
 if [ "${1:-}" = "--stale" ]; then

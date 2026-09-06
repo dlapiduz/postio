@@ -48,19 +48,26 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 # bureaucratized yet is still claimable.
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
 
-# A claim lock is a directory, so `mkdir` is the atomic take. It now holds one
-# file, `owner`, naming the worktree the claim created -- which is this
+# A claim lock is a directory, so `mkdir` is the atomic take. Beside it sits
+# `issue-<n>.owner`, naming the worktree the claim created -- which is this
 # project's own definition of a session ("a worktree belongs to one session",
 # CLAUDE.md). Two things need it: a refusal can say *which* tree is holding an
 # issue rather than only that something is, and `--resume` can tell a live
 # claim from the lock a finished session left behind (#1218).
 #
-# Every drop of a lock goes through this, because `rmdir` refuses a directory
-# with a file in it -- and a lock that cannot be dropped is an issue nobody
-# can claim again.
+# **Beside the lock, not inside it** (#1230). The first version put the file in
+# the directory, where `rmdir` refuses it -- and every worktree carries its own
+# copy of these scripts at the commit it was cut from, with the main checkout
+# pulled when somebody remembers. So a lock's format is something several
+# versions of this code have to agree on at once, and they never do: a release
+# run from an older checkout failed its `rmdir` silently, left a lock with no
+# session behind it, and made #1216 unclaimable within the hour. An empty
+# directory is a format every version can already drop, and a stray `.owner`
+# left by an older script is inert -- it is only read while the lock exists,
+# and the next claim overwrites it.
 drop_lock() {
-    rm -f "$1/owner" 2>/dev/null || true
     rmdir "$1" 2>/dev/null || true
+    rm -f "$1.owner" 2>/dev/null || true
 }
 
 # Whether the session behind a held lock is still there.
@@ -71,7 +78,7 @@ drop_lock() {
 # conventional path keeps those readable rather than making them permanent.
 lock_is_live() {
     local lock="$1" num="$2" owner
-    owner="$(cat "$lock/owner" 2>/dev/null || true)"
+    owner="$(cat "$lock.owner" 2>/dev/null || true)"
     if [ -n "$owner" ]; then
         [ -d "$owner" ]
     else
@@ -141,7 +148,7 @@ if [ -n "$RESUME" ]; then
     # flow `--resume` exists for -- coming back to a branch whose PR went red.
     if ! mkdir "$CLAIMS/issue-$RESUME" 2>/dev/null; then
         if lock_is_live "$CLAIMS/issue-$RESUME" "$RESUME"; then
-            HOLDER="$(cat "$CLAIMS/issue-$RESUME/owner" 2>/dev/null || true)"
+            HOLDER="$(cat "$CLAIMS/issue-$RESUME.owner" 2>/dev/null || true)"
             echo "#$RESUME is claimed by another session${HOLDER:+, working in $HOLDER}." >&2
             echo "Two sessions on one issue produce one branch name and two" >&2
             echo "implementations of it (#1177). Not resuming." >&2
@@ -149,7 +156,7 @@ if [ -n "$RESUME" ]; then
             exit 2
         fi
     fi
-    printf '%s\n' "$RESUME_TREE" > "$CLAIMS/issue-$RESUME/owner"
+    printf '%s\n' "$RESUME_TREE" > "$CLAIMS/issue-$RESUME.owner"
     git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
     git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
     git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
@@ -567,12 +574,12 @@ while IFS=$'\t' read -r NUM TITLE; do
     # machine, so a local lock is a real lock -- assignee cannot be one,
     # because every session authenticates as the same GitHub user.
     if ! mkdir "$CLAIMS/issue-$NUM" 2>/dev/null; then
-        HOLDER="$(cat "$CLAIMS/issue-$NUM/owner" 2>/dev/null || true)"
+        HOLDER="$(cat "$CLAIMS/issue-$NUM.owner" 2>/dev/null || true)"
         echo "#$NUM is claimed by another session${HOLDER:+ (working in $HOLDER)}, trying the next one." >&2
         SKIPPED_CLAIMED="$SKIPPED_CLAIMED $NUM"
         continue
     fi
-    printf '%s\n' "$TREE" > "$CLAIMS/issue-$NUM/owner"
+    printf '%s\n' "$TREE" > "$CLAIMS/issue-$NUM.owner"
     # Cross-machine backstop: someone already pushed a branch for it.
     #
     # Claim locks are per-machine, so another host's live work is invisible
