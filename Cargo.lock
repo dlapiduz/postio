@@ -2879,6 +2879,7 @@ name = "postio-runtime"
 version = "0.2.0"
 dependencies = [
  "async-channel",
+ "async-trait",
  "chrono",
  "futures-util",
  "postio-account",
@@ -3005,6 +3006,7 @@ dependencies = [
  "postio-config",
  "postio-core",
  "postio-model",
+ "postio-search",
  "thiserror",
 ]
 

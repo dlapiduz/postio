@@ -237,3 +237,77 @@ fn searching_drops_what_was_marked() {
     );
     session.shutdown();
 }
+
+#[test]
+fn the_query_reads_as_chips_from_one_parse() {
+    // The chips are how somebody learns Postio's query language, so two
+    // readings would be two languages on two platforms (#1157). The parse is
+    // `postio-search`'s; both frontends draw the same one.
+    let chips = postio_ffi::query_chips("from:ada has:attach quarterly".to_string());
+    let labels: Vec<&str> = chips.iter().map(|chip| chip.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["from:ada", "has:attach"],
+        "free text is not a chip: it is the part still being edited"
+    );
+    assert!(chips.iter().all(|chip| chip.complete));
+    assert!(
+        chips.iter().all(|chip| !chip.spoken.contains(':')),
+        "a screen reader should hear `from Ada`, not `from colon ada`: {:?}",
+        chips.iter().map(|c| &c.spoken).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_half_typed_operator_is_still_a_chip() {
+    // The moment the language is being learned: `from:` with no value tells
+    // the user the parser understood the keyword.
+    let chips = postio_ffi::query_chips("from:".to_string());
+    assert_eq!(chips.len(), 1);
+    assert!(!chips[0].complete);
+}
+
+#[test]
+fn a_negated_operator_says_so() {
+    let chips = postio_ffi::query_chips("-is:unread".to_string());
+    assert_eq!(chips.len(), 1);
+    assert!(chips[0].negated);
+}
+
+#[test]
+fn a_search_reports_what_it_turned_out_to_be() {
+    // Canvas 2b puts "14 hits · 11 ms" at the right-hand end of the field —
+    // the 100ms budget made visible, which is a claim the application should
+    // be willing to make on screen.
+    let (session, _) = searchable();
+    assert_eq!(
+        session.search_outcome(),
+        None,
+        "there is no outcome before a search has run"
+    );
+
+    session.search("quarterly");
+    let outcome = session.search_outcome().expect("a search just ran");
+    assert_eq!(outcome.hits, 2, "two messages say quarterly");
+    assert!(
+        outcome.readout.contains("2 hits"),
+        "the readout does not say how many: {}",
+        outcome.readout
+    );
+    assert!(
+        outcome.readout.contains("ms") || outcome.readout.contains("µs"),
+        "the readout does not say how long: {}",
+        outcome.readout
+    );
+    // The spoken form is words, because "·" and "ms" are punctuation and an
+    // abbreviation rather than something to read out.
+    assert!(!outcome.spoken.contains('·'), "spoken: {}", outcome.spoken);
+
+    session.clear_search();
+    assert_eq!(
+        session.search_outcome(),
+        None,
+        "leaving search left a readout about a query nobody is running"
+    );
+    session.shutdown();
+}

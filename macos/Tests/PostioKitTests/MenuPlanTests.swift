@@ -136,3 +136,28 @@ import Testing
         #expect(first?.shortcut == nil)
     }
 }
+
+/// The application menu, which macOS expects and freedesktop does not have.
+@MainActor
+@Suite struct ApplicationMenuTests {
+    @Test func settingsIsPlannedIntoTheApplicationMenu() {
+        // `⌘,` is discoverable there and nowhere else on this platform. The
+        // placement comes from `postio_core::menu`, so it is one table's
+        // answer rather than a list of command ids kept here by hand — which
+        // is what #1158 existed to remove.
+        let plan = MenuPlan.build(binding: { _ in "⌘," })
+        let app = plan.first { $0.section == .app }
+        #expect(app != nil, "no application menu was planned")
+        #expect(app?.items.contains { $0.command == "settings" } == true)
+        #expect(app?.items.contains { $0.command == "edit_config" } == true)
+    }
+
+    @Test func nothingInTheApplicationMenuIsAlsoInEdit() {
+        // The failure this guards is a fold that adds rather than moves,
+        // leaving Settings in two menus at once.
+        let plan = MenuPlan.build(binding: { _ in nil })
+        let app = Set(plan.first { $0.section == .app }?.items.map(\.command) ?? [])
+        let edit = Set(plan.first { $0.section == .edit }?.items.map(\.command) ?? [])
+        #expect(app.isDisjoint(with: edit), "\(app.intersection(edit)) is in both menus")
+    }
+}

@@ -58,11 +58,16 @@ exit 1
 # worktree add`'s own bookkeeping, the test harness setting up fixtures --
 # reaches the real `cp` untouched.
 CP_STUB = """#!/bin/bash
-reflink=0
+# Keyed on the *source* being a sibling's target/, not on the GNU flag
+# spelling. The claim script picks `-a --reflink=auto`, `-Rc` or `-R`
+# depending on what the local `cp` supports, and probes once with a scratch
+# directory to decide -- so a stub that fired on flags alone either never
+# fired on macOS or was spent by the probe (#1208).
+is_seed=0
 for arg in "$@"; do
-    [ "$arg" = "--reflink=auto" ] && reflink=1
+    case "$arg" in */worktrees/*/target/debug) is_seed=1 ;; esac
 done
-if [ "$1" = "-a" ] && [ "$reflink" = "1" ]; then
+if [ "$is_seed" = "1" ]; then
     echo "cp: simulated failure for the seed-failure test" >&2
     exit 1
 fi

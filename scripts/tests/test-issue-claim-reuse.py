@@ -94,7 +94,7 @@ def world(base: Path) -> tuple[Path, Path]:
     # As the real repo does. Without it the build cache this feature exists
     # to keep would itself read as uncommitted work, and the clean check
     # would refuse every reuse.
-    (repo / ".gitignore").write_text("target/\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("target/\n.build/\n", encoding="utf-8")
     git("add", "-A", cwd=repo)
     git("commit", "-q", "-m", "init", cwd=repo)
     origin = base / "origin.git"
@@ -145,6 +145,13 @@ def main() -> int:
         git("worktree", "add", "--quiet", "-b", "issue-1-done", str(first), "main", cwd=repo)
         (first / "target").mkdir()
         (first / "target" / "warm").write_text("a compiled artifact\n", encoding="utf-8")
+        # SwiftPM's module cache bakes the tree's absolute path into every
+        # `.pcm` it writes, and a moved tree carries them to a path that no
+        # longer matches (#1208). Unlike `target/`, none of it can be kept:
+        # the first `swift build` afterwards fails on `missing required
+        # module 'SwiftShims'`, which reads as a broken toolchain.
+        (first / "macos" / ".build").mkdir(parents=True)
+        (first / "macos" / ".build" / "stale.pcm").write_text("old path\n", encoding="utf-8")
 
         # ── it reuses, renames, and keeps target/ ────────────────────────
         result = claim(repo, base, stub_dir, "--reuse", "4242", cwd=first)
@@ -155,6 +162,13 @@ def main() -> int:
             fail("reuse", f"the tree is not at {moved}", result)
         elif not (moved / "target" / "warm").is_file():
             fail("reuse", "target/ did not come along, which is the whole point", result)
+        elif (moved / "macos" / ".build").exists():
+            fail(
+                "reuse",
+                "macos/.build survived the move, so the first swift build fails "
+                "on a module cache that names the old tree",
+                result,
+            )
         elif first.exists():
             fail("reuse", "the old path is still there, so it was copied not moved", result)
         else:

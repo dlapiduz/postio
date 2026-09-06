@@ -32,6 +32,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 CLAIM = HERE / "issue-claim.sh"
 LAND = HERE / "issue-land.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = HERE.parent / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 FAILURES: list[str] = []
 
@@ -221,7 +228,7 @@ def main() -> int:
     channel = pinned_channel()
 
     # --- A: a worktree claimed with --base lands back onto that base --------
-    with tempfile.TemporaryDirectory(dir=HERE.parent) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, channel, 7)
         environment = env_for(root, base, stub_dir)
@@ -256,7 +263,7 @@ def main() -> int:
                 FAILURES.append(f"A: the PR named main as its base\n{report('A', landed, calls)}")
 
     # --- B: no base given behaves exactly as it does today ------------------
-    with tempfile.TemporaryDirectory(dir=HERE.parent) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, channel, 8)
         environment = env_for(root, base, stub_dir)
@@ -281,7 +288,7 @@ def main() -> int:
                 )
 
     # --- C: a base that does not exist is refused ---------------------------
-    with tempfile.TemporaryDirectory(dir=HERE.parent) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         _origin, root, stub_dir = world(base, channel, 9)
         environment = env_for(root, base, stub_dir)

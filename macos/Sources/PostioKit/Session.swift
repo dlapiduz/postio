@@ -183,6 +183,14 @@ public final class PostioSession {
     @discardableResult
     public func clearSearch() -> UInt64 { inner.clearSearch() }
 
+    /// What the last search turned out to be, or `nil` outside a search.
+    ///
+    /// The wording is `postio_ui::search::readout`'s, including its caveats —
+    /// "still syncing" is a state that ends (#352), and an account named
+    /// unreachable is ADR 0005 Q10's promise that a view says what it left
+    /// out. Neither is worth a second frontend re-deriving.
+    public var searchOutcome: OutcomeFfi? { inner.searchOutcome() }
+
     /// Whether the list is showing search results rather than a folder.
     public var isSearching: Bool { inner.isSearching() }
 
@@ -242,6 +250,16 @@ public final class PostioSession {
 
     /// The message the cursor is on, if its page has arrived.
     public var cursorMessage: Int64? { inner.cursorMessage() }
+
+    /// The cursor rested on `message` long enough for it to count as read.
+    ///
+    /// Not `invoke`: `MarkReadOnDwell` is deliberately outside the registry,
+    /// because it is the one dispatch that is *not* recorded on the undo
+    /// stack — `u` takes back what you did, and reading a mailbox produces
+    /// one of these per message rested on.
+    public func markReadOnDwell(_ message: Int64) {
+        inner.markReadOnDwell(message: message)
+    }
 
     /// Put the cursor on `row` — what a click on the list means.
     ///

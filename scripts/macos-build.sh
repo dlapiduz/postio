@@ -84,7 +84,14 @@ else
 fi
 
 if [ "$LIB_ONLY" = 1 ]; then
-    echo "library and bindings only, as asked."
+    # After the tokens, deliberately. `--lib-only` means "stop before
+    # `swift build`", and the tokens are an *input* to that build exactly as
+    # the bindings are -- `MessageRowCell` will not compile without
+    # `PostioTokens`. With the step below the exit, `scripts/macos-test.sh`
+    # (which calls this) could not build the Swift tests in a fresh worktree
+    # at all: it worked only where some earlier full build had left the
+    # generated file behind.
+    echo "library, bindings and tokens only, as asked."
     exit 0
 fi
 

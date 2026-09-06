@@ -34,6 +34,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/drop-workspace-artifacts.sh"
 
 REPO_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 WORKTREES="${POSTIO_WORKTREES:-$HOME/src/postio-worktrees}"
+# Resolved, because `git rev-parse --show-toplevel` resolves too and the two
+# are compared. On macOS `/var` is a symlink to `/private/var`, so an
+# unresolved `$TMPDIR` here and a resolved toplevel there never match, and
+# `--reuse` refuses a worktree that is plainly under this directory (#1208).
+[ -d "$WORKTREES" ] && WORKTREES="$(cd "$WORKTREES" && pwd -P)"
 CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 
 # Which label marks an issue as claimable. `${READY_LABELS[0]}` (`ready`) for
@@ -47,6 +52,44 @@ CLAIMS="${POSTIO_CLAIMS:-$HOME/.cache/postio/claims}"
 # can still name anything, on purpose: a one-off queue nobody has
 # bureaucratized yet is still claimable.
 READY_LABEL="${POSTIO_READY_LABEL:-${READY_LABELS[0]}}"
+
+# A claim lock is a directory, so `mkdir` is the atomic take. Beside it sits
+# `issue-<n>.owner`, naming the worktree the claim created -- which is this
+# project's own definition of a session ("a worktree belongs to one session",
+# CLAUDE.md). Two things need it: a refusal can say *which* tree is holding an
+# issue rather than only that something is, and `--resume` can tell a live
+# claim from the lock a finished session left behind (#1218).
+#
+# **Beside the lock, not inside it** (#1230). The first version put the file in
+# the directory, where `rmdir` refuses it -- and every worktree carries its own
+# copy of these scripts at the commit it was cut from, with the main checkout
+# pulled when somebody remembers. So a lock's format is something several
+# versions of this code have to agree on at once, and they never do: a release
+# run from an older checkout failed its `rmdir` silently, left a lock with no
+# session behind it, and made #1216 unclaimable within the hour. An empty
+# directory is a format every version can already drop, and a stray `.owner`
+# left by an older script is inert -- it is only read while the lock exists,
+# and the next claim overwrites it.
+drop_lock() {
+    rmdir "$1" 2>/dev/null || true
+    rm -f "$1.owner" 2>/dev/null || true
+}
+
+# Whether the session behind a held lock is still there.
+#
+# The same judgment `issue-release.sh --stale` makes, and for the same reason:
+# a live worktree is a live claim, whatever the labels say. A lock with no
+# `owner` is one taken before #1218 or by an older script; falling back to the
+# conventional path keeps those readable rather than making them permanent.
+lock_is_live() {
+    local lock="$1" num="$2" owner
+    owner="$(cat "$lock.owner" 2>/dev/null || true)"
+    if [ -n "$owner" ]; then
+        [ -d "$owner" ]
+    else
+        [ -d "$WORKTREES/issue-$num" ]
+    fi
+}
 
 WANT=""; MILESTONE=""; LABEL=""; DRY=0; BASE="main"; REUSE=0; FRESH=0; COLD=0
 REUSE_IMPLICIT=0; RESUME=""
@@ -100,7 +143,25 @@ if [ -n "$RESUME" ]; then
         exit 2
     fi
     mkdir -p "$WORKTREES" "$CLAIMS"
-    mkdir "$CLAIMS/issue-$RESUME" 2>/dev/null || true
+    # `|| true` used to be here, so a resume walked straight through another
+    # session's live claim -- which is how two sessions came to work #1177 at
+    # once, on branches of the same name, and implement it twice (#1218).
+    #
+    # A lock whose worktree is gone is not a live claim, though: the ordinary
+    # loop lands, claims the next issue into the same tree, and leaves this
+    # one's lock behind, so refusing on the lock alone would break the very
+    # flow `--resume` exists for -- coming back to a branch whose PR went red.
+    if ! mkdir "$CLAIMS/issue-$RESUME" 2>/dev/null; then
+        if lock_is_live "$CLAIMS/issue-$RESUME" "$RESUME"; then
+            HOLDER="$(cat "$CLAIMS/issue-$RESUME.owner" 2>/dev/null || true)"
+            echo "#$RESUME is claimed by another session${HOLDER:+, working in $HOLDER}." >&2
+            echo "Two sessions on one issue produce one branch name and two" >&2
+            echo "implementations of it (#1177). Not resuming." >&2
+            echo "If that session is gone: scripts/issue-release.sh --stale" >&2
+            exit 2
+        fi
+    fi
+    printf '%s\n' "$RESUME_TREE" > "$CLAIMS/issue-$RESUME.owner"
     git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
     git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
     git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
@@ -245,6 +306,44 @@ fi
 
 mkdir -p "$WORKTREES" "$CLAIMS"
 
+# Copy a directory, sharing blocks where the filesystem can.
+#
+# `cp -a --reflink=auto` is GNU, and BSD `cp` rejects it outright -- so on
+# macOS every seed failed its usage check and fell back to a cold build, which
+# is the 11-to-19 minutes this whole feature exists to avoid (#1208). The
+# fallback hid it: the claim still worked, just slowly, and said so in a line
+# that reads as an unlucky filesystem rather than as a flag that never had a
+# chance.
+#
+# APFS clones with `cp -c`, which is the same copy-on-write bargain. Plain
+# `cp -R` last, because a slow seed still beats a cold build.
+# Decided once, on a scratch directory, rather than by retrying per copy: a
+# candidate that genuinely cannot be copied has to fail *once* so `seed_target`
+# falls through to an older sibling (#1190). Trying three flag sets against the
+# real source would turn one doomed copy into three and skip the fallthrough.
+CP_CLONE_FLAGS=""
+detect_clone_flags() {
+    local probe
+    probe="$(mktemp -d)" || { CP_CLONE_FLAGS="-R"; return; }
+    mkdir -p "$probe/src"
+    if cp -a --reflink=auto "$probe/src" "$probe/gnu" 2>/dev/null; then
+        CP_CLONE_FLAGS="-a --reflink=auto"
+    elif cp -Rc "$probe/src" "$probe/bsd" 2>/dev/null; then
+        CP_CLONE_FLAGS="-Rc"
+    else
+        CP_CLONE_FLAGS="-R"
+    fi
+    rm -rf "$probe"
+}
+
+clone_tree() { # <src> <dst>
+    [ -n "$CP_CLONE_FLAGS" ] || detect_clone_flags
+    # Unquoted on purpose: the flags are this script's own, and one of them is
+    # two words.
+    # shellcheck disable=SC2086
+    cp $CP_CLONE_FLAGS "$1" "$2"
+}
+
 # Seed a fresh worktree's target/debug from the newest sibling's (#1102).
 #
 # A cold target/ is 11 to 19 minutes before the first gate can say anything,
@@ -310,7 +409,7 @@ seed_target() { # <tree>
         SEED_CANDIDATE="$src"
         mkdir -p "$1/target"
         started=$(date +%s)
-        if error="$(cp -a --reflink=auto "$src" "$1/target/debug" 2>&1)"; then
+        if error="$(clone_tree "$src" "$1/target/debug" 2>&1)"; then
             # The sibling's own crates have *its* path baked in; drop them so
             # cargo rebuilds ours and keeps the dependencies (lib/ says why).
             drop_workspace_artifacts "$1/target"
@@ -353,8 +452,28 @@ SKIP = {"epic", "icebox", "needs-architecture", "needs-maintainer", "in-progress
 for i in json.load(sys.stdin):
     names = {l["name"] for l in i["labels"]}
     if want:
+        # Naming an issue bypasses the *label* filters below on purpose: an
+        # `epic` or `needs-architecture` issue is not queue work and is still
+        # claimable by name -- that is how the architect takes one to write
+        # its ADR. It must not bypass a claim somebody else holds
+        # (#1218). The queue path has always skipped an assigned or `in-progress` issue;
+        # this one did not, and a rider claim (`gh issue edit --add-assignee`,
+        # which CLAUDE.md sanctions and which takes no lock) was invisible to
+        # it. Two sessions took #1177 and #1142 that way in one afternoon.
         if str(i["number"]) == want:
-            print(i["number"], i["title"], sep="\t")
+            marks = [m for m in (
+                "assigned" if i["assignees"] else "",
+                "labelled in-progress" if "in-progress" in names else "",
+            ) if m]
+            if marks:
+                print("#%s is %s -- another session has it." % (
+                    i["number"], " and ".join(marks)), file=sys.stderr)
+                print("Working it anyway means two branches of one name and "
+                      "the same fix twice.", file=sys.stderr)
+                print("If that session is gone: scripts/issue-release.sh "
+                      "--stale", file=sys.stderr)
+            else:
+                print(i["number"], i["title"], sep="\t")
         continue
     pri = next((n for n in names if re.fullmatch(r"p[0-9]", n)), "p9")
     num = i["number"]
@@ -454,7 +573,8 @@ fi
 
 if [ -z "$CANDIDATES" ]; then
     if [ -n "$WANT" ]; then
-        echo "issue #$WANT is not open, or does not exist." >&2
+        echo "issue #$WANT is not open, does not exist, or is already claimed" >&2
+        echo "by another session -- see above if it said which." >&2
     else
         echo "No \`$READY_LABEL\`, unblocked, unclaimed issues${MILESTONE:+ in milestone $MILESTONE}."
         echo "Stop here and say so -- do not go looking for work elsewhere."
@@ -497,10 +617,12 @@ while IFS=$'\t' read -r NUM TITLE; do
     # machine, so a local lock is a real lock -- assignee cannot be one,
     # because every session authenticates as the same GitHub user.
     if ! mkdir "$CLAIMS/issue-$NUM" 2>/dev/null; then
-        echo "#$NUM is claimed by another session, trying the next one." >&2
+        HOLDER="$(cat "$CLAIMS/issue-$NUM.owner" 2>/dev/null || true)"
+        echo "#$NUM is claimed by another session${HOLDER:+ (working in $HOLDER)}, trying the next one." >&2
         SKIPPED_CLAIMED="$SKIPPED_CLAIMED $NUM"
         continue
     fi
+    printf '%s\n' "$TREE" > "$CLAIMS/issue-$NUM.owner"
     # Cross-machine backstop: someone already pushed a branch for it.
     #
     # Claim locks are per-machine, so another host's live work is invisible
@@ -529,7 +651,7 @@ while IFS=$'\t' read -r NUM TITLE; do
         # known -- and "cannot tell" has to read as "somebody may be working
         # on this", which is the direction that costs time rather than work.
         if [ -z "$BRANCH_UNLANDED" ] || [ "$BRANCH_UNLANDED" -ne 0 ]; then
-            rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
+            drop_lock "$CLAIMS/issue-$NUM"
             if [ -z "$BRANCH_UNLANDED" ]; then
                 echo "#$NUM has the remote branch $STALE_BRANCH, which could not be" >&2
                 echo "read -- assuming another session is on it." >&2
@@ -556,7 +678,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     # session works (#328) -- and two sessions in one worktree trample each
     # other with the very commands that are safe everywhere else.
     if [ -d "$TREE" ]; then
-        rmdir "$CLAIMS/issue-$NUM" 2>/dev/null || true
+        drop_lock "$CLAIMS/issue-$NUM"
         echo "#$NUM already has a worktree at $TREE; not adopting it -- a session may be in it." >&2
         if [ -n "$WANT" ]; then
             echo "If it is truly abandoned, release it first (refuses if dirty):" >&2
@@ -580,6 +702,8 @@ while IFS=$'\t' read -r NUM TITLE; do
         # (env!("CARGO_MANIFEST_DIR")) and cargo will not notice. Drop
         # them; the dependencies -- the expensive part -- stay warm.
         drop_workspace_artifacts "$TREE/target"
+        # SwiftPM has the same problem and none of the upside: see lib/.
+        drop_swift_build "$TREE"
     else
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
         seed_target "$TREE"

@@ -46,6 +46,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 # The six invariant checks `issue-land.sh` runs unconditionally. Stubbed here
 # because this test is about the target directory, not about them -- they are
@@ -189,7 +196,7 @@ def check(name: str, result: subprocess.CompletedProcess[str]) -> None:
 
 def test_no_default_to_the_shared_checkout(channel: str) -> None:
     """With nothing exported, the gates build in the worktree's own target."""
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         fake_main = base / "main-checkout"
         fake_main.mkdir()
@@ -220,7 +227,7 @@ def test_an_explicit_setting_is_still_honoured(channel: str) -> None:
     staking a merge on, so dropping the default must not also drop the
     caller's ability to choose.
     """
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         fake_main = base / "main-checkout"
         fake_main.mkdir()

@@ -821,7 +821,12 @@ impl Composer {
     /// Asking for the draft already in the composer is a no-op that puts the
     /// keyboard back, exactly as [`open`](Self::open) is.
     pub fn resume(&self, draft: Draft) {
-        if self.is_open() && self.imp().draft.borrow().id == draft.id {
+        // `is_assigned` and not just equality: every *unsaved* draft carries
+        // `DraftId::UNASSIGNED`, so comparing ids alone made two different
+        // unsaved drafts compare equal and this decline to swap, silently
+        // (#1240). An absent identity is not evidence that two things are
+        // the same one.
+        if self.is_open() && draft.id.is_assigned() && self.imp().draft.borrow().id == draft.id {
             if let Some(host) = self.detached_window() {
                 host.present();
             }

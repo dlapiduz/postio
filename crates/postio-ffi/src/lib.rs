@@ -35,6 +35,7 @@
 //! handles none of them still runs. Today the floor is one function; the
 //! scaffolding around it is the part that had to be proven first.
 
+mod dwell;
 mod event;
 mod keys;
 mod list;
@@ -47,6 +48,7 @@ mod search;
 mod session;
 mod settings;
 
+pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
@@ -55,7 +57,7 @@ pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use palette::PaletteEntryFfi;
 pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use search::{MatchRangeFfi, SnippetFfi};
+pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, DensityFfi, GroupFfi, RowActionFfi, RowHintFfi, RowMetricsFfi, SettingsError,

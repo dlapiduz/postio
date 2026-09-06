@@ -1,3 +1,4 @@
+import PostioFFI
 import PostioKit
 import SwiftUI
 
@@ -20,12 +21,34 @@ struct SearchField: View {
     let dismiss: () -> Void
 
     @State private var query = ""
+    /// Bumped when a search runs, so the readout re-reads. `searchOutcome`
+    /// is a computed property over a boundary the view cannot observe.
+    @State private var ran = 0
     @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+            // The operators, drawn as pills from `postio-search`'s own parse.
+            // Not a second parser: the chips are how somebody learns Postio's
+            // query language, so two readings would be two languages
+            // (canvas 2b, #1157).
+            ForEach(queryChips(query: query), id: \.index) { chip in
+                Text(chip.label)
+                    .font(.system(.callout, design: .monospaced))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        (chip.complete ? Color.accentColor : Color.secondary)
+                            .opacity(chip.negated ? 0.10 : 0.20),
+                        in: .rect(cornerRadius: 4)
+                    )
+                    // A half-typed `from:` is drawn dimmer but still drawn:
+                    // it says the parser understood the keyword.
+                    .opacity(chip.complete ? 1 : 0.6)
+                    .accessibilityLabel(chip.spoken)
+            }
             TextField("Search mail", text: $query)
                 .textFieldStyle(.plain)
                 .focused($focused)
@@ -34,6 +57,15 @@ struct SearchField: View {
                     leave()
                     return .handled
                 }
+            // "14 hits · 11 ms" — the 100ms budget made visible, which is a
+            // claim the application should be willing to make on screen.
+            // Its wording, and its caveats, are the core's.
+            if let outcome = session.searchOutcome {
+                Text(outcome.readout)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(outcome.spoken)
+            }
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -52,6 +84,10 @@ struct SearchField: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .onAppear { focused = true }
+        // Reading `ran` here is what makes the readout above re-evaluate:
+        // `searchOutcome` reads through to the boundary, which SwiftUI has no
+        // way to observe on its own.
+        .id(ran)
     }
 
     /// Run what has been typed.
@@ -66,12 +102,14 @@ struct SearchField: View {
             return
         }
         session.search(query)
+        ran += 1
         reload()
     }
 
     /// Leave search, restoring the scope that was open.
     private func leave() {
         session.clearSearch()
+        ran += 1
         reload()
         dismiss()
     }

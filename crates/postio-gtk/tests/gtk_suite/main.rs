@@ -155,6 +155,10 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
     (
+        "gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
+        gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
+    ),
+    (
         "gtk_settings_sync::the_pane_shows_the_files_values",
         gtk_settings_sync::the_pane_shows_the_files_values as fn(),
     ),
@@ -355,6 +359,18 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_conversation::one_thread_offers_one_reply_however_long_it_is",
+        gtk_conversation::one_thread_offers_one_reply_however_long_it_is as fn(),
+    ),
+    (
+        "gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand",
+        gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
+    ),
+    (
+        "gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply",
+        gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply as fn(),
+    ),
+    (
         "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
         gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
     ),
@@ -418,6 +434,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_list_reload::a_reordering_sync_leaves_the_cursor_on_the_same_message",
         gtk_list_reload::a_reordering_sync_leaves_the_cursor_on_the_same_message as fn(),
+    ),
+    (
+        "gtk_list_reload::a_reordering_sync_leaves_the_autoselected_cursor_on_its_message",
+        gtk_list_reload::a_reordering_sync_leaves_the_autoselected_cursor_on_its_message as fn(),
+    ),
+    (
+        "gtk_list_reload::restoring_the_cursor_after_a_reload_does_not_arm_the_dwell",
+        gtk_list_reload::restoring_the_cursor_after_a_reload_does_not_arm_the_dwell as fn(),
+    ),
+    (
+        "gtk_list_reload::switching_what_the_list_shows_does_not_carry_the_cursor_over",
+        gtk_list_reload::switching_what_the_list_shows_does_not_carry_the_cursor_over as fn(),
     ),
     (
         "gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else",

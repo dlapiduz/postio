@@ -46,6 +46,13 @@ HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 TEST_HEADLESS = HERE / "test-headless.sh"
+# Sandboxes go under `target/`, which git ignores: inside the worktree because
+# the shared-tree guard only lifts its refusals for worktree paths, and not in
+# its root because a killed run leaves the sandbox behind and `git add -A` in a
+# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
+# that cost (#1225).
+SANDBOXES = REPO_ROOT / "target" / "tmp"
+SANDBOXES.mkdir(parents=True, exist_ok=True)
 
 # Not installed anywhere, ever -- that is the point. rustup refuses an
 # override naming a toolchain it has never fetched rather than fetching one
@@ -149,7 +156,7 @@ def test_issue_land_clears_the_override() -> str:
     """Returns the pinned channel, for the success message."""
     channel = pinned_channel()
 
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         root = base / "repo"
         origin = base / "origin.git"
@@ -205,7 +212,7 @@ def test_issue_land_clears_the_override() -> str:
 def test_headless_sh_clears_the_override() -> None:
     """`test-headless.sh` fronts every ad-hoc GTK test run, so the same
     override has to be cleared before its `exec "$@"` too."""
-    with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+    with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         runtime_dir = Path(directory)
         display = "postio-headless-test"
         # `running()` in test-headless.sh only checks for a socket at this

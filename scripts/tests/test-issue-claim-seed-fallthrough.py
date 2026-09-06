@@ -61,11 +61,16 @@ exit 1
 # file is how it remembers "already failed once" across separate `cp`
 # invocations, since each is a fresh process with no shared memory.
 CP_STUB = """#!/bin/bash
-reflink=0
+# Keyed on the *source* being a sibling's target/, not on the GNU flag
+# spelling. The claim script picks `-a --reflink=auto`, `-Rc` or `-R`
+# depending on what the local `cp` supports, and probes once with a scratch
+# directory to decide -- so a stub that fired on flags alone either never
+# fired on macOS or was spent by the probe (#1208).
+is_seed=0
 for arg in "$@"; do
-    [ "$arg" = "--reflink=auto" ] && reflink=1
+    case "$arg" in */worktrees/*/target/debug) is_seed=1 ;; esac
 done
-if [ "$1" = "-a" ] && [ "$reflink" = "1" ] && [ ! -f "$STUB_DIR/cp-failed-once" ]; then
+if [ "$is_seed" = "1" ] && [ ! -f "$STUB_DIR/cp-failed-once" ]; then
     touch "$STUB_DIR/cp-failed-once"
     echo "cp: simulated failure for the seed-fallthrough test" >&2
     exit 1

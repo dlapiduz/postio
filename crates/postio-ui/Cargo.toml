@@ -20,6 +20,9 @@ thiserror = "2.0.20"
 postio-body = { version = "0.2.0", path = "../postio-body" }
 postio-config = { version = "0.2.0", path = "../postio-config" }
 postio-core = { version = "0.2.0", path = "../postio-core" }
+# The query language. `search.rs` reads a `ParsedQuery` as chips and says
+# what a result set turned out to be; neither is a toolkit's business (#1157).
+postio-search = { version = "0.2.0", path = "../postio-search" }
 postio-model = { version = "0.2.0", path = "../postio-model" }
 
 [dev-dependencies]

@@ -383,13 +383,12 @@ pub fn the_composer_detaches_into_its_own_window_and_comes_back() {
         move |draft| sent.borrow_mut().push(draft.clone())
     });
 
-    // Closed first: the composer is open on the blank composition `c` just
-    // started, and `open` on an open composer is a no-op that returns the
-    // keyboard rather than replacing what is being typed. (`resume` would
-    // not do it either — both drafts are unassigned, so it reads as a
-    // request for the one already showing.) Closing and opening is what a
-    // person does, and it is what this half of the test needs: a real draft
-    // to send.
+    // Closed, then opened. `open` on an *open* composer is a no-op that
+    // returns the keyboard rather than replacing what is being typed, so
+    // the close is what makes room for this draft — and it is also what
+    // puts the reading pane back, which the assertions further down depend
+    // on. `resume` would replace the draft (since #1240) and would not do
+    // the pane half, which is why this is not simplified to one call.
     composer.close();
     settle();
     composer.open(started());

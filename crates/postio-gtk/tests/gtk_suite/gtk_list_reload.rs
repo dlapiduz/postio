@@ -239,6 +239,16 @@ impl Reordering {
     fn rotate(&self) {
         self.order.borrow_mut().rotate_left(1);
     }
+
+    /// The oldest message is now the newest, and everything shifted down by
+    /// one.
+    ///
+    /// The same move in the other direction, which is what a sync that finds
+    /// a message older than the page it already had looks like: every row
+    /// moves, and the one that was on top is still on the first page.
+    fn rotate_back(&self) {
+        self.order.borrow_mut().rotate_right(1);
+    }
 }
 
 impl MailboxSource for Reordering {
@@ -347,4 +357,257 @@ pub fn a_reordering_sync_leaves_the_cursor_on_the_same_message() {
          opened on",
         list.cursor_id()
     );
+}
+
+/// A cursor nobody placed is still on a *message* (#1177).
+///
+/// This is the half of #1177 the first fix left open, and it is the half the
+/// issue actually reports. At launch nobody has chosen anything:
+/// `SingleSelection` autoselects row 0, the reading pane draws whatever that
+/// points at, and then the first sync pass reorders the folder underneath it.
+/// A pin that only holds for a cursor a person placed does nothing here, so
+/// the first screen shows one message and jumps to another.
+///
+/// The rotation goes the other way from the test above so the pinned message
+/// stays on page 0: `select_message` asks for the first page and gives up if
+/// what it wants is not there, which is a separate behaviour with its own
+/// reasons — this test is about the pin, not about paging.
+pub fn a_reordering_sync_leaves_the_autoselected_cursor_on_its_message() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Reordering::new(120);
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+
+    let list = window.list();
+    pump_until(|| list.model().n_items() == 120);
+
+    // Nobody has touched anything: this is a window that has just opened.
+    let showing = list
+        .cursor_id()
+        .expect("the autoselect puts the cursor on the first row");
+    assert_eq!(showing, MessageId::new(1), "the newest message is on top");
+    assert!(!list.landed(), "nobody has chosen a row yet");
+
+    // A sync pass finds an older message and says the only thing it can say.
+    store.rotate_back();
+    feeds.apply(&Event::MessageListChanged {
+        account: postio_model::AccountId::new(1),
+        mailbox: MailboxId::new(INBOX),
+    });
+    pump_until(|| list.model().peek(0) == Some(MessageId::new(120)));
+    assert_eq!(
+        list.model().peek(0),
+        Some(MessageId::new(120)),
+        "the reordered page never arrived, so this test proves nothing"
+    );
+    pump();
+
+    assert_eq!(
+        list.cursor_id(),
+        Some(showing),
+        "the order moved and the cursor stayed on the row number, so the \
+         first screen showed message {showing:?} and then jumped to {:?} — \
+         which is what a person sees at launch, having chosen nothing",
+        list.cursor_id()
+    );
+}
+
+/// Putting the cursor back is not a person choosing a row (#71, #601).
+///
+/// The pin above reaches the cursor through the same `move_cursor_to` a
+/// keystroke does, and that is what sets `landed` — the flag meaning "somebody
+/// chose this row", which is what #71's dwell-to-read waits for. A pin that
+/// set it would hand the launch case a cursor the application believes a
+/// person placed, and the next thing the list reported would start the clock
+/// on mail nobody has looked at: the unread signal destroying itself.
+///
+/// Proven where it shows rather than on the flag: the pinned message is moved
+/// off the first page, so `select_message` gives up, the cursor reports the
+/// row it is left on, and a dwell armed for that report would mark a message
+/// read at launch.
+pub fn restoring_the_cursor_after_a_reload_does_not_arm_the_dwell() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Reordering::new(120);
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+
+    let list = window.list();
+    pump_until(|| list.model().n_items() == 120);
+    assert!(!list.landed(), "nobody has chosen a row yet");
+
+    let dwelled: Rc<std::cell::RefCell<Vec<MessageId>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
+    let read = Rc::clone(&dwelled);
+    list.connect_dwelled(move |message| read.borrow_mut().push(message));
+    // Short enough that a dwell which was armed has fired well inside the
+    // settle below — the assertion is that nothing was armed, so the timer
+    // must not be the thing that outlasts the wait.
+    list.set_dwell_delay(std::time::Duration::from_millis(30));
+
+    // A sync pass reorders the folder, and the cursor is pinned back onto the
+    // message it was showing.
+    store.rotate_back();
+    feeds.apply(&Event::MessageListChanged {
+        account: postio_model::AccountId::new(1),
+        mailbox: MailboxId::new(INBOX),
+    });
+    pump_until(|| list.model().peek(0) == Some(MessageId::new(120)));
+
+    // A second pass carries it off the first page, which is as far as
+    // `select_message` looks. It gives up, and the cursor reports whatever
+    // row it was left on — the report a dwell would be armed for.
+    for _ in 0..60 {
+        store.rotate();
+    }
+    feeds.apply(&Event::MessageListChanged {
+        account: postio_model::AccountId::new(1),
+        mailbox: MailboxId::new(INBOX),
+    });
+    pump_until(|| list.cursor_id() != Some(MessageId::new(1)));
+    settle_for(std::time::Duration::from_millis(300));
+
+    assert!(
+        dwelled.borrow().is_empty(),
+        "launching and letting a sync run marked {:?} read, and nobody had \
+         chosen a row: restoring the cursor claimed the landing as a \
+         person's",
+        dwelled.borrow()
+    );
+    assert!(
+        !list.landed(),
+        "a reload made the cursor a person's, so every surface that asks \
+         whether somebody chose this row (#755) now gets the wrong answer"
+    );
+}
+
+/// Pump the main loop for `how_long`, so a timer that was armed can fire.
+///
+/// The shape a *negative* needs: everywhere else here waits on a condition,
+/// which cannot prove that nothing happens.
+fn settle_for(how_long: std::time::Duration) {
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(how_long);
+    while std::time::Instant::now() < deadline {
+        pump();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// A different question is not a reload (#1177).
+///
+/// `set_source` — another folder, a search — announces itself the same way
+/// `invalidate` does, as a full replace over the same length, so the pin
+/// cannot tell the two apart by shape. It tells them apart by *generation*: a
+/// cursor means a message inside the answer to one question, and a folder's
+/// cursor that happens to also be a hit is not where a search should open.
+///
+/// `app_suite/search_results.rs` is where this was found — the result list
+/// opened on the message the mailbox had been showing instead of on the best
+/// match — and this is the same rule one layer down, where it costs a second
+/// rather than a minute.
+pub fn switching_what_the_list_shows_does_not_carry_the_cursor_over() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    /// Six rows, in whatever order the question answers.
+    struct Answer(Vec<i64>);
+
+    impl postio_gtk::list::PageSource for Answer {
+        fn total(&self) -> u32 {
+            self.0.len() as u32
+        }
+        fn request(&self, _page: u32) {}
+    }
+
+    fn rows(ids: &[i64]) -> Vec<Row> {
+        ids.iter()
+            .enumerate()
+            .map(|(index, id)| Row {
+                id: MessageId::new(*id),
+                thread: None,
+                from: None,
+                subject: Some(format!("message {id}")),
+                preview: None,
+                received_at: Utc.timestamp_opt(1_700_000_000 - index as i64, 0).unwrap(),
+                seen: false,
+                flagged: false,
+                answered: false,
+                draft: false,
+                has_attachments: false,
+                thread_count: 1,
+                participants: Vec::new(),
+            })
+            .collect()
+    }
+
+    let pane = postio_gtk::list_view::MessageListView::new();
+    let window = gtk::Window::new();
+    window.set_default_size(404, 600);
+    window.set_child(Some(&pane));
+    window.present();
+    pump();
+
+    let folder = [1, 2, 3, 4, 5, 6];
+    pane.model().set_source(Rc::new(Answer(folder.to_vec())));
+    pane.model().deliver(0, rows(&folder));
+    pump();
+    assert_eq!(
+        pane.cursor_id(),
+        Some(MessageId::new(1)),
+        "the autoselect opens the folder on its first row"
+    );
+
+    // A search over the same account. The same length, so it is the same
+    // shape of announcement as a reorder — and message 1 is a hit, so a pin
+    // that went by identity alone has something to find.
+    let hits = [4, 5, 1, 6, 2, 3];
+    pane.model().set_source(Rc::new(Answer(hits.to_vec())));
+    pane.model().deliver(0, rows(&hits));
+    pump();
+
+    assert_eq!(
+        pane.cursor_id(),
+        Some(MessageId::new(4)),
+        "the results opened on the message the folder had been showing \
+         instead of on the best match: the cursor was carried across a \
+         change of what the list is answering"
+    );
+
+    window.close();
 }

@@ -714,6 +714,11 @@ mod imp {
         pub unsubscribe_list: gtk::ListBox,
         /// Hidden entirely when nothing has ever been activated.
         pub unsubscribe_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `egress_scroller` when nothing has connected —
+        /// the egress log never had an empty state, so its heading stood
+        /// over nothing at all until the first connection (#1179's kickers
+        /// made that visible, and `scripts/screens.sh` made it obvious).
+        pub egress_empty: gtk::Label,
         /// Shown instead of `unsubscribe_scroller` when the log is empty —
         /// same "empty is never blank" rule `privacy_empty` follows.
         pub unsubscribe_empty: gtk::Label,
@@ -839,6 +844,7 @@ mod imp {
                 remote_image_allowlist: RefCell::new(None),
                 unsubscribe_list: gtk::ListBox::new(),
                 unsubscribe_scroller: gtk::ScrolledWindow::new(),
+                egress_empty: gtk::Label::new(Some("Nothing has connected out yet this session.")),
                 unsubscribe_empty: gtk::Label::new(Some("No mailing lists have been left yet.")),
                 unsubscribe_activations: RefCell::new(Vec::new()),
                 read_receipt_count: gtk::Label::new(None),
@@ -1463,6 +1469,7 @@ impl SettingsPanel {
             imp.egress_list.append(&row);
         }
         imp.egress_scroller.set_visible(!entries.is_empty());
+        imp.egress_empty.set_visible(entries.is_empty());
     }
 
     /// One account's row: name and address, what its mail weighs, and an
@@ -3964,7 +3971,11 @@ impl SettingsPanel {
             .add_css_class("postio-settings-privacy-empty");
         imp.privacy_empty.set_xalign(0.0);
         imp.privacy_empty.set_wrap(true);
-        imp.privacy_empty.set_visible(false);
+        // Visible from the start. `set_remote_image_allowlist` may not have
+        // been called yet, and "no senders are always allowed" is equally
+        // true before the list is handed over and after it arrives empty —
+        // whereas a heading with nothing under it is true of neither.
+        imp.privacy_empty.set_visible(true);
 
         // ── privacy: one row per past unsubscribe activation (#971) ──────
         // A second list under the same pane as `privacy_list`, so it gets
@@ -4018,6 +4029,11 @@ impl SettingsPanel {
         imp.egress_scroller.add_css_class("postio-settings-egress");
         imp.egress_scroller.set_visible(false);
 
+        imp.egress_empty
+            .add_css_class("postio-settings-egress-empty");
+        imp.egress_empty.set_xalign(0.0);
+        imp.egress_empty.set_wrap(true);
+
         imp.privacy_pane.append(&kicker("REMOTE IMAGES ALLOWED"));
         imp.privacy_pane.append(&imp.privacy_scroller);
         imp.privacy_pane.append(&imp.privacy_empty);
@@ -4034,6 +4050,7 @@ impl SettingsPanel {
         egress_title.set_margin_top(18);
         imp.privacy_pane.append(&egress_title);
         imp.privacy_pane.append(&imp.egress_scroller);
+        imp.privacy_pane.append(&imp.egress_empty);
 
         // ── keys: one row per command, a rebind capture button (#881) ────
         imp.keys_list.add_css_class("postio-settings-keys-list");
