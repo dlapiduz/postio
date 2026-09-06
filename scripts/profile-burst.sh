@@ -34,6 +34,25 @@
 #      when it parses AND carries at least MIN_SAMPLES. A profile of 53
 #      samples misleads in exactly the way the three failures above did.
 #
+#   5. `perf report` run as root against a file owned by somebody else
+#      refuses it -- "not owned by current user or root" -- and exits having
+#      printed no samples, rather than failing loudly. This script chowns
+#      each dump to the invoking user and then read it back under `sudo`, so
+#      a genuine 7,000-sample capture of an 83% burst was classified empty
+#      and thrown away by the very code written to stop bad captures being
+#      trusted. Read a dump as the user who owns it, and pass --force. A
+#      check that quietly answers "nothing here" is worse than no check,
+#      because it is the one you believe.
+#
+# Why --call-graph dwarf rather than -g: the burn lands inside
+# `sha512_block_data_order_avx2`, OpenSSL's hand-written AVX2 assembly, which
+# keeps no frame pointer. Frame-pointer unwinding does not fail there, it
+# invents -- the "callers" it reported were SHA-512's own round constants
+# read as return addresses (`0x7137449123ef65cd` is one of them, and it is in
+# the FIPS 180-4 table). DWARF costs more per sample, hence the halved
+# frequency, and it is the only thing that can say which *query* is doing the
+# decrypting -- which is the whole question #1216 is asking.
+#
 # Also worth knowing, and the reason this uses perf at all: ptrace-based
 # samplers are useless here. `eu-stack` and `gdb` both stop the target at a
 # syscall boundary and reported the thread parked in `epoll_wait` on 25 of 25
@@ -81,7 +100,8 @@ say() { echo "$(date +%H:%M:%S) $*" | tee -a "$log"; }
 
 # --overwrite keeps only the most recent buffer and writes nothing until
 # signalled; --switch-output=signal is what turns SIGUSR2 into a dump.
-sudo -n perf record -F 999 -g -p "$pid" --overwrite --switch-output=signal \
+sudo -n perf record -F 499 --call-graph dwarf,16384 -p "$pid" \
+     --overwrite --switch-output=signal \
      -o "$out/ring.data" -- sleep 100000 >/dev/null 2>&1 &
 sleep 3
 # By process NAME. See failure 2 above.
@@ -100,7 +120,9 @@ say "dumps and this log: $out"
 #   corrupt    -- parsed the header and then failed on the samples
 classify() {
   local file="$1" out n
-  out=$(sudo -n perf report -i "$file" --stdio --no-children 2>&1)
+  # Not under sudo: the dump was chowned to this user a moment ago, and perf
+  # refuses a file owned by neither root nor the caller -- quietly. Failure 5.
+  out=$(perf report --force -i "$file" --stdio --no-children 2>&1)
   if grep -qE 'processing failed|failed to process' <<<"$out"; then
     echo corrupt
     return
@@ -151,10 +173,10 @@ while true; do
     ok\ *)
       say "CPU ${pct}% -- dumped $(basename "$newest"), ${verdict#ok } samples"
       say "  by thread:"
-      perf report -i "$newest" --stdio --no-children --sort comm 2>/dev/null \
+      perf report --force -i "$newest" --stdio --no-children --sort comm 2>/dev/null \
         | grep -E '^ +[0-9]+\.[0-9]+%' | head -5 | sed 's/^/  /' | tee -a "$log"
       say "  top frames:"
-      perf report -i "$newest" --stdio --no-children 2>/dev/null \
+      perf report --force -i "$newest" --stdio --no-children 2>/dev/null \
         | grep -E '^ +[0-9]+\.[0-9]+%' | head -10 | sed 's/^/  /' | tee -a "$log"
       ;;
     thin\ *)
