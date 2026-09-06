@@ -1432,10 +1432,6 @@ fn fired_on_body(
             rule: rule.name.clone(),
         })
         .collect();
-    let actions: Vec<postio_model::rule::Action> = matched
-        .iter()
-        .flat_map(|rule| rule.actions.iter().cloned())
-        .collect();
 
     // One timestamp for the whole set, exactly as the arrival pass takes one
     // per batch: it stamps the queue rows these actions enqueue, and rows
@@ -1445,10 +1441,22 @@ fn fired_on_body(
     let account = stored.account_id;
     let was_in = stored.mailbox_id;
     let mut stored = stored;
+    // The body the rules were just matched against, on the message the
+    // actions are about to run over. `MessageRepository::get` answers the row
+    // and not the blob, which is right for everything that only mutates the
+    // row -- and `forward:` sends the message on, so it needs the message.
+    // Reading it a second time inside the transaction would be a second read
+    // of what is already in hand, and could answer differently.
+    if let Some(body) = &body {
+        stored.body = postio_model::MessageBody {
+            text: body.text.clone(),
+            html: body.html.clone(),
+        };
+    }
     let unit =
         rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)
             .map_err(postio_storage::Error::from)?;
-    crate::rules::apply(&unit, account, &mut stored, &actions, now)?;
+    crate::rules::apply(&unit, account, &mut stored, &matched, now)?;
     unit.commit().map_err(postio_storage::Error::from)?;
 
     Ok(RulesRan {

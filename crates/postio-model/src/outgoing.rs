@@ -41,6 +41,20 @@ use crate::message::Message;
 /// `@domain`, which the account setup flow does not allow.
 const FALLBACK_DOMAIN: &str = "invalid";
 
+/// The header a message forwarded by a rule carries, so a copy that finds its
+/// way back is not forwarded again.
+///
+/// ADR 0008 Q5's first `forward:` guard, and the only half of it that can
+/// travel: a local record cannot recognise the same mail arriving as a new
+/// message, which is exactly the loop the guard exists to break — a rule
+/// forwarding to an address that delivers back into the same account.
+///
+/// **A bare marker.** It says a Postio rule sent this and nothing else: not
+/// which rule, not which account, not what matched. What a user called their
+/// rule is their business, and CLAUDE.md's "nothing leaves this machine that
+/// the user did not ask for" is not satisfied by a header they never saw.
+pub const FORWARDED_BY_A_RULE: &str = "X-Postio-Forwarded";
+
 /// One of a draft's attachments, resolved to its bytes.
 ///
 /// `postio-model` has no blob store, so the caller reads
@@ -144,6 +158,14 @@ fn assemble(
 
     if let Some(parent) = in_reply_to {
         builder = add_threading_headers(builder, parent);
+    }
+
+    // The loop guard, on the way out. See `FORWARDED_BY_A_RULE`.
+    if draft.forwarded_by.is_some() {
+        builder = builder.header(
+            FORWARDED_BY_A_RULE,
+            mail_builder::headers::raw::Raw::new("1"),
+        );
     }
 
     if !draft.subject.is_empty() {

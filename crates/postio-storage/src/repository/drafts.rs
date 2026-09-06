@@ -65,7 +65,7 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id";
+rfc_message_id, forwarded_by";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -103,7 +103,8 @@ impl<'a> DraftRepository<'a> {
                         mod_seq = coalesce(?13, mod_seq),
                         remote_id = coalesce(?14, remote_id),
                         updated_at = ?15,
-                        rfc_message_id = ?16
+                        rfc_message_id = ?16,
+                        forwarded_by = ?17
                   WHERE id = ?1",
                 params![
                     draft.id.get(),
@@ -129,6 +130,7 @@ impl<'a> DraftRepository<'a> {
                         .map(|id| id.as_str().to_owned()),
                     to_millis(draft.updated_at),
                     reservation_for(draft),
+                    draft.forwarded_by,
                 ],
             )?;
             if changed == 0 {
@@ -143,9 +145,9 @@ impl<'a> DraftRepository<'a> {
                 "INSERT INTO drafts (account_id, identity_id, kind, in_reply_to_message_id,
                                      thread_id, subject, body_text, body_html, state, uid,
                                      uid_validity, mod_seq, remote_id, created_at, updated_at,
-                                     rfc_message_id)
+                                     rfc_message_id, forwarded_by)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                         ?16)",
+                         ?16, ?17)",
                 params![
                     account_id,
                     optional_identity(draft.identity_id),
@@ -170,6 +172,7 @@ impl<'a> DraftRepository<'a> {
                     to_millis(draft.created_at),
                     to_millis(draft.updated_at),
                     reservation_for(draft),
+                    draft.forwarded_by,
                 ],
             )?;
             draft.id = DraftId::new(transaction.last_insert_rowid());
@@ -985,6 +988,7 @@ fn read_draft(row: &Row<'_>) -> rusqlite::Result<Draft> {
             remote_id: row.get::<_, Option<String>>(13)?.map(RemoteId::new),
         },
         rfc_message_id: row.get::<_, Option<String>>(16)?.map(RfcMessageId::new),
+        forwarded_by: row.get::<_, Option<String>>(17)?,
         created_at: from_millis(row.get(14)?),
         updated_at: from_millis(row.get(15)?),
     })
