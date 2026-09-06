@@ -116,10 +116,13 @@ public enum Intercepted {
     public static let cyclePane = "cycle_pane"
     public static let cyclePaneBack = "cycle_pane_back"
     public static let focusSidebar = "focus_sidebar"
+    /// The Settings window — a window on macOS, not the in-window pane GTK
+    /// shows, per ADR 0029.
+    public static let settings = "settings"
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
-        palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar,
+        palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
     ]
 }
 
