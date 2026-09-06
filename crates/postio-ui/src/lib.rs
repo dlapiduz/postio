@@ -19,5 +19,6 @@ pub mod palette;
 pub mod reader;
 pub mod row;
 pub mod selection;
+pub mod settings;
 pub mod sidebar;
 pub mod tokens;
