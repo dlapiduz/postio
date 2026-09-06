@@ -74,15 +74,30 @@ a pane added later that forgets will look native and be wrong.
 The middle density is labelled **"Snug"** on screen and `comfortable` in the
 file, on both platforms. Changing one alone makes the other a lie.
 
-## Q4 — What the platform gives for free
+## Q4 — What the platform gives, and takes back
 
 A SwiftUI `Settings` scene puts **"Settings…" in the application menu with
-`⌘,`** by itself, correctly placed, without `MenuBar` building anything. So the
-macOS half of the menu-placement problem is not a problem;
-[#1207](https://github.com/dlapiduz/postio/issues/1207) is now only about
-`MenuSection`'s shared vocabulary.
+`⌘,`** by itself, correctly placed, without `MenuBar` building anything.
 
-Opening it goes through `NSApp.sendAction(Selector(("showSettingsWindow:")))`
+**That lasts until the mail loads.** `MenuBar.install` runs from `Engine`'s
+`adopt`, once a session opens, and it assigns `NSApp.mainMenu` wholesale — a
+bar whose application menu is hand-built as About, Hide, Quit. So the item the
+platform supplied is replaced by one that does not have it, and `Settings`
+falls back to `MenuSection::Edit`, which is where it does not belong on this
+platform.
+
+Observed the wrong way round, which is worth recording: the menus were
+inspected while the app sat on the Keychain prompt, so they were SwiftUI's
+stock ones, and the first draft of this section concluded the placement was
+free. It is free only before the application has finished starting.
+
+So [#1207](https://github.com/dlapiduz/postio/issues/1207) is not cosmetic
+after all — `⌘,` is discoverable in the menu only until your mail arrives —
+and it is still the same fix: `MenuSection` gains an `App` variant that
+freedesktop folds into Edit and Apple renders as the application menu, rather
+than a hand-maintained list of three command ids in the Swift builder.
+
+Opening the window goes through `NSApp.sendAction(Selector(("showSettingsWindow:")))`
 rather than the `openSettings` environment value. That is not a preference:
 reading `\.openSettings` from a view inside the `WindowGroup` stops the **main**
 window ever completing its first layout, and the app then launches, logs, runs
