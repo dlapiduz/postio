@@ -72,7 +72,7 @@ pub fn install(
 ) {
     let composer = window.composer();
     composer.set_account(account);
-    install_identities(&composer, &database, account);
+    install_identities(window, &composer, &database, account);
     install_signature_default(&composer, window, database.clone(), account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
@@ -154,12 +154,27 @@ fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
 /// tested and shown with an empty model since it was written: every draft
 /// signed with whatever `apply_identity` found on an account of none, which
 /// is nothing.
-fn install_identities(composer: &Composer, database: &Database, account: AccountId) {
+fn install_identities(
+    window: &Window,
+    composer: &Composer,
+    database: &Database,
+    account: AccountId,
+) {
     let Ok(connection) = database.connection() else {
         return;
     };
     match AccountRepository::new(&connection).get(account) {
         Ok(Some(account)) => {
+            // The conversation pane needs the same fact for a different
+            // reason: it marks the user's own messages with an outline
+            // rather than a fill (#1241). One read of the account row
+            // answers both.
+            let addresses: Vec<_> = account
+                .identities
+                .iter()
+                .map(|identity| identity.address.clone())
+                .collect();
+            window.conversation().set_own_addresses(&addresses);
             composer.set_identities(account.identities);
             composer.set_signatures(account.signatures);
         }

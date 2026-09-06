@@ -782,3 +782,80 @@ pub fn a_draft_is_offered_continue_editing_and_no_reply() {
 
     window.close();
 }
+
+/// #1241: a row knows whether the message is one the user sent.
+///
+/// `Design/screens/18-conversation-row-states.png` gives four states a mark
+/// each, and three of them — read, unread, focused — the row could already
+/// tell apart from `Row::seen` and its own selection. `mine` it could not:
+/// nothing in `postio-gtk` knows the account's addresses, so the pane is
+/// told them and folds the comparison once.
+///
+/// The mark itself is drawn into a `snapshot()` and cannot be read back from
+/// a widget tree, so what is asserted is the state the drawing depends on.
+/// `scripts/screens.sh --only conversation` is what puts the pixels beside
+/// `17-conversation-view.png`.
+pub fn a_row_knows_whether_the_message_is_the_users_own() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    window.set_child(Some(&pane.widget()));
+    window.present();
+
+    let from = |id: i64, address: &str| Row {
+        from: Some(EmailAddress::new(Some("Someone"), address)),
+        ..message(id, true)
+    };
+
+    pane.open(vec![
+        from(1, "ada@example.com"),
+        from(2, "me@example.net"),
+        from(3, "ADA@EXAMPLE.COM"),
+    ]);
+    settle_for(std::time::Duration::from_millis(20));
+
+    // Nobody has said which addresses are the user's, so nothing is theirs.
+    assert_eq!(mine_flags(&pane), vec![false, false, false]);
+
+    pane.set_own_addresses(&[EmailAddress::new(None::<String>, "me@example.net")]);
+    settle_for(std::time::Duration::from_millis(20));
+    assert_eq!(
+        mine_flags(&pane),
+        vec![false, true, false],
+        "only the message from the account's own address is the user's"
+    );
+
+    // Addresses are case-insensitive, and a thread quotes them however the
+    // sender typed them.
+    pane.set_own_addresses(&[EmailAddress::new(None::<String>, "Ada@Example.com")]);
+    settle_for(std::time::Duration::from_millis(20));
+    assert_eq!(
+        mine_flags(&pane),
+        vec![true, false, true],
+        "ADA@EXAMPLE.COM and ada@example.com are the same person"
+    );
+
+    // Identities can change while a conversation is open, and a mark that
+    // was right when the pane opened is not one anybody checks again.
+    pane.set_own_addresses(&[]);
+    settle_for(std::time::Duration::from_millis(20));
+    assert_eq!(mine_flags(&pane), vec![false, false, false]);
+
+    window.destroy();
+}
+
+/// Each row's `mine`, in stack order.
+fn mine_flags(pane: &ConversationView) -> Vec<bool> {
+    pane.rows()
+        .iter()
+        .filter_map(|row| pane.header_for(row.id))
+        .map(|header| header.is_mine())
+        .collect()
+}

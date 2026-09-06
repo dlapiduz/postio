@@ -53,6 +53,15 @@ const GAP: f32 = 10.0;
 /// How wide the index column is. Two digits and a little air; a thread with
 /// more than ninety-nine messages simply runs wider here.
 const INDEX_WIDTH: f32 = 16.0;
+
+/// The state mark's side, and the stroke of the outline `mine` wears.
+///
+/// Square, like every other mark in this application, and small enough that
+/// four rows of them read as a column rather than as decoration
+/// (`Design/screens/18-conversation-row-states.png`).
+const MARK: f32 = 7.0;
+/// See [`MARK`].
+const MARK_STROKE: f32 = 1.0;
 /// How wide the sender column is. The canvas' 104px.
 const SENDER_WIDTH: f32 = 104.0;
 /// The shortest a row may be, so a thread reads as a transcript rather than
@@ -132,7 +141,6 @@ struct Laid {
     width: i32,
     tone: usize,
     height: f32,
-    index: pango::Layout,
     sender: pango::Layout,
     line: pango::Layout,
     when: pango::Layout,
@@ -144,7 +152,14 @@ mod imp {
     #[derive(Default)]
     pub struct ThreadRowView {
         pub(super) row: RefCell<Option<Row>>,
+        /// Which message of the thread this is. Nothing draws it since the
+        /// mark took the column (#1241), but the accessible name still says
+        /// "3 of 8" — the one reader for whom the number was never clutter.
         pub(super) index: Cell<u32>,
+        /// Whether this message came from one of the account's own
+        /// identities. The conversation sets it; nothing else in this crate
+        /// knows the user's addresses.
+        pub(super) mine: Cell<bool>,
         pub(super) selected: Cell<bool>,
         pub(super) hovered: Cell<bool>,
         /// Invisible, and the whole reason this widget still follows the
@@ -257,6 +272,25 @@ impl ThreadRowView {
         Self::default()
     }
 
+    /// Whether this message is one the user sent.
+    ///
+    /// Drawn as an outlined mark rather than a filled one — the drawing's
+    /// way of saying "this side of the conversation is yours", which is a
+    /// different question from whether it has been read.
+    pub fn set_mine(&self, mine: bool) {
+        if self.imp().mine.replace(mine) != mine {
+            self.queue_draw();
+        }
+    }
+
+    /// Whether this row is drawn as the user's own message.
+    ///
+    /// The mark is painted into a `snapshot()` and cannot be read back off a
+    /// widget tree, so this is how a test asks what was drawn.
+    pub fn is_mine(&self) -> bool {
+        self.imp().mine.get()
+    }
+
     /// Show `row` as the `index`-th message of the thread.
     pub fn set_row(&self, row: Option<Row>, index: u32) {
         let imp = self.imp();
@@ -361,16 +395,6 @@ impl ThreadRowView {
         };
         let row = self.imp().row.borrow().clone();
 
-        let index = run(
-            &palette.index[tone],
-            &match self.imp().index.get() {
-                0 => String::new(),
-                n => n.to_string(),
-            },
-        );
-        index.set_alignment(pango::Alignment::Right);
-        index.set_width((INDEX_WIDTH * pango::SCALE as f32) as i32);
-
         let sender = run(
             &palette.sender[tone],
             &row.as_ref().map(sender_name).unwrap_or_default(),
@@ -405,7 +429,7 @@ impl ThreadRowView {
         line.set_ellipsize(pango::EllipsizeMode::End);
         line.set_width((column * pango::SCALE as f32) as i32);
 
-        let tallest = [&index, &sender, &line, &when]
+        let tallest = [&sender, &line, &when]
             .iter()
             .map(|layout| layout.pixel_size().1 as f32)
             .fold(0.0, f32::max);
@@ -415,7 +439,6 @@ impl ThreadRowView {
             width,
             tone,
             height,
-            index,
             sender,
             line,
             when,
@@ -464,7 +487,31 @@ impl ThreadRowView {
 
         let tone = laid.tone;
         let mut x = INSET_LEFT;
-        text(&laid.index, &palette.index[tone], x);
+
+        // The state mark, where the message's number used to be
+        // (`Design/screens/18-conversation-row-states.png`). Unread is the
+        // accent fill; read and focused share the dim one, because what
+        // tells a focused row apart is the tint and the edge behind it, not
+        // a third colour of mark. `mine` is an outline: the user's own
+        // message is not a state of having-been-read at all, and filling it
+        // would put it on the same axis as the other three.
+        // `tone` already encodes read/unread and selected, and `palette.index`
+        // is the four inks that column has always had — so the mark inherits
+        // the accent-for-unread it needs without a second colour table.
+        let ink = &palette.index[tone];
+        let mark_y = ((height - MARK) / 2.0).max(0.0);
+        let mark_x = x + (INDEX_WIDTH - MARK) / 2.0;
+        if imp.mine.get() {
+            // Four thin rectangles rather than a stroked path: this widget
+            // draws colours into a snapshot and has no cairo context.
+            let s = MARK_STROKE;
+            snapshot.append_color(&ink.color, &rect(mark_x, mark_y, MARK, s));
+            snapshot.append_color(&ink.color, &rect(mark_x, mark_y + MARK - s, MARK, s));
+            snapshot.append_color(&ink.color, &rect(mark_x, mark_y, s, MARK));
+            snapshot.append_color(&ink.color, &rect(mark_x + MARK - s, mark_y, s, MARK));
+        } else {
+            snapshot.append_color(&ink.color, &rect(mark_x, mark_y, MARK, MARK));
+        }
         x += INDEX_WIDTH + GAP;
         text(&laid.sender, &palette.sender[tone], x);
         x += SENDER_WIDTH + GAP;

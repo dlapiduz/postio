@@ -617,6 +617,11 @@ mod imp {
         /// `ActionBar` runs its handler list and the list was empty. Found
         /// while giving the lone message's own `Archive` a path (#1173).
         pub(super) on_command: RefCell<Vec<super::CommandHandler>>,
+        /// The account's own addresses, folded, so a row can say whether the
+        /// message is one the user sent (#1241). Nothing else in this crate
+        /// knows them; `postio-app` hands them over from the same account
+        /// row the composer's identity picker is built from.
+        pub(super) own_addresses: RefCell<Vec<String>>,
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.
         pub(super) scroller: gtk::ScrolledWindow,
@@ -708,6 +713,7 @@ mod imp {
                 dwell_delay: Cell::new(crate::list_view::DWELL_TO_READ),
                 dividers: RefCell::new(Vec::new()),
                 on_command: RefCell::new(Vec::new()),
+                own_addresses: RefCell::new(Vec::new()),
             }
         }
     }
@@ -1387,6 +1393,7 @@ impl ConversationView {
     fn build_entry(&self, row: &Row, index: u32, alone: bool) -> imp::Entry {
         let header = crate::thread_row::ThreadRowView::new();
         header.set_row(Some(row.clone()), index);
+        header.set_mine(self.is_mine(row));
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.set_visible(false);
@@ -1479,6 +1486,52 @@ impl ConversationView {
         for handler in self.imp().on_command.borrow().iter() {
             handler(command.clone());
         }
+    }
+
+    /// The addresses this account sends as.
+    ///
+    /// What lets a row draw the drawing's `mine` mark — an outlined square
+    /// rather than a filled one, for the user's own side of the
+    /// conversation. Folded once here rather than per row per redraw.
+    ///
+    /// Re-stating it redraws the rows: identities can change while a
+    /// conversation is open, and a mark that was right when the pane opened
+    /// is not a mark anybody checks again.
+    pub fn set_own_addresses(&self, addresses: &[postio_model::EmailAddress]) {
+        let folded: Vec<String> = addresses
+            .iter()
+            .map(|address| address.address.to_lowercase())
+            .collect();
+        if *self.imp().own_addresses.borrow() == folded {
+            return;
+        }
+        *self.imp().own_addresses.borrow_mut() = folded;
+        for entry in self.imp().entries.borrow().iter() {
+            entry.header.set_mine(self.is_mine(&entry.row));
+        }
+    }
+
+    /// The collapsed header drawn for `message`, if the stack holds it.
+    ///
+    /// The same shape as `reader_for`, and for the same reason: what a row
+    /// draws is a fact about one entry, and the pane is what knows which
+    /// entry that is.
+    pub fn header_for(&self, message: MessageId) -> Option<crate::thread_row::ThreadRowView> {
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.message == message)
+            .map(|entry| entry.header.clone())
+    }
+
+    /// Whether `row` came from one of the account's own addresses.
+    fn is_mine(&self, row: &Row) -> bool {
+        let own = self.imp().own_addresses.borrow();
+        row.from.as_ref().is_some_and(|from| {
+            let from = from.address.to_lowercase();
+            own.contains(&from)
+        })
     }
 
     /// Who to ask to run a command one of this pane's bars carries.
