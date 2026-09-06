@@ -22,12 +22,23 @@ public enum AccountRow {
         account.isDefault ? "default" : nil
     }
 
+    /// Whether this account needs somebody to do something about it.
+    ///
+    /// An expired token is the case the canvas draws: the account is there,
+    /// the mail is there, and nothing will arrive until somebody signs in
+    /// again. Read off the facts the boundary already words rather than
+    /// re-derived, so "expired" means the same thing in both frontends.
+    public static func needsAttention(_ account: AccountFfi) -> Bool {
+        account.facts.contains { fact in
+            let fact = fact.lowercased()
+            return fact.contains("expired") || fact.contains("reconnect")
+        }
+    }
+
     /// What the pane says when there are no accounts.
     ///
-    /// Canvas 3d: never a shrug. On macOS this is also the ordinary case, so
-    /// it names the way in that exists rather than pointing at an Add button
-    /// this build does not have yet (#649).
+    /// Canvas 3d: never a shrug — and now it can point at the button that
+    /// does it, which is what changed with #1279.
     public static let emptyMessage =
-        "No accounts yet. Adding one from here is not built on macOS; "
-        + "`cargo run -p postio-session --bin postio-provision` sets one up."
+        "No accounts yet. Add one with the + button below."
 }
