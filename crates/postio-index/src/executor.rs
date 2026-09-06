@@ -49,6 +49,37 @@ const CANDIDATE_POOL_MIN: u32 = 200;
 /// stops being worth trying.
 const RANK_BY_RELEVANCE_LIMIT: u64 = 2_000;
 
+/// Past how many matches the probed shape becomes the cheaper one.
+///
+/// **Ordering and join form are separate decisions, and conflating them was a
+/// bug.** Past [`RANK_BY_RELEVANCE_LIMIT`] a match is too broad to rank, so it
+/// orders by recency — but that says nothing about which side should drive the
+/// join, and until this constant existed the same threshold decided both.
+///
+/// The probed shape walks `messages` newest-first and asks each row "did you
+/// match?", so its cost is set by how *recent* the matches are, not how many
+/// there are. That is fast for a word in most of the mailbox and slow for one
+/// scattered through old mail — and "too broad to rank" catches both.
+///
+/// Measured against a real 82,132-message store, `LIMIT 100`, 16 MiB cache:
+///
+/// ```text
+/// term           hits    probed    driven by the match
+/// invoice       3,843     972ms                  142ms
+/// meeting       3,646     511ms                  119ms
+/// unsubscribe   8,137     167ms                  182ms
+/// the          10,000+     74ms                1,257ms
+/// ```
+///
+/// The two shapes cross over near 8,000, and the band between 2,000 and there
+/// was taking the wrong one — `invoice` at seven times the cost of the
+/// alternative. Above it the probe is worth an order of magnitude, which is
+/// why the answer is a second threshold rather than deleting the shape.
+///
+/// The count saturates at `TOTAL_HITS_CAP` (10,000), so a term in half the
+/// mailbox reports 10,000 and lands here, which is where it belongs.
+const PROBED_FORM_LIMIT: u64 = 8_000;
+
 /// [`CANDIDATE_POOL_MULTIPLIER`], for a recency-ordered fetch. See the
 /// comment in [`search`] on `pool_size`.
 const RECENCY_POOL_MULTIPLIER: u32 = 2;
@@ -139,7 +170,7 @@ pub fn search(
             .saturating_mul(RECENCY_POOL_MULTIPLIER)
             .max(RECENCY_POOL_MIN)
     };
-    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance)?;
+    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits)?;
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
@@ -671,8 +702,8 @@ impl Plan {
     /// here: `messages` first, driven by its own `(account_id, received_at)`
     /// index, with `messages_fts` tested one row at a time as a cheap
     /// point lookup rather than scanned.
-    fn fetch_form(&self, rank_by_relevance: bool) -> Form {
-        if rank_by_relevance {
+    fn fetch_form(&self, rank_by_relevance: bool, total_hits: u64) -> Form {
+        if rank_by_relevance || total_hits <= PROBED_FORM_LIMIT {
             Form::Driven
         } else {
             Form::Probed
@@ -795,8 +826,9 @@ impl Plan {
         connection: &Connection,
         pool_size: u32,
         rank_by_relevance: bool,
+        total_hits: u64,
     ) -> Result<Vec<Candidate>> {
-        let scored = self.fetch_candidates(connection, pool_size, rank_by_relevance)?;
+        let scored = self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits)?;
         self.hydrate(connection, &scored)
     }
 
@@ -815,8 +847,9 @@ impl Plan {
         connection: &Connection,
         pool_size: u32,
         rank_by_relevance: bool,
+        total_hits: u64,
     ) -> Result<Vec<(i64, f64)>> {
-        let form = self.fetch_form(rank_by_relevance);
+        let form = self.fetch_form(rank_by_relevance, total_hits);
         // The row's own score on the driven path: without a `GROUP BY` each
         // arm of the union contributes its own row, so a message that matched
         // in both is ordered by its better half and summed below. That is a
@@ -1219,6 +1252,58 @@ mod tests {
 
     fn at(days_ago: i64) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap() - chrono::Duration::days(days_ago)
+    }
+
+    /// A plan with a free-text match, which is the only case the form matters
+    /// for -- without one there is nothing to drive the join from.
+    fn matching_plan() -> Plan {
+        Plan {
+            conditions: Vec::new(),
+            params: Vec::new(),
+            account: AccountScope::Unified,
+            has_match: true,
+            match_param: Some(Value::Text("invoice".to_owned())),
+        }
+    }
+
+    #[test]
+    fn the_join_form_follows_the_match_size_not_the_ordering() {
+        let plan = matching_plan();
+
+        // Narrow enough to rank: driven by the match, ordered by bm25.
+        assert_eq!(plan.fetch_form(true, 500), Form::Driven);
+
+        // Too broad to rank, so it orders by recency -- and *used to* switch
+        // the join form on the same threshold. That is the bug: ordering and
+        // join form are separate questions. Driving from `messages` and asking
+        // each row "did you match?" costs whatever it takes to walk back to
+        // the matches, so a term scattered through old mail scanned deep.
+        // Measured on a real store, `invoice` at 3,843 hits took 972ms probed
+        // against 142ms driven.
+        assert_eq!(plan.fetch_form(false, 3_843), Form::Driven);
+        assert_eq!(plan.fetch_form(false, PROBED_FORM_LIMIT), Form::Driven);
+
+        // Past the crossover the probe earns its place, and by an order of
+        // magnitude: a word in most of the mailbox fills `LIMIT` after a
+        // handful of rows, where driving walks every posting. `the` at the
+        // 10,000 cap took 74ms probed against 1.26s driven.
+        assert_eq!(plan.fetch_form(false, PROBED_FORM_LIMIT + 1), Form::Probed);
+        assert_eq!(plan.fetch_form(false, TOTAL_HITS_CAP), Form::Probed);
+    }
+
+    #[test]
+    fn ranking_by_relevance_always_drives_from_the_match() {
+        // Whatever the count says. If a match is rankable at all it is narrow
+        // enough that walking the postings is the cheap path, and the probed
+        // shape cannot carry `bm25` scores in the first place.
+        let plan = matching_plan();
+        for hits in [0, 1, RANK_BY_RELEVANCE_LIMIT, TOTAL_HITS_CAP] {
+            assert_eq!(
+                plan.fetch_form(true, hits),
+                Form::Driven,
+                "relevance ranking must drive from the match at {hits} hits"
+            );
+        }
     }
 
     #[test]
