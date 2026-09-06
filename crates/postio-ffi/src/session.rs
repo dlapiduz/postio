@@ -78,7 +78,7 @@ pub struct SessionOptions {
     #[cfg(feature = "testing")]
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
     #[cfg(feature = "testing")]
-    config_text: Option<String>,
+    config: ConfigSource,
 }
 
 impl SessionOptions {
@@ -95,7 +95,7 @@ impl SessionOptions {
             #[cfg(feature = "testing")]
             seeded_blobs: None,
             #[cfg(feature = "testing")]
-            config_text: None,
+            config: ConfigSource::Installed,
         }
     }
 
@@ -119,11 +119,34 @@ impl SessionOptions {
         self
     }
 
+    /// Read this installation's real `config.toml`, whatever it says.
+    ///
+    /// The escape hatch for the rare test that is *about* the installed file.
+    /// It exists so that reading it is a sentence somebody wrote on purpose:
+    /// before #1219 it was the default, and every in-memory session did it
+    /// without saying so or meaning to.
+    ///
+    /// Anything asserting on configured behaviour wants
+    /// [`with_config_for_test`](Self::with_config_for_test) instead -- a test
+    /// that depends on the machine it runs on has no result, only a mood.
+    #[cfg(feature = "testing")]
+    pub fn with_installed_config_for_test(mut self) -> Self {
+        self.config = ConfigSource::Installed;
+        self
+    }
+
     /// A session over a store that exists only in memory.
+    ///
+    /// Configured by an **empty document**, not by whatever `config.toml` the
+    /// machine has. A test that meant the real file says so with
+    /// [`with_installed_config_for_test`](Self::with_installed_config_for_test);
+    /// every other test gets the built-in defaults wherever it runs, which is
+    /// the only way its result means anything (#1219).
     #[cfg(feature = "testing")]
     pub fn in_memory() -> Self {
         Self {
             in_memory: true,
+            config: ConfigSource::Document(String::new()),
             ..Self::at_default_path()
         }
     }
@@ -161,9 +184,13 @@ impl SessionOptions {
     ///
     /// For tests. Reading the developer's own config would make a rebinding
     /// on their machine fail a test on everyone else's.
+    ///
+    /// Since #1219 this is only needed to supply *content*: an in-memory
+    /// session already ignores the installed file, so a test that wants the
+    /// built-in defaults need not pass `""` to get them.
     #[cfg(feature = "testing")]
     pub fn with_config_for_test(mut self, text: &str) -> Self {
-        self.config_text = Some(text.to_owned());
+        self.config = ConfigSource::Document(text.to_owned());
         self
     }
 
@@ -192,66 +219,68 @@ impl SessionOptions {
     }
 }
 
-/// This installation's `[keys]`, or the built-in defaults.
+/// Where a session's configuration comes from.
+///
+/// Explicit because the absence of a document used to mean "read the
+/// developer's own `config.toml`", and `SessionOptions::in_memory()` left it
+/// absent (#1219). Every test that opened a session inherited whatever was on
+/// the machine running it: green on CI, which has no such file, and red on a
+/// workstation according to somebody's preferences. `[ui]` is where it was
+/// caught; `[keys]` is where it would have been worse, since one rebinding
+/// silently changes what every keyboard test resolves.
+///
+/// There is no variant meaning "whatever turns up". A session says which.
+#[derive(Debug, Clone)]
+enum ConfigSource {
+    /// Exactly this document. An empty one is the built-in defaults.
+    Document(String),
+    /// Whatever `config.toml` this installation has, or the defaults if there
+    /// is none. What a shipping application wants, and what a test gets only
+    /// by asking for it by name.
+    Installed,
+}
+
+/// This session's configuration, whole.
+///
+/// One function and one read where there were three of each -- `[keys]`,
+/// `[sync]` and `[ui]` were three copies differing only in which field they
+/// plucked, so a real session opened and parsed `config.toml` three times, and
+/// a fix to one of them was a fix to one of them (#1219).
 ///
 /// A config that will not parse is a reason to use the defaults, not a reason
 /// the application cannot open: the store and the mail are not downstream of
 /// `[keys]`, and refusing to start over a mistyped binding would be a mail
 /// client held hostage by its own preferences file.
-fn load_key_bindings(text: Option<&str>) -> postio_config::keys::KeyBindings {
-    let config = match text {
-        Some(text) => postio_config::Config::from_toml_str(text).ok(),
-        None => postio_config::Config::load().ok(),
+fn load_config(source: &ConfigSource) -> postio_config::Config {
+    let parsed = match source {
+        ConfigSource::Document(text) => postio_config::Config::from_toml_str(text).ok(),
+        ConfigSource::Installed => postio_config::Config::load().ok(),
     };
-    match config {
-        Some(config) => config.keys,
-        None => {
-            tracing::warn!("using the built-in key bindings: config.toml is absent or unreadable");
-            Default::default()
+    parsed.unwrap_or_else(|| {
+        match source {
+            ConfigSource::Installed => tracing::warn!(
+                "using the built-in configuration: config.toml is absent or unreadable"
+            ),
+            ConfigSource::Document(_) => tracing::warn!(
+                "using the built-in configuration: the given document will not parse"
+            ),
         }
-    }
+        Default::default()
+    })
 }
 
-/// This installation's `[sync]`, or the built-in defaults.
+/// The source `options` asks for.
 ///
-/// The same shape as [`load_key_bindings`], and for the same reason: a
-/// config that will not parse is a reason to use the defaults, not a reason
-/// the session cannot open. `postio-app::open_with` reads `[sync]` this way
-/// for the GTK frontend (`notifications::config_at`); this is the
-/// counterpart for every `Wiring` this crate builds, which used to read
-/// nothing at all and so started every engine on `BackfillPolicy::default()`
-/// and `WatchPolicy::default()` regardless of what was on disk (#1014).
-fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
-    let config = match text {
-        Some(text) => postio_config::Config::from_toml_str(text).ok(),
-        None => postio_config::Config::load().ok(),
-    };
-    match config {
-        Some(config) => config.sync,
-        None => {
-            tracing::warn!("using the built-in sync policy: config.toml is absent or unreadable");
-            Default::default()
-        }
-    }
+/// Without the `testing` feature there is nothing to ask: a shipping session
+/// reads the installed file, and there is no way to hand it a document.
+#[cfg(feature = "testing")]
+fn config_source(options: &SessionOptions) -> ConfigSource {
+    options.config.clone()
 }
 
-/// The `[ui]` table, for the frontend that has to draw by it.
-///
-/// Same shape as [`load_sync_config`] beside it, and the same fallback: a
-/// missing or unreadable file is the built-in defaults, said once in the log
-/// rather than guessed at silently by whatever asks next.
-fn load_ui_config(text: Option<&str>) -> postio_config::ui::UiConfig {
-    let config = match text {
-        Some(text) => postio_config::Config::from_toml_str(text).ok(),
-        None => postio_config::Config::load().ok(),
-    };
-    match config {
-        Some(config) => config.ui,
-        None => {
-            tracing::warn!("using the built-in appearance: config.toml is absent or unreadable");
-            Default::default()
-        }
-    }
+#[cfg(not(feature = "testing"))]
+fn config_source(_options: &SessionOptions) -> ConfigSource {
+    ConfigSource::Installed
 }
 
 /// The resolver these bindings make, for the running platform.
@@ -820,6 +849,10 @@ impl Session {
     pub fn open(options: SessionOptions) -> Result<Arc<Self>, SessionError> {
         let (sink, events) = event_channel();
 
+        // Read before anything moves out of `options`, and once: both paths
+        // below build the same configuration from it.
+        let source = config_source(&options);
+
         let (runtime, commands, owned_bridge) = match options.bridge {
             Some((runtime, commands)) => (runtime, commands, None),
             None => {
@@ -878,15 +911,16 @@ impl Session {
             // in-memory session still needs no Secret Service, no Keychain and
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
-            let sync_config = load_sync_config(options.config_text.as_deref());
+            let config = load_config(&source);
+            let sync_config = config.sync;
             let wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
-            let keys = load_key_bindings(options.config_text.as_deref());
+            let keys = config.keys;
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
-                ui: load_ui_config(options.config_text.as_deref()),
+                ui: config.ui,
                 keys,
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
@@ -931,20 +965,10 @@ impl Session {
         let (database, blobs) = postio_session::open_store_at(path, &key)
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
-        #[cfg(feature = "testing")]
-        let keys = load_key_bindings(options.config_text.as_deref());
-        #[cfg(not(feature = "testing"))]
-        let keys = load_key_bindings(None);
-
-        #[cfg(feature = "testing")]
-        let sync_config = load_sync_config(options.config_text.as_deref());
-        #[cfg(not(feature = "testing"))]
-        let sync_config = load_sync_config(None);
-
-        #[cfg(feature = "testing")]
-        let ui_config = load_ui_config(options.config_text.as_deref());
-        #[cfg(not(feature = "testing"))]
-        let ui_config = load_ui_config(None);
+        let config = load_config(&source);
+        let keys = config.keys;
+        let sync_config = config.sync;
+        let ui_config = config.ui;
 
         let wiring = Wiring::new(database, blobs, runtime, sink, commands)
             .with_secrets(secrets)

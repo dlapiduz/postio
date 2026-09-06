@@ -260,14 +260,14 @@ fn the_session_reports_the_appearance_it_was_opened_with() {
 
 #[test]
 fn a_session_with_no_ui_table_reports_the_built_in_defaults() {
-    // An *empty document*, not an absent one. `SessionOptions::in_memory()`
-    // with no config text falls through to `Config::load()`, which reads the
-    // developer's own `config.toml` -- so written the obvious way this
-    // asserts whatever density the person running it happens to prefer, and
-    // it failed on exactly that. See the isolation issue filed from here.
-    let session =
-        postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory().with_config_for_test(""))
-            .expect("a session with an empty config");
+    // Plain `in_memory()`. It used to need an explicit empty document, because
+    // an absent one fell through to `Config::load()` and this asserted whatever
+    // density the person running it happened to prefer -- it failed on exactly
+    // that, and #1219 came from here. An in-memory session now ignores the
+    // installed file by construction, and `session_config_isolation.rs` is what
+    // holds that.
+    let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory())
+        .expect("an in-memory session");
     assert_eq!(session.appearance().density, DensityFfi::Airy);
     session.shutdown();
 }
