@@ -31,6 +31,20 @@ fn rule(name: &str, query: &str) -> Rule {
     .expect("a rule")
 }
 
+/// A rule whose query is header-answerable and whose actions are not.
+fn forwarding(name: &str, query: &str, actions: &[&str]) -> Rule {
+    Rule::parse(
+        &RuleSource {
+            name: name.to_owned(),
+            query: Some(query.to_owned()),
+            actions: actions.iter().map(|action| (*action).to_owned()).collect(),
+            ..RuleSource::default()
+        },
+        |_| None,
+    )
+    .expect("a rule")
+}
+
 fn disabled(name: &str, query: &str) -> Rule {
     Rule {
         enabled: false,
@@ -215,5 +229,93 @@ fn a_stop_on_a_rule_that_did_not_match_is_not_a_stop() {
         vec!["ada"],
         "`stop` is a property of a rule that *fired*: a rule the message did \
          not select has decided nothing about the rules under it"
+    );
+}
+
+/// A rule stages where it can be *carried out*, not only where it can be
+/// answered (ADR 0030).
+///
+/// `forward:` is the first action with a requirement of its own: it sends the
+/// message on, so it needs the message. A rule carrying one is `OnBody`
+/// however header-answerable its query reads — otherwise the arrival pass,
+/// which deliberately holds no body (ADR 0016), would forward headers with
+/// nothing under them.
+#[test]
+fn a_rule_stages_where_its_actions_can_run_as_well_as_its_query() {
+    let rules = [
+        rule("headers", "from:lists@example.com"),
+        forwarding(
+            "forwards",
+            "from:lists@example.com",
+            &["forward:ada@example.com"],
+        ),
+        forwarding(
+            "already-on-body",
+            "body:invoice",
+            &["forward:ada@example.com"],
+        ),
+        forwarding("moves", "from:lists@example.com", &["move:Lists"]),
+    ];
+    let set = RuleSet::compile(&rules, today());
+
+    let stages: Vec<(&str, Stage)> = set
+        .rules()
+        .iter()
+        .map(|staged| (staged.rule.name.as_str(), staged.stage))
+        .collect();
+
+    assert_eq!(
+        stages,
+        vec![
+            ("headers", Stage::OnArrival),
+            // The query alone would have answered on arrival. The action
+            // could not have run there.
+            ("forwards", Stage::OnBody),
+            // Both halves want the body point, which is the sanity check
+            // that the two requirements compose rather than fight.
+            ("already-on-body", Stage::OnBody),
+            // Every other action runs on the row that is already there, so
+            // nothing about them moves a rule.
+            ("moves", Stage::OnArrival),
+        ],
+        "the stage is the later of what the query needs and what the actions \
+         need (ADR 0030)"
+    );
+}
+
+/// A rule stages as a whole; its actions never split across the two points
+/// (ADR 0030 Q2).
+///
+/// The tempting shape is to run `move:` on arrival and hold `forward:` back.
+/// It breaks two ways: `stop` would mean two different things for one rule,
+/// and the forward would fire from a folder the same rule had already moved
+/// the message out of.
+#[test]
+fn a_forwarding_rules_other_actions_move_to_the_body_point_with_it() {
+    let rules = [forwarding(
+        "digest",
+        "from:ada",
+        &["move:Lists", "forward:babbage@example.com", "mark-read"],
+    )];
+    let set = RuleSet::compile(&rules, today());
+    let message = a_message();
+
+    assert!(
+        set.matching(Stage::OnArrival, &Subject::new(&message))
+            .is_empty(),
+        "part of a forwarding rule ran on arrival, so its `move:` would file \
+         the message before the forward had read it"
+    );
+
+    let subject = Subject::new(&message).with_body(Some("anything"));
+    let matched = set.matching(Stage::OnBody, &subject);
+    let actions: Vec<&postio_model::rule::Action> = matched
+        .iter()
+        .flat_map(|rule| rule.actions.iter())
+        .collect();
+    assert_eq!(
+        actions.len(),
+        3,
+        "a rule is carried out whole, in one transaction: {actions:?}"
     );
 }

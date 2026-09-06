@@ -150,6 +150,31 @@ impl Action {
             }),
         }
     }
+
+    /// Whether this action needs the message's body to be carried out.
+    ///
+    /// ADR 0030: a rule's stage is the later of what its query needs and what
+    /// its actions need, and this is the second half. `forward:` sends the
+    /// message on, so it needs the message — every other action mutates the
+    /// row that is already there and needs nothing the arrival pass has not
+    /// got.
+    ///
+    /// A match over the vocabulary rather than a test on one variant, so the
+    /// next action with a requirement of its own is an arm here and not a
+    /// rediscovery of the ADR.
+    pub fn needs_body_to_run(&self) -> bool {
+        match self {
+            Action::Forward(_) => true,
+            Action::Move(_)
+            | Action::Label(_)
+            | Action::Flag
+            | Action::Unflag
+            | Action::MarkRead
+            | Action::MarkUnread
+            | Action::Archive
+            | Action::Trash => false,
+        }
+    }
 }
 
 /// One `[[rules]]` entry as text, however the caller read it.

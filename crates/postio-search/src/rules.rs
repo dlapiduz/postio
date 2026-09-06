@@ -10,9 +10,18 @@
 //! files mail in the wrong place.
 //!
 //! So each rule declares nothing and the engine derives what it needs.
-//! [`Stage`] is that derivation, computed from the fields a query actually
-//! uses by [`needs_body`](crate::needs_body), and a rule is evaluated at
-//! exactly one of the two points.
+//! [`Stage`] is that derivation, and a rule is evaluated at exactly one of
+//! the two points.
+//!
+//! It is derived from *both* halves of a rule (ADR 0030): the fields the
+//! query uses, by [`needs_body`](crate::needs_body), and what the actions
+//! need to be carried out, by
+//! [`Action::needs_body_to_run`](postio_model::rule::Action::needs_body_to_run).
+//! `forward:` is the first action with a requirement of its own — it sends
+//! the message on, so it needs the message — and a rule carrying one is
+//! `OnBody` however header-answerable its query reads. The stage is the later
+//! of the two, and it is the rule's as a whole: the actions never split
+//! across the points.
 //!
 //! # Exactly once, by construction
 //!
@@ -35,11 +44,27 @@
 use chrono::NaiveDate;
 use postio_model::rule::Rule;
 
+use postio_model::rule::Action;
+
 use crate::matcher::{Subject, matches, needs_body};
 use crate::query::ParsedQuery;
 
+/// The point a requirement puts a rule at: the body point if it needs a body,
+/// the arrival point if it does not.
+fn stage_for(needs_body: bool) -> Stage {
+    if needs_body {
+        Stage::OnBody
+    } else {
+        Stage::OnArrival
+    }
+}
+
 /// Which of the two evaluation points a rule belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Ordered, because that is how a stage is derived: ADR 0030 makes it the
+/// *later* of what the query needs and what the actions need, and `OnArrival`
+/// is the earlier of the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     /// Answerable from the headers alone, so it runs in the sync pass that
     /// inserts the message — before the user ever sees it in the Inbox.
@@ -90,11 +115,14 @@ impl RuleSet {
             .filter(|rule| rule.enabled)
             .map(|rule| {
                 let query = crate::parse(&rule.query, today);
-                let stage = if needs_body(&query) {
-                    Stage::OnBody
-                } else {
-                    Stage::OnArrival
-                };
+                // The later of the two requirements (ADR 0030). A rule stages
+                // as a whole: its actions never split across the two points,
+                // because `stop` would then mean two things for one rule and
+                // a `forward:` would fire from a folder the same rule's
+                // `move:` had already emptied.
+                let stage = stage_for(needs_body(&query)).max(stage_for(
+                    rule.actions.iter().any(Action::needs_body_to_run),
+                ));
                 Staged {
                     rule: rule.clone(),
                     stage,
