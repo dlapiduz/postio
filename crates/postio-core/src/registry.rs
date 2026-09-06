@@ -1270,9 +1270,33 @@ pub fn binding_conflict(
     all().find(|other| {
         other.id != command
             && mine.contexts.intersects(other.contexts)
-            && bindings.binding_on(other.id.as_str(), platform).as_deref()
-                == Some(expanded.as_str())
+            && binding_in_force(other, bindings, platform) == expanded
     })
+}
+
+/// The key a command actually answers to: the user's override if `[keys]` set
+/// one, otherwise the registry's own default.
+///
+/// It has to be built here rather than asked of `KeyBindings`, and that is the
+/// whole of #1227. `postio-config` cannot see this registry — the dependency
+/// runs the other way, for `expand_mod` — so its `binding_on` could only
+/// answer from a short table of its own, which listed 23 of the 79 commands
+/// here. Every one of the other 56 read as unbound: `delete`, `send`,
+/// `mark_unread` and, the one that surfaced it, `flag`.
+///
+/// The registry is the single source of truth the module doc has always
+/// claimed. Asking it directly is what makes that true.
+fn binding_in_force(
+    spec: &CommandSpec,
+    bindings: &postio_config::KeyBindings,
+    platform: Platform,
+) -> String {
+    let raw = bindings
+        .overrides()
+        .get(spec.id.as_str())
+        .map(String::as_str)
+        .unwrap_or(spec.default_binding);
+    postio_config::keys::expand_mod(raw, platform)
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,12 +1603,20 @@ mod tests {
 
     #[test]
     fn the_same_binding_in_disjoint_contexts_is_not_a_conflict() {
-        // Bold is Composer-only; NextMessage never reaches there, so reusing
-        // Bold's own binding is not shadowing anything.
+        // Italic is Composer-only; NextMessage never reaches there, so reusing
+        // Italic's own binding is not shadowing anything.
+        //
+        // This used to propose `mod+b` and pass for the wrong reason. `mod+b`
+        // is Bold's default *and* ToggleSidebar's, and ToggleSidebar shares a
+        // context with NextMessage — a real conflict the check could not see
+        // while it asked a table ToggleSidebar was not in (#1227). Reusing a
+        // key across disjoint contexts is deliberate here (`j` is three
+        // commands, `d` is three more), so the case is worth keeping; it just
+        // needs a binding only one command claims.
         let bindings = postio_config::KeyBindings::default();
         let conflict = binding_conflict(
             CommandId::NextMessage,
-            "mod+b",
+            "mod+i",
             &bindings,
             Platform::Freedesktop,
         );
@@ -1601,6 +1633,27 @@ mod tests {
             Platform::Freedesktop,
         );
         assert_eq!(conflict, None);
+    }
+
+    #[test]
+    fn a_command_config_has_no_default_for_still_holds_its_key() {
+        // #1227: this check used to ask `postio-config`'s `DEFAULT_BINDINGS`,
+        // which lists 23 commands out of 79. `Flag` is one of the 56 it never
+        // knew about, so proposing its key read as free -- and the settings
+        // pane let a rebind silently take `s` away from a command that was
+        // using it, with no "Already used by" to stop it.
+        let bindings = postio_config::KeyBindings::default();
+        assert_eq!(
+            binding_conflict(
+                CommandId::NextMessage,
+                "s",
+                &bindings,
+                Platform::Freedesktop
+            )
+            .map(|spec| spec.id),
+            Some(CommandId::Flag),
+            "`s` is Flag's default and Flag shares a context with NextMessage"
+        );
     }
 
     #[test]
