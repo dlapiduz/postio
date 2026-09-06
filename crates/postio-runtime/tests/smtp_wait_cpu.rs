@@ -156,8 +156,69 @@ fn assert_the_clock_can_see_a_burn() {
     );
 }
 
+/// The same measurement with the NetworkManager listener running (#1216).
+///
+/// `#[ignore]`: it needs a system D-Bus and a live NetworkManager, which CI
+/// has neither of. `follow` returns immediately without them, so an
+/// unattended run would report an idle engine and prove nothing — the same
+/// vacuous pass this file's first version had.
+///
+/// Why it exists: every other engine test uses `NetworkSource::Ignored`, so
+/// nothing spawns `network::follow`, and the listener is the only task that
+/// shares the engine's current-thread runtime. While the engine is parked
+/// inside `drain`'s await on a 30 s connect, it is the only thing that *can*
+/// consume that thread — which makes it the last candidate standing for
+/// #1216's burn once the send itself is measured at zero.
+///
+/// Run it by hand during an investigation:
+///
+/// ```text
+/// cargo test -p postio-runtime --test smtp_wait_cpu -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a system D-Bus and a live NetworkManager"]
+fn the_networkmanager_listener_costs_no_cpu_either() {
+    assert_networkmanager_is_really_there();
+    measure_a_waiting_send(NetworkSource::NetworkManager);
+}
+
+/// The listener has something to listen to.
+///
+/// `follow` returns quietly when the bus or the service is absent — which is
+/// correct, and is also indistinguishable from a listener that ran and cost
+/// nothing. This file has already had one green test that measured an engine
+/// doing nothing at all; the same reading twice would be a coincidence worth
+/// refusing to rely on. Reads the property `follow` reads, from the process
+/// that will run it.
+fn assert_networkmanager_is_really_there() {
+    let state = futures_lite_block_on(async {
+        let connection = zbus::Connection::system()
+            .await
+            .expect("a system bus (this case is #[ignore]d because CI has none)");
+        let proxy = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            "org.freedesktop.NetworkManager",
+        )
+        .await
+        .expect("NetworkManager on the bus");
+        proxy
+            .get_property::<u32>("State")
+            .await
+            .expect("NetworkManager's State property")
+    });
+    eprintln!("NetworkManager reports state {state}; the listener has a bus to follow");
+}
+
 #[test]
 fn a_queued_send_to_a_silent_server_costs_no_cpu_while_it_waits() {
+    measure_a_waiting_send(NetworkSource::Ignored);
+}
+
+/// The measurement both cases share: an engine with a send it cannot deliver,
+/// and what it costs to sit there.
+fn measure_a_waiting_send(network: NetworkSource) {
     assert_the_clock_can_see_a_burn();
 
     // Left in, and pointed at the test writer so it is silent unless someone
@@ -257,7 +318,7 @@ fn a_queued_send_to_a_silent_server_costs_no_cpu_while_it_waits() {
         backfill: Default::default(),
         reconnect: Default::default(),
         watch: Default::default(),
-        network: NetworkSource::Ignored,
+        network,
         mailbox_roles: Default::default(),
         clock: Arc::new(SystemClock),
     })
