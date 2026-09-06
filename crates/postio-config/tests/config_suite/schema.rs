@@ -4,10 +4,7 @@
 
 use std::path::Path;
 
-use postio_config::{
-    Config, Density, Theme,
-    keys::{self, KeyBindings},
-};
+use postio_config::{Config, Density, Theme, keys::KeyBindings};
 
 // ---------------------------------------------------------------- defaults --
 
@@ -112,19 +109,25 @@ fn an_unknown_enum_value_is_a_parse_error() {
 // ------------------------------------------------------------------ [keys] --
 
 #[test]
-fn default_bindings_match_the_design_canvas() {
+fn an_untouched_file_binds_nothing_of_its_own() {
+    // The defaults are the command registry's, and this crate cannot see it
+    // (#1227) -- `[keys]` is overrides, and `KeyBindings` says so. What key a
+    // command actually answers to is `postio_core::config::Keymap`, which is
+    // where `reply = "e"` is asserted now.
     let k = KeyBindings::default();
-    assert_eq!(k.binding("reply"), Some("e"));
-    assert_eq!(k.binding("archive"), Some("a"));
-    assert_eq!(k.binding("archive_thread"), Some("A"));
-    assert_eq!(k.binding("undo"), Some("u"));
+    assert_eq!(k.binding("reply"), None);
+    assert_eq!(k.binding("archive"), None);
 }
 
 #[test]
-fn a_key_override_wins_but_other_defaults_survive() {
+fn an_override_is_stored_and_nothing_else_is() {
     let cfg = Config::from_toml_str("[keys]\narchive = \"x\"\n").unwrap();
     assert_eq!(cfg.keys.binding("archive"), Some("x"));
-    assert_eq!(cfg.keys.binding("undo"), Some("u"));
+    assert_eq!(
+        cfg.keys.binding("undo"),
+        None,
+        "undo keeps its registry default, which this crate does not hold"
+    );
     assert_eq!(cfg.keys.overrides().len(), 1, "only the override is stored");
 }
 
@@ -135,11 +138,11 @@ fn bindings_for_unknown_commands_are_kept() {
 }
 
 #[test]
-fn resolved_bindings_merge_defaults_and_overrides() {
+fn the_override_table_holds_exactly_what_the_file_said() {
     let cfg = Config::from_toml_str("[keys]\nreply = \"r\"\n").unwrap();
-    let resolved = cfg.keys.resolved();
-    assert_eq!(resolved.get("reply").map(String::as_str), Some("r"));
-    assert_eq!(resolved.len(), keys::DEFAULT_BINDINGS.len());
+    let overrides = cfg.keys.overrides();
+    assert_eq!(overrides.get("reply").map(String::as_str), Some("r"));
+    assert_eq!(overrides.len(), 1);
 }
 
 // -------------------------------------------------------------- [accounts] --

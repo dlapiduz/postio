@@ -154,12 +154,21 @@ zoom = "ctrl+shift+plus"
 
 #[test]
 fn two_commands_on_one_key_is_a_conflict() {
-    // `a` is archive by default, so rebinding reply onto it collides.
-    let text = "[keys]\nreply = \"a\"\n";
+    // Two `[keys]` entries on one key: a mistake with no principled winner,
+    // and the only collision visible without the command registry.
+    //
+    // It used to be `reply = "a"` alone, against archive's *default*, which
+    // this crate could see only because it kept a 23-command copy of the
+    // defaults — and so was silent for the other 56 (#1227). An override
+    // landing on a default's key is not an error at all now: the override
+    // wins, deliberately, and the displaced command is reported by
+    // `Keymap::resolve_on`. See
+    // `core_suite::config::an_override_that_takes_a_default_key_is_reported`.
+    let text = "[keys]\nreply = \"a\"\narchive_thread = \"a\"\n";
     let checked = check(text);
     let err = checked.validation.first_error().expect("a conflict");
-    assert_eq!(err.line, 2);
-    assert!(err.message.contains("archive"), "{}", err.message);
+    assert_eq!(err.line, 3);
+    assert!(err.message.contains("archive_thread"), "{}", err.message);
     assert!(err.message.contains("reply"), "{}", err.message);
 }
 

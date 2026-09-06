@@ -3,6 +3,15 @@
 //! key hints. These tests encode the structural guarantees docs/PRODUCT.md §8 asks for:
 //! every command has an id, a human title and a default binding, so the three
 //! surfaces cannot drift apart.
+//!
+//! This file used to carry `CONFIG_BINDINGS`, a hand-copied 16-entry table
+//! kept "rather than a dependency on `postio-config`, on purpose — the point
+//! of the test is that the two crates agree without one deriving from the
+//! other". Both crates having their own table is what #1227 turned out to be:
+//! the copies drifted to 16, 23 and 79 entries, and nothing failed. The
+//! registry is the only default table now, so there is nothing left to agree
+//! with — what the canvas settled on is asserted against the *resolved*
+//! keymap below, which is the key a finger actually presses.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,39 +21,10 @@ use postio_core::config::Keymap;
 use postio_core::{Command, CommandId, Context, MessageTarget, Recovery, Scope, registry};
 use postio_model::AccountId;
 
-/// The id vocabulary `postio-config`'s `DEFAULT_BINDINGS` already fixed.
-/// `[keys]` in `config.toml` references commands by these strings, so they are
-/// part of the file format: changing one breaks user configuration.
-///
-/// Kept as a literal copy rather than a dependency on `postio-config`, on
-/// purpose — the point of the test is that the two crates agree without one
-/// deriving from the other.
-const CONFIG_BINDINGS: &[(&str, &str)] = &[
-    ("next_message", "j"),
-    ("prev_message", "k"),
-    ("open_message", "Return"),
-    ("back", "Escape"),
-    ("archive", "a"),
-    ("archive_thread", "A"),
-    ("undo", "u"),
-    ("reply", "e"),
-    ("reply_all", "E"),
-    ("forward", "f"),
-    ("compose", "c"),
-    ("search", "/"),
-    ("command_palette", "mod+k"),
-    ("cheat_sheet", "?"),
-    ("settings", "mod+comma"),
-    ("edit_config", "mod+e"),
-];
-
 #[test]
 fn registry_is_enumerable_and_non_empty() {
     let all: Vec<_> = registry::all().collect();
-    assert!(
-        all.len() >= CONFIG_BINDINGS.len(),
-        "the registry must cover at least every command config knows about"
-    );
+    assert!(!all.is_empty(), "the registry must hold commands");
     assert_eq!(all.len(), CommandId::ALL.len());
 }
 
@@ -87,20 +67,6 @@ fn every_command_id_resolves_to_exactly_one_spec() {
 fn command_ids_are_unique() {
     let unique: BTreeSet<&str> = CommandId::ALL.iter().map(|id| id.as_str()).collect();
     assert_eq!(unique.len(), CommandId::ALL.len(), "duplicate command id");
-}
-
-#[test]
-fn ids_and_defaults_match_the_config_crate_vocabulary() {
-    for (id, key) in CONFIG_BINDINGS {
-        let parsed: CommandId = id
-            .parse()
-            .unwrap_or_else(|_| panic!("registry is missing command id `{id}` used by [keys]"));
-        assert_eq!(
-            registry::get(parsed).default_binding,
-            *key,
-            "default binding for `{id}` disagrees with postio-config"
-        );
-    }
 }
 
 #[test]
