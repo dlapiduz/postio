@@ -319,7 +319,7 @@ type CommandHandler = Box<dyn Fn(postio_core::CommandId)>;
 /// #1173: a one-message thread drew both bars, so `Reply` appeared twice
 /// with `e` printed on each. The question it raised — *is a single message a
 /// degenerate conversation with a footer, or its own view with its own bar?*
-/// — is answered by `Design/screens/19-threaded-view-fixes.png`, which draws
+/// — is answered by `Design/screens/19-threaded-view.png`, which draws
 /// one bar at the foot of a single message reading `Reply · Reply all ·
 /// Forward · Archive`, and by `17-conversation-view.png`, which draws the
 /// footer's conversation verbs only on a thread that has a conversation in
@@ -356,26 +356,43 @@ pub const LONE_MESSAGE_ACTIONS: [crate::widgets::Action; 4] = [
     ),
 ];
 
-/// The conversation's own verbs, drawn in the footer.
+/// The thread's own verbs, drawn in the footer.
 ///
 /// Reply, reply-all and forward are per *message* and live inside each entry
-/// ([`MESSAGE_ACTIONS`]); everything else is the conversation's (ADR 0015
-/// Q4). `Reply to conversation` is the same command `e` runs and aims at the
-/// same message — the focused one — so the button and the key cannot
-/// diverge.
-pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 2] = [
-    crate::widgets::Action::new(
-        postio_core::CommandId::Reply,
-        "Reply to conversation",
-        "conversation-footer-reply",
-    )
-    .primary(),
-    crate::widgets::Action::new(
-        postio_core::CommandId::ArchiveThread,
-        "Archive thread",
-        "conversation-footer-archive",
-    ),
-];
+/// ([`MESSAGE_ACTIONS`]); everything else is the thread's (ADR 0015 Q4). So
+/// one verb, and a verb is drawn on the thing it acts on.
+///
+/// **There is no `Reply to conversation` here** (#1173). It ran
+/// `CommandId::Reply` aimed at the *focused* message — the same command and
+/// the same key as the bar drawn on that message — under a label naming a
+/// scope Postio does not have: you reply to a message, never to a thread. A
+/// pinned control drawn a pane away from the message it will answer is the
+/// mistake ADR 0015 Q4 gives as its own reason for making the reply verbs
+/// per-message, *"answering the wrong message of a conversation is a real and
+/// common mistake"*, and it is worse than the bar it duplicated because it
+/// does not show you which message you are about to answer. At n=1 that read
+/// as two identical buttons stacked on each other; at n>1 it is the same
+/// defect with a pane's height between them, which is why it survived three
+/// issues.
+///
+/// Nothing becomes mouse-only or keyboard-only by its going. The pane scrolls
+/// the focused message into view and expands it (ADR 0015 Q4 §Focus), so the
+/// bar drawn on it is on screen wherever focus is, and `e`, the palette and
+/// the message's own menu all still reach reply.
+///
+/// Not [`primary`](crate::widgets::Action::primary): the pane's primary verb
+/// is Reply, and it is drawn on the message. A filled archive button as the
+/// most prominent control in the reading pane inverts that.
+///
+/// `Design/screens/17-conversation-view.png` still draws the footer with a
+/// `Reply to conversation`. The canvas is authority on spacing, colour and
+/// proportion; this is a behaviour call, and the screen as drawn puts two
+/// controls on one command and one key.
+pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::Action::new(
+    postio_core::CommandId::ArchiveThread,
+    "Archive thread",
+    "conversation-footer-archive",
+)];
 
 /// The pane's own header: what conversation this is, and how much of it.
 ///
@@ -450,6 +467,10 @@ impl Header {
             return;
         }
         self.root.set_visible(true);
+        // Nothing to expand in a thread of one: it opens expanded, so the
+        // button would be offered with nothing left to do (#1173). The same
+        // n=1 surface as the footer standing down.
+        self.expand_all.widget().set_visible(rows.len() > 1);
         self.subject.set_label(
             rows.iter()
                 .find_map(|row| row.subject.as_deref())
@@ -500,6 +521,11 @@ impl Header {
         self.subject.label().to_string()
     }
 
+    /// Whether `Expand all` is on offer. Test-facing.
+    pub fn offers_expand_all(&self) -> bool {
+        self.expand_all.widget().is_visible()
+    }
+
     /// Re-cap `Expand all` from the live keymap.
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
         self.expand_all
@@ -537,16 +563,14 @@ mod imp {
         /// it survives scrolling. Nothing else on screen says what you are
         /// reading once the drill-in column's header went (#1004).
         pub(super) header: super::Header,
-        /// `Reply to conversation` and `Archive thread`, pinned below —
-        /// where the conversation's own verbs live, as against the
-        /// per-message ones inside each entry (#1006).
+        /// `Archive thread`, pinned below — where the thread's own verbs
+        /// live, as against the per-message ones inside each entry (#1006).
         pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
         /// Who to ask to run a `CommandId` one of this pane's bars carries.
         ///
-        /// The footer had none, so `Reply to conversation` and `Archive
-        /// thread` were buttons that did nothing when pressed — `ActionBar`
-        /// runs its handler list and the list was empty. Found while giving
-        /// the lone message's own `Archive` a path (#1173).
+        /// The footer had none, so its buttons did nothing when pressed —
+        /// `ActionBar` runs its handler list and the list was empty. Found
+        /// while giving the lone message's own `Archive` a path (#1173).
         pub(super) on_command: RefCell<Vec<super::CommandHandler>>,
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.

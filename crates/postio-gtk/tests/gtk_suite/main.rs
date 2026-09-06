@@ -355,6 +355,14 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_conversation::one_thread_offers_one_reply_however_long_it_is",
+        gtk_conversation::one_thread_offers_one_reply_however_long_it_is as fn(),
+    ),
+    (
+        "gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand",
+        gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
+    ),
+    (
         "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
         gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
     ),
