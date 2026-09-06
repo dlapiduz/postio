@@ -19,8 +19,39 @@ fn a_message_with_images(sender: &str, images: usize) -> (std::sync::Arc<Session
     (session, messages[0])
 }
 
+/// A session over a store holding one message that reads as bulk mail —
+/// nested tables, which is the arrangement reader view exists to reduce.
+fn a_bulk_message(sender: &str) -> (std::sync::Arc<Session>, i64) {
+    let (session, messages) = a_store_with_html(&[(
+        sender,
+        "<table><tr><td><table><tr><td><p>Sale</p>\
+         <img src=\"https://tracker.example/1.png\"></td></tr></table></td></tr></table>",
+    )]);
+    (session, messages[0])
+}
+
 /// A session over a store holding one message per `(sender, images)` pair.
 fn a_store_with(senders: &[(&str, usize)]) -> (std::sync::Arc<Session>, Vec<i64>) {
+    let bodies: Vec<(&str, String)> = senders
+        .iter()
+        .map(|(sender, images)| {
+            (
+                *sender,
+                (0..*images)
+                    .map(|n| format!("<p>hello <img src=\"https://tracker.example/{n}.png\"></p>"))
+                    .collect::<String>(),
+            )
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str)> = bodies
+        .iter()
+        .map(|(sender, html)| (*sender, html.as_str()))
+        .collect();
+    a_store_with_html(&borrowed)
+}
+
+/// As [`a_store_with`], with the body written out.
+fn a_store_with_html(senders: &[(&str, &str)]) -> (std::sync::Arc<Session>, Vec<i64>) {
     let database = test_support::memory();
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
@@ -32,13 +63,11 @@ fn a_store_with(senders: &[(&str, usize)]) -> (std::sync::Arc<Session>, Vec<i64>
         let (account, inbox) = test_support::account_with_inbox(&connection);
         let repository = MessageRepository::new(&connection);
         let mut ids = Vec::new();
-        for (sender, images) in senders {
+        for (sender, html) in senders {
             let mut message = Message::new(account.id, inbox, Utc::now());
             message.from = vec![EmailAddress::new(Some("Notices"), *sender)];
             let id = repository.create(&mut message).expect("a message");
-            let html: String = (0..*images)
-                .map(|n| format!("<p>hello <img src=\"https://tracker.example/{n}.png\"></p>"))
-                .collect();
+            let html = (*html).to_owned();
             repository
                 .set_body(
                     id,
@@ -143,9 +172,31 @@ fn the_document_still_blocks_until_the_frontend_asks_for_allowed() {
     let (session, message) = a_message_with_images("ada@example.com", 2);
     session.allow_sender("ada@example.com".to_owned());
 
-    let blocked = session.reader_document(message, RemoteImagesFfi::Blocked);
+    let blocked = session.reader_document(message, RemoteImagesFfi::Blocked, false);
     assert!(
         !blocked.contains("tracker.example"),
         "asked for blocked, blocked it is"
+    );
+}
+
+#[test]
+fn view_original_leaves_reader_view_for_this_message_and_no_further() {
+    // The one gesture that may leave reader view (canvas 26). Per message and
+    // per view: nothing is remembered, so the next message opens reduced.
+    // Bulk mail, which is what reader view is *for*: nested tables are what
+    // a campaign template does and a person writing mail does not.
+    let (session, message) = a_bulk_message("notices@relay.example.net");
+
+    let reduced = session.reader_document(message, RemoteImagesFfi::Blocked, false);
+    let original = session.reader_document(message, RemoteImagesFfi::Blocked, true);
+
+    assert_ne!(
+        reduced, original,
+        "asking for the original has to actually change what is drawn"
+    );
+    assert_eq!(
+        session.reader_document(message, RemoteImagesFfi::Blocked, false),
+        reduced,
+        "and asking again for the ordinary rendering gets it back"
     );
 }

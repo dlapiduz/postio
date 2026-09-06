@@ -15,6 +15,9 @@ public struct ReaderView: NSViewRepresentable {
     private let session: PostioSession
     private let message: Int64?
     private let remoteImages: RemoteImagesFfi
+    /// Whether to draw what the sender wrote rather than what reader view
+    /// reduces it to.
+    private let original: Bool
     private let onHeight: ((CGFloat) -> Void)?
 
     /// `onHeight` is how a *stacked* reader is drawn: inside a conversation
@@ -25,11 +28,13 @@ public struct ReaderView: NSViewRepresentable {
         session: PostioSession,
         message: Int64?,
         remoteImages: RemoteImagesFfi = .blocked,
+        original: Bool = false,
         onHeight: ((CGFloat) -> Void)? = nil
     ) {
         self.session = session
         self.message = message
         self.remoteImages = remoteImages
+        self.original = original
         self.onHeight = onHeight
     }
 
@@ -62,12 +67,12 @@ public struct ReaderView: NSViewRepresentable {
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel(Pane.reader.label)
-        coordinator.load(into: view, message: message, remote: remoteImages)
+        coordinator.load(into: view, message: message, remote: remoteImages, original: original)
         return view
     }
 
     public func updateNSView(_ view: WKWebView, context: Context) {
-        context.coordinator.load(into: view, message: message, remote: remoteImages)
+        context.coordinator.load(into: view, message: message, remote: remoteImages, original: original)
     }
 
     /// Holds the handlers and remembers what is on screen.
@@ -84,6 +89,7 @@ public struct ReaderView: NSViewRepresentable {
         private let session: PostioSession
         private var showing: Int64?
         private var showingRemote: RemoteImagesFfi = .blocked
+        private var showingOriginal = false
         private let gate = RenderGate()
         private var pending: Task<Void, Never>?
         private let onHeight: ((CGFloat) -> Void)?
@@ -127,10 +133,17 @@ public struct ReaderView: NSViewRepresentable {
         /// a token and a stale one is dropped rather than drawn. Drawing it
         /// would put one message's body under another's header, which is the
         /// shape of #70 and the reason `reading.rs` carries the same guard.
-        func load(into view: WKWebView, message: Int64?, remote: RemoteImagesFfi) {
-            guard showing != message || showingRemote != remote else { return }
+        func load(
+            into view: WKWebView,
+            message: Int64?,
+            remote: RemoteImagesFfi,
+            original: Bool
+        ) {
+            guard showing != message || showingRemote != remote || showingOriginal != original
+            else { return }
             showing = message
             showingRemote = remote
+            showingOriginal = original
 
             let token = gate.begin()
             pending?.cancel()
@@ -147,7 +160,7 @@ public struct ReaderView: NSViewRepresentable {
             let session = self.session
             pending = Task { [weak self] in
                 let document = await Task.detached {
-                    session.readerDocument(message: message, remote: remote)
+                    session.readerDocument(message: message, remote: remote, original: original)
                 }.value
 
                 guard let self, !Task.isCancelled, self.gate.isCurrent(token) else { return }

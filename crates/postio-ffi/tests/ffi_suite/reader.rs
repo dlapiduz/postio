@@ -60,13 +60,13 @@ fn the_document_carries_the_shared_content_security_policy() {
     // works.
     let (session, id) = with_body("<p>hello</p>");
 
-    let blocked = session.reader_document(id, RemoteImagesFfi::Blocked);
+    let blocked = session.reader_document(id, RemoteImagesFfi::Blocked, false);
     assert!(
         blocked.contains(&shared::content_security_policy(RemoteImages::Blocked)),
         "the blocked document does not carry the shared policy"
     );
 
-    let allowed = session.reader_document(id, RemoteImagesFfi::Allowed);
+    let allowed = session.reader_document(id, RemoteImagesFfi::Allowed, false);
     assert!(
         allowed.contains(&shared::content_security_policy(RemoteImages::Allowed)),
         "the allowed document does not carry the shared policy"
@@ -102,7 +102,7 @@ fn the_document_is_the_one_the_gtk_reader_would_render() {
     );
 
     assert_eq!(
-        session.reader_document(id, RemoteImagesFfi::Blocked),
+        session.reader_document(id, RemoteImagesFfi::Blocked, false),
         expected
     );
     session.shutdown();
@@ -115,7 +115,7 @@ fn the_senders_markup_is_bounded_and_carries_no_script() {
     // so markup imitating application chrome has a harder time. A frontend
     // that forgot it would look fine and be wrong.
     let (session, id) = with_body("<p>hi</p><script>alert(1)</script>");
-    let document = session.reader_document(id, RemoteImagesFfi::Blocked);
+    let document = session.reader_document(id, RemoteImagesFfi::Blocked, false);
 
     assert!(
         document.contains("postio-body"),
@@ -149,7 +149,7 @@ fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
         Session::open(SessionOptions::in_memory_with(database).with_blobs_for_test(blobs, scratch))
             .expect("a session");
 
-    let document = session.reader_document(id.into(), RemoteImagesFfi::Blocked);
+    let document = session.reader_document(id.into(), RemoteImagesFfi::Blocked, false);
     assert!(
         document.len() > 200,
         "a body-less message produced an empty document rather than a state plate"
