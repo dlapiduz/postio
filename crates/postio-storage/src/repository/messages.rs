@@ -1208,7 +1208,11 @@ impl<'a> MessageRepository<'a> {
     /// rather than only the next time something else writes that row.
     pub fn wake_due(&self, account: AccountId, now: DateTime<Utc>) -> Result<Vec<MailboxId>> {
         let now_millis = to_millis(now);
-        let mut statement = self.connection.prepare(
+        // Cached: the engine's poll tick runs this every five seconds for the
+        // life of the process, and the SQL never changes. Preparing it afresh
+        // each time put `sqlite3RunParser` into a profile of an idle
+        // application (#1237).
+        let mut statement = self.connection.prepare_cached(
             "SELECT DISTINCT mailbox_id FROM messages
               WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2
               ORDER BY mailbox_id",
