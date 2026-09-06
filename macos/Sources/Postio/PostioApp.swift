@@ -24,6 +24,8 @@ struct PostioApp: App {
         WindowGroup("Postio") {
             Shell(engine: engine)
                 .background(WindowConfigurator())
+                // `[ui].theme`, not the system's, when the file says so.
+                .preferredColorScheme(engine.colorScheme)
         }
         .onChange(of: phase) { _, now in
             // Orderly rather than at process exit: the store is SQLCipher, and
@@ -46,6 +48,7 @@ struct PostioApp: App {
         // along the foot -- is kept in full; only the frame is different.
         Settings {
             SettingsPaneView(store: settings)
+                .preferredColorScheme(engine.colorScheme)
         }
     }
 }

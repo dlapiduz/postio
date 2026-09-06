@@ -1,4 +1,5 @@
 import AppKit
+import PostioFFI
 
 /// One row of the message list.
 ///
@@ -19,6 +20,36 @@ public final class MessageRowCell: NSTableCellView {
     /// rather than as a second highlight competing with `NSTableView`'s own —
     /// which is the cursor, and which a marked row may or may not also be.
     private let marked = NSView()
+    /// The vertical stack, kept so density can retune its spacing rather than
+    /// rebuild the cell.
+    private var stack: NSStackView?
+    private lazy var padTop = stack!.topAnchor.constraint(
+        equalTo: topAnchor, constant: PostioTokens.space2)
+    private lazy var padBottom = stack!.bottomAnchor.constraint(
+        lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2)
+
+    /// How much of canvas 1b's row anatomy to draw.
+    ///
+    /// The setting is `[ui].density` and the numbers are
+    /// `postio_ui::row::Metrics`, which GTK lays out with — so Compact means
+    /// the same thing on both platforms rather than "a bit tighter, somehow".
+    /// The visible part is the snippet: the tightest density drops it, which
+    /// is what makes it the tightest.
+    public var density: DensityFfi = .airy {
+        didSet { applyDensity() }
+    }
+
+    /// Whether the snippet line is drawn. Read back rather than inferred, so
+    /// a test can assert the row a person sees.
+    public var previewIsHiddenForTesting: Bool { preview.isHidden }
+
+    private func applyDensity() {
+        let metrics = rowMetrics(density: density)
+        preview.isHidden = !metrics.snippet
+        stack?.spacing = CGFloat(metrics.subjectGap)
+        padTop.constant = CGFloat(metrics.padY)
+        padBottom.constant = -CGFloat(metrics.padY)
+    }
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -74,12 +105,13 @@ public final class MessageRowCell: NSTableCellView {
         stack.spacing = PostioTokens.space1
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        self.stack = stack
         NSLayoutConstraint.activate([
             // Spacing from the design system rather than numbers chosen here.
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space3),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space3),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: PostioTokens.space2),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -PostioTokens.space2),
+            padTop,
+            padBottom,
 
             marked.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PostioTokens.space1),
             marked.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PostioTokens.space1),
@@ -107,15 +139,19 @@ public final class MessageRowCell: NSTableCellView {
     /// Computed from the same tokens the layout uses, so the two cannot drift
     /// apart again, and `aRowIsTallEnoughForItsContents` measures a real laid
     /// out cell against it rather than trusting this arithmetic.
-    public static var preferredHeight: CGFloat {
+    public static func preferredHeight(for density: DensityFfi = .airy) -> CGFloat {
         let sender = NSFont(name: PostioTokens.fontBody, size: 13)
             ?? .systemFont(ofSize: 13, weight: .semibold)
         let subject = NSFont(name: PostioTokens.fontBody, size: 13) ?? .systemFont(ofSize: 13)
         let preview = NSFont.systemFont(ofSize: 12)
+        let metrics = rowMetrics(density: density)
+        // The snippet is a line at airy and snug and no line at all at
+        // compact, so it counts for its height and for one of the gaps.
         let lines = ceil(sender.boundingRectForFont.height)
             + ceil(subject.boundingRectForFont.height)
-            + ceil(preview.boundingRectForFont.height)
-        return ceil(lines + PostioTokens.space1 * 2 + PostioTokens.space2 * 2)
+            + (metrics.snippet ? ceil(preview.boundingRectForFont.height) : 0)
+        let gaps = CGFloat(metrics.subjectGap) * (metrics.snippet ? 2 : 1)
+        return ceil(lines + gaps + CGFloat(metrics.padY) * 2)
     }
 
     /// What this cell is currently showing.
@@ -139,14 +175,19 @@ public final class MessageRowCell: NSTableCellView {
         // In search results the row shows *why it matched*, with the matched
         // spans emphasised, rather than its own first line. In a folder there
         // is no excerpt and the preview is what there is to show.
+        // Two reasons this line can be absent, and they compose: there may be
+        // nothing to say, or the density may have decided the row does not
+        // carry a third line at all. Setting it from the content alone -- as
+        // this did -- silently undid the density on every reuse.
+        let drawsSnippet = rowMetrics(density: density).snippet
         if let snippet = presentation.snippet {
             preview.attributedStringValue = NSAttributedString(
                 PaletteRow.highlighted(snippet)
             )
-            preview.isHidden = snippet.text.isEmpty
+            preview.isHidden = !drawsSnippet || snippet.text.isEmpty
         } else {
             preview.stringValue = presentation.preview
-            preview.isHidden = presentation.preview.isEmpty
+            preview.isHidden = !drawsSnippet || presentation.preview.isEmpty
         }
 
         unreadDot.isHidden = !presentation.unread

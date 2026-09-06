@@ -26,6 +26,25 @@ final class Engine {
     }
 
     private(set) var state: State = .opening
+
+    /// The `[ui]` table this session was opened with.
+    ///
+    /// Observed, because the theme is drawn from it and a change has to
+    /// repaint. `nil` until a session opens, which is the window's honest
+    /// state before then: it follows the system.
+    private(set) var appearance: AppearanceFfi?
+
+    /// The colour scheme `[ui].theme` asks for, or `nil` to follow the system.
+    ///
+    /// `system` and "no session yet" are the same answer on purpose — both
+    /// mean "Postio has no opinion", and SwiftUI spells that `nil`.
+    var colorScheme: ColorScheme? {
+        switch appearance?.theme {
+        case .light: return .light
+        case .dark: return .dark
+        case .system, .none: return nil
+        }
+    }
     private(set) var session: PostioSession?
 
     /// Starts the log, then opens the store **off this actor**.
@@ -66,7 +85,14 @@ final class Engine {
         switch opened {
         case let .success(session):
             self.session = session
-            state = .open(MessageTableController(source: SessionRowSource(session: session)))
+            let controller = MessageTableController(source: SessionRowSource(session: session))
+            // What `[ui]` says, applied before the first row is drawn. The
+            // settings pane writes this table; if nothing read it here, a Mac
+            // user would pick Compact and watch the list not change (#1215).
+            let appearance = session.appearance()
+            controller.density = appearance.density
+            self.appearance = appearance
+            state = .open(controller)
             // Nothing was ever fetched before this: the store opened and
             // stayed empty because no engine had been started (#648).
             mailboxes = session.mailboxes

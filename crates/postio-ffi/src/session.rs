@@ -236,6 +236,25 @@ fn load_sync_config(text: Option<&str>) -> postio_config::SyncConfig {
     }
 }
 
+/// The `[ui]` table, for the frontend that has to draw by it.
+///
+/// Same shape as [`load_sync_config`] beside it, and the same fallback: a
+/// missing or unreadable file is the built-in defaults, said once in the log
+/// rather than guessed at silently by whatever asks next.
+fn load_ui_config(text: Option<&str>) -> postio_config::ui::UiConfig {
+    let config = match text {
+        Some(text) => postio_config::Config::from_toml_str(text).ok(),
+        None => postio_config::Config::load().ok(),
+    };
+    match config {
+        Some(config) => config.ui,
+        None => {
+            tracing::warn!("using the built-in appearance: config.toml is absent or unreadable");
+            Default::default()
+        }
+    }
+}
+
 /// The resolver these bindings make, for the running platform.
 ///
 /// One place, called from both construction paths, because an in-memory
@@ -373,6 +392,10 @@ pub struct Session {
     /// actually bound, and re-reading `config.toml` on every menu draw would
     /// be a file read per repaint.
     keys: postio_config::keys::KeyBindings,
+    /// The `[ui]` table this session was opened with — row density, theme and
+    /// what the message list draws. Read once here so the list and the
+    /// settings pane cannot disagree about what the file says.
+    ui: postio_config::ui::UiConfig,
     /// The live keymap: the binding table, plus whatever sequence is
     /// half-typed.
     ///
@@ -730,6 +753,21 @@ impl Session {
     pub fn is_open_ffi(&self) -> bool {
         self.is_open()
     }
+    /// The `[ui]` table this session was opened with.
+    ///
+    /// The message list draws by these: row height comes from the density,
+    /// and the three flags say what a row shows. Read from the session rather
+    /// than from the file by whoever is drawing, so the list and the settings
+    /// pane cannot end up with two different opinions of the same table.
+    pub fn appearance(&self) -> crate::AppearanceFfi {
+        crate::AppearanceFfi {
+            density: self.ui.density.into(),
+            theme: self.ui.theme.into(),
+            show_hover_actions: self.ui.show_hover_actions,
+            show_key_hints: self.ui.show_key_hints,
+            sender_avatars: self.ui.sender_avatars,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -817,6 +855,7 @@ impl Session {
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
+                ui: load_ui_config(options.config_text.as_deref()),
                 keys,
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
@@ -871,6 +910,11 @@ impl Session {
         #[cfg(not(feature = "testing"))]
         let sync_config = load_sync_config(None);
 
+        #[cfg(feature = "testing")]
+        let ui_config = load_ui_config(options.config_text.as_deref());
+        #[cfg(not(feature = "testing"))]
+        let ui_config = load_ui_config(None);
+
         let wiring = Wiring::new(database, blobs, runtime, sink, commands)
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))
@@ -878,6 +922,7 @@ impl Session {
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             resolver: Mutex::new(build_resolver(&keys)),
+            ui: ui_config,
             keys,
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),

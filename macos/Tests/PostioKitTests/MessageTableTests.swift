@@ -247,13 +247,13 @@ struct MessageTableTests {
         )
         // A realistic width: narrow enough to be a list column, wide enough
         // that nothing wraps and the height is the three lines.
-        cell.frame = NSRect(x: 0, y: 0, width: 360, height: MessageRowCell.preferredHeight)
+        cell.frame = NSRect(x: 0, y: 0, width: 360, height: MessageRowCell.preferredHeight())
         cell.layoutSubtreeIfNeeded()
 
         let clipped = "the cell lays out to \(cell.fittingSize.height) in a row of "
-            + "\(MessageRowCell.preferredHeight), so its top line is clipped"
+            + "\(MessageRowCell.preferredHeight()), so its top line is clipped"
         #expect(
-            cell.fittingSize.height <= MessageRowCell.preferredHeight,
+            cell.fittingSize.height <= MessageRowCell.preferredHeight(),
             Comment(rawValue: clipped)
         )
     }
@@ -261,7 +261,7 @@ struct MessageTableTests {
     @Test func theRowHeightIsNotAbsurd() {
         // The other direction: a derived number that ran away would give a
         // list of six enormous rows, which is its own kind of broken.
-        #expect(MessageRowCell.preferredHeight > 40)
-        #expect(MessageRowCell.preferredHeight < 120)
+        #expect(MessageRowCell.preferredHeight() > 40)
+        #expect(MessageRowCell.preferredHeight() < 120)
     }
 }
