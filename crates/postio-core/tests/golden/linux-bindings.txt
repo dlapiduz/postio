@@ -10,15 +10,15 @@ select_all	ctrl+a
 prev_view	h | Left
 back	Escape
 toggle_result_order	o
-next_in_conversation	J
-prev_in_conversation	K
+next_in_conversation	J | alt+Down
+prev_in_conversation	K | alt+Up
 toggle_fold	space
 view_original	ctrl+o
-expand_all	O
-reply	e
-reply_all	E
-forward	f
-archive	a
+expand_all	O | ctrl+shift+e
+reply	e | ctrl+r
+reply_all	E | ctrl+shift+r
+forward	f | ctrl+shift+f
+archive	a | ctrl+shift+a
 archive_thread	A
 delete	d
 move	m
@@ -27,9 +27,9 @@ mark_unread	U
 snooze	b
 unsnooze	B
 add_label	L
-search	/
+search	/ | alt+ctrl+f
 save_search	ctrl+s
-compose	c
+compose	c | ctrl+n
 send	ctrl+Return
 schedule_send	ctrl+shift+Return
 save_draft	ctrl+s
@@ -43,7 +43,7 @@ bullet_list	ctrl+shift+8
 numbered_list	ctrl+shift+7
 insert_link	ctrl+shift+k
 quote_block	ctrl+shift+9
-undo	u
+undo	u | ctrl+z
 command_palette	ctrl+k
 cheat_sheet	?
 settings	ctrl+comma

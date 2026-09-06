@@ -329,7 +329,7 @@ static SPECS: &[CommandSpec] = &[
         // is open. The pair `a`/`A` already means "this, and this whole
         // thread" -- the shift is the level, not a different action.
         default_binding: "J",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+Down"],
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
@@ -339,7 +339,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::PrevInConversation,
         title: "Previous message in conversation",
         default_binding: "K",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+Up"],
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
@@ -387,7 +387,7 @@ static SPECS: &[CommandSpec] = &[
         // on the whole conversation -- the same relationship `a`/`A` already
         // has between a message and its thread.
         default_binding: "O",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+shift+e"],
         // Only where there is a conversation to expand. Offering it on the
         // list would be a key that does nothing most of the time.
         contexts: ctx(&[Context::Conversation]),
@@ -399,7 +399,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Reply,
         title: "Reply",
         default_binding: "e",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+r"],
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -409,7 +409,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::ReplyAll,
         title: "Reply to all",
         default_binding: "E",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+shift+r"],
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -419,7 +419,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Forward,
         title: "Forward",
         default_binding: "f",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+shift+f"],
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -429,7 +429,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Archive,
         title: "Archive",
         default_binding: "a",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+shift+a"],
         contexts: ctx(MESSAGE_SURFACES),
         // Sweeping a screenful out of the inbox is exactly the case docs/PRODUCT.md §16
         // wants a toast for.
@@ -531,7 +531,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Search,
         title: "Search",
         default_binding: "/",
-        alternate_bindings: &[],
+        alternate_bindings: &["alt+mod+f"],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -557,7 +557,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Compose,
         title: "Compose",
         default_binding: "c",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+n"],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -741,7 +741,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Undo,
         title: "Undo",
         default_binding: "u",
-        alternate_bindings: &[],
+        alternate_bindings: &["mod+z"],
         // Plus the account list. #464 built account removal as a soft delete
         // with a toast wired straight to AccountRepository::restore rather
         // than through the global stack, and said so because Remove was not a

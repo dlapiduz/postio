@@ -40,11 +40,11 @@ import AppKit
 public enum MenuBar {
     /// Build the bar and install it, routing every choice through `run`.
     public static func install(
-        binding: @escaping (String) -> String?,
+        bindings: @escaping (String) -> [String],
         available: @escaping (String) -> Bool,
         run: @escaping (String) -> Void
     ) {
-        recipe = Recipe(binding: binding, available: available, run: run)
+        recipe = Recipe(bindings: bindings, available: available, run: run)
         mount()
     }
 
@@ -54,7 +54,7 @@ public enum MenuBar {
     /// edits the menu in place, so what is on screen after it has had its
     /// turn is our object with its submenus removed.
     private struct Recipe {
-        let binding: (String) -> String?
+        let bindings: (String) -> [String]
         let available: (String) -> Bool
         let run: (String) -> Void
     }
@@ -66,7 +66,7 @@ public enum MenuBar {
         guard let recipe else { return }
         let target = CommandTarget(run: recipe.run, available: recipe.available)
         Self.target = target
-        let binding = recipe.binding
+        let bindings = recipe.bindings
 
         let bar = NSMenu()
         // The application menu, which is AppKit's and not the registry's:
@@ -74,7 +74,7 @@ public enum MenuBar {
         // does own three of this menu's items -- Settings, the config file and
         // Add account -- and they are merged in rather than drawn as a second
         // "Postio" menu beside it (#1207).
-        let planned = MenuPlan.build(binding: binding)
+        let planned = MenuPlan.build(bindings: bindings)
         let appItem = NSMenuItem()
         appItem.submenu = applicationMenu(
             items: planned.first { $0.section == .app }?.items ?? [],

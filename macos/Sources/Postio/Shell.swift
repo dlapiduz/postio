@@ -113,7 +113,7 @@ struct Shell: View {
                     }
                     .help(
                         ToolbarPlan.tooltip(for: item) { command in
-                            engine.session?.binding(for: command)
+                            engine.session?.bindings(for: command) ?? []
                         }
                     )
                     .accessibilityLabel(item.title)

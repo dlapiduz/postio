@@ -437,7 +437,7 @@ final class Engine {
     /// own rebuilds.
     private func installMenuBar() {
         MenuBar.install(
-            binding: { [weak self] command in self?.session?.binding(for: command) },
+            bindings: { [weak self] command in self?.session?.bindings(for: command) ?? [] },
             // Asked per item, each time a menu opens, against the context
             // that has focus right now — which is what makes a menu item
             // grey out as the keyboard moves between panes. With no session
