@@ -87,9 +87,61 @@ const RECENCY_POOL_MULTIPLIER: u32 = 2;
 const RECENCY_POOL_MIN: u32 = 50;
 
 /// Recency's weight in [`rank_score`], relative to `bm25`'s native scale.
-const RECENCY_WEIGHT: f64 = 2.0;
+///
+/// Raised with the half-life below, and the two go together: a heavier weight
+/// on a term that is zero for every candidate changes nothing.
+const RECENCY_WEIGHT: f64 = 3.0;
 /// The age, in days, at which the recency boost has halved.
-const RECENCY_HALF_LIFE_DAYS: f64 = 14.0;
+///
+/// **Two years, and it was fourteen days.** Measured against a real store, the
+/// forty best `bm25` matches for `invoice` had a median age of 6,687 days and
+/// every one of them was over a year old. An exponential with a fourteen-day
+/// half-life is zero to four decimal places across that whole range, so
+/// recency moved those scores by 0.00 and `bm25` alone decided the order --
+/// which is exactly the complaint that prompted this: search pulling up very
+/// old mail.
+///
+/// The shape matters more than the weight. Measured spread across those same
+/// candidates, which is what decides whether a term can reorder anything:
+///
+/// ```text
+/// half-life        spread    x weight   against a bm25 spread of 0.80
+/// 14 days           0.000        0.00   cannot reorder
+/// 1 year            0.110        0.33   cannot
+/// 2 years           0.331        0.99   can
+/// 5 years           0.569        1.71   can
+/// ```
+///
+/// Two years keeps a useful gradient over the range mail actually lives in --
+/// a month is 0.97, a year 0.71, five years 0.21, eighteen years 0.002 -- and
+/// still separates last week from last month, which a five-year half-life
+/// starts to flatten.
+const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
+
+/// Age's weight in the *pool* ordering, per year, in `bm25` units.
+///
+/// A separate term from [`RECENCY_WEIGHT`] because it answers a separate
+/// question, and missing that is why raising the weight alone would have
+/// changed nothing. `rank_score` reorders the candidates it is given; this
+/// decides which candidates there are. The pool was ordered by `bm25` alone,
+/// so on the store above every one of the 400 it handed to `rank_score` was
+/// over a year old -- and no ranking function can surface a recent message
+/// that never entered the pool.
+///
+/// **Linear, not exponential, and not by choice.** This SQLCipher build has no
+/// math functions -- `exp`, `ln` and `pow` are all absent -- so the ordering
+/// can only use arithmetic. Linear in years is what that allows, and it has
+/// the virtue of never saturating: it keeps separating eighteen years from
+/// five where an exponential has long since flattened.
+///
+/// At 0.25 a year of age costs a quarter of a `bm25` point, so five years
+/// costs 1.25 -- about one and a half times the entire spread of the top forty
+/// matches. An old message has to be substantially the better match to beat a
+/// recent one, which is the intent, rather than being excluded outright.
+const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
+
+/// Milliseconds in a year, for the pool ordering's age term.
+const MILLIS_PER_YEAR: f64 = 31_557_600_000.0;
 /// Sender affinity's weight in [`rank_score`].
 const SENDER_WEIGHT: f64 = 1.0;
 
@@ -170,7 +222,7 @@ pub fn search(
             .saturating_mul(RECENCY_POOL_MULTIPLIER)
             .max(RECENCY_POOL_MIN)
     };
-    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits)?;
+    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits, now)?;
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
@@ -827,8 +879,10 @@ impl Plan {
         pool_size: u32,
         rank_by_relevance: bool,
         total_hits: u64,
+        now: DateTime<Utc>,
     ) -> Result<Vec<Candidate>> {
-        let scored = self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits)?;
+        let scored =
+            self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now)?;
         self.hydrate(connection, &scored)
     }
 
@@ -848,6 +902,7 @@ impl Plan {
         pool_size: u32,
         rank_by_relevance: bool,
         total_hits: u64,
+        now: DateTime<Utc>,
     ) -> Result<Vec<(i64, f64)>> {
         let form = self.fetch_form(rank_by_relevance, total_hits);
         // The row's own score on the driven path: without a `GROUP BY` each
@@ -856,8 +911,19 @@ impl Plan {
         // *pool* ordering, not the answer — `search` re-ranks what comes back
         // through `rank_score` — so all it has to get right is which
         // candidates are worth hydrating.
+        // The pool ordering, and the age term in it is load-bearing rather
+        // than a refinement. Ordered by `bm25` alone, every one of the 400
+        // candidates this handed to `rank_score` for `invoice` on a real store
+        // was over a year old -- so no ranking function downstream could
+        // surface a recent message, because none was ever in the pool.
+        //
+        // Linear in years because this build's SQLite has no `exp`; see
+        // `POOL_AGE_WEIGHT_PER_YEAR`. `?` is bound to now, in milliseconds.
         let order_by = if rank_by_relevance {
-            "coalesce(hits.meta, 0.0) + coalesce(hits.body, 0.0)"
+            &format!(
+                "coalesce(hits.meta, 0.0) + coalesce(hits.body, 0.0) \
+                 + {POOL_AGE_WEIGHT_PER_YEAR} * (? - m.received_at) / {MILLIS_PER_YEAR}"
+            )
         } else {
             "m.received_at DESC"
         };
@@ -882,6 +948,13 @@ impl Plan {
         );
 
         params.extend(self.params_for(form));
+        // `now`, for the age term in the pool ordering. Bound here because
+        // parameters are positional and the `ORDER BY` sits between the
+        // `WHERE`'s and the `LIMIT`'s -- and only when that ordering is the
+        // one carrying the term, or the count would not match the statement.
+        if rank_by_relevance {
+            params.push(Value::Integer(now.timestamp_millis()));
+        }
         // Asked for more than the pool, because the union can hand back the
         // same message twice and the duplicates are folded below. Doubling is
         // the bound: a message appears at most once per index.
@@ -1264,6 +1337,52 @@ mod tests {
             has_match: true,
             match_param: Some(Value::Text("invoice".to_owned())),
         }
+    }
+
+    #[test]
+    fn recency_can_still_reorder_mail_that_is_years_old() {
+        // The complaint this answers: search surfacing very old mail. On a real
+        // store the forty best `bm25` matches for a term had a median age of
+        // 6,687 days, and the recency term was zero for every one of them --
+        // an exponential with a fourteen-day half-life is zero to four decimal
+        // places by then, so `bm25` alone decided the order.
+        //
+        // What matters is not that recency is *large* but that it still
+        // *differs* between candidates. A term that gives every one the same
+        // number cannot reorder anything, however heavily weighted.
+        let now = at(0);
+        let five_years = rank_score(-6.0, at(1825), now, 0);
+        let eighteen_years = rank_score(-6.0, at(6570), now, 0);
+        assert!(
+            five_years < eighteen_years,
+            "five-year-old mail must outrank eighteen-year-old at equal bm25: \
+             {five_years} against {eighteen_years}"
+        );
+
+        // And the gap has to be big enough to matter against the spread real
+        // candidates sit in -- 0.80 bm25 points across the top forty on that
+        // store. A separation smaller than that reorders nothing in practice.
+        assert!(
+            eighteen_years - five_years > 0.40,
+            "the gap between five and eighteen years is {}, too small to move \
+             anything against a bm25 spread of 0.80",
+            eighteen_years - five_years
+        );
+    }
+
+    #[test]
+    fn a_much_better_match_still_beats_a_more_recent_one() {
+        // Recency is weighted heavily on purpose, but it is still a boost and
+        // not an override: `RECENCY_WEIGHT` bounds what it can move, so a
+        // genuinely far stronger text match wins.
+        let now = at(0);
+        let strong_and_old = rank_score(-12.0, at(3650), now, 0);
+        let weak_and_fresh = rank_score(-6.0, at(0), now, 0);
+        assert!(
+            strong_and_old < weak_and_fresh,
+            "a six-point better bm25 must beat freshness: {strong_and_old} \
+             against {weak_and_fresh}"
+        );
     }
 
     #[test]
