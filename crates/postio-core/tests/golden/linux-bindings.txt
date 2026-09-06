@@ -30,7 +30,7 @@ add_label	L
 search	/ | alt+ctrl+f
 save_search	ctrl+s
 compose	c | ctrl+n
-send	ctrl+Return
+send	ctrl+shift+d | ctrl+Return
 schedule_send	ctrl+shift+Return
 save_draft	ctrl+s
 discard_draft	ctrl+d

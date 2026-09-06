@@ -39,4 +39,8 @@ public enum WindowId {
     /// `⌘,` has opened one on this platform since Mac OS X 10.0, and ADR 0031
     /// keeps the model shared with GTK while the frame differs.
     public static let settings = "settings"
+
+    /// A compose window. Several can be open at once, so the window is
+    /// identified by the draft it is writing rather than by this id alone.
+    public static let compose = "compose"
 }

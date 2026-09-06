@@ -375,6 +375,10 @@ pub struct Session {
     /// afterwards. A conversation is bounded — a thread, not a mailbox — so
     /// holding it whole breaks no promise §18 makes.
     conversation: Arc<Mutex<Option<crate::ConversationFfi>>>,
+    /// The store this session opened, for anything that has to *name* it —
+    /// the composer's footer says where a draft lives, and a footer naming a
+    /// path the draft is not in is worse than no footer.
+    store_at: std::path::PathBuf,
     hits: Mutex<Option<Vec<crate::search::Hit>>>,
     /// What the last search turned out to be, for the field's readout.
     ///
@@ -537,6 +541,37 @@ impl Session {
     #[uniffi::method(name = "conversation")]
     pub fn conversation_ffi(&self) -> Option<crate::ConversationFfi> {
         self.conversation()
+    }
+
+    /// A new message, from the account that would send it.
+    #[uniffi::method(name = "newDraft")]
+    pub fn new_draft_ffi(&self) -> Option<crate::DraftFfi> {
+        self.new_draft()
+    }
+
+    /// A reply to `message` — to its sender, or to everyone on it.
+    #[uniffi::method(name = "replyDraft")]
+    pub fn reply_draft_ffi(&self, message: i64, all: bool) -> Option<crate::DraftFfi> {
+        self.reply_draft(message, all)
+    }
+
+    /// A forward of `message`, addressed to nobody yet.
+    #[uniffi::method(name = "forwardDraft")]
+    pub fn forward_draft_ffi(&self, message: i64) -> Option<crate::DraftFfi> {
+        self.forward_draft(message)
+    }
+
+    /// Write the draft to the store, and answer it with its id.
+    #[uniffi::method(name = "saveDraft")]
+    pub fn save_draft_ffi(&self, draft: crate::DraftFfi) -> Option<crate::DraftFfi> {
+        self.save_draft(draft)
+    }
+
+    /// Queue the draft for sending; `None` when it went, a sentence when it
+    /// could not.
+    #[uniffi::method(name = "sendDraft")]
+    pub fn send_draft_ffi(&self, draft: crate::DraftFfi) -> Option<String> {
+        self.send_draft(draft)
     }
 
     /// How many rows the current scope has — a table's `numberOfRows`.
@@ -969,6 +1004,7 @@ impl Session {
                 cursor_row: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 conversation: Arc::default(),
+                store_at: std::path::PathBuf::from(":memory:"),
                 hits: Mutex::new(None),
                 outcome: Mutex::new(None),
                 resting: Mutex::new(None),
@@ -1003,6 +1039,7 @@ impl Session {
         let path = options
             .store_path
             .unwrap_or_else(postio_session::paths::store_path);
+        let store_at = path.clone();
         let (database, blobs) = postio_session::open_store_at(path, &key)
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
@@ -1028,6 +1065,7 @@ impl Session {
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
             conversation: Arc::default(),
+            store_at,
             hits: Mutex::new(None),
             outcome: Mutex::new(None),
             resting: Mutex::new(None),
@@ -1095,6 +1133,176 @@ impl Session {
     /// [`conversation_ffi`](Self::conversation_ffi).
     pub fn conversation(&self) -> Option<crate::ConversationFfi> {
         self.conversation.lock().expect("conversation lock").clone()
+    }
+
+    /// A new message. See [`new_draft_ffi`](Self::new_draft_ffi).
+    pub fn new_draft(&self) -> Option<crate::DraftFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let account = self.writing_account(&database)?;
+        let draft = postio_model::Draft::new(account.id);
+        Some(crate::compose::to_ffi(
+            &draft,
+            account.address.to_string(),
+            self.drafts_path(),
+        ))
+    }
+
+    /// A reply. See [`reply_draft_ffi`](Self::reply_draft_ffi).
+    pub fn reply_draft(&self, message: i64, all: bool) -> Option<crate::DraftFfi> {
+        self.answer(message, |source, account| {
+            let quote = postio_model::reply::plain_quote(source);
+            if all {
+                postio_model::reply::reply_all(source, account, quote)
+            } else {
+                postio_model::reply::reply(source, account, quote)
+            }
+        })
+    }
+
+    /// A forward. See [`forward_draft_ffi`](Self::forward_draft_ffi).
+    pub fn forward_draft(&self, message: i64) -> Option<crate::DraftFfi> {
+        self.answer(message, |source, account| {
+            let body = postio_model::reply::plain_forward(source);
+            postio_model::reply::forward(source, account, body)
+        })
+    }
+
+    /// The shared half of replying and forwarding: read the message, find the
+    /// account, hand both to `build`.
+    fn answer(
+        &self,
+        message: i64,
+        build: impl FnOnce(&postio_model::Message, &postio_model::Account) -> postio_model::Draft,
+    ) -> Option<crate::DraftFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        let mut source = postio_storage::repository::MessageRepository::new(&connection)
+            .get(postio_model::ids::MessageId::new(message))
+            .ok()??;
+        // The body is not on the row: it is a compressed column read through
+        // the same path the reader uses (ADR 0020), and a quote built from
+        // the message as `get` returns it would quote nothing at all — which
+        // is a reply that silently loses what it is answering.
+        if let postio_session::reading::Body::Ready { body, .. } =
+            postio_session::reading::load_body_or_reason(
+                &connection,
+                source.id,
+                self.offline.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        {
+            source.body = body;
+        }
+        let account = postio_storage::repository::AccountRepository::new(&connection)
+            .get(source.account_id)
+            .ok()??;
+        let draft = build(&source, &account);
+        Some(crate::compose::to_ffi(
+            &draft,
+            account.address.to_string(),
+            self.drafts_path(),
+        ))
+    }
+
+    /// Save. See [`save_draft_ffi`](Self::save_draft_ffi).
+    pub fn save_draft(&self, edited: crate::DraftFfi) -> Option<crate::DraftFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let mut draft = self.rehydrate(&database, &edited)?;
+        let (connection, _permit) = database.interactive_write().ok()?;
+        postio_storage::repository::DraftRepository::new(&connection)
+            .save(&mut draft)
+            .ok()?;
+        Some(crate::compose::to_ffi(
+            &draft,
+            edited.from.clone(),
+            self.drafts_path(),
+        ))
+    }
+
+    /// Send. See [`send_draft_ffi`](Self::send_draft_ffi).
+    ///
+    /// **Nothing here opens a connection.** The write is one local
+    /// transaction and `postio-sync::send` drains the row it leaves whenever
+    /// there is a network, which is what lets a compose window close on the
+    /// keystroke rather than on a server.
+    pub fn send_draft(&self, edited: crate::DraftFfi) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open to send from.".to_owned());
+        };
+        let Some(mut draft) = self.rehydrate(&database, &edited) else {
+            return Some("This draft is no longer in the store.".to_owned());
+        };
+        // Refused rather than queued: an unaddressed draft would close the
+        // window and drain as impossible — the words gone and no message
+        // sent. The same check `postio-gtk`'s composer makes, for the same
+        // two reasons.
+        if !draft.has_recipients() {
+            return Some("This message has no recipient yet.".to_owned());
+        }
+        if !draft.is_sendable() {
+            return Some("This draft has already been queued to send.".to_owned());
+        }
+        let Ok((connection, _permit)) = database.interactive_write() else {
+            return Some("The store would not take a write.".to_owned());
+        };
+        match postio_storage::repository::DraftRepository::new(&connection)
+            .queue_send(&mut draft, chrono::Utc::now())
+        {
+            Ok(_) => None,
+            Err(error) => {
+                tracing::error!(%error, "could not queue the draft for sending");
+                Some("The draft could not be queued for sending.".to_owned())
+            }
+        }
+    }
+
+    /// The stored draft this edit is about, with the frontend's fields on it.
+    ///
+    /// A round trip through the store rather than a draft rebuilt from the
+    /// fields: the kind, the ancestor and the reserved `Message-ID` are not
+    /// things a composer edits, and rebuilding would drop all three — the
+    /// last of which is what stops one message being sent twice (ADR 0021).
+    fn rehydrate(
+        &self,
+        database: &postio_storage::Database,
+        edited: &crate::DraftFfi,
+    ) -> Option<postio_model::Draft> {
+        let base = if edited.id > 0 {
+            let connection = database.connection().ok()?;
+            postio_storage::repository::DraftRepository::new(&connection)
+                .get(postio_model::ids::DraftId::new(edited.id))
+                .ok()??
+        } else {
+            let mut fresh =
+                postio_model::Draft::new(postio_model::ids::AccountId::new(edited.account));
+            fresh.kind = edited.kind.into();
+            fresh.in_reply_to = edited.in_reply_to.map(postio_model::ids::MessageId::new);
+            fresh
+        };
+        Some(crate::compose::from_ffi(base, edited))
+    }
+
+    /// The account a new message is written from: the default one.
+    fn writing_account(
+        &self,
+        database: &postio_storage::Database,
+    ) -> Option<postio_model::Account> {
+        let connection = database.connection().ok()?;
+        let accounts = postio_storage::repository::AccountRepository::new(&connection);
+        let enabled = accounts.list_enabled().ok()?;
+        enabled
+            .iter()
+            .find(|account| account.is_default)
+            .or_else(|| enabled.first())
+            .cloned()
+    }
+
+    /// Where drafts live, for the composer's footer.
+    ///
+    /// The store this session actually opened, not a guess at where one
+    /// would be: a footer naming a path the draft is not in is worse than no
+    /// footer, and this application can be pointed at another store.
+    fn drafts_path(&self) -> String {
+        self.store_at.display().to_string()
     }
 
     /// [`open_scope`](Self::open_scope), for a scope already in the store's

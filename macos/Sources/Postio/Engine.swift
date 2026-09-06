@@ -176,6 +176,9 @@ final class Engine {
     private(set) var requested: (mailbox: Int64, message: Int64?)?
     private(set) var requestedToken = 0
 
+    /// The messages being written, and the windows they are waiting for.
+    let compose = ComposeStore()
+
     /// The conversation the reading pane is showing (#1263).
     ///
     /// Held by the engine rather than by the view so that an event can fill
@@ -535,6 +538,15 @@ final class Engine {
             // second opinion in Swift would be one the window ignores.
             NSApp.sendAction(
                 #selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+        case Intercepted.compose:
+            write(session?.newDraft())
+        case Intercepted.reply:
+            write(replyDraft(all: false))
+        case Intercepted.replyAll:
+            write(replyDraft(all: true))
+        case Intercepted.forward:
+            guard let session, let message = cursorShowing else { return }
+            write(session.forwardDraft(message))
         case Intercepted.expandAll:
             conversation.expandAll()
         case Intercepted.toggleFold:
@@ -551,6 +563,28 @@ final class Engine {
         default:
             session?.invoke(id)
         }
+    }
+
+    /// Open a compose window for `draft`, or say why there is none.
+    ///
+    /// A missing draft is not a silent no-op: on a fresh install there is no
+    /// account to write from, and a `⌘N` that appeared to do nothing is the
+    /// shape of bug this port has produced three times.
+    private func write(_ draft: DraftFfi?) {
+        guard let draft else {
+            NSSound.beep()
+            return
+        }
+        compose.open(draft)
+    }
+
+    /// A reply to the message the cursor is on.
+    ///
+    /// The cursor, not the selection: `PRODUCT.md` §9 keeps them apart, and
+    /// replying to twelve marked messages is not a thing.
+    private func replyDraft(all: Bool) -> DraftFfi? {
+        guard let session, let message = cursorShowing else { return nil }
+        return session.replyDraft(to: message, all: all)
     }
 
     /// Close whatever overlay is open, and put the keyboard back in the list.

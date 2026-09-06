@@ -328,6 +328,39 @@ public final class PostioSession {
         inner.bindingsFor(command: command)
     }
 
+    // -- writing mail (#1272) ---------------------------------------------
+
+    /// A new message, from the account that would send it.
+    ///
+    /// `nil` when no account is configured, which is a real state on a fresh
+    /// install rather than an error: there is nothing to send from yet.
+    public func newDraft() -> DraftFfi? { inner.newDraft() }
+
+    /// A reply to `message` — to its sender, or to everyone on it.
+    ///
+    /// Who that is, what the subject becomes and what the quote looks like
+    /// are `postio_model::reply`'s answers, shared with the frontend that
+    /// already had them. Swift addresses nothing itself.
+    public func replyDraft(to message: Int64, all: Bool) -> DraftFfi? {
+        inner.replyDraft(message: message, all: all)
+    }
+
+    /// A forward of `message`, addressed to nobody yet.
+    public func forwardDraft(_ message: Int64) -> DraftFfi? {
+        inner.forwardDraft(message: message)
+    }
+
+    /// Write the draft to the store; answers it with the id it now has.
+    public func saveDraft(_ draft: DraftFfi) -> DraftFfi? {
+        inner.saveDraft(draft: draft)
+    }
+
+    /// Queue the draft for sending. `nil` when it went; a sentence when it
+    /// could not, which the composer shows rather than closing over.
+    public func sendDraft(_ draft: DraftFfi) -> String? {
+        inner.sendDraft(draft: draft)
+    }
+
     /// Start syncing every configured account; answers how many started.
     @discardableResult
     public func startSyncing() throws -> UInt32 { try inner.startSyncing() }

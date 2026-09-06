@@ -122,6 +122,13 @@ public enum Intercepted {
     /// The conversation pane's own four. They are commands like any other —
     /// bound, rebindable, in the menu — but what they act on is a fold this
     /// frontend is holding, so the boundary has nothing to do with them.
+    /// Writing mail: the four verbs that open a compose window (#1272). The
+    /// draft is the boundary's; the *window* is this frontend's, which is why
+    /// these are handled here rather than dispatched.
+    public static let compose = "compose"
+    public static let reply = "reply"
+    public static let replyAll = "reply_all"
+    public static let forward = "forward"
     public static let toggleSidebar = "toggle_sidebar"
     public static let expandAll = "expand_all"
     public static let toggleFold = "toggle_fold"
@@ -132,6 +139,7 @@ public enum Intercepted {
     public static let all = [
         palette, cheatSheet, search, back, cyclePane, cyclePaneBack, focusSidebar, settings,
         toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
+        compose, reply, replyAll, forward,
     ]
 }
 
