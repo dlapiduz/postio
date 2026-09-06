@@ -84,6 +84,10 @@ pub enum ReaderOccupant {
     Reader,
     /// The search preview — canvas 2b's right-hand pane.
     SearchPreview,
+    /// A whole thread, stacked (canvas turn 8a). A *reading* surface like
+    /// [`Reader`](Self::Reader) and mutually exclusive with it: the pane
+    /// shows one thread or one message, never both.
+    Conversation,
     /// The composer, which takes the pane over (docs/PRODUCT.md).
     Composer,
 }
@@ -124,11 +128,23 @@ pub fn sidebar_wanted_after_toggle(on: bool, mode: Mode, wanted: bool) -> bool {
 /// is the worst state the pane has. Search outranks plain reading while it is
 /// up, because the pane is the search's answer column. Pure, so the whole
 /// priority is testable without a window.
-pub fn fallback(composing: bool, searching: bool, reading: bool) -> ReaderOccupant {
+///
+/// A conversation and a single message are both *reading*, and the
+/// conversation wins because it is the more specific answer to "what is the
+/// pane open on" — a thread is open, and the single-message reader is what
+/// shows when one is not. They are never both right (#1195).
+pub fn fallback(
+    composing: bool,
+    searching: bool,
+    reading: bool,
+    conversing: bool,
+) -> ReaderOccupant {
     if composing {
         ReaderOccupant::Composer
     } else if searching {
         ReaderOccupant::SearchPreview
+    } else if conversing {
+        ReaderOccupant::Conversation
     } else if reading {
         ReaderOccupant::Reader
     } else {
@@ -178,6 +194,9 @@ mod imp {
         pub occupants: RefCell<Vec<(ReaderOccupant, glib::WeakRef<gtk::Widget>)>>,
         /// Who has the reading pane right now.
         pub occupant: Cell<ReaderOccupant>,
+        /// Whether the pane is open on a whole thread rather than on one
+        /// message. One of the activity flags `fallback` is computed from.
+        pub conversing: Cell<bool>,
         /// The activity flags `fallback` is computed from.
         pub composing: Cell<bool>,
         pub searching: Cell<bool>,
@@ -212,6 +231,7 @@ mod imp {
                 focused: Cell::new(Pane::default()),
                 occupants: RefCell::new(Vec::new()),
                 occupant: Cell::new(ReaderOccupant::default()),
+                conversing: Cell::new(false),
                 composing: Cell::new(false),
                 searching: Cell::new(false),
                 reading: Cell::new(false),
@@ -418,6 +438,25 @@ impl Shell {
         }
     }
 
+    /// The pane is (or is no longer) open on a whole thread.
+    ///
+    /// The conversation's equivalent of [`set_reading`](Self::set_reading),
+    /// and it exists for the reason that one does: the conversation pane
+    /// used to set its own visibility and hide the reader by hand, which
+    /// left it on screen underneath the composer when the composer took the
+    /// pane (#1195). Nothing outside this file decides what the pane shows.
+    pub fn set_conversing(&self, conversing: bool) {
+        self.imp().conversing.set(conversing);
+        if self.imp().composing.get() {
+            return;
+        }
+        if conversing {
+            self.show_occupant(ReaderOccupant::Conversation);
+        } else if self.imp().occupant.get() == ReaderOccupant::Conversation {
+            self.settle_reader_pane();
+        }
+    }
+
     /// The composer took or released the pane. It outranks everything: see
     /// [`fallback`].
     pub fn set_composing(&self, composing: bool) {
@@ -436,6 +475,7 @@ impl Shell {
             imp.composing.get(),
             imp.searching.get(),
             imp.reading.get(),
+            imp.conversing.get(),
         ));
     }
 
@@ -641,13 +681,27 @@ mod tests {
     }
 
     #[test]
+    fn a_conversation_outranks_the_single_message_reader_and_loses_to_the_composer() {
+        use ReaderOccupant::*;
+        // The pane shows one thread *or* one message, never both — which is
+        // what the composer sharing the pane with a conversation proved was
+        // not being decided anywhere (#1195).
+        assert_eq!(fallback(false, false, true, true), Conversation);
+        assert_eq!(fallback(false, false, false, true), Conversation);
+        // And it is still a reading surface: anything that outranks the
+        // reader outranks it too.
+        assert_eq!(fallback(true, false, true, true), Composer);
+        assert_eq!(fallback(false, true, true, true), SearchPreview);
+    }
+
+    #[test]
     fn the_fallback_ranks_composer_over_search_over_reading() {
         use ReaderOccupant::*;
-        assert_eq!(fallback(true, true, true), Composer);
-        assert_eq!(fallback(true, false, false), Composer);
-        assert_eq!(fallback(false, true, true), SearchPreview);
-        assert_eq!(fallback(false, true, false), SearchPreview);
-        assert_eq!(fallback(false, false, true), Reader);
-        assert_eq!(fallback(false, false, false), Empty);
+        assert_eq!(fallback(true, true, true, false), Composer);
+        assert_eq!(fallback(true, false, false, false), Composer);
+        assert_eq!(fallback(false, true, true, false), SearchPreview);
+        assert_eq!(fallback(false, true, false, false), SearchPreview);
+        assert_eq!(fallback(false, false, true, false), Reader);
+        assert_eq!(fallback(false, false, false, false), Empty);
     }
 }

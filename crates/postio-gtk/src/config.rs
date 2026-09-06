@@ -115,6 +115,9 @@ pub fn install_at(window: &Window, path: &Path) {
     window.apply_ui(&service.config().ui);
     window.list().set_density(service.config().ui.density);
     window.list().set_keymap(service.keymap().clone());
+    // The settings footer's `Open in $EDITOR` cap reads its key from here,
+    // like every other keycap in the application (#1179).
+    window.settings().set_keymap(service.keymap());
     apply_compose(window, service.config());
     window.settings().load(path);
     window
@@ -221,6 +224,7 @@ pub fn install_at(window: &Window, path: &Path) {
             if update.changed.keys {
                 window.apply_keymap(service.keymap().clone());
                 window.list().set_keymap(service.keymap().clone());
+                window.settings().set_keymap(service.keymap());
             }
             if update.changed.ui {
                 window.apply_ui(&service.config().ui);

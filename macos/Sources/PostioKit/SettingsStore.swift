@@ -5,7 +5,7 @@ import SwiftUI
 /// The settings window's model: the file, what is wrong with it, and the way
 /// a change gets back to disk.
 ///
-/// **It parses no TOML and writes no TOML** (ADR 0029). Every value it shows
+/// **It parses no TOML and writes no TOML** (ADR 0030). Every value it shows
 /// came from `postio_config` through the boundary, and every change goes back
 /// the same way — `settingsPatchAppearance` rewrites one table with
 /// `toml_edit`'s document model and leaves the rest of the file byte for
@@ -44,10 +44,11 @@ public final class SettingsStore {
 
     public init(path: String) {
         self.path = path
-        let sections = settingsSections()
-        self.sections = sections
-        // The pane ADR 0029 Q3 ships first, and the first nav row either way.
-        self.selected = sections.first?.key ?? "ui"
+        self.sections = settingsSections()
+        // Appearance, because it is the only pane built here yet. The nav
+        // starts at Accounts, and this opens further down it on purpose
+        // rather than landing on a section that has nothing to show.
+        self.selected = "ui"
         let loaded = settingsLoad(path: path)
         self.text = loaded
         self.status = settingsStatus(text: loaded)
@@ -62,21 +63,58 @@ public final class SettingsStore {
         settingsAppearance(text: text)
     }
 
+    /// The sections under one heading, in nav order.
+    public func sections(in group: GroupFfi) -> [SettingsSectionFfi] {
+        sections.filter { $0.group == group }
+    }
+
+    /// The section showing now.
+    public var current: SettingsSectionFfi? {
+        sections.first { $0.key == selected }
+    }
+
+    /// The line along the foot.
+    ///
+    /// Two different sentences, and which one shows is the whole point. When
+    /// the file is good it names the table this pane writes and says the
+    /// change is already in effect -- there is no Save to look for. When it
+    /// is not, that takes over: canvas 3d's rule is that a state names its
+    /// reason, and "[ui] in config.toml" while the file will not parse would
+    /// be announcing a write that is not happening.
+    public var footer: String {
+        guard status.valid else { return status.statusLine }
+        if let failure { return failure }
+        guard let table = current?.table else { return status.statusLine }
+        return "\(table) in config.toml · applied live"
+    }
+
     /// Re-read the file, for an edit that arrived from `$EDITOR`.
     public func reload() {
         text = settingsLoad(path: path)
         status = settingsStatus(text: text)
     }
 
-    /// Write `appearance` into `[ui]` and save.
+    /// Apply one change to `[ui]` and save.
     ///
-    /// Reads the file back afterwards rather than trusting what it just
-    /// wrote: the footer is the only thing telling the user their change took
-    /// effect — canvas 3f put it where OK and Cancel would be — so it has to
-    /// describe the file as it is, not as this believes it left it.
-    public func apply(_ appearance: AppearanceFfi) {
+    /// Takes a mutation rather than a whole `AppearanceFfi`, and re-reads the
+    /// file before applying it. Both halves matter, and a real edit found out
+    /// why: `config.toml` is a file people edit by hand, so anything this
+    /// window remembers about it is already possibly wrong. Patching a
+    /// remembered copy makes this a second writer racing `$EDITOR`, and one
+    /// click destroyed a comment, an unknown key and an entire table that had
+    /// been added while the window sat open.
+    ///
+    /// So the file is read, one field is changed, and the result is written:
+    /// nothing this window has been holding can overwrite anything it did not
+    /// know about. Reading it back afterwards is the same argument once more
+    /// -- the footer describes the file as it is, not as this believes it
+    /// left it.
+    public func apply(_ change: (inout AppearanceFfi) -> Void) {
+        reload()
+        guard var next = appearance else { return }
+        change(&next)
         do {
-            let patched = try settingsPatchAppearance(text: text, appearance: appearance)
+            let patched = try settingsPatchAppearance(text: text, appearance: next)
             try settingsSave(path: path, text: patched)
             failure = nil
         } catch {
@@ -84,4 +122,5 @@ public final class SettingsStore {
         }
         reload()
     }
+
 }

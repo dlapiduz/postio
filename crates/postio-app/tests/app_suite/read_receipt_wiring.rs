@@ -81,8 +81,10 @@ pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
     window.act(postio_core::Command::Settings);
     while glib::MainContext::default().iteration(false) {}
 
+    // From the panel, not from the main window: settings is a window of its
+    // own since #1179, so its widgets are no longer descendants of this one.
     let label = find_label(
-        &window.clone().upcast(),
+        &window.settings().upcast(),
         "postio-settings-read-receipt-count",
     )
     .expect("the privacy pane always draws the read-receipt count line");

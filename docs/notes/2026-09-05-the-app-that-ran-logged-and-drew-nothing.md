@@ -41,7 +41,7 @@ menu path end up at one place instead of two.
 Worth knowing, because it removes the reason to reach for `openSettings` at
 all: **a `Settings` scene puts "Settings…" in the application menu with `⌘,`
 by itself**, correctly placed, without `MenuBar` doing anything. The platform
-gives you the native placement ADR 0029 wanted for free.
+gives you the native placement ADR 0030 wanted for free.
 
 ## Why nothing caught it
 

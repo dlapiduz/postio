@@ -8,8 +8,9 @@
 //! been rewritten.
 
 use postio_ffi::{
-    AppearanceFfi, DensityFfi, ThemeFfi, settings_appearance, settings_load,
-    settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
+    AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, settings_appearance, settings_group_label,
+    settings_humanize_interval, settings_load, settings_patch_appearance, settings_path,
+    settings_save, settings_sections, settings_status,
 };
 
 /// A file with things in it that a naive form would destroy: a comment, a key
@@ -108,21 +109,56 @@ fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
 }
 
 #[test]
-fn the_nav_lists_all_six_sections_by_human_name() {
+fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
     let sections = settings_sections();
-    let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
+    let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
-        titles,
+        labels,
         [
+            "Accounts",
+            "Filters",
+            "Composing",
             "Appearance",
             "Keyboard",
-            "Accounts",
-            "Sync",
-            "Filters",
-            "Privacy"
+            "Sync & storage",
+            "Privacy",
+            "Config file",
         ],
-        "the nav order is canvas 3f's, and the names are the human ones"
+        "the nav order and names are the ones the GTK window already shows"
     );
+
+    // The grouping is the nav's shape, and a frontend that guessed it would
+    // put Composing under APPLICATION on one platform and MAIL on the other.
+    let mail: Vec<&str> = sections
+        .iter()
+        .filter(|s| s.group == GroupFfi::Mail)
+        .map(|s| s.label.as_str())
+        .collect();
+    assert_eq!(mail, ["Accounts", "Filters", "Composing"]);
+    assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
+}
+
+#[test]
+fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
+    // The footer under every structured pane reads `[ui] in config.toml`, so
+    // the table is the pane's, not a string the frontend keeps beside it.
+    let by_key = |key: &str| {
+        settings_sections()
+            .into_iter()
+            .find(|s| s.key == key)
+            .expect("the section exists")
+    };
+    assert_eq!(by_key("ui").table.as_deref(), Some("[ui]"));
+    assert_eq!(by_key("sync").table.as_deref(), Some("[sync]"));
+    // Privacy is not a `config.toml` table at all (#871), and Config file is
+    // every table there is rather than one.
+    assert_eq!(by_key("privacy").table, None);
+}
+
+#[test]
+fn an_interval_reads_as_the_unit_it_was_written_in() {
+    assert_eq!(settings_humanize_interval(300), "5 min");
+    assert_eq!(settings_humanize_interval(90), "90s");
 }
 
 #[test]

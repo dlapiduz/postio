@@ -163,15 +163,23 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
     bridge.shutdown();
 }
 
+/// The row's token-validity fact.
+///
+/// One `·`-separated entry on the row's mono metadata line since #1179 —
+/// four stacked labels read as four rows of one account rather than one row
+/// of four facts, so they were joined.
 fn validity_in(row: &gtk::ListBoxRow) -> Option<String> {
     collect(
         row.upcast_ref::<gtk::Widget>(),
-        "postio-settings-account-validity",
+        "postio-settings-account-metadata",
     )
     .into_iter()
     .find_map(|w| w.downcast::<gtk::Label>().ok())
     .filter(|label| label.is_visible())
-    .map(|label| label.text().to_string())
+    .map(|label| label.text().to_string())?
+    .split(" · ")
+    .find(|fact| fact.starts_with("token "))
+    .map(str::to_owned)
 }
 
 fn rows(panel: &postio_gtk::settings::SettingsPanel) -> Vec<gtk::ListBoxRow> {

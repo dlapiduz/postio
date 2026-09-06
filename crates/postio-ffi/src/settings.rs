@@ -1,6 +1,6 @@
 //! Settings, as a frontend reads and writes them.
 //!
-//! **Swift never parses or writes TOML** (ADR 0029). That is not a style
+//! **Swift never parses or writes TOML** (ADR 0030). That is not a style
 //! preference: `config.toml` is the settings store, it is a file a person
 //! edits by hand, and a second writer with its own idea of key order and
 //! comment survival would rewrite work nobody asked it to touch. So the
@@ -26,12 +26,48 @@ use postio_ui::settings::Section;
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SettingsSectionFfi {
     /// Stable identifier — the `config.toml` table name, and what a frontend
-    /// stores to remember which pane was open.
+    /// stores to remember which pane was open. Empty for `Config file`, which
+    /// is not one table but all of them.
     pub key: String,
-    /// The name a structured pane shows: "Appearance".
-    pub title: String,
-    /// The bracketed table name a text view shows: "[ui]".
+    /// The nav label, and the pane's own title: "Sync & storage".
     pub label: String,
+    /// Which heading this sits under.
+    pub group: GroupFfi,
+    /// The one line under the pane's title, saying what it is for.
+    pub description: String,
+    /// The bracketed table this pane writes — `[ui]` — for the footer that
+    /// says where a change is going. `None` for the two panes that own no
+    /// table of their own.
+    pub table: Option<String>,
+}
+
+/// The two headings the nav groups its sections under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum GroupFfi {
+    /// Accounts, Filters, Composing.
+    Mail,
+    /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
+    Application,
+}
+
+impl From<postio_ui::settings::Group> for GroupFfi {
+    fn from(group: postio_ui::settings::Group) -> Self {
+        use postio_ui::settings::Group;
+        match group {
+            Group::Mail => GroupFfi::Mail,
+            Group::Application => GroupFfi::Application,
+        }
+    }
+}
+
+impl GroupFfi {
+    /// The sidebar heading, already upper-cased.
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupFfi::Mail => "MAIL",
+            GroupFfi::Application => "APPLICATION",
+        }
+    }
 }
 
 /// The validity line along the foot of the settings surface.
@@ -101,10 +137,24 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
         .into_iter()
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
-            title: section.title().to_string(),
             label: section.label().to_string(),
+            group: section.group().into(),
+            description: section.description().to_string(),
+            table: section.table().map(str::to_string),
         })
         .collect()
+}
+
+/// The sidebar heading for a group, already upper-cased.
+#[uniffi::export]
+pub fn settings_group_label(group: GroupFfi) -> String {
+    group.label().to_string()
+}
+
+/// `300` → `5 min`, `90` → `90s` — the sentence under Check for mail.
+#[uniffi::export]
+pub fn settings_humanize_interval(seconds: u64) -> String {
+    postio_ui::settings::humanize_interval(seconds)
 }
 
 /// Validate `text` and describe it the way the footer shows it.

@@ -49,7 +49,7 @@ use postio_account::secret::{AccountKey, Password, SecretStore};
 use postio_core::CommandId;
 use postio_core::bridge::EventStream;
 use postio_core::state::SharedState;
-use postio_gtk::onboarding::{Onboarding, Server, Settings, Status, Submission};
+use postio_gtk::onboarding::{BrowserSignIn, Onboarding, Server, Settings, Status, Submission};
 use postio_gtk::window::Window;
 use postio_model::account::{AuthMethod, TransportSecurity};
 use postio_model::ids::AccountId;
@@ -596,7 +596,48 @@ pub(crate) fn submit_oauth(
     let Some(client) = submission.oauth_client.clone() else {
         return;
     };
+    // What the browser is about to be asked to approve, so the screen can
+    // say so rather than showing a spinner (#1179, `Design/screens/23`).
+    // The scopes are known here, from the provider's own preset row; the
+    // consent URL and the loopback port are not known until `authorize`
+    // binds its listener and opens the browser, so they arrive through
+    // `AnnouncingOpener` below, at the moment they become true.
+    let (announce, announced) = async_channel::bounded(1);
+    let opener: Arc<dyn postio_account::oauth::BrowserOpener> = Arc::new(AnnouncingOpener {
+        inner: opener,
+        announce,
+    });
+    screen.set_browser_sign_in(BrowserSignIn {
+        provider: provider_name(&submission.settings),
+        scopes: offer.scopes.clone(),
+        ..BrowserSignIn::default()
+    });
     screen.set_status(Status::WaitingForBrowser);
+
+    glib::spawn_future_local({
+        let screen = screen.clone();
+        let scopes = offer.scopes.clone();
+        let provider = provider_name(&submission.settings);
+        async move {
+            let Ok(url) = announced.recv().await else {
+                return;
+            };
+            // The redirect the listener actually bound, read back off the
+            // request rather than guessed: `authorize` chose an ephemeral
+            // port, and this is the only place its number appears.
+            let redirect_uri = url
+                .query_pairs()
+                .find(|(key, _)| key == "redirect_uri")
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or_default();
+            screen.set_browser_sign_in(BrowserSignIn {
+                provider,
+                scopes,
+                redirect_uri,
+                authorize_url: url.to_string(),
+            });
+        }
+    });
 
     let settings = connection_settings(&submission);
     let (sender, receiver) = async_channel::bounded(1);
@@ -1124,6 +1165,42 @@ fn explain(error: &postio_account::backend::BackendError) -> String {
         ),
         other => format!("{other}"),
     }
+}
+
+/// Forwards to the real opener and announces the URL on its way past.
+///
+/// The consent URL and the loopback port it carries are built inside
+/// [`postio_account::oauth::authorize`] and never returned — the only moment
+/// they are visible to anything outside that function is the call to
+/// [`postio_account::oauth::BrowserOpener::open`]. So the screen learns what
+/// it is showing from here rather than from a second construction of the
+/// same URL, which would be a copy that could drift from the one the browser
+/// actually got.
+///
+/// `try_send` on a bounded(1) channel, never `send`: `open` is called on the
+/// runtime and must not be made to wait on a GTK task that may never run —
+/// a screen that has already been closed leaves nobody receiving, and
+/// blocking the sign-in on that would be a hang rather than a missing line.
+struct AnnouncingOpener {
+    inner: Arc<dyn postio_account::oauth::BrowserOpener>,
+    announce: async_channel::Sender<postio_account::oauth::Url>,
+}
+
+impl postio_account::oauth::BrowserOpener for AnnouncingOpener {
+    fn open(&self, url: &postio_account::oauth::Url) -> std::io::Result<()> {
+        let _ = self.announce.try_send(url.clone());
+        self.inner.open(url)
+    }
+}
+
+/// Whose consent screen this is, for the step's own heading.
+///
+/// From the IMAP host, because that is what the preset row actually carries
+/// — there is no provider *name* in the table, and inventing a mapping from
+/// domain to brand is how a provider table stops being data and starts being
+/// code (CLAUDE.md: providers are data, not code).
+fn provider_name(settings: &Settings) -> String {
+    settings.source.clone()
 }
 
 #[cfg(test)]

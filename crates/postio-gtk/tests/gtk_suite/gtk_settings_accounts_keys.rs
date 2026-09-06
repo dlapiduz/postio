@@ -70,8 +70,15 @@ pub fn focus_on_an_account_row_enters_the_accounts_context_and_leaving_restores_
          means delete-message while the focus ring sits on an account"
     );
 
-    // Somewhere else in the window, the way Tab out of the list would.
-    window.list().grab_focus();
+    // Somewhere else in the settings window, the way Tab out of the list
+    // would. Not the main window's message list: settings is a window of
+    // its own now (#1179), and focus is per window — moving the keyboard
+    // in the workspace behind would leave the account row still focused in
+    // here, which is not what leaving the list means.
+    gtk::prelude::GtkWindowExt::set_focus(
+        &window.settings_window().expect("settings is open"),
+        None::<&gtk::Widget>,
+    );
     pump();
     assert_eq!(
         window.context(),

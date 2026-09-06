@@ -176,7 +176,9 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
     // ── opening settings lists it ────────────────────────────────────────
     window.act(postio_core::Command::Settings);
     while glib::MainContext::default().iteration(false) {}
-    let listed = find(&window.clone().upcast(), &|widget| {
+    // From the panel, not from the main window: settings is a window of its
+    // own since #1179, so its widgets are no longer descendants of this one.
+    let listed = find(&window.settings().upcast(), &|widget| {
         widget.has_css_class("postio-settings-unsubscribe-row")
     });
     assert!(

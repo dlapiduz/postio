@@ -142,36 +142,38 @@ pub enum Opening {
 
 /// Which draft wins when the composer is asked to open one.
 ///
-/// `c` on a composer that kept a draft means "show me it", never "start
-/// another" — that is the one-composition-at-a-time rule, and coming back to
-/// what was kept is what makes `Esc` safe to press. But the rule is about
-/// *fresh compositions*, and it used to be applied to every request: a
-/// reply, a forward or a `mailto:` asked for after closing a draft with
-/// anything in it was silently thrown away, and the user landed back in the
-/// old draft instead of the reply they had just asked for (#691).
+/// **The one that was asked for, always.** A reply opens the reply, a
+/// `mailto:` opens the `mailto:`, and `c` opens a blank message — which is
+/// what "compose" means to everyone who has not read this file (#1196).
 ///
-/// So the question is what is being *asked for*, not only what is being
-/// held. Two things make a request deliberate, and either is enough:
+/// # What used to happen, and why it stopped
 ///
-/// * **It answers a message.** A reply, a reply-all or a forward names one,
-///   which is an intention no amount of emptiness takes back — forwarding a
-///   message with no subject and an empty body builds a draft that *looks*
-///   blank and is not.
-/// * **It arrives with something in it.** Recipients, a subject, a body: a
-///   `mailto:` link is a fresh composition by kind and still a specific one.
+/// A bare `c` came back to whatever the composer was holding. That was the
+/// one-composition-at-a-time rule, and it existed to make `Esc` safe:
+/// escape out of a half-written mail, press `c`, and there it is again.
 ///
-/// Everything else is `c`, and comes back to whatever was kept.
+/// Two things ended it. The smaller is #691: the rule was originally
+/// applied to *every* request, so a reply asked for after escaping a draft
+/// was silently discarded and the user landed back in the old draft — which
+/// is why "deliberate" requests had to be carved out of it. The larger is
+/// that the safety no longer depends on the rule at all. Since #166 a kept
+/// draft is autosaved and *is* a row in the Drafts folder by the time this
+/// is asked, so starting fresh loses nothing: the previous draft is exactly
+/// where anybody would look for a previous draft, and
+/// [`Composer::resume`] opens it by name.
 ///
-/// Nothing is lost either way: closing flushes the autosave, so a kept
-/// draft is already a row in the Drafts folder by the time this is asked —
-/// the same reasoning [`Composer::resume`] gives for replacing one outright.
-pub fn opening(kept: &Draft, asked: &Draft) -> Opening {
-    let deliberate = asked.kind != DraftKind::New || closing(asked) == Closing::Keep;
-    if deliberate || closing(kept) == Closing::Drop {
-        Opening::Fill
-    } else {
-        Opening::Restore
-    }
+/// What survives is the part that was always about the keyboard rather than
+/// about the draft: `c` while the composer is *already open* is still a
+/// no-op that returns focus, in [`Composer::open`]'s own first branch. One
+/// composition at a time, still — but "show me the one I have open", not
+/// "show me the one I closed".
+///
+/// Kept as a named function, and still called, because the decision has a
+/// reason and a caller reading `if opening(..) == Opening::Restore` is owed
+/// somewhere to find out why it never is. It is also the seam a "restore my
+/// draft" preference would reopen, should anyone want one.
+pub fn opening(_kept: &Draft, _asked: &Draft) -> Opening {
+    Opening::Fill
 }
 
 /// Whether closing the composer has anything to keep.
@@ -570,6 +572,9 @@ mod imp {
         /// The link button: a plain button, because a link is a dialog to
         /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
+        /// The paperclip. Held like `link_button` rather than built inline,
+        /// so a test can press the control a person presses.
+        pub attach_button: gtk::Button,
         pub send: gtk::Button,
         /// Opens the [`CommandId::ScheduleSend`] picker beside `send`. Its
         /// popover content is rebuilt fresh from [`schedule_presets`] every
@@ -681,6 +686,7 @@ mod imp {
                 },
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
+                attach_button: gtk::Button::new(),
                 send: gtk::Button::new(),
                 schedule_send: gtk::MenuButton::new(),
                 save: gtk::Button::new(),
@@ -2569,6 +2575,30 @@ impl Composer {
         ));
         toolbar.append(&imp.link_button);
 
+        // Attaching a file had a command, a keybinding, a file chooser, a
+        // drop target and a whole blob-store path behind it — and nothing on
+        // screen that said so, so the honest answer to "how do I attach a
+        // file" was `mod+shift+a`, if you already knew (#1197). Through
+        // `dispatch`, like every other button here, so the control and the
+        // key cannot come to mean different things.
+        style_toolbar_button(
+            &imp.attach_button,
+            CommandId::AttachFile,
+            "mail-attachment-symbolic",
+            "postio-toolbar-attach",
+        );
+        // Unlike the formatting buttons, this one does not act on the
+        // selection, so there is nothing to protect by refusing the focus —
+        // and a control the keyboard cannot reach is the same discoverability
+        // problem one step further on.
+        imp.attach_button.set_focus_on_click(true);
+        imp.attach_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::AttachFile)
+        ));
+        toolbar.append(&imp.attach_button);
+
         // Reflection: the caret's formatting drives the toggles. Programmatic
         // `set_active` emits `toggled`, not `clicked`, so nothing loops.
         let toggles = imp.format_toggles.clone();
@@ -3620,46 +3650,35 @@ mod tests {
     }
 
     #[test]
-    fn pressing_compose_again_comes_back_to_the_draft_that_was_kept() {
-        // The one-composition-at-a-time rule, and what makes `Esc` safe to
-        // press: `c` on a composer holding a kept draft is "show me it".
-        assert_eq!(opening(&written(), &draft()), Opening::Restore);
+    fn compose_starts_a_blank_message_even_when_a_draft_was_kept() {
+        // `c` means a new message (#1196). It used to come back to whatever
+        // was kept, which read as "compose opens my last draft" — and the
+        // safety that rule was protecting does not depend on it: closing
+        // flushes the autosave, so the kept draft is a row in Drafts before
+        // this is ever asked.
+        assert_eq!(opening(&written(), &draft()), Opening::Fill);
     }
 
     #[test]
-    fn a_draft_that_names_its_own_message_wins_over_the_kept_one() {
-        // #691: a reply, a forward or a `mailto:` is a specific request
-        // about a specific message. Answering it with the draft somebody
-        // closed ten minutes ago discards what they just asked for, and
-        // says nothing about having done so.
-        let mut forward = draft();
-        forward.kind = DraftKind::Forward;
-        forward.subject = "Fwd: the tide gate interlock".to_owned();
-        assert_eq!(opening(&written(), &forward), Opening::Fill);
-
+    fn every_request_opens_what_it_asked_for() {
+        // One rule now, so one test. These used to be three — a reply wins,
+        // an empty forward wins, a composer holding nothing shows what it is
+        // handed — each carving an exception out of "come back to the kept
+        // draft". There are no exceptions left to carve, and asserting
+        // `Fill` against a function that returns nothing else proves
+        // nothing, so the *behaviour* those three protected (#691: a reply
+        // asked for after escaping a draft opens the reply) is asserted
+        // where it can still fail, on the widget:
+        // `gtk_composer_resume::composing_after_a_kept_draft_starts_blank`.
         let mut reply = draft();
         reply.kind = DraftKind::Reply;
-        reply.to = vec![EmailAddress::new(None::<String>, "grace@example.com")];
-        assert_eq!(opening(&written(), &reply), Opening::Fill);
-    }
+        let mut forward = draft();
+        forward.kind = DraftKind::Forward;
 
-    #[test]
-    fn forwarding_an_empty_message_is_still_a_deliberate_request() {
-        // A forward carries no recipients and quotes whatever the message
-        // held, so forwarding one with no subject and an empty body builds a
-        // draft that *looks* blank. It is not: the user named a message.
-        // Judging this one on its contents would answer them with somebody
-        // else's draft, which is the whole of #691.
-        let mut empty = draft();
-        empty.kind = DraftKind::Forward;
-        assert_eq!(opening(&written(), &empty), Opening::Fill);
-    }
-
-    #[test]
-    fn a_composer_holding_nothing_shows_whatever_it_is_handed() {
-        // Nothing to come back to, so there is no question to answer.
-        assert_eq!(opening(&draft(), &draft()), Opening::Fill);
-        assert_eq!(opening(&draft(), &written()), Opening::Fill);
+        for asked in [draft(), written(), reply, forward] {
+            assert_eq!(opening(&written(), &asked), Opening::Fill);
+            assert_eq!(opening(&draft(), &asked), Opening::Fill);
+        }
     }
 
     #[test]
