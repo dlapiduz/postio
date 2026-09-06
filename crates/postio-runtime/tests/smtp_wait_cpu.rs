@@ -13,7 +13,7 @@
 //!
 //! # Its own binary, and why
 //!
-//! It reads this **process's** CPU time out of `/proc/self/stat`, so anything
+//! It reads this **process's** CPU time (`postio_test_support::cpu`), so anything
 //! else running in the process is measured too. `runtime_suite` is one binary
 //! over libtest's thread pool, where a neighbour compiling a regex would land
 //! in this reading as a spin. `shutdown.rs` and `logging_privacy.rs` are out
@@ -36,6 +36,7 @@ use postio_smtp::transport::{SmtpConnector, SmtpStream, TransportError};
 use postio_storage::repository::{DraftRepository, OperationQueueRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
+use postio_test_support::cpu::{assert_the_clock_can_see_a_burn, cpu_time};
 
 /// How long a connect to a host that never answers takes to give up.
 ///
@@ -91,24 +92,6 @@ impl SmtpConnector for Silent {
     }
 }
 
-/// This process's CPU time so far, user plus system.
-///
-/// Fields 14 and 15 of `/proc/self/stat`, in clock ticks. The comm field can
-/// contain spaces and parentheses, so the split is after the last `)` — the
-/// standard way to parse this file, and the reason it is not a plain
-/// `split_whitespace`.
-fn cpu_time() -> Duration {
-    let stat = std::fs::read_to_string("/proc/self/stat").expect("/proc/self/stat");
-    let tail = &stat[stat.rfind(')').expect("the comm field ends") + 1..];
-    let fields: Vec<&str> = tail.split_whitespace().collect();
-    // `tail` starts at the state field, which is field 3, so field 14 is
-    // index 11 here and field 15 is index 12.
-    let utime: u64 = fields[11].parse().expect("utime");
-    let stime: u64 = fields[12].parse().expect("stime");
-    let ticks_per_second = 100; // `sysconf(_SC_CLK_TCK)`, 100 on every Linux this runs on.
-    Duration::from_secs_f64((utime + stime) as f64 / ticks_per_second as f64)
-}
-
 /// Drive one future to completion on a runtime of its own.
 ///
 /// The test itself is synchronous — it sleeps and reads `/proc` — and the two
@@ -119,41 +102,6 @@ fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
         .build()
         .expect("a runtime")
         .block_on(future)
-}
-
-/// The reading moves when the process actually burns.
-///
-/// This whole file is a *negative* assertion — "no CPU was used" — and the
-/// cheapest way for one of those to pass is for the instrument to be broken.
-/// A clock that always reads zero would report an idle engine however hard it
-/// spun, so the reading is calibrated against a deliberate burn before it is
-/// trusted to say the engine did none.
-fn assert_the_clock_can_see_a_burn() {
-    /// Enough movement to be unambiguous, and small enough to be quick.
-    const VISIBLE: Duration = Duration::from_millis(50);
-
-    let before = cpu_time();
-    // Spins until the *clock* moves, rather than for a fixed stretch of wall
-    // time, so a machine that deschedules this thread lengthens the spin
-    // instead of failing the assertion — and a machine that does not stops
-    // early rather than burning a whole tenth of a second of somebody else's
-    // core. The wall-clock bound is only the give-up.
-    let give_up = Instant::now() + postio_test_support::scaled(Duration::from_secs(2));
-    let mut counter = 0u64;
-    let mut seen = Duration::ZERO;
-    while seen < VISIBLE && Instant::now() < give_up {
-        // A batch between readings: `/proc/self/stat` is a file read, and one
-        // per turn would measure the reading rather than the spinning.
-        for _ in 0..10_000 {
-            counter = counter.wrapping_add(1);
-        }
-        seen = cpu_time().saturating_sub(before);
-    }
-    assert!(
-        seen >= VISIBLE,
-        "spinning read as {seen:?} of CPU after {counter} turns, so this \
-         file's measurement cannot tell a spinning engine from an idle one"
-    );
 }
 
 /// The same measurement with the NetworkManager listener running (#1216).
