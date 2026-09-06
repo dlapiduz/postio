@@ -74,6 +74,7 @@ fn sample_row() -> RowFfi {
         draft: false,
         has_attachments: false,
         thread_count: 1,
+        participants: String::new(),
     }
 }
 

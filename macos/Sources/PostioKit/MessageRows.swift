@@ -154,7 +154,15 @@ public struct RowPresentation: Equatable, Sendable {
         // `LK` on either platform, and the time so `Thu` means the same week.
         initials = row.initials
         time = rowTimestamp(receivedAt: row.receivedAt)
-        sender = row.from?.nonEmpty ?? "(no sender)"
+        // A conversation row names the people in it; a message row names its
+        // sender. Which one this is comes from `isThread`, not from whether
+        // the participants happen to be empty — a thread whose senders all
+        // failed to parse is still a thread, and falling through to the
+        // representative would make it look like a message row (ADR 0015).
+        sender =
+            row.isThread
+            ? (row.participants.nonEmpty ?? row.from?.nonEmpty ?? "(no sender)")
+            : (row.from?.nonEmpty ?? "(no sender)")
         subject = row.subject?.nonEmpty ?? "(no subject)"
         preview = row.preview ?? ""
         unread = !row.seen

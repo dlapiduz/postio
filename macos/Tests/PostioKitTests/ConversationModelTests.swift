@@ -27,7 +27,8 @@ import Testing
             answered: false,
             draft: false,
             hasAttachments: false,
-            threadCount: 6
+            threadCount: 6,
+            participants: ""
         )
     }
 
