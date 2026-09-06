@@ -39,11 +39,10 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use chrono::{DateTime, Datelike, Local, Utc};
+use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
-use postio_core::{CommandId, Keymap};
-use postio_model::address::EmailAddress;
+use postio_core::Keymap;
 // The people in a conversation, short and newest-biased. The rule lives in
 // `postio-ui`: the list row and the conversation header both draw this line,
 // and two surfaces shortening the same names two ways is what moving it
@@ -1414,7 +1413,12 @@ struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test-only since #1221 moved `initials`, `timestamp` and
+    // `RowAction` to `postio-ui`: the widget names none of these
+    // any more, only these assertions do.
     use chrono::{Local, TimeZone, Utc};
+    use postio_model::address::EmailAddress;
     use postio_model::ids::MessageId;
 
     fn addr(name: Option<&str>, address: &str) -> EmailAddress {
