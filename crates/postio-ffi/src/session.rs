@@ -782,6 +782,23 @@ impl Session {
             })
             .collect()
     }
+    /// Every configured account, in the order the pane lists them.
+    ///
+    /// Disabled ones included: a list that hid them would make "where did my
+    /// account go" the next question. An empty answer means no store, which
+    /// on a machine that has never signed in is exactly the claim.
+    pub fn accounts(&self) -> Vec<crate::AccountFfi> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Vec::new();
+        };
+        let Ok(connection) = database.connection() else {
+            return Vec::new();
+        };
+        postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
+            .unwrap_or_default()
+    }
 }
 
 // ---------------------------------------------------------------------------

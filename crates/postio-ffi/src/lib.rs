@@ -35,6 +35,7 @@
 //! handles none of them still runs. Today the floor is one function; the
 //! scaffolding around it is the part that had to be proven first.
 
+mod account;
 mod dwell;
 mod event;
 mod keys;
@@ -48,6 +49,7 @@ mod search;
 mod session;
 mod settings;
 
+pub use account::AccountFfi;
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};

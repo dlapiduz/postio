@@ -34,6 +34,13 @@ final class Engine {
     /// state before then: it follows the system.
     private(set) var appearance: AppearanceFfi?
 
+    /// The configured accounts, for the settings window's Accounts pane.
+    ///
+    /// Read once when the session opens. Nothing in this build changes them
+    /// -- adding an account is still `postio-provision` (#649) -- so there is
+    /// nothing yet to keep this in step with.
+    private(set) var accounts: [AccountFfi] = []
+
     /// The colour scheme `[ui].theme` asks for, or `nil` to follow the system.
     ///
     /// `system` and "no session yet" are the same answer on purpose — both
@@ -93,6 +100,7 @@ final class Engine {
             controller.ui = appearance
             // From this session's keymap, so a rebinding reaches the row.
             controller.hints = session.rowHints()
+            accounts = session.accounts()
             self.appearance = appearance
             state = .open(controller)
             // Nothing was ever fetched before this: the store opened and

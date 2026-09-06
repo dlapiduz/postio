@@ -47,7 +47,7 @@ struct PostioApp: App {
         // 3f's contract -- one store, no OK/Cancel, nav that jumps, validity
         // along the foot -- is kept in full; only the frame is different.
         Settings {
-            SettingsPaneView(store: settings)
+            SettingsPaneView(store: settings, accounts: engine.accounts)
                 .preferredColorScheme(engine.colorScheme)
         }
     }
