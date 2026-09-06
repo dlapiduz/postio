@@ -59,5 +59,22 @@ struct PostioApp: App {
         }
         .defaultSize(width: 900, height: 560)
         .windowResizability(.contentSize)
+
+        // Compose: its own window, several at once, each in the Window menu
+        // (canvas screen 26). `WindowGroup` rather than `Window` for exactly
+        // that reason — a `Window` is a singleton, and writing two messages
+        // at once is ordinary.
+        WindowGroup(id: WindowId.compose, for: Int64.self) { $draft in
+            if let draft, let model = engine.compose.model(draft), let session = engine.session {
+                ComposeView(
+                    session: session,
+                    model: model,
+                    close: { engine.compose.close(draft) }
+                )
+                .preferredColorScheme(engine.colorScheme)
+                .navigationTitle(model.title)
+            }
+        }
+        .defaultSize(width: 640, height: 520)
     }
 }

@@ -17,6 +17,7 @@
 //! it will change what its neighbours see.
 
 mod aiming;
+mod compose;
 mod config;
 mod conversation;
 mod dwell;

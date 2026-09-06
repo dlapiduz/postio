@@ -205,6 +205,12 @@ struct Shell: View {
             guard request.wasRaised else { return }
             openWindow(id: request.id)
         }
+        // A compose window per draft: the store holds the draft, the shell
+        // is what can open a window for it.
+        .onChange(of: engine.compose.request) { _, request in
+            guard request.wasRaised, let draft = engine.compose.requested else { return }
+            openWindow(id: WindowId.compose, value: draft)
+        }
         .onChange(of: engine.requestedToken) { _, _ in
             guard let requested = engine.requested else { return }
             selectedFolder = requested.mailbox

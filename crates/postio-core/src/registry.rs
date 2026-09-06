@@ -566,8 +566,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Send,
         title: "Send",
-        default_binding: "mod+Return",
-        alternate_bindings: &[],
+        default_binding: "mod+shift+d",
+        alternate_bindings: &["mod+Return"],
         contexts: Context::Composer.as_set(),
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.

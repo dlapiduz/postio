@@ -36,6 +36,7 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod account;
+mod compose;
 mod conversation;
 mod dwell;
 mod event;
@@ -52,6 +53,7 @@ mod settings;
 mod sidebar;
 
 pub use account::AccountFfi;
+pub use compose::{DraftFfi, DraftKindFfi, outgoing_shape};
 pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
