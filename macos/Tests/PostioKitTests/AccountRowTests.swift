@@ -42,10 +42,19 @@ import Testing
     }
 
     @Test func anEmptyListSaysWhyRatherThanDrawingNothing() {
-        // Canvas 3d: never a shrug. On a Mac this is also the common case —
-        // there is no way to add an account from the interface yet, so the
-        // sentence has to name the way in that does exist.
+        // Canvas 3d: never a shrug. It used to point at `postio-provision`,
+        // because there was no way in from the interface; now there is one,
+        // and the sentence names it (#1279).
         let empty = AccountRow.emptyMessage
-        #expect(empty.contains("postio-provision"), "\(empty)")
+        #expect(empty.contains("+"), "\(empty)")
+        #expect(!empty.contains("postio-provision"), "the terminal is no longer the way in")
+    }
+
+    @Test func anExpiredTokenIsSomethingToDoSomethingAbout() {
+        // The canvas draws a warning and an inline Reconnect for exactly this
+        // state: the account is there, the mail is there, and nothing will
+        // arrive until somebody signs in again.
+        #expect(AccountRow.needsAttention(account(facts: ["outlook", "oauth2", "token expired"])))
+        #expect(!AccountRow.needsAttention(account(facts: ["imap", "password", "4291 msg"])))
     }
 }

@@ -352,6 +352,29 @@ public final class PostioSession {
     /// Always allow every address at this domain.
     public func allowDomain(_ domain: String) { inner.allowDomain(domain: domain) }
 
+    /// Add an account that signs in with a password.
+    ///
+    /// `nil` when it was added; a sentence when it was not. The password goes
+    /// to the OS keyring under the address and nowhere else — never
+    /// `config.toml`, never a log (ADR 0014).
+    public func addImapAccount(
+        address: String,
+        password: String,
+        imapHost: String,
+        imapPort: UInt16,
+        smtpHost: String,
+        smtpPort: UInt16
+    ) -> String? {
+        inner.addImapAccount(
+            address: address,
+            password: password,
+            imapHost: imapHost,
+            imapPort: imapPort,
+            smtpHost: smtpHost,
+            smtpPort: smtpPort
+        )
+    }
+
     // -- writing mail (#1272) ---------------------------------------------
 
     /// A new message, from the account that would send it.

@@ -54,7 +54,11 @@ struct PostioApp: App {
         // with an id is opened by `openWindow`, which is a call rather than a
         // hope.
         Window("Settings", id: WindowId.settings) {
-            SettingsPaneView(store: settings, accounts: engine.accounts)
+            SettingsPaneView(
+                store: settings,
+                accounts: engine.accounts,
+                session: engine.session
+            )
                 .preferredColorScheme(engine.colorScheme)
         }
         .defaultSize(width: 900, height: 560)

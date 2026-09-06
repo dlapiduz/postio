@@ -25,6 +25,7 @@ mod keys;
 mod list;
 mod notice;
 mod palette;
+mod provisioning;
 mod reader;
 mod registry;
 mod search;

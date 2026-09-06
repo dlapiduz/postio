@@ -24,9 +24,25 @@ public struct SettingsPaneView: View {
     /// `config.toml`: the store is the truth about which accounts exist.
     private let accounts: [AccountFfi]
 
-    public init(store: SettingsStore, accounts: [AccountFfi] = []) {
+    /// The session, for the things the accounts pane can actually *do* —
+    /// adding one, mostly. `nil` when the store never opened, in which case
+    /// the pane still draws: settings are a file, and being unable to read
+    /// mail is not being unable to configure it.
+    private let session: PostioSession?
+
+    /// Which account's form is open, if any.
+    @State private var selected: Int64?
+    /// The add-account sheet, while it is up.
+    @State private var adding: AddAccountModel?
+
+    public init(
+        store: SettingsStore,
+        accounts: [AccountFfi] = [],
+        session: PostioSession? = nil
+    ) {
         self.store = store
         self.accounts = accounts
+        self.session = session
     }
 
     public var body: some View {
@@ -153,41 +169,137 @@ public struct SettingsPaneView: View {
     /// list first, because a pane that cannot even show what is configured is
     /// the part that makes the rest unverifiable.
     @ViewBuilder private var accountsPane: some View {
-        if accounts.isEmpty {
-            ContentUnavailableView {
-                Label("No accounts", systemImage: "person.crop.circle.badge.questionmark")
-            } description: {
-                Text(AccountRow.emptyMessage)
+        VStack(alignment: .leading, spacing: 0) {
+            if accounts.isEmpty {
+                ContentUnavailableView {
+                    Label("No accounts", systemImage: "person.crop.circle.badge.questionmark")
+                } description: {
+                    Text(AccountRow.emptyMessage)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(accounts, id: \.id) { account in
+                            accountRow(account)
+                            if account.id != accounts.last?.id { Divider() }
+                        }
+                    }
+                }
             }
-        } else {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(accounts, id: \.id) { account in
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(account.initials)
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(width: 30, height: 30)
-                            .background(Color.accentColor.opacity(0.22))
-                            .clipShape(Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
-                                Text(account.address).font(.body)
-                                if let tag = AccountRow.tag(account) {
-                                    Text(tag)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
+            Divider()
+            // Under the list, not in the sidebar: the buttons act on *this*
+            // list, and a `+` in the section nav would read as "add a section"
+            // (canvas 27).
+            HStack(spacing: 6) {
+                Button {
+                    adding = AddAccountModel()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Add an account")
+                .accessibilityLabel("Add an account")
+                Button {
+                    // Removing an account takes its mail with it, so it is a
+                    // confirmed action rather than a button (#1277).
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(true)
+                .help("Removing an account is not built yet")
+                .accessibilityLabel("Remove the selected account")
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .sheet(item: $adding) { model in
+            AddAccountSheet(session: session, model: model) { adding = nil }
+        }
+    }
+
+    /// One account, and its form when it is the selected one.
+    @ViewBuilder private func accountRow(_ account: AccountFfi) -> some View {
+        let open = selected == account.id
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                selected = open ? nil : account.id
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(account.initials)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 30, height: 30)
+                        .background(Color.accentColor.opacity(0.22))
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(account.address).font(.body)
+                            if let tag = AccountRow.tag(account) {
+                                Text(tag)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            if AccountRow.needsAttention(account) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .foregroundStyle(.secondary)
                             }
                             Text(AccountRow.line(account))
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 10)
-                    if account.id != accounts.last?.id { Divider() }
+                    Spacer(minLength: 0)
+                    if AccountRow.needsAttention(account) {
+                        // Inline, beside the account it is about: a token that
+                        // expired is a thing to fix here rather than a banner
+                        // somewhere else (#1276).
+                        Button("Reconnect") {}
+                            .controlSize(.small)
+                            .disabled(true)
+                            .help("Signing in again is not built here yet")
+                    }
                 }
+                .contentShape(Rectangle())
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(open ? [.isSelected] : [])
+
+            if open {
+                accountForm(account)
             }
         }
+    }
+
+    /// What selecting an account reveals.
+    private func accountForm(_ account: AccountFfi) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            field("DISPLAY NAME") {
+                Text(account.displayName.isEmpty ? account.address : account.displayName)
+            }
+            field("LOCAL STORE") {
+                Text(store.path)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 8) {
+                Button("Test connection") {}
+                    .disabled(true)
+                Button("Re-index store") {}
+                    .disabled(true)
+                Button("Remove account…") {}
+                    .disabled(true)
+            }
+            // Said once, here, rather than three tooltips: these are the
+            // account actions the boundary has no path for yet (#1277).
+            Text("Testing, re-indexing and removing are not built here yet.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.leading, 42)
+        .padding(.bottom, 14)
     }
 
     @ViewBuilder private var appearance: some View {

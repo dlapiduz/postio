@@ -600,6 +600,24 @@ impl Session {
         self.allow_domain(domain);
     }
 
+    /// Add an account that signs in with a password. `None` when it was
+    /// added, a sentence when it was not.
+    #[uniffi::method(name = "addImapAccount")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_imap_account_ffi(
+        &self,
+        address: String,
+        password: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+    ) -> Option<String> {
+        self.add_imap_account(
+            address, password, imap_host, imap_port, smtp_host, smtp_port,
+        )
+    }
+
     /// How many rows the current scope has — a table's `numberOfRows`.
     #[uniffi::method(name = "rowCount")]
     pub fn row_count_ffi(&self) -> u32 {
@@ -1019,9 +1037,18 @@ impl Session {
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
             let sync_config = config.sync;
-            let wiring = Wiring::new(database, blobs, runtime, sink, commands)
+            let mut wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
+            // Honour `with_secrets` here too. It was read only on the real
+            // path, so an in-memory session that had been handed a test
+            // keyring quietly used the **login keychain** instead — which is
+            // how a test suite came to hang on a macOS permission prompt
+            // nobody could see, after writing a password into a developer's
+            // own keychain.
+            if let Some(secrets) = options.secrets.clone() {
+                wiring = wiring.with_secrets(secrets);
+            }
             let keys = config.keys;
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
@@ -1268,6 +1295,101 @@ impl Session {
     /// two would mean Postio rewriting a file the user owns.
     fn allow_list_path(&self) -> std::path::PathBuf {
         self.allow_list_at.clone()
+    }
+
+    /// Add an account. See [`add_imap_account_ffi`](Self::add_imap_account_ffi).
+    ///
+    /// The password goes to the OS keyring under the address and nowhere
+    /// else — never `config.toml`, never a log (ADR 0014). The row is written
+    /// only after the keyring has taken it, so a locked keyring leaves no
+    /// half-made account behind; `postio_session::provision` is where that
+    /// order is argued.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_imap_account(
+        &self,
+        address: String,
+        password: String,
+        imap_host: String,
+        imap_port: u16,
+        smtp_host: String,
+        smtp_port: u16,
+    ) -> Option<String> {
+        if !address.contains('@') {
+            return Some(format!("{address} does not look like an email address."));
+        }
+        // Refused rather than written: an account naming no server fails
+        // later, at sync, as a connection error nobody can act on.
+        if imap_host.trim().is_empty() || smtp_host.trim().is_empty() {
+            return Some(
+                "Postio needs the incoming and outgoing server names — it will not                  guess them from your address."
+                    .to_owned(),
+            );
+        }
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open to add an account to.".to_owned());
+        };
+
+        let server = |host: String, port: u16| postio_account::discovery::ServerSettings {
+            host,
+            port,
+            encryption: postio_account::discovery::Encryption::Tls,
+        };
+        let settings = postio_account::discovery::AccountSettings {
+            email: address.clone(),
+            imap: server(imap_host.trim().to_owned(), imap_port),
+            smtp: server(smtp_host.trim().to_owned(), smtp_port),
+            // The login is the address unless somebody says otherwise, and
+            // the two differ more often than they look like they should —
+            // every iCloud custom domain, for one. The sheet does not ask
+            // yet; when it does, this is the field.
+            login: address.clone(),
+            // Typed by the person adding the account, which no probe can
+            // claim: `Guess` is the honest source for settings nothing
+            // discovered, and it is what stops this presenting itself as a
+            // verified configuration.
+            source: postio_account::discovery::SettingsSource::Guess,
+            requires_app_password: false,
+            note: None,
+            password_help_url: None,
+            display_name: None,
+            oauth: None,
+            jmap: None,
+            backends: vec!["imap".to_owned()],
+        };
+        let account = postio_session::provision::account_from(&settings);
+
+        let Some(secrets) = self.secret_store() else {
+            return Some("There is no keyring to store the password in.".to_owned());
+        };
+        let password = postio_account::secret::Password::new(password);
+        // A runtime of its own, alive for exactly this call — the same shape
+        // `postio_session::store_key_blocking` uses and for the same reason.
+        // Borrowing the session's engine runtime deadlocked: `Handle::block_on`
+        // needs that runtime to be driven, and under the full test suite it is
+        // busy elsewhere. It cost two hung test binaries to find, and the
+        // symptom was every test passing and the process never exiting.
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return Some("The keyring could not be reached.".to_owned());
+        };
+        let outcome = runtime.block_on(postio_session::provision::provision(
+            &database,
+            secrets.as_ref(),
+            account,
+            password,
+        ));
+        match outcome {
+            Ok(_) => None,
+            Err(error) => Some(error.to_string()),
+        }
+    }
+
+    /// The keyring this session was opened with.
+    fn secret_store(&self) -> Option<Arc<dyn postio_account::secret::SecretStore>> {
+        let guard = self.wiring.lock().expect("wiring lock");
+        Some(guard.as_ref()?.secrets.clone())
     }
 
     /// A new message. See [`new_draft_ffi`](Self::new_draft_ffi).

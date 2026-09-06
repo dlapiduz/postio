@@ -3436,3 +3436,4 @@ Three things worth keeping:
 - 2026-09-05 — [The error log was never switched on (2026-09-05, #1184)](notes/2026-09-05-the-error-log-was-never-switched-on.md)
 - 2026-09-05 — [The app that ran, logged, and drew nothing (2026-09-05, #1156)](notes/2026-09-05-the-app-that-ran-logged-and-drew-nothing.md)
 - 2026-09-06 — [Moving code out of a crate you cannot compile (2026-09-06, #1221)](notes/2026-09-06-moving-code-out-of-a-crate-you-cannot-compile.md)
+- 2026-09-06 — [A test keyring that was quietly the login keychain (2026-09-06, #1279)](notes/2026-09-06-a-test-keyring-that-was-quietly-the-login-keychain.md)
