@@ -246,12 +246,9 @@ fn the_composer_takes_the_reading_pane_and_gives_it_back() {
         "`c` starts a new message rather than reopening the kept one"
     );
 
-    // And the kept one is still reachable, with every word. Closed first,
-    // then opened: `resume` keys its "already showing this" check on the
-    // draft *id*, and every unsaved draft carries `UNASSIGNED` — so
-    // resuming one unsaved draft over another is a no-op. Real resumes come
-    // out of the Drafts folder with real ids, which is why that has never
-    // bitten anything but a test.
+    // And the kept one is still reachable, with every word. Closed and
+    // reopened rather than resumed: `close` is what releases the reading
+    // pane, and the assertions below are about which pane comes back.
     composer.close();
     settle();
     composer.open(started());
