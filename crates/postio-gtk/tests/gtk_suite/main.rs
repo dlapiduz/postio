@@ -420,6 +420,18 @@ const CASES: &[(&str, fn())] = &[
         gtk_list_reload::a_reordering_sync_leaves_the_cursor_on_the_same_message as fn(),
     ),
     (
+        "gtk_list_reload::a_reordering_sync_leaves_the_autoselected_cursor_on_its_message",
+        gtk_list_reload::a_reordering_sync_leaves_the_autoselected_cursor_on_its_message as fn(),
+    ),
+    (
+        "gtk_list_reload::restoring_the_cursor_after_a_reload_does_not_arm_the_dwell",
+        gtk_list_reload::restoring_the_cursor_after_a_reload_does_not_arm_the_dwell as fn(),
+    ),
+    (
+        "gtk_list_reload::switching_what_the_list_shows_does_not_carry_the_cursor_over",
+        gtk_list_reload::switching_what_the_list_shows_does_not_carry_the_cursor_over as fn(),
+    ),
+    (
         "gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else",
         gtk_new_mail_scroll::new_mail_reveals_itself_at_the_top_and_nowhere_else as fn(),
     ),
