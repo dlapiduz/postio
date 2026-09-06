@@ -30,6 +30,7 @@
 //! turn a menu into a list of everything.
 
 use crate::command::CommandId;
+use postio_config::paths::Platform;
 
 /// A top-level menu, in the order a menu bar shows them.
 ///
@@ -40,6 +41,14 @@ use crate::command::CommandId;
 /// registry, so they are not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MenuSection {
+    /// The application menu: settings, accounts, the config file.
+    ///
+    /// macOS has one and expects `⌘,` to live in it; freedesktop has no such
+    /// menu, and [`MenuSection::bar_for`] folds this into [`Edit`](Self::Edit)
+    /// there. The variant exists so the *placement* is decided once, in the
+    /// table both frontends read, rather than as a list of three command ids
+    /// kept by hand in one of them.
+    App,
     /// New mail, drafts, attachments, and getting things out of Postio.
     File,
     /// Undo, selection, and the editing verbs a text surface expects.
@@ -59,6 +68,7 @@ pub enum MenuSection {
 impl MenuSection {
     /// Every section, in menu-bar order.
     pub const ALL: &'static [MenuSection] = &[
+        MenuSection::App,
         MenuSection::File,
         MenuSection::Edit,
         MenuSection::View,
@@ -69,8 +79,25 @@ impl MenuSection {
     ];
 
     /// The title a menu bar shows.
+    /// The sections a menu bar shows on `platform`, left to right.
+    ///
+    /// The application menu is first where there is one and absent where
+    /// there is not — its commands reach Edit instead, through
+    /// [`section_on`].
+    pub fn bar_for(platform: Platform) -> Vec<MenuSection> {
+        MenuSection::ALL
+            .iter()
+            .copied()
+            .filter(|section| *section != MenuSection::App || platform == Platform::Apple)
+            .collect()
+    }
+
+    /// The title a menu bar shows.
     pub fn title(self) -> &'static str {
         match self {
+            // AppKit names this one after the application itself; the string
+            // is here so nothing has to special-case an empty title.
+            MenuSection::App => "Postio",
             MenuSection::File => "File",
             MenuSection::Edit => "Edit",
             MenuSection::View => "View",
@@ -113,7 +140,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
         C::Search | C::SaveSearch => Some(M::Edit),
-        C::Settings | C::EditConfig | C::AddAccount => Some(M::Edit),
+        C::Settings | C::EditConfig | C::AddAccount => Some(M::App),
         // Settings surfaces act on the row the settings list has focus on.
         // They are commands so `[keys]` can reach them and so the palette
         // can offer them where they apply; a menu bar item for "rename the
@@ -167,6 +194,18 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
     }
 }
 
+/// [`section_for`], folded for a platform that has no application menu.
+///
+/// Freedesktop has none, so its three commands appear under Edit — which is
+/// where they were before this variant existed, and where the GTK menu still
+/// draws them.
+pub fn section_on(command: CommandId, platform: Platform) -> Option<MenuSection> {
+    match section_for(command) {
+        Some(MenuSection::App) if platform != Platform::Apple => Some(MenuSection::Edit),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +236,70 @@ mod tests {
             placed * 2 > total,
             "only {placed} of {total} commands reach a menu"
         );
+    }
+
+    #[test]
+    fn settings_lives_in_the_application_menu_on_apple_and_in_edit_elsewhere() {
+        // `⌘,` is discoverable in the application menu on macOS and nowhere
+        // else; freedesktop has no such menu, so the same three verbs fold
+        // into Edit. One table, two renderings — the alternative is a
+        // hand-maintained list of command ids in the Swift menu builder,
+        // which is what #1158 existed to remove.
+        use postio_config::paths::Platform;
+        for command in [
+            CommandId::Settings,
+            CommandId::EditConfig,
+            CommandId::AddAccount,
+        ] {
+            assert_eq!(section_for(command), Some(MenuSection::App), "{command:?}");
+            assert_eq!(
+                section_on(command, Platform::Apple),
+                Some(MenuSection::App),
+                "{command:?}"
+            );
+            assert_eq!(
+                section_on(command, Platform::Freedesktop),
+                Some(MenuSection::Edit),
+                "{command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_shows_an_application_menu_only_where_the_platform_has_one() {
+        use postio_config::paths::Platform;
+        let apple = MenuSection::bar_for(Platform::Apple);
+        let freedesktop = MenuSection::bar_for(Platform::Freedesktop);
+
+        assert_eq!(
+            apple.first(),
+            Some(&MenuSection::App),
+            "the application menu is the leftmost one on macOS"
+        );
+        assert!(
+            !freedesktop.contains(&MenuSection::App),
+            "freedesktop drew an application menu it has no place for"
+        );
+        // Everything else is the same bar, in the same order.
+        let without_app: Vec<_> = apple
+            .iter()
+            .filter(|section| **section != MenuSection::App)
+            .copied()
+            .collect();
+        assert_eq!(without_app, freedesktop);
+    }
+
+    #[test]
+    fn no_section_draws_an_empty_menu_on_either_platform() {
+        use postio_config::paths::Platform;
+        for platform in [Platform::Apple, Platform::Freedesktop] {
+            for section in MenuSection::bar_for(platform) {
+                assert!(
+                    crate::registry::all()
+                        .any(|spec| section_on(spec.id, platform) == Some(section)),
+                    "{section:?} would draw an empty menu on {platform:?}"
+                );
+            }
+        }
     }
 }

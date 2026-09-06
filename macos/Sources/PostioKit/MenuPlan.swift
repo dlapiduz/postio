@@ -36,6 +36,9 @@ public enum MenuPlan {
     public struct Menu: Equatable, Sendable {
         public let title: String
         public let items: [Item]
+        /// Which menu this is, so the builder can tell the application menu
+        /// from the rest without matching on its title.
+        public let section: MenuSectionFfi
     }
 
     /// The whole menu bar, in order, empty menus dropped.
@@ -62,7 +65,7 @@ public enum MenuPlan {
             // A menu with nothing under it draws as an empty pane, which reads
             // as a broken application rather than as a section that happens to
             // be empty on this build.
-            return items.isEmpty ? nil : Menu(title: menu.title, items: items)
+            return items.isEmpty ? nil : Menu(title: menu.title, items: items, section: menu.section)
         }
     }
 

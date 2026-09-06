@@ -33,13 +33,19 @@ enum MenuBar {
 
         let bar = NSMenu()
         // The application menu, which is AppKit's and not the registry's:
-        // About, Hide, Quit. A Mac without it is not a Mac, and none of it is
-        // a Postio command.
+        // About, Hide, Quit are AppKit's and not the registry's. The registry
+        // does own three of this menu's items -- Settings, the config file and
+        // Add account -- and they are merged in rather than drawn as a second
+        // "Postio" menu beside it (#1207).
+        let planned = MenuPlan.build(binding: binding)
         let appItem = NSMenuItem()
-        appItem.submenu = applicationMenu()
+        appItem.submenu = applicationMenu(
+            items: planned.first { $0.section == .app }?.items ?? [],
+            target: target
+        )
         bar.addItem(appItem)
 
-        for menu in MenuPlan.build(binding: binding) {
+        for menu in planned where menu.section != .app {
             let item = NSMenuItem()
             let submenu = NSMenu(title: menu.title)
             for planned in menu.items {
@@ -67,12 +73,23 @@ enum MenuBar {
     /// and a deallocated one makes every item stop working with no error.
     private static var target: CommandTarget?
 
-    private static func applicationMenu() -> NSMenu {
+    /// AppKit's application menu, with the registry's three items in it.
+    ///
+    /// Where macOS puts them, and the only place `⌘,` is discoverable here.
+    /// Until this existed the menu was About/Hide/Quit and Settings fell back
+    /// to Edit, so the shortcut was announced nowhere once the mail loaded.
+    private static func applicationMenu(items: [MenuPlan.Item], target: CommandTarget) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(
             withTitle: "About Postio",
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: "")
+        if !items.isEmpty {
+            menu.addItem(.separator())
+            for planned in items {
+                menu.addItem(menuItem(for: planned, target: target))
+            }
+        }
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Hide Postio", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
