@@ -289,6 +289,15 @@ chore ci build revert`, scope the crate without prefix (or `workspace`, `ci`,
 72. Every commit ends with `Refs: #<issue>`; the PR body's `Closes: #<issue>`
 does the closing. Every commit is green for the crates it touches.
 
+**Never write a closing keyword in a commit body, not even to deny it.**
+GitHub acts on `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved
+#<n>` and does not read the negation in front of it, so *"this does not close
+#1216"* closes #1216 — which is how a p1 investigation with an unmet
+acceptance line came to be closed by the commit saying it was not finishing
+it. Write **"does not finish #1216"**, "leaves #1216 open", or just
+`Refs: #1216`. `issue-land.sh --refs-only` refuses the landing rather than
+letting it through.
+
 Standing authorisation: committing, pushing your own issue branch, and
 `--force-with-lease` on it after the land script rebases. Not authorised
 without asking: pushing `main`, adding remotes, rewriting shared history,
