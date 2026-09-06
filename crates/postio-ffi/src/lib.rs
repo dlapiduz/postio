@@ -51,7 +51,7 @@ mod session;
 mod settings;
 
 pub use account::AccountFfi;
-pub use conversation::ConversationFfi;
+pub use conversation::{ConversationFfi, RunFfi, conversation_runs, message_when};
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
