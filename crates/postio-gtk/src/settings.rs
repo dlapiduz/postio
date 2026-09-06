@@ -775,6 +775,10 @@ mod imp {
         /// What the find-a-setting field currently holds, folded to lower
         /// case — read by the sidebar's filter function, which GTK calls
         /// once per row and must not do the folding eight times over.
+        /// Set while `redraw_accounts` is rebuilding the list, so the
+        /// selection changes that rebuilding causes are not mistaken for a
+        /// person choosing an account. See that method.
+        pub redrawing: Cell<bool>,
         pub nav_query: RefCell<String>,
         /// Who to ask to run a `CommandId` this panel has a button for.
         pub command: RefCell<Vec<CommandHandler>>,
@@ -1003,6 +1007,7 @@ mod imp {
                 nav_rows: RefCell::new(Vec::new()),
                 footer_dot: gtk::Box::new(gtk::Orientation::Horizontal, 0),
                 footer_target: gtk::Label::new(None),
+                redrawing: Cell::new(false),
                 nav_query: RefCell::new(String::new()),
                 command: RefCell::new(Vec::new()),
                 editor_button: OnceCell::new(),
@@ -1586,6 +1591,19 @@ impl SettingsPanel {
     /// Rebuilds the account rows from whatever accounts and weights are held.
     fn redraw_accounts(&self) {
         let imp = self.imp();
+        // Selecting a row is what opens the form under the list (#1179), so
+        // rebuilding the list has to be told apart from a person changing
+        // the selection. Removing rows fires `row-selected(None)` and
+        // putting one back fires it again; treated as gestures, the first
+        // closes the form mid-edit and clears the account id an edit needs
+        // to name, and the second reloads the fields from the store over
+        // whatever was being typed.
+        //
+        // So the handler stands down for the whole rebuild, selection
+        // included. The form does not move, because nothing about it
+        // changed: the same account is still the open one.
+        imp.redrawing.set(true);
+        let open_on = *imp.account_detail_id.borrow();
         while let Some(row) = imp.accounts_list.row_at_index(0) {
             imp.accounts_list.remove(&row);
         }
@@ -1597,12 +1615,8 @@ impl SettingsPanel {
         // typing in. Put it back on the account the form is open on, before
         // anything reads the list's selection back.
         //
-        // Copied out of the `RefCell` before selecting, never held across
-        // it: `select_row` fires `row-selected` synchronously, which lands
-        // in `open_account_detail`, which writes this very cell. Holding the
-        // borrow across the call aborts the process — a `RefCell` panic in
-        // a GTK signal handler is a panic in a function that cannot unwind.
-        let open_on = *imp.account_detail_id.borrow();
+        // The mark goes back on the row the form belongs to, so the list
+        // and the form still agree about which account is open.
         if let Some(open_on) = open_on {
             let mut index = 0;
             while let Some(row) = imp.accounts_list.row_at_index(index) {
@@ -1613,6 +1627,7 @@ impl SettingsPanel {
                 index += 1;
             }
         }
+        imp.redrawing.set(false);
         // A refresh can land while the detail view is open on an account
         // this same redraw just found gone -- removed from another window,
         // most likely -- and showing an editable form over settings that no
@@ -4077,14 +4092,19 @@ impl SettingsPanel {
         imp.accounts_list.connect_row_selected(glib::clone!(
             #[weak(rename_to = panel)]
             self,
-            move |_, row| match row {
-                Some(row) => {
-                    let id = row_account_id(row);
-                    if id.is_assigned() {
-                        panel.open_account_detail(id);
-                    }
+            move |_, row| {
+                if panel.imp().redrawing.get() {
+                    return;
                 }
-                None => panel.close_account_detail(),
+                match row {
+                    Some(row) => {
+                        let id = row_account_id(row);
+                        if id.is_assigned() {
+                            panel.open_account_detail(id);
+                        }
+                    }
+                    None => panel.close_account_detail(),
+                }
             }
         ));
         imp.accounts_list.connect_row_activated(glib::clone!(
