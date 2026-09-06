@@ -35,10 +35,17 @@
 //! insert that brought the message in. A verb that opened its own could not
 //! be called from here at all.
 //!
+//! # Both evaluation points
+//!
+//! The arrival point calls this inside the insert transaction (ADR 0008 Q3);
+//! the body point calls it inside a transaction it opens for the purpose,
+//! because by then the insert is long committed. ADR 0030 is why the second
+//! one has to exist at all: `forward:` stages on the body whatever its query
+//! says, so a body point that reported and did nothing would be a rule that
+//! never runs.
+//!
 //! # Not here yet
 //!
-//! * `forward:` — needs a body an on-arrival rule has not fetched, which is a
-//!   staging question ADR 0028 does not answer (#1142).
 //! * Per-rule error isolation and Attention are #483. What this module does
 //!   with an action it cannot carry out — a `move:` naming a mailbox that
 //!   does not exist — is leave the message alone and carry on, so the rules

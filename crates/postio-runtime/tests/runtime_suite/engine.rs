@@ -86,6 +86,26 @@ fn engine_with_backfill(
     Arc<MockBackend>,
     BlobDir,
 ) {
+    engine_with_backfill_and_rules(prepare, backfill, RuleSet::default())
+}
+
+/// As [`engine_with_backfill`], with the `[[rules]]` the engine is to run.
+///
+/// Rules reach the engine as a parsed `RuleSet` and nowhere else, so a test
+/// about a rule firing has to hand one in here — there is no config file in
+/// the loop to write to.
+fn engine_with_backfill_and_rules(
+    prepare: impl FnOnce(&MockBackend),
+    backfill: postio_sync::BackfillPolicy,
+    rules: RuleSet,
+) -> (
+    Engine,
+    postio_storage::Database,
+    postio_storage::seed::SeedReport,
+    EventStream,
+    Arc<MockBackend>,
+    BlobDir,
+) {
     let database = test_support::memory();
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -116,7 +136,7 @@ fn engine_with_backfill(
         watch: Default::default(),
         network: NetworkSource::Ignored,
         mailbox_roles: Default::default(),
-        rules: RuleSet::default(),
+        rules,
         clock: Arc::new(SystemClock),
     })
     .expect("the engine starts");
@@ -1033,6 +1053,77 @@ fn queue_a_flag_change(
 }
 
 /// What the engine announced, drained without blocking.
+/// A rule that fires when a body lands tells the open lists about it (#1142).
+///
+/// The arrival point never needed saying: its actions run inside the sync
+/// pass, and the pass announces the mailbox it synced whatever the rules did.
+/// The body point announces only its own progress, so a rule filing a message
+/// here moves mail out from under a list that was never told — the shape of
+/// bug this project ships, where every layer is right and nothing joins them
+/// up.
+#[tokio::test]
+async fn a_rule_that_files_mail_when_the_body_lands_tells_the_lists() {
+    let filing = postio_model::rule::Rule::parse(
+        &postio_model::rule::RuleSource {
+            name: "filing".to_owned(),
+            query: Some("body:travel".to_owned()),
+            actions: vec!["move:Archive".to_owned()],
+            ..postio_model::rule::RuleSource::default()
+        },
+        |_| None,
+    )
+    .expect("a rule");
+    let (engine, database, report, events, _backend, _directory) = engine_with_backfill_and_rules(
+        |_| {},
+        Default::default(),
+        RuleSet::compile(&[filing], Utc::now().date_naive()),
+    );
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
+    let archive = report.mailbox(MailboxRole::Archive).expect("an archive");
+
+    let candidates = give_the_inbox_uids(&database, inbox.id);
+    assert!(candidates > 0, "the fixture found no messages to fetch");
+    engine
+        .seed_backfill(inbox.id, 10)
+        .await
+        .expect("seeding reads the store");
+
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let progress = engine
+                .backfill_progress()
+                .await
+                .expect("the engine answers");
+            if progress.pending == 0 && progress.in_flight == 0 && progress.stored > 0 {
+                return progress;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the backfill loop never settled with a body stored");
+    assert!(settled.stored > 0, "no body arrived: {settled:?}");
+
+    let seen = announced(&events);
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            Event::MessagesRemoved { mailbox, .. } if *mailbox == inbox.id
+        )),
+        "a rule filed mail out of the Inbox when its body landed and nothing \
+         told the Inbox list: it goes on drawing rows for messages that are \
+         not there"
+    );
+    assert!(
+        seen.iter().any(|event| matches!(
+            event,
+            Event::MessageListChanged { mailbox, .. } if *mailbox == archive.id
+        )),
+        "and nothing told the folder the mail was filed *into*, which is the \
+         list a person watching a rule work is most likely to have open"
+    );
+}
+
 fn announced(events: &EventStream) -> Vec<Event> {
     let mut seen = Vec::new();
     while let Some(event) = events.try_next() {

@@ -1757,17 +1757,67 @@ async fn pump_body(
                 reason: error.to_string(),
             },
             fired: Vec::new(),
+            relocated: None,
         }
     });
-    let BodyFetch { outcome, fired } = fetched;
-    // The body-requiring rules this fetch let run (ADR 0008 Q3, #482).
-    // Reported, not carried out: the action vocabulary is #481, and this is
-    // the seam it attaches to. Names and ids only -- a rule's name is the
-    // user's own config and a message id is not mail (see `logging_privacy`).
+    let BodyFetch {
+        outcome,
+        fired,
+        relocated,
+    } = fetched;
+    // The body-requiring rules this fetch ran (ADR 0008 Q3, #482, #481).
+    // Names and ids only -- a rule's name is the user's own config and a
+    // message id is not mail (see `logging_privacy`).
     report_fired(parts, &fired);
+    announce_rules(parts, message, &fired, relocated);
     state.backfill.finished(message, outcome);
     announce_backfill(parts, state, std::time::Instant::now());
     true
+}
+
+/// Tell the open lists what the body point's rules did.
+///
+/// A body fetch announces its own progress and nothing else, which was right
+/// for as long as the body point only *reported* which rules matched. Now
+/// that it carries their actions out (ADR 0030 makes it have to, because
+/// `forward:` stages there), a rule can move a message or change its flags
+/// with no sync pass around it to announce the mailbox — so this says it.
+///
+/// Precisely rather than bluntly, which is what the two events are for.
+/// `MessagesChanged` covers a flag, a label or a read state: the row is where
+/// it was and the list repaints it. A move is the pair that describes it from
+/// both ends — the message left one mailbox, and the other one's window has
+/// to reload, because a message *arriving* is the case a windowed list cannot
+/// patch in place.
+fn announce_rules(
+    parts: &EngineParts,
+    message: postio_model::MessageId,
+    fired: &[postio_sync::RuleHit],
+    relocated: Option<postio_sync::backfill::Relocated>,
+) {
+    if fired.is_empty() {
+        return;
+    }
+    let account = parts.account;
+    match relocated {
+        Some(moved) => {
+            parts.events.emit(Event::MessagesRemoved {
+                account,
+                mailbox: moved.from,
+                messages: vec![message],
+            });
+            parts.events.emit(Event::MessageListChanged {
+                account,
+                mailbox: moved.to,
+            });
+        }
+        None => {
+            parts.events.emit(Event::MessagesChanged {
+                account,
+                messages: vec![message],
+            });
+        }
+    }
 }
 
 /// Say which rules matched, without saying anything about the mail.
@@ -1777,9 +1827,9 @@ async fn pump_body(
 /// body are not, and nothing here reaches for them (ADR 0014, and
 /// `runtime/tests/logging_privacy.rs`).
 ///
-/// This is where #481 attaches: it replaces the log with the actions the
-/// rule asked for, at the point ADR 0008 Q3 chose, without having to move
-/// the evaluation.
+/// The log alone, now: the actions themselves are carried out where they are
+/// decided, inside the fetch, in one transaction (ADR 0008 Q6). What reaches
+/// the user is [`announce_rules`] beside this.
 fn report_fired(parts: &EngineParts, fired: &[postio_sync::RuleHit]) {
     for hit in fired {
         tracing::info!(
