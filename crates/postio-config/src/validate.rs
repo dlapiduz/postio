@@ -237,26 +237,31 @@ fn finish(config: Option<Config>, mut errors: Vec<ValidationError>, started: Ins
     }
 }
 
-/// ADR 0008 Q3's note: the rules that cannot be answered when a message
-/// arrives, and will run when its body lands instead.
+/// ADR 0008 Q3's note: the rules that cannot be answered *and carried out*
+/// when a message arrives, and will run when its body lands instead.
 ///
-/// The classification is `postio_search::rules`', the same function the
-/// engine files each rule by (#482) — deliberately not a second opinion
-/// about which fields need a body, because a validator that disagreed with
-/// the engine would be worse than one that said nothing.
+/// Through `RuleSet::compile`, which is the same derivation the engine files
+/// each rule by (#482) — deliberately not a second opinion, because a
+/// validator that disagreed with the engine would be worse than one that said
+/// nothing. It also drops disabled rules for us, on the same reasoning: a
+/// note about when a rule that does not run would have run is noise.
+///
+/// It reads the actions as well as the query since ADR 0030. A `forward:`
+/// rule with a header-only query is exactly the case a user cannot see from
+/// the file: it looks like it runs on arrival, it waits for the body, and
+/// without this the evidence is mail sitting unforwarded.
 fn deferred_rule_notes(config: &Config) -> Vec<ValidationNote> {
     let today = chrono::Utc::now().date_naive();
-    config
+    let rules: Vec<postio_model::rule::Rule> = config.rules().into_iter().flatten().collect();
+    postio_search::rules::RuleSet::compile(&rules, today)
         .rules()
-        .into_iter()
-        .flatten()
-        .filter(|rule| rule.enabled)
-        .filter(|rule| postio_search::needs_body(&postio_search::parse(&rule.query, today)))
-        .map(|rule| ValidationNote {
-            path: format!("rules.{}", rule.name),
+        .iter()
+        .filter(|staged| staged.stage == postio_search::rules::Stage::OnBody)
+        .map(|staged| ValidationNote {
+            path: format!("rules.{}", staged.rule.name),
             message: format!(
                 "{}: runs after the body is fetched, not on arrival",
-                rule.name
+                staged.rule.name
             ),
         })
         .collect()

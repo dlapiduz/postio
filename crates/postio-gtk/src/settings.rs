@@ -508,6 +508,13 @@ mod imp {
         /// render where `[keys]` is actually edited rather than only in a log
         /// line nobody watches interactively.
         pub keymap_problems: RefCell<Vec<String>>,
+        /// The folders excluded from background backfill, as of the last time
+        /// [`super::SettingsPanel::set_backfill_excluded`] was told.
+        ///
+        /// Handed over for the same reason the keymap problems are: it is a
+        /// fact about the *store* — a column on `mailboxes` — and this crate
+        /// may not read SQL. The application knows it and pushes it here.
+        pub backfill_excluded: RefCell<Vec<String>>,
         /// One row per account, enable switch and context menu (#464).
         pub accounts_list: gtk::ListBox,
         /// The egress log's audit list (#151): what left this machine.
@@ -684,6 +691,7 @@ mod imp {
                 dismissed: RefCell::new(Vec::new()),
                 last_good: RefCell::new(None),
                 keymap_problems: RefCell::new(Vec::new()),
+                backfill_excluded: RefCell::new(Vec::new()),
                 accounts_list: gtk::ListBox::new(),
                 egress_list: gtk::ListBox::new(),
                 egress_scroller: gtk::ScrolledWindow::new(),
@@ -954,7 +962,50 @@ impl SettingsPanel {
                 problems.join("; ")
             ));
         }
+        if let Some(warning) = self.never_runs_warning(&checked) {
+            status.push_str(&warning);
+        }
         imp.status.set_label(&status);
+    }
+
+    /// The rules that wait for a body that is never going to arrive.
+    ///
+    /// ADR 0030 Q5. A rule staged on the body over a folder excluded from
+    /// backfill does not run late — it does not run. `seed` "queues nothing
+    /// at all" for an excluded folder, so nothing will ever fetch the body it
+    /// is waiting for, and a rule that silently never fires is a dead end.
+    ///
+    /// Not resolved silently in either direction: Postio does not quietly
+    /// re-enable backfill for the folder, and it does not quietly act on a
+    /// message whose body it has not got. It says so, here, beside the rule
+    /// the user is editing.
+    ///
+    /// Static, from what the panel has been told, computed when the line is
+    /// drawn. No per-message machinery, and nothing here reads the store.
+    fn never_runs_warning(&self, checked: &postio_config::validate::Checked) -> Option<String> {
+        let excluded = self.imp().backfill_excluded.borrow();
+        if excluded.is_empty() {
+            return None;
+        }
+        // The same notes the line above already carries, which are exactly
+        // the body-staged rules (ADR 0008 Q3, ADR 0030). Reading them back
+        // rather than re-deriving the stage keeps one answer to "when does
+        // this run" instead of two that can disagree.
+        let waiting: Vec<&str> = checked
+            .validation
+            .notes()
+            .iter()
+            .filter_map(|note| note.path.strip_prefix("rules."))
+            .collect();
+        if waiting.is_empty() {
+            return None;
+        }
+        Some(format!(
+            " · {} never {} in {}: excluded from backfill",
+            waiting.join(", "),
+            if waiting.len() == 1 { "runs" } else { "run" },
+            excluded.join(", ")
+        ))
     }
 
     /// Tells the panel which `[keys]` bindings the resolver dropped, so they
@@ -966,6 +1017,20 @@ impl SettingsPanel {
     /// every live reload, whether or not this panel happens to be open.
     pub fn set_keymap_problems(&self, problems: &[String]) {
         *self.imp().keymap_problems.borrow_mut() = problems.to_vec();
+        self.refresh_validity();
+    }
+
+    /// Tells the panel which folders are excluded from background backfill,
+    /// so a rule that waits for a body can say when that body is never
+    /// coming (ADR 0030 Q5).
+    ///
+    /// Pushed in rather than read, exactly as [`set_keymap_problems`] is:
+    /// `mailboxes.backfill_excluded` is a column, and `postio-gtk` may not
+    /// touch SQL. The application calls this when the mailbox list changes.
+    ///
+    /// [`set_keymap_problems`]: Self::set_keymap_problems
+    pub fn set_backfill_excluded(&self, folders: &[String]) {
+        *self.imp().backfill_excluded.borrow_mut() = folders.to_vec();
         self.refresh_validity();
     }
 

@@ -338,6 +338,57 @@ pub fn a_deferred_rule_says_so_on_the_validity_line_and_a_header_rule_does_not()
         "a header-only rule runs on arrival and should say nothing: {footer:?}"
     );
 
+    // ── and when a folder never backfills, "later" is "never" ────────────
+    // ADR 0030 Q5. A body-staged rule over a folder excluded from backfill
+    // never runs at all: `seed` queues nothing for one, so the body it is
+    // waiting for is not coming. "Nothing is a dead end" forbids letting that
+    // be silent, and it is not resolved silently in either direction --
+    // Postio neither re-enables the folder nor forwards a bodyless message.
+    window.settings().set_text(
+        "[[rules]]\nname = \"digest\"\nquery = \"from:lists@example.com\"\n\
+         actions = [\"forward:ada@example.com\"]\n",
+    );
+    window
+        .settings()
+        .set_backfill_excluded(&["Archive".to_owned(), "Junk".to_owned()]);
+    settle();
+
+    let footer = window.settings().footer_text();
+    assert!(
+        footer.contains("Archive") && footer.contains("Junk"),
+        "a rule that waits for a body is configured over folders that never \
+         fetch one, and the line the user reads names neither: {footer:?}"
+    );
+    assert!(
+        footer.contains("digest"),
+        "and does not say which rule will never run: {footer:?}"
+    );
+
+    // Nothing excluded, nothing said.
+    window.settings().set_backfill_excluded(&[]);
+    settle();
+    let footer = window.settings().footer_text();
+    assert!(
+        !footer.contains("Archive"),
+        "the warning outlived the exclusion it was about: {footer:?}"
+    );
+
+    // And a rule that runs on arrival is not affected by an excluded folder:
+    // its answer never needed a body.
+    window
+        .settings()
+        .set_text("[[rules]]\nname = \"team\"\nquery = \"from:team\"\nactions = [\"flag\"]\n");
+    window
+        .settings()
+        .set_backfill_excluded(&["Archive".to_owned()]);
+    settle();
+    let footer = window.settings().footer_text();
+    assert!(
+        !footer.contains("Archive"),
+        "an arrival-point rule was warned about a backfill it does not wait \
+         for, which is a warning nobody can act on: {footer:?}"
+    );
+
     window.close();
     settle();
     let _ = std::fs::remove_dir_all(&root);

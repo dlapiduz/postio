@@ -90,7 +90,6 @@ open_search                       # crates/postio-core/src/state.rs:607
 optimize                          # crates/postio-storage/src/db.rs:1012
 parse_document_html               # crates/postio-body/src/parse.rs:71
 partials                          # crates/postio-search/src/query.rs:369
-plain_forward                     # crates/postio-model/src/reply.rs:221
 plain_quote                       # crates/postio-model/src/reply.rs:213
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 prune_settled                     # crates/postio-storage/src/repository/operations.rs:543
