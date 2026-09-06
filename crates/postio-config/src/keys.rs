@@ -1,9 +1,18 @@
 //! `[keys]` — command id to key binding.
 //!
-//! The file holds *overrides only*: [`DEFAULT_BINDINGS`] is the built-in map
-//! and `postio-core`'s command registry takes its default binding from here, so
-//! there is exactly one source of truth. Keeping the file override-only means a
-//! round trip never rewrites bindings the user did not set.
+//! The file holds *overrides only*, and so does [`KeyBindings`]: the built-in
+//! defaults live in `postio-core`'s command registry, which is the single
+//! source of truth for them. Keeping the file override-only means a round trip
+//! never rewrites bindings the user did not set.
+//!
+//! This module used to carry a `DEFAULT_BINDINGS` table of its own and claim
+//! the registry read from it. The registry never did — it carries its own
+//! literals — and the two drifted to 23 entries against 79, so everything that
+//! asked *this* crate what key a command had got `None` for 56 commands whose
+//! keys worked fine (#1227). The dependency runs core → config, for
+//! [`expand_mod`], so this crate cannot read the registry; the answer is that
+//! it must not try. Ask `postio_core::config::Keymap`, which is defaults and
+//! overrides together and knows every command.
 //!
 //! Binding syntax is deliberately untyped at this layer — the keymap resolver
 //! in `postio-gtk` parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
@@ -15,33 +24,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::Platform;
 use crate::{ConfigError, Result};
-
-/// The built-in bindings, taken from the design canvas.
-pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
-    ("next_message", "j"),
-    ("prev_message", "k"),
-    ("open_message", "Return"),
-    ("back", "Escape"),
-    ("archive", "a"),
-    ("archive_thread", "A"),
-    ("undo", "u"),
-    ("reply", "e"),
-    ("reply_all", "E"),
-    ("forward", "f"),
-    ("compose", "c"),
-    ("bold", "mod+b"),
-    ("italic", "mod+i"),
-    ("bullet_list", "mod+shift+8"),
-    ("numbered_list", "mod+shift+7"),
-    ("insert_link", "mod+shift+k"),
-    ("quote_block", "mod+shift+9"),
-    ("search", "/"),
-    ("command_palette", "mod+k"),
-    ("cheat_sheet", "?"),
-    ("settings", "mod+comma"),
-    ("add_account", "mod+shift+n"),
-    ("edit_config", "mod+e"),
-];
 
 /// Modifiers a binding may combine with a key.
 ///
@@ -234,26 +216,13 @@ pub fn expand_mod(binding: &str, platform: Platform) -> String {
 }
 
 impl KeyBindings {
-    /// The binding for a command: the user's override if present, otherwise the
-    /// built-in default, otherwise `None`.
-    pub fn binding(&self, command: &str) -> Option<&str> {
-        if let Some(custom) = self.overrides.get(command) {
-            return Some(custom.as_str());
-        }
-        DEFAULT_BINDINGS
-            .iter()
-            .find(|(id, _)| *id == command)
-            .map(|(_, key)| *key)
-    }
-
-    /// The binding in force, with `mod` resolved for `platform`.
+    /// What the file set for a command, or `None` if it set nothing.
     ///
-    /// What a menu draws and what the resolver matches. [`binding`](Self::binding)
-    /// answers what is *written*, which is what the file round-trips; this
-    /// answers what it *means* here.
-    pub fn binding_on(&self, command: &str, platform: Platform) -> Option<String> {
-        self.binding(command)
-            .map(|binding| expand_mod(binding, platform))
+    /// **Not the key the command answers to.** A command with no `[keys]` entry
+    /// still has its registry default, and this cannot see it — see the module
+    /// docs. For the binding in force, ask `postio_core::config::Keymap`.
+    pub fn binding(&self, command: &str) -> Option<&str> {
+        self.overrides.get(command).map(String::as_str)
     }
 
     /// Only what the config file set, in file order-independent key order.
@@ -264,20 +233,6 @@ impl KeyBindings {
     /// Mutable access, for the settings panel.
     pub fn overrides_mut(&mut self) -> &mut BTreeMap<String, String> {
         &mut self.overrides
-    }
-
-    /// Defaults merged with overrides — the map the keymap resolver wants.
-    pub fn resolved(&self) -> BTreeMap<String, String> {
-        let mut map: BTreeMap<String, String> = DEFAULT_BINDINGS
-            .iter()
-            .map(|(id, key)| ((*id).to_string(), (*key).to_string()))
-            .collect();
-        map.extend(
-            self.overrides
-                .iter()
-                .map(|(id, key)| (id.clone(), key.clone())),
-        );
-        map
     }
 
     /// Whether the file set anything at all.
@@ -330,31 +285,6 @@ struct KeysOnly<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_binding_ids_are_unique() {
-        let mut ids: Vec<&str> = DEFAULT_BINDINGS.iter().map(|(id, _)| *id).collect();
-        ids.sort_unstable();
-        let count = ids.len();
-        ids.dedup();
-        assert_eq!(ids.len(), count, "duplicate command id in DEFAULT_BINDINGS");
-    }
-
-    #[test]
-    fn every_default_binding_is_syntactically_valid() {
-        for (command, binding) in DEFAULT_BINDINGS {
-            assert_eq!(binding_problem(binding), None, "{command} = {binding}");
-        }
-    }
-
-    #[test]
-    fn default_bindings_do_not_collide() {
-        let mut seen: Vec<&str> = DEFAULT_BINDINGS.iter().map(|(_, key)| *key).collect();
-        seen.sort_unstable();
-        let count = seen.len();
-        seen.dedup();
-        assert_eq!(seen.len(), count, "two commands share a default binding");
-    }
 
     #[test]
     fn ordinary_bindings_are_accepted() {
@@ -546,60 +476,19 @@ mod mod_token_tests {
     }
 
     #[test]
-    fn every_default_resolves_to_what_linux_has_today() {
-        // The argument for doing this now rather than when macOS ships
-        // bindings: on freedesktop the new table resolves to exactly the old
-        // one, so nothing a Linux user sees changes.
-        let expected: &[(&str, &str)] = &[
-            ("command_palette", "ctrl+k"),
-            ("settings", "ctrl+comma"),
-            ("add_account", "ctrl+shift+n"),
-            ("bold", "ctrl+b"),
-            ("insert_link", "ctrl+shift+k"),
-        ];
-        for (command, want) in expected {
-            let bindings = KeyBindings::default();
-            assert_eq!(
-                bindings
-                    .binding_on(command, Platform::Freedesktop)
-                    .as_deref(),
-                Some(*want),
-                "{command} changed for Linux users"
-            );
-        }
-    }
-
-    #[test]
-    fn the_same_defaults_are_command_on_apple() {
-        let bindings = KeyBindings::default();
-        assert_eq!(
-            bindings
-                .binding_on("command_palette", Platform::Apple)
-                .as_deref(),
-            Some("cmd+k")
-        );
-    }
-
-    #[test]
     fn an_override_is_expanded_too() {
         // A `config.toml` synced between a Linux desktop and a Mac has to mean
         // the same thing on both, which is why `mod` is a *config* token
         // rather than a rendering trick.
-        let mut bindings = KeyBindings::default();
-        bindings
-            .overrides_mut()
-            .insert("archive".to_string(), "mod+shift+a".to_string());
-
-        assert_eq!(
-            bindings.binding_on("archive", Platform::Apple).as_deref(),
-            Some("cmd+shift+a")
-        );
-        assert_eq!(
-            bindings
-                .binding_on("archive", Platform::Freedesktop)
-                .as_deref(),
-            Some("ctrl+shift+a")
-        );
+        //
+        // Through `expand_mod` directly, since `KeyBindings::binding_on` has
+        // gone: with the defaults in the registry it could only restate what
+        // the file said, and nothing wanted that (#1227). `Keymap::resolve_on`
+        // is what expands a binding on the way to a surface, and it calls
+        // this.
+        let written = "mod+shift+a";
+        assert_eq!(expand_mod(written, Platform::Apple), "cmd+shift+a");
+        assert_eq!(expand_mod(written, Platform::Freedesktop), "ctrl+shift+a");
     }
 
     #[test]
@@ -611,33 +500,5 @@ mod mod_token_tests {
             .overrides_mut()
             .insert("archive".to_string(), "mod+shift+a".to_string());
         assert_eq!(bindings.binding("archive"), Some("mod+shift+a"));
-    }
-}
-
-#[cfg(test)]
-mod mod_token_validity_tests {
-    use super::*;
-    use crate::paths::Platform;
-
-    #[test]
-    fn expansion_always_produces_a_binding_the_validator_accepts() {
-        // `cmd` only ever appears as expansion output, so nothing else would
-        // catch it being absent from MODIFIERS -- and the failure would be a
-        // Mac where every default is rejected as invalid.
-        for platform in [Platform::Freedesktop, Platform::Apple] {
-            for (command, binding) in DEFAULT_BINDINGS {
-                let expanded = expand_mod(binding, platform);
-                assert_eq!(
-                    binding_problem(&expanded),
-                    None,
-                    "{command} expands to `{expanded}`, which the validator rejects"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn mod_is_spellable_in_a_config_file() {
-        assert_eq!(binding_problem("mod+shift+a"), None);
     }
 }

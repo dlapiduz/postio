@@ -13,7 +13,7 @@ use postio_config::{Config, KeyBindings, validate};
 use postio_core::ActionId;
 use postio_core::bridge::event_channel;
 use postio_core::config::{ConfigService, Keymap, SharedConfig};
-use postio_core::{CommandId, Context, Event};
+use postio_core::{CommandId, Context, Event, registry};
 
 /// How long a wait on the event stream may go silent before it is called a
 /// hang.
@@ -48,6 +48,90 @@ fn service_with(toml: &str) -> ConfigService {
 }
 
 // -- Resolving [keys] onto the registry --------------------------------------
+
+/// An override landing on a default's key is reported, for any of the 79.
+///
+/// The half of #1227 that `postio-config`'s validator gave up when its own
+/// default table went: it could only see collisions between two `[keys]`
+/// entries, and against defaults it knew 23 commands. This is the complete
+/// answer, and it has to stay complete — `flag` is one of the 56 the old table
+/// had never heard of.
+#[test]
+fn an_override_that_takes_a_default_key_is_reported() {
+    for (taker, victim, key) in [
+        (CommandId::Reply, "archive", "a"),
+        (CommandId::Reply, "flag", "s"),
+    ] {
+        let mut overrides = KeyBindings::default();
+        overrides
+            .overrides_mut()
+            .insert(taker.as_str().to_owned(), key.to_owned());
+        let keymap = Keymap::resolve_on(&overrides, Platform::Freedesktop);
+
+        assert_eq!(keymap.binding(taker), Some(key));
+        let said = keymap
+            .problems()
+            .iter()
+            .any(|problem| problem.contains(victim) && problem.contains(key));
+        assert!(
+            said,
+            "taking `{key}` from `{victim}` was not reported: {:?}",
+            keymap.problems()
+        );
+    }
+}
+
+/// Every default the registry ships expands to something the validator will
+/// take, on both platforms.
+///
+/// Moved here from `postio-config` with the default table itself (#1227).
+/// There it ran over 23 commands; here it runs over all of them, which is the
+/// point — `cmd` only ever appears as expansion *output*, so nothing else
+/// would catch it going missing from `MODIFIERS`, and the failure mode is a
+/// Mac on which every default is rejected as unusable.
+#[test]
+fn every_registry_default_expands_to_something_the_validator_accepts() {
+    for platform in [Platform::Freedesktop, Platform::Apple] {
+        for spec in registry::all() {
+            for binding in spec.bindings() {
+                let expanded = postio_config::keys::expand_mod(binding, platform);
+                assert_eq!(
+                    postio_config::keys::binding_problem(&expanded),
+                    None,
+                    "{} expands to `{expanded}` on {platform:?}, which the validator rejects",
+                    spec.id
+                );
+            }
+        }
+    }
+}
+
+/// The accelerators a Linux user has today, spelled out.
+///
+/// Also moved from `postio-config` (#1227), and it has to ask the keymap
+/// rather than the config crate now: `mod+k` is the registry's, and the file
+/// says nothing. A change here is a change to what somebody's fingers already
+/// know, so it should cost a deliberate edit.
+#[test]
+fn the_mod_defaults_are_control_on_linux_and_command_on_apple() {
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (command, want) in [
+        (CommandId::CommandPalette, "ctrl+k"),
+        (CommandId::Settings, "ctrl+comma"),
+        (CommandId::AddAccount, "ctrl+shift+n"),
+        (CommandId::Bold, "ctrl+b"),
+        (CommandId::InsertLink, "ctrl+shift+k"),
+    ] {
+        assert_eq!(
+            linux.binding(command),
+            Some(want),
+            "{command} changed for Linux users"
+        );
+    }
+
+    let apple = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    assert_eq!(apple.binding(CommandId::CommandPalette), Some("cmd+k"));
+}
 
 #[test]
 fn without_a_file_the_registry_defaults_are_the_keymap() {

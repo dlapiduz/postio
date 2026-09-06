@@ -412,9 +412,21 @@ fn check_keys(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError
         }
     }
 
-    let resolved = config.keys.resolved();
+    // Two `[keys]` entries on one key: a mistake with no principled winner,
+    // visible entirely inside the file, and so this crate's to catch.
+    //
+    // An override landing on some *default's* key is deliberately not an error
+    // here, and this crate could not see it anyway now that the defaults are
+    // the command registry's (#1227). It is not a mistake: `Keymap::resolve_on`
+    // is explicit that "a default is a suggestion; an override is not", gives
+    // the key to the override, and reports the command that lost its default
+    // so the user is told. Treating it as a validation error instead would
+    // reject the whole file — an error here is not survivable the way that
+    // report is — so rebinding onto any of 79 default keys would throw away a
+    // user's entire config.
+    let overrides = config.keys.overrides();
     let mut by_binding: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (command, binding) in &resolved {
+    for (command, binding) in overrides {
         by_binding
             .entry(binding.trim())
             .or_default()

@@ -95,43 +95,44 @@ fn a_rebind_reaches_a_sequence_too() {
 }
 
 #[test]
-fn a_conflicting_override_is_reported_and_the_command_keeps_its_default() {
+fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
     let directory = TempDir::new().expect("a temporary directory");
     // `a` already archives, in the same contexts reply is reachable in.
     let path = write(directory.path(), "[keys]\nreply = \"a\"\n");
     let service = ConfigService::load(&path);
 
-    // A collision is caught while the file is being validated, before the
-    // keymap is built: the offending entry is dropped and reported with its
-    // line number, rather than being applied and quietly costing some other
-    // command its key.
-    let reported = service
-        .status()
-        .errors()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        reported.contains("archive") && reported.contains("reply"),
-        "the validity line has to name both sides: {reported}"
-    );
-    assert!(
-        service.config().keys.overrides().is_empty(),
-        "the collision is not applied"
-    );
-
-    let (mut resolver, problems) = Resolver::from_commands(service.keymap());
-    assert!(problems.is_empty(), "{problems:?}");
+    // The override wins. `Keymap::resolve_on` resolves `[keys]` before
+    // defaults on purpose -- "a default is a suggestion; an override is not" --
+    // so a user who wrote this gets what they asked for.
+    //
+    // This case used to assert the opposite: that the entry was dropped and
+    // archive kept `a`. Both rules were live at once and neither was wrong
+    // where it ran, because `postio-config` validated the collision away for
+    // the 23 commands it had defaults for and the keymap's rule governed the
+    // other 56 (#1227). With one default table there is one answer, and it is
+    // the documented one -- ignoring an explicit instruction is the worse
+    // failure, and the cost of honouring it is paid by the report below rather
+    // than in silence.
+    let (mut resolver, _) = Resolver::from_commands(service.keymap());
     assert_eq!(
         command(&mut resolver, "a").as_deref(),
-        Some("archive"),
-        "the command that had the key keeps it"
-    );
-    assert_eq!(
-        command(&mut resolver, "e").as_deref(),
         Some("reply"),
-        "and the one that asked for it keeps its default rather than losing both"
+        "the override takes the key it asked for"
+    );
+
+    // And archive is told, by name, that it lost its default -- the whole
+    // reason honouring the override is safe. Silence here would be the bug
+    // the old rule was guarding against.
+    let reported = problems(&service);
+    assert!(
+        reported.contains("archive") && reported.contains("reply"),
+        "the command that lost its key has to be named, and by whom: {reported}"
+    );
+
+    assert_eq!(
+        service.config().keys.overrides().len(),
+        1,
+        "the override is applied, not discarded"
     );
 }
 

@@ -10,7 +10,7 @@
 //! No display, no GTK main loop: every layer involved is pure.
 
 use postio_config::KeyBindings;
-use postio_config::keys::{DEFAULT_BINDINGS, binding_problem, expand_mod};
+use postio_config::keys::{binding_problem, expand_mod};
 use postio_config::paths::Platform;
 use postio_core::{CommandId, Context};
 use postio_gtk::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
@@ -115,14 +115,20 @@ fn the_two_binding_parsers_agree() {
 }
 
 #[test]
-fn every_binding_the_config_crate_documents_parses() {
-    for (command, binding) in DEFAULT_BINDINGS {
-        // Expanded, because the resolver refuses `mod` on purpose -- it is a
-        // config-file word, and `Keymap::resolve` is what turns it into a key.
-        let binding = expand_mod(binding, Platform::Freedesktop);
-        binding
-            .parse::<Binding>()
-            .unwrap_or_else(|error| panic!("{command} = {binding}: {error}"));
+fn every_binding_the_registry_ships_parses() {
+    // Was `DEFAULT_BINDINGS`, which listed 23 of the registry's 79 commands
+    // and has gone (#1227). Over the registry it covers the other 56 too --
+    // including the alternates, which no version of this ever checked.
+    for spec in postio_core::registry::all() {
+        for binding in spec.bindings() {
+            // Expanded, because the resolver refuses `mod` on purpose -- it is
+            // a config-file word, and `Keymap::resolve` is what turns it into a
+            // key.
+            let binding = expand_mod(binding, Platform::Freedesktop);
+            binding
+                .parse::<Binding>()
+                .unwrap_or_else(|error| panic!("{} = {binding}: {error}", spec.id));
+        }
     }
 }
 
