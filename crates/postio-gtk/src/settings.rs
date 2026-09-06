@@ -288,7 +288,7 @@ impl ConnectionStatus {
 // the same eight sections of the same file, and a second copy of "which line
 // does [sync] start on" is a second answer waiting to disagree. Re-exported
 // so every reference in this crate still reads as it did.
-pub use postio_ui::settings::{Group, Section, find_section, section_at_line};
+pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, section_at_line};
 
 /// The muted leading icon an unselected row wears.
 ///
