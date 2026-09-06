@@ -144,8 +144,16 @@ public final class PostioSession {
     /// font faces, the sanitized body inside its container and the scroll
     /// markers all come from the engine, which is what the GTK reader renders
     /// too. Swift composes no reader HTML.
-    public func readerDocument(message: Int64, remote: RemoteImagesFfi) -> String {
-        inner.readerDocument(message: message, remote: remote)
+    /// `original` is the one gesture that leaves reader view: what the
+    /// sender wrote, on their own paper-white sheet, inset from Postio's
+    /// chrome. Per message and per view — nothing is remembered, so the next
+    /// message opens reduced again.
+    public func readerDocument(
+        message: Int64,
+        remote: RemoteImagesFfi,
+        original: Bool = false
+    ) -> String {
+        inner.readerDocument(message: message, remote: remote, original: original)
     }
 
     /// One inline part of `message`, by its `Content-ID`.

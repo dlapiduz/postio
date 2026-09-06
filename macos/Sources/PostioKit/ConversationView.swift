@@ -239,6 +239,11 @@ struct ExpandedMessage: View {
     /// the standing grant is the popover's, and it is the only thing that
     /// survives closing the conversation.
     @State private var showingImages = false
+    /// Whether this message is drawn as its sender wrote it.
+    ///
+    /// Per message and per view: reader view is on by default for bulk mail
+    /// and leaving it is one gesture about one message, not a mode.
+    @State private var showingOriginal = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -261,7 +266,8 @@ struct ExpandedMessage: View {
                 ReaderView(
                     session: session,
                     message: row.id,
-                    remoteImages: remoteImages
+                    remoteImages: remoteImages,
+                    original: showingOriginal
                 ) { measured in
                     height = measured
                 }
@@ -323,7 +329,7 @@ struct ExpandedMessage: View {
                 Button("Collapse", action: collapse)
                 Button("Reply") { run("reply") }
                 Button("Forward") { run("forward") }
-                Button("View original") { run("view_original") }
+                Toggle("View original", isOn: $showingOriginal)
             } label: {
                 Image(systemName: "ellipsis")
             }

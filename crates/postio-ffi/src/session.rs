@@ -808,8 +808,13 @@ impl Session {
     /// Swift's job is to build a hardened configuration, hand it this string,
     /// and refuse navigations. It composes no reader HTML of its own.
     #[uniffi::method(name = "readerDocument")]
-    pub fn reader_document_ffi(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        self.reader_document(message, remote)
+    pub fn reader_document_ffi(
+        &self,
+        message: i64,
+        remote: crate::RemoteImagesFfi,
+        original: bool,
+    ) -> String {
+        self.reader_document(message, remote, original)
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -2383,7 +2388,12 @@ impl Session {
     /// * `postio-font:` — the eight vendored faces, through
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
-    pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
+    pub fn reader_document(
+        &self,
+        message: i64,
+        remote: crate::RemoteImagesFfi,
+        original: bool,
+    ) -> String {
         use postio_ui::reader::document::{
             Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
             wrap_document,
@@ -2419,22 +2429,23 @@ impl Session {
                 encoding_problems: _,
             } => {
                 // Reader view is decided per message from the message, the
-                // same rule the GTK reader uses (#1009). This frontend has no
-                // notice surface to offer `View original` through yet — the
-                // same gap `encoding_problems` above names — so what it draws
-                // is what the rule chooses, and nothing can leave it.
+                // same rule the GTK reader uses (#1009) — unless the reader
+                // asked to see the original, which is the one gesture that
+                // may leave it (#1274). Asking is per message and per view:
+                // nothing here is remembered, so the next message opens
+                // reduced again.
                 let bulk = suits_reader_view(&body);
-                let rendering = if bulk {
+                let rendering = if bulk && !original {
                     Rendering::Reader
                 } else {
                     Rendering::Original
                 };
                 let drawn = body_html(&body, remote, rendering);
-                // The same rule the GTK reader applies, from the same
-                // function. Nothing here can reach `Sheet::Senders` while
-                // this frontend has no way to leave reader view -- which is
-                // the point of asking rather than assuming: the day it grows
-                // one, the sheet comes with it.
+                // The sender's own sheet — paper white, inset from the app's
+                // chrome — for an original that reader view would otherwise
+                // have reduced. `sheet_for` is the rule, from the same
+                // function GTK calls: the app's palette is never injected
+                // into a sender's markup.
                 document_for(&drawn.html, remote, sheet_for(drawn.rendering, bulk))
             }
             // A state plate is Postio's own words, so it is served with remote
