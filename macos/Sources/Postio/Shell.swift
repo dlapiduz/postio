@@ -15,6 +15,9 @@ import SwiftUI
 /// `docs/PRODUCT.md` §9 says so, not because the widgets happen to match.
 struct Shell: View {
     @State private var engine: Engine
+    /// Only a view can open a window, so the shell is where a `settings`
+    /// command becomes one (#1261).
+    @Environment(\.openWindow) private var openWindow
     @State private var selectedFolder: Int64?
     @State private var showing: Int64?
     /// The folder that was open. Application state rather than window state —
@@ -195,6 +198,12 @@ struct Shell: View {
         // reading pane follows the engine rather than the click.
         .onChange(of: engine.cursorShowing) { _, message in
             if let message { showing = message }
+        }
+        // A count rather than a flag: two `⌘,` presses are two openings, and
+        // `onChange` compares values (see `WindowRequest`).
+        .onChange(of: engine.settingsWindow) { _, request in
+            guard request.wasRaised else { return }
+            openWindow(id: request.id)
         }
         .onChange(of: engine.requestedToken) { _, _ in
             guard let requested = engine.requested else { return }

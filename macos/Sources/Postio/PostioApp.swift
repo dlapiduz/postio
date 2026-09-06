@@ -46,9 +46,18 @@ struct PostioApp: App {
         // cheap port precisely for having "the wrong window chrome". Canvas
         // 3f's contract -- one store, no OK/Cancel, nav that jumps, validity
         // along the foot -- is kept in full; only the frame is different.
-        Settings {
+        //
+        // `Window` rather than SwiftUI's `Settings` scene, because the scene
+        // can only be opened by a selector that reached no handler here
+        // (#1261) and by a menu item this application does not draw --
+        // `MenuBar` builds the application menu from the registry. A window
+        // with an id is opened by `openWindow`, which is a call rather than a
+        // hope.
+        Window("Settings", id: WindowId.settings) {
             SettingsPaneView(store: settings, accounts: engine.accounts)
                 .preferredColorScheme(engine.colorScheme)
         }
+        .defaultSize(width: 900, height: 560)
+        .windowResizability(.contentSize)
     }
 }

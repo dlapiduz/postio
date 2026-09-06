@@ -13,6 +13,20 @@ import PostioKit
 /// part that needs an application to exist.
 @MainActor
 final class URLHandler: NSObject, NSApplicationDelegate {
+    /// Put Postio's menu bar back, after SwiftUI has finished building its
+    /// own.
+    ///
+    /// The bar is installed from `Engine.init`, which runs inside
+    /// `App.init()` — before SwiftUI builds anything, so SwiftUI's own menu
+    /// lands on top of it. This is the first moment the application is
+    /// running and SwiftUI has had its turn; the `async` hop is what puts it
+    /// *after* the scene's first update rather than in the middle of it
+    /// (#1262).
+    func applicationDidFinishLaunching(_: Notification) {
+        MenuBar.reassert()
+        DispatchQueue.main.async { MenuBar.reassert() }
+    }
+
     func application(_: NSApplication, open urls: [URL]) {
         for url in urls {
             guard let mailto = Mailto(url) else { continue }

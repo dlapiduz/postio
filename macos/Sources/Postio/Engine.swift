@@ -75,6 +75,13 @@ final class Engine {
         // Keychain refusing and the store refusing to migrate -- say so
         // somewhere rather than arriving as an empty window.
         PostioSession.startLogging()
+        // Before the store, deliberately. Opening it waits on the Keychain and
+        // can wait forever — and while it does, the application is on screen
+        // with a menu bar. Installed after the session, that bar was AppKit's
+        // stock one for the whole of the wait and for the entire life of a
+        // build whose store never opened (#1262). The registry is a `const`
+        // table and needs no session to read.
+        installMenuBar()
         Task.detached(priority: .userInitiated) {
             // `PostioSession` is `@unchecked Sendable` and this is the call
             // that must not run on the main actor, so it happens here and only
@@ -129,21 +136,10 @@ final class Engine {
             dwell = DwellClock { [weak self] message in
                 self?.session?.markReadOnDwell(message)
             }
-            // The menu bar, rendered from the same registry the palette and
-            // the cheat sheet read (#657). Its accelerators come from the
-            // bindings in force, and none of its items has a key equivalent:
-            // dispatch is the monitor's, above.
-            MenuBar.install(
-                binding: { [weak self] command in self?.session?.binding(for: command) },
-                // Asked per item, each time a menu opens, against the context
-                // that has focus right now — which is what makes a menu item
-                // grey out as the keyboard moves between panes.
-                available: { [weak self] id in
-                    guard let self, let session = self.session else { return false }
-                    return session.isAvailable(id, in: self.context)
-                },
-                run: { [weak self] id in self?.run(id) }
-            )
+            // Again, now that there are bindings to draw: the bar installed
+            // at launch shows the built-in defaults, and a rebound key has to
+            // reach the menu.
+            installMenuBar()
             // The platform observes and the engine is told. Callbacks arrive
             // on a background queue and may repeat the same answer; the
             // boundary absorbs that, nudging a reconnect only on a real
@@ -166,6 +162,10 @@ final class Engine {
 
     /// The folder the list currently has open, for deciding what is news.
     private(set) var showingMailbox: Int64?
+
+    /// Asked for the settings window. Watched by the shell, which is what
+    /// can actually open one.
+    private(set) var settingsWindow = WindowRequest(id: WindowId.settings)
 
     /// The message a notification click asked for, for the shell to open.
     ///
@@ -424,6 +424,42 @@ final class Engine {
         notifications.post(notification)
     }
 
+    /// Build the menu bar from the registry and hang it off `NSApp`.
+    ///
+    /// Rendered from the same registry the palette and the cheat sheet read
+    /// (#657). Accelerators come from the bindings in force where there is a
+    /// session to ask and from the built-in defaults before there is one;
+    /// none of the items has a key equivalent, because dispatch is the
+    /// monitor's.
+    ///
+    /// Called twice on the way up — once at launch and once when a session
+    /// arrives — and `MenuBar` keeps it mounted from there against SwiftUI's
+    /// own rebuilds.
+    private func installMenuBar() {
+        MenuBar.install(
+            binding: { [weak self] command in self?.session?.binding(for: command) },
+            // Asked per item, each time a menu opens, against the context
+            // that has focus right now — which is what makes a menu item
+            // grey out as the keyboard moves between panes. With no session
+            // yet, nothing is available: the commands are real but there is
+            // nothing for them to act on.
+            available: { [weak self] id in
+                guard let self else { return false }
+                guard let session else {
+                    // No session yet — the store is still being unlocked, or
+                    // it never opened. Most verbs have nothing to act on, but
+                    // the ones this frontend handles itself do not need one:
+                    // Settings edits a file, and greying it out while the
+                    // Keychain waits leaves the user looking at an
+                    // application with nothing enabled and no way to ask why.
+                    return Intercepted.all.contains(id)
+                }
+                return session.isAvailable(id, in: self.context)
+            },
+            run: { [weak self] id in self?.run(id) }
+        )
+    }
+
     /// Wire the `NSEvent` monitor to the boundary's resolver.
     ///
     /// Three lines of policy and no keymap: reduce, ask, act. The application
@@ -483,12 +519,16 @@ final class Engine {
         case Intercepted.focusSidebar:
             focus(.sidebar)
         case Intercepted.settings:
-            // AppKit's own action for the `Settings` scene, rather than
-            // SwiftUI's `openSettings` environment value. Reading that one
-            // from a view inside the `WindowGroup` stops the main window ever
-            // completing its first layout -- the app runs, logs and draws
-            // nothing. Bisected 2026-09-05; see the note in docs/notes/.
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            // A request the shell turns into `openWindow(id:)`, because only
+            // a view can open a window. Not `sendAction(showSettingsWindow:)`
+            // -- that reached no handler at all, and because the monitor had
+            // already swallowed the key, it also stopped the menu item's own
+            // equivalent from running: Postio took `⌘,` and dropped it
+            // (#1261). Not the `openSettings` environment value either:
+            // reading that from a view inside the `WindowGroup` stops the
+            // main window ever completing its first layout, and the
+            // application runs, logs and draws nothing (see docs/notes/).
+            settingsWindow.raise()
         case Intercepted.toggleSidebar:
             // AppKit's own action rather than a piece of state here: a split
             // view controller owns whether its sidebar is collapsed, and a
