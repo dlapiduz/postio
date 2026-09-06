@@ -476,21 +476,22 @@ pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
 
     // ── the footer ────────────────────────────────────────────────────────
     let footer = pane.footer();
-    assert!(footer.is_visible(), "a conversation has conversation verbs");
-    assert_eq!(
-        footer
-            .button(postio_core::CommandId::Reply)
-            .expect("reply is in the footer")
-            .key(),
-        "e",
-        "the footer button names the key that does the same thing"
-    );
+    assert!(footer.is_visible(), "a thread has the thread's verbs");
     assert_eq!(
         footer
             .button(postio_core::CommandId::ArchiveThread)
             .expect("archive thread is in the footer")
             .key(),
-        "A"
+        "A",
+        "the footer button names the key that does the same thing"
+    );
+    // And nothing else. Reply is per message and is drawn on the message
+    // (#1173): `Reply to conversation` ran the same command as the bar above
+    // it, aimed at the same focused message, from a control that did not show
+    // you which message that was.
+    assert!(
+        footer.button(postio_core::CommandId::Reply).is_none(),
+        "the footer is the thread's bar, and reply is not a thread verb"
     );
 
     // An empty pane has nothing to name and no verbs to offer.
@@ -583,6 +584,136 @@ pub fn the_keyboard_walks_the_stack_and_folds_what_it_lands_on() {
     assert!(!pane.focus_next());
     assert!(!pane.focus_previous());
     pane.toggle_fold();
+
+    window.close();
+}
+
+/// Every widget under `root` whose CSS class ends in `-reply`, walking only
+/// into subtrees that are actually on screen.
+///
+/// The class is what `widgets::Action` documents as "the CSS class a test
+/// finds it by", and `-reply` excludes `-reply-all` because the class for
+/// that one ends in `-all`. Counting what is *drawn* rather than asking the
+/// two action tables what they hold is the whole point: the tables were each
+/// right on their own, and the defect was the pair of them on screen at once.
+fn reply_controls(root: &gtk::Widget) -> Vec<String> {
+    let mut found = Vec::new();
+    if !root.is_visible() {
+        return found;
+    }
+    for class in root.css_classes() {
+        if class.ends_with("-reply") {
+            found.push(class.to_string());
+        }
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        found.extend(reply_controls(&widget));
+        child = widget.next_sibling();
+    }
+    found
+}
+
+/// One thread, one `Reply` on screen — at any length (#1173).
+///
+/// The one-message case was the visible half: both bars drew and `Reply`
+/// appeared twice with `e` printed on each. The n>1 case is the same defect
+/// with a pane's height between the two buttons, which is why it survived
+/// three issues while the n=1 one was reported at once.
+///
+/// `Reply to conversation` runs `CommandId::Reply` aimed at the *focused*
+/// message, so it is the same command and the same key as the bar drawn on
+/// that message — under a label naming a scope Postio does not have. You
+/// reply to a message, never to a thread, and a pinned control drawn a pane
+/// away from the message it will answer is the mistake ADR 0015 Q4 gives as
+/// its reason for making the reply verbs per-message: "answering the wrong
+/// message of a conversation is a real and common mistake".
+pub fn one_thread_offers_one_reply_however_long_it_is() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // ── a thread of one ───────────────────────────────────────────────────
+    pane.open(vec![message(1, false)]);
+    crate::pump();
+    let found = reply_controls(&pane.widget());
+    assert_eq!(
+        found.len(),
+        1,
+        "a one-message thread drew {} controls bound to reply: {found:?}",
+        found.len()
+    );
+
+    // ── and a thread of eight ─────────────────────────────────────────────
+    let mut messages: Vec<Row> = (1..=8).map(|id| message(id, true)).collect();
+    messages[7].seen = false;
+    pane.open(messages);
+    crate::pump();
+    let found = reply_controls(&pane.widget());
+    assert_eq!(
+        found.len(),
+        1,
+        "a thread drew {} controls bound to reply: {found:?}. Both run \
+         `CommandId::Reply` on the focused message, so the second is a \
+         duplicate that hides which message it answers",
+        found.len()
+    );
+
+    window.close();
+}
+
+/// `Expand all` is offered only when there is something to expand (#1173).
+///
+/// The same n=1 surface as the double `Reply`, and it was read as a second
+/// bug in the issue — "the header still offers `Expand all 0`". The `0` is
+/// the keycap for `O`, which the mono face draws close enough to a zero at
+/// that size to look like a count, so there is no "expand nothing" arithmetic
+/// to fix. What is real is the control: a one-message thread opens that
+/// message expanded, so the button is offered with nothing left to do.
+pub fn expand_all_is_offered_only_when_there_is_something_to_expand() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    pane.open(vec![message(1, false)]);
+    crate::pump();
+    assert!(
+        !pane.header().offers_expand_all(),
+        "a thread of one opens expanded, so there is nothing for `O` to do"
+    );
+
+    let mut messages: Vec<Row> = (1..=8).map(|id| message(id, true)).collect();
+    messages[7].seen = false;
+    pane.open(messages);
+    crate::pump();
+    assert!(
+        pane.header().offers_expand_all(),
+        "seven of the eight open collapsed, which is exactly what `O` is for"
+    );
 
     window.close();
 }
