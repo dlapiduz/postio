@@ -30,6 +30,62 @@ SCRIPT = HERE / "sccache-restart.sh"
 
 FAILURES: list[str] = []
 
+# How long the stubbed script gets before the deadline is treated as a hang.
+#
+# It guards nothing this file asserts. The script's own waiting is already
+# neutralised by the fixture (`POSTIO_SCCACHE_WINDOW=0`), so every case here is
+# a few shell invocations against stubs and finishes in milliseconds -- the
+# deadline is only here so a genuine hang fails rather than blocking the job
+# for ever.
+#
+# It failed once anyway (#1243, run 34043679568): the Crate boundaries job runs
+# 81 self-tests four at a time on a shared runner, and 30 seconds of wall clock
+# is generous on an idle box and not obviously generous on that one. Nothing on
+# the branch touched sccache.
+BASE_TIMEOUT = 120.0
+
+# The dial the Rust suite already has, reaching this file too.
+#
+# `postio_test_support::patience` multiplies every deadline in the Rust suite
+# by `POSTIO_TEST_PATIENCE`, so a loaded machine is one environment variable
+# rather than a pull request that enlarges a constant and slows every run
+# afterwards. That dial stopped at the crate boundary; a deadline written by
+# hand in Python could not hear it. Now it can, and reads the same variable,
+# because two dials that mean the same thing is one dial nobody sets.
+PATIENCE_ENV = "POSTIO_TEST_PATIENCE"
+
+
+def patience() -> float:
+    """The multiplier `POSTIO_TEST_PATIENCE` asks for, or 1.
+
+    An unparseable or non-positive value is ignored rather than honoured, the
+    same as the Rust side: a typo in a workflow should not quietly set every
+    deadline to zero and turn every wait into an instant failure.
+    """
+    raw = os.environ.get(PATIENCE_ENV)
+    if not raw:
+        return 1.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 1.0
+    return value if value > 0 else 1.0
+
+
+def timeout_seconds() -> float:
+    return BASE_TIMEOUT * patience()
+
+
+class ScriptHung(Exception):
+    """The script under test ran out of wall clock rather than misbehaving.
+
+    Its own exception because the two findings are not the same and used to
+    look identical: a `TimeoutExpired` surfaced as a plain FAILED, so a run
+    that lost a race with a loaded runner read exactly like the script getting
+    the answer wrong. #1243 is one of those, and it cost a session the time to
+    establish that nothing on the branch touched sccache.
+    """
+
 # A daemon whose counter reads from a file, so a case can decide whether the
 # second reading differs from the first.
 SCCACHE_STUB = """#!/usr/bin/env bash
@@ -77,16 +133,36 @@ def run(base: Path, *, waiting: int, moves: bool, args: list[str]) -> subprocess
     # So a case that reaches the two-reading path does not actually wait.
     environment["POSTIO_SCCACHE_WINDOW"] = "0"
     environment["POSTIO_SCCACHE_STALLED_AFTER"] = "300"
-    return subprocess.run(
-        ["bash", str(SCRIPT), *args],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    limit = timeout_seconds()
+    try:
+        return subprocess.run(
+            ["bash", str(SCRIPT), *args],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=limit,
+        )
+    except subprocess.TimeoutExpired as expired:
+        raise ScriptHung(
+            f"`sccache-restart.sh {' '.join(args)}` did not finish within "
+            f"{limit:g}s. Every case here runs against stubs with the script's "
+            f"own waiting switched off, so this is a hang or a runner too "
+            f"loaded to finish milliseconds of work -- not the script "
+            f"answering wrongly. Raise {PATIENCE_ENV} (currently "
+            f"{patience():g}x over a {BASE_TIMEOUT:g}s base) if the machine is "
+            f"busy."
+        ) from expired
 
 
 def main() -> int:
+    try:
+        return run_the_cases()
+    except ScriptHung as hung:
+        print(f"TIMED OUT  {hung}", file=sys.stderr)
+        return 1
+
+
+def run_the_cases() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
         stub_dir = base / "stubs"
