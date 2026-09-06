@@ -166,6 +166,25 @@ pub struct Draft {
     /// worse than having no id at all. The id belongs to one attempt series
     /// at one piece of text, not to the row.
     pub rfc_message_id: Option<RfcMessageId>,
+    /// The rule that made this draft, when a rule did (#1142).
+    ///
+    /// `None` for everything a person composed, which is almost every draft.
+    /// A `forward:` rule's send goes out through this same path — ADR 0028's
+    /// "a rule runs the same verb a keystroke does" — and this is the one
+    /// thing that distinguishes it, kept because two later steps need it:
+    ///
+    /// * [`outgoing::build`](crate::outgoing::build) marks the outgoing
+    ///   message so a copy that finds its way back here is not forwarded
+    ///   again, which is the first of ADR 0008 Q5's three guards. The bytes
+    ///   are built when the queue drains, long after the rule has gone, so
+    ///   the fact has to be on the row.
+    /// * A person looking at Sent can be told which rule sent something they
+    ///   did not write.
+    ///
+    /// **The name stays on this machine.** The header it causes is a bare
+    /// marker; what a user called their rule is their business and not the
+    /// recipient's.
+    pub forwarded_by: Option<String>,
     /// Server identifiers, once the draft has been appended remotely.
     pub server: ServerIdentifiers,
     /// When composition started.
@@ -193,6 +212,7 @@ impl Draft {
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,
+            forwarded_by: None,
             server: ServerIdentifiers::default(),
             created_at: now,
             updated_at: now,

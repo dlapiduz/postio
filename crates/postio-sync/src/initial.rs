@@ -616,19 +616,15 @@ pub fn commit_batch(
             // `matching` stops at the first match carrying `stop`, so the
             // actions below are exactly the ones ADR 0008 Q4 says run.
             let matched = rules.matching(Stage::OnArrival, &Subject::new(message));
-            let actions: Vec<_> = matched
-                .iter()
-                .inspect(|rule| {
-                    report.fired.push(RuleHit {
-                        message: message.id,
-                        rule: rule.name.clone(),
-                    });
-                })
-                .flat_map(|rule| rule.actions.iter().cloned())
-                .collect();
+            for rule in &matched {
+                report.fired.push(RuleHit {
+                    message: message.id,
+                    rule: rule.name.clone(),
+                });
+            }
             // The same transaction, and the same storage verbs a keystroke
             // runs -- there is no rules-only mutation path (ADR 0008 Q5).
-            crate::rules::apply(&unit, mailbox.account_id, message, &actions, now)?;
+            crate::rules::apply(&unit, mailbox.account_id, message, &matched, now)?;
         }
 
         unit.commit().map_err(postio_storage::Error::from)?;

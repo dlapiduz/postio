@@ -1422,3 +1422,128 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
         "nothing is filed into a folder the server no longer has"
     );
 }
+
+/// A rule's forward goes out the ordinary way, and lands in Sent (#1142).
+///
+/// ADR 0028 makes this a requirement rather than a nicety: mail that left this
+/// machine has to be visible in the folder that says what left it, whoever
+/// decided to send it. Nothing here is special-cased for a rule — the draft is
+/// an ordinary queued draft — so what this proves is that nothing *needs* to
+/// be.
+///
+/// It also proves what the outgoing message says about itself: the marker that
+/// stops a copy finding its way back here from being forwarded again, and no
+/// more than that. The rule's name is the user's own config and stays on this
+/// machine.
+#[tokio::test]
+async fn a_rules_forward_is_sent_and_filed_in_sent_like_any_other() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, sent_mailbox) = account_with_sent(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.forwarded_by = Some("digest".to_owned());
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let local_sent = MailboxRepository::new(&connection)
+        .get(sent_mailbox)
+        .expect("get")
+        .expect("the sent mailbox");
+    assert_eq!(
+        local_sent.counts.total, 1,
+        "a message a rule sent is not in Sent, so the folder that says what \
+         left this machine is missing the mail nobody chose to send"
+    );
+
+    let written = String::from_utf8_lossy(&connector.log().written).to_string();
+    assert!(
+        written.contains("X-Postio-Forwarded"),
+        "the outgoing message carries no forwarding marker, so a copy that \
+         finds its way back here would be forwarded again, for ever"
+    );
+    assert!(
+        !written.contains("digest"),
+        "the rule's name left the machine: what a user called their rule is \
+         their business and not the recipient's"
+    );
+}
+
+/// And an ordinary send carries no marker at all.
+#[tokio::test]
+async fn a_send_nobody_automated_carries_no_forwarding_marker() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _sent) = account_with_sent(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    let written = String::from_utf8_lossy(&connector.log().written).to_string();
+    assert!(
+        !written.contains("X-Postio-Forwarded"),
+        "a message a person wrote says it was forwarded by a rule, which \
+         would let their own mail be refused by their own loop guard"
+    );
+}
