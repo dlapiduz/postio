@@ -406,6 +406,13 @@ final class Engine {
             focus(pane.next(false))
         case Intercepted.focusSidebar:
             focus(.sidebar)
+        case Intercepted.settings:
+            // AppKit's own action for the `Settings` scene, rather than
+            // SwiftUI's `openSettings` environment value. Reading that one
+            // from a view inside the `WindowGroup` stops the main window ever
+            // completing its first layout -- the app runs, logs and draws
+            // nothing. Bisected 2026-09-05; see the note in docs/notes/.
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case Intercepted.back where showingPalette || showingCheatSheet:
             // Escape means "get me out of here", and the innermost "here" is
             // whichever of these is open.

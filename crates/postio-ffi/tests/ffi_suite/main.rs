@@ -27,5 +27,6 @@ mod registry;
 mod search;
 mod selection;
 mod session;
+mod settings;
 mod store_on_disk;
 mod syncing;

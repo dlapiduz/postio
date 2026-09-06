@@ -46,6 +46,7 @@ mod reader;
 mod registry;
 mod search;
 mod session;
+mod settings;
 
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, UiEvent};
@@ -58,6 +59,11 @@ pub use reader::{InlinePart, RemoteImagesFfi};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
+pub use settings::{
+    AppearanceFfi, DensityFfi, GroupFfi, SettingsError, SettingsSectionFfi, SettingsStatusFfi,
+    ThemeFfi, settings_appearance, settings_group_label, settings_humanize_interval, settings_load,
+    settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
+};
 
 /// Every command the registry knows, in cheat-sheet order.
 ///

@@ -1,0 +1,253 @@
+import PostioFFI
+import SwiftUI
+
+/// The settings window: a fixed sidebar, exactly one pane, and a footer
+/// naming the table that pane writes.
+///
+/// The frame does not move; only the sidebar's selection and the pane body do.
+/// That is the whole navigation model, and it is the GTK window's — the eight
+/// sections, their order, their two headings and their labels all come from
+/// `postio_ui::settings` rather than from a list kept beside this view, so the
+/// two frontends cannot drift into being two different applications.
+///
+/// # The controls are decided, not chosen
+///
+/// ADR 0029: segmented for a closed set of three or four, a checkbox for a
+/// value in a form, a switch only for something that *acts* when flipped, a
+/// dropdown only for an open list. SwiftUI's `Picker` defaults to a dropdown
+/// on macOS, which is why every one here is `.segmented` explicitly — Theme
+/// and Row density are closed sets of three, and a popup for three options is
+/// the idiom that ADR exists to stop.
+public struct SettingsPaneView: View {
+    @Bindable private var store: SettingsStore
+
+    public init(store: SettingsStore) {
+        self.store = store
+    }
+
+    public var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Divider()
+                footer
+            }
+        }
+        .frame(minWidth: 720, minHeight: 460)
+    }
+
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach([GroupFfi.mail, GroupFfi.application], id: \.self) { group in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(settingsGroupLabel(group: group))
+                            .font(.system(size: 10, weight: .semibold))
+                            .kerning(0.6)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 4)
+                        ForEach(store.sections(in: group), id: \.key) { section in
+                            row(section)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        // The GTK window's fixed 214px sidebar. Fixed rather than resizable
+        // because the pane is the thing that varies, and a settings window
+        // whose nav can be dragged to nothing is a settings window with a bug
+        // report waiting in it.
+        .frame(width: 214)
+        .background(.quaternary.opacity(0.35))
+    }
+
+    private func row(_ section: SettingsSectionFfi) -> some View {
+        let selected = section.key == store.selected
+        return Button {
+            store.selected = section.key
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: symbol(for: section.key))
+                    .frame(width: 16)
+                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                Text(section.label)
+                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    /// The macOS half of what `postio_gtk::settings::icon` answers for GTK.
+    ///
+    /// Beside the view rather than behind the boundary for the reason that
+    /// function records: a symbolic icon name is not an SF Symbol, and the
+    /// shared crate should carry neither.
+    private func symbol(for key: String) -> String {
+        switch key {
+        case "accounts": return "person.crop.circle"
+        case "filters": return "line.3.horizontal.decrease.circle"
+        case "compose": return "square.and.pencil"
+        case "ui": return "paintbrush"
+        case "keys": return "keyboard"
+        case "sync": return "arrow.triangle.2.circlepath"
+        case "privacy": return "lock.shield"
+        default: return "doc.plaintext"
+        }
+    }
+
+    // MARK: - Detail
+
+    @ViewBuilder private var detail: some View {
+        if let section = store.current {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(section.label).font(.system(size: 17, weight: .semibold))
+                    Text(section.description).font(.callout).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 16)
+                Divider()
+                pane
+                    .padding(24)
+            }
+        }
+    }
+
+    @ViewBuilder private var pane: some View {
+        if store.selected == "ui" {
+            appearance
+        } else {
+            unbuilt
+        }
+    }
+
+    @ViewBuilder private var appearance: some View {
+        if let current = store.appearance {
+            HStack(alignment: .top, spacing: 32) {
+                VStack(alignment: .leading, spacing: 20) {
+                    field("THEME") {
+                        Picker("", selection: binding(current, \.theme)) {
+                            Text("System").tag(ThemeFfi.system)
+                            Text("Light").tag(ThemeFfi.light)
+                            Text("Dark").tag(ThemeFfi.dark)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    field("ROW DENSITY") {
+                        // "Snug" is what the middle setting is called on
+                        // screen; `comfortable` is what it is called in the
+                        // file. GTK says the same two things, and changing
+                        // either alone would make one of them a lie.
+                        Picker("", selection: binding(current, \.density)) {
+                            Text("Airy").tag(DensityFfi.airy)
+                            Text("Snug").tag(DensityFfi.comfortable)
+                            Text("Compact").tag(DensityFfi.compact)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                }
+                Divider().frame(height: 120)
+                field("MESSAGE LIST") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Hover action icons", isOn: binding(current, \.showHoverActions))
+                        Toggle("Key hints on the focused row", isOn: binding(current, \.showKeyHints))
+                        Toggle("Sender avatars", isOn: binding(current, \.senderAvatars))
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    private func field<Content: View>(
+        _ kicker: String,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(kicker)
+                .font(.system(size: 10, weight: .semibold))
+                .kerning(0.6)
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private var unreadable: some View {
+        ContentUnavailableView {
+            Label("This file will not parse", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text(
+                "Settings cannot be shown as fields until the file is valid TOML. "
+                    + "The line below says where it went wrong; ⌘E opens it in your editor."
+            )
+        }
+    }
+
+    private var unbuilt: some View {
+        ContentUnavailableView {
+            Label("Not on macOS yet", systemImage: "gearshape")
+        } description: {
+            Text(
+                "This section is only editable in the file for now — ⌘E opens it in your editor. "
+                    + "The panes are shipping one at a time (#1156)."
+            )
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Image(systemName: store.status.valid ? "checkmark.circle" : "exclamationmark.circle")
+                .foregroundStyle(store.status.valid ? Color.secondary : Color.red)
+            Text(store.footer)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(store.status.valid ? Color.secondary : Color.red)
+            Spacer()
+            Text(store.path)
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .truncationMode(.head)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    /// A binding that patches the file on change.
+    ///
+    /// There is no Save in this window because canvas 3f decided there is no
+    /// second store to save *from* — which is exactly what the footer says.
+    private func binding<T>(
+        _ current: AppearanceFfi,
+        _ field: WritableKeyPath<AppearanceFfi, T>
+    ) -> Binding<T> {
+        Binding(
+            get: { current[keyPath: field] },
+            // One field, applied to whatever the file says at the moment of
+            // the click -- never to the copy this view was drawn from.
+            set: { value in store.apply { $0[keyPath: field] = value } }
+        )
+    }
+}

@@ -1,3 +1,4 @@
+import PostioFFI
 import PostioKit
 import SwiftUI
 
@@ -10,6 +11,9 @@ import SwiftUI
 @main
 struct PostioApp: App {
     @State private var engine = Engine()
+    // Resolved by `postio_config::paths`, so this edits the file the rest of
+    // Postio reads rather than a second opinion about where settings live.
+    @State private var settings = SettingsStore(path: (try? settingsPath()) ?? "")
     @Environment(\.scenePhase) private var phase
     // SwiftUI's `onOpenURL` only fires for a scene that already exists, and a
     // `mailto:` click is the ordinary way Postio gets launched in the first
@@ -34,5 +38,14 @@ struct PostioApp: App {
         // thing that survives a window being closed and reopened rather than
         // the app being quit.
         .windowResizability(.contentSize)
+
+        // A real window, not an overlay on the main one: `⌘,` has opened one
+        // on this platform since Mac OS X 10.0, and ADR 0019 Q1 rejected the
+        // cheap port precisely for having "the wrong window chrome". Canvas
+        // 3f's contract -- one store, no OK/Cancel, nav that jumps, validity
+        // along the foot -- is kept in full; only the frame is different.
+        Settings {
+            SettingsPaneView(store: settings)
+        }
     }
 }
