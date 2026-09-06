@@ -297,23 +297,43 @@ impl<T: ListRow> ListWindow<T> {
         }
 
         // Not here: ask for it, and for the pages either side, so scrolling
-        // at speed does not stall on a page boundary.
+        // at speed does not stall on a page boundary. The page actually
+        // being read must be long enough to cover `index`, not merely
+        // present — a page can be resident and still too short for the
+        // position asked of it (#1165). The neighbours are pure prefetch
+        // with no position of their own to answer for, so presence alone is
+        // still the right question there.
         let mut request = Vec::with_capacity(3);
-        self.want(page, &mut request);
+        self.want(page, Some(index), &mut request);
         if page > 0 {
-            self.want(page - 1, &mut request);
+            self.want(page - 1, None, &mut request);
         }
-        self.want(page + 1, &mut request);
+        self.want(page + 1, None, &mut request);
         Some(Lookup::Missing { request })
     }
 
     /// Mark `page` as worth a fresh request, and note it in `into` — unless
     /// it is already resident or already on its way.
-    fn want(&mut self, page: u32, into: &mut Vec<u32>) {
+    ///
+    /// `required_index`, when given, is the row within `page` that must
+    /// actually be present for the page to count as resident: `row_at`'s own
+    /// `index < rows.len()` question, asked here too. Without it, a page
+    /// delivered short of `PAGE_SIZE` — the last page legitimately, or a
+    /// middle page whose fetch raced a shrinking store — reads as resident
+    /// forever once `pages` merely contains its key, and the position it
+    /// cannot answer for is stuck showing a placeholder with nothing left to
+    /// ever ask for it again. `None` is the coarser question a neighbour
+    /// prefetched for its own sake, rather than a position anyone asked for,
+    /// still wants: present at all, whatever its length.
+    fn want(&mut self, page: u32, required_index: Option<usize>, into: &mut Vec<u32>) {
         if page * PAGE_SIZE >= self.total {
             return;
         }
-        if self.pages.contains_key(&page) || !self.pending.insert(page) {
+        let resident = match required_index {
+            Some(index) => self.pages.get(&page).is_some_and(|rows| index < rows.len()),
+            None => self.pages.contains_key(&page),
+        };
+        if resident || !self.pending.insert(page) {
             return;
         }
         into.push(page);
@@ -587,6 +607,35 @@ mod tests {
         deliver_fresh(&mut window, 1799, HUGE);
         deliver_fresh(&mut window, 1801, HUGE);
         assert!(matches!(window.row_at(90_000), Some(Lookup::Resident(_))));
+    }
+
+    #[test]
+    fn a_short_middle_page_is_re_requested_rather_than_stuck_as_a_placeholder() {
+        // The unsafe case #1165 describes: total was 500 when page 2 was
+        // requested, but the store had shrunk to 200 rows by the time the
+        // fetch actually ran, so the delivery for page 2 (positions
+        // 100..150) came back with only 20 rows in it. `set_total` corrects
+        // the count to 200 without touching what is cached -- page 2 stays
+        // exactly as short as it arrived, and 200 / 50 = 4 pages means it is
+        // still a *middle* page, not the legitimately-short last one.
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(500);
+        window.deliver(window.generation(), 2, (100..120).map(row).collect());
+        window.set_total(200);
+
+        // Position 130 is index 30 within page 2 -- past the 20 rows the
+        // short delivery actually holds, so it must still come back Missing
+        // and, critically, must still ask for page 2 rather than treating
+        // `pages.contains_key(&2)` as good enough forever.
+        match window.row_at(130) {
+            Some(Lookup::Missing { request }) => {
+                assert!(
+                    request.contains(&2),
+                    "expected the short page 2 to be re-requested, got {request:?}"
+                );
+            }
+            other => panic!("expected row 130 to be Missing with page 2 requested, got {other:?}"),
+        }
     }
 
     #[test]
