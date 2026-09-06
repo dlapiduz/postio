@@ -42,7 +42,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Duration;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -53,7 +52,6 @@ use postio_model::ids::MessageId;
 use postio_search::ParsedQuery;
 use postio_search::SearchHit;
 use postio_search::facets::{Facets, Refinement, Scope};
-use postio_search::query::{Field, TokenKind};
 
 // Moved to `postio-ui` in #1157 so the macOS search bar reads the same query
 // as chips, says the same thing about a result set, and debounces at the same
@@ -1510,6 +1508,11 @@ pub fn markup(highlighted: &postio_search::Highlighted) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test-only since #1157 moved the pure half to `postio-ui`: the widget
+    // no longer names a duration or a field, only these assertions do.
+    use postio_search::query::Field;
+    use std::time::Duration;
 
     /// A fixed day, so a test that mentions a relative date is not a test of
     /// what day it is.
