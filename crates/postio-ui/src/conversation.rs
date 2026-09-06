@@ -258,10 +258,6 @@ pub trait ConversationMessage {
     /// The tie-break when two messages claim the same second — the local id,
     /// which is stable across reads and unique.
     fn ordinal(&self) -> i64;
-
-    /// Who wrote it, for counting correspondents. `None` for a message whose
-    /// `From` did not parse.
-    fn sender(&self) -> Option<&EmailAddress>;
 }
 
 /// How many messages open expanded at most.
@@ -309,11 +305,12 @@ pub fn arrange<T: ConversationMessage + Clone>(
 ///
 /// By address, folded: one correspondent who has changed their display name
 /// mid-thread is still one person, and the header's count is a count of
-/// correspondents rather than of `From` headers.
-pub fn correspondents<T: ConversationMessage>(rows: &[T]) -> usize {
-    let mut seen: Vec<String> = rows
+/// correspondents rather than of `From` headers. Takes the senders rather
+/// than the rows for the same reason [`participants`] does — the two answer
+/// the same question about the same list, one as a number and one as a line.
+pub fn correspondents(senders: &[EmailAddress]) -> usize {
+    let mut seen: Vec<String> = senders
         .iter()
-        .filter_map(|row| row.sender())
         .map(|from| from.address.to_lowercase())
         .collect();
     seen.sort();
@@ -679,7 +676,6 @@ mod tests {
         id: i64,
         seen: bool,
         at: DateTime<Utc>,
-        from: Option<EmailAddress>,
     }
 
     impl ConversationMessage for Msg {
@@ -694,10 +690,6 @@ mod tests {
         fn ordinal(&self) -> i64 {
             self.id
         }
-
-        fn sender(&self) -> Option<&EmailAddress> {
-            self.from.as_ref()
-        }
     }
 
     fn message(id: i64, seen: bool) -> Msg {
@@ -705,7 +697,6 @@ mod tests {
             id,
             seen,
             at: Utc.timestamp_opt(1_770_000_000 + id, 0).single().unwrap(),
-            from: None,
         }
     }
 
@@ -716,13 +707,6 @@ mod tests {
                 .timestamp_opt(1_770_000_000 + second, 0)
                 .single()
                 .unwrap(),
-            ..message(id, true)
-        }
-    }
-
-    fn written_by(id: i64, name: &str, address: &str) -> Msg {
-        Msg {
-            from: Some(EmailAddress::new(Some(name), address)),
             ..message(id, true)
         }
     }
@@ -792,16 +776,16 @@ mod tests {
     fn one_correspondent_who_renamed_themselves_is_still_one_person() {
         // Display names change mid-thread — a phone signature, a new job.
         // The count is of correspondents, not of `From` headers.
-        let messages = [
-            written_by(1, "Ada Norwood", "ada@example.com"),
-            written_by(2, "Ada N.", "Ada@Example.com"),
+        let senders = [
+            EmailAddress::new(Some("Ada Norwood"), "ada@example.com"),
+            EmailAddress::new(Some("Ada N."), "Ada@Example.com"),
         ];
-        assert_eq!(correspondents(&messages), 1);
+        assert_eq!(correspondents(&senders), 1);
     }
 
     #[test]
-    fn a_message_with_no_sender_is_nobody() {
-        assert_eq!(correspondents(&[message(1, true)]), 0);
+    fn a_conversation_with_no_senders_has_no_correspondents() {
+        assert_eq!(correspondents(&[]), 0);
     }
 
     // -- where the pane opens ---------------------------------------------

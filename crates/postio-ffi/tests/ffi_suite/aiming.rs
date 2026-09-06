@@ -63,6 +63,7 @@ fn sample_row() -> RowFfi {
         thread: None,
         is_thread: false,
         from: None,
+        from_address: None,
         initials: "?".to_string(),
         subject: None,
         preview: None,

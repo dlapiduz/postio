@@ -40,6 +40,15 @@ pub enum ScopeFfi {
         /// The account.
         account: i64,
     },
+    /// One conversation, wherever its messages are filed.
+    ///
+    /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
+    /// pane that filtered the list's own resident rows would show only the
+    /// part of the conversation that happened to be paged in.
+    Thread {
+        /// The conversation.
+        thread: i64,
+    },
 }
 
 impl From<ScopeFfi> for ListScope {
@@ -50,6 +59,7 @@ impl From<ScopeFfi> for ListScope {
             ScopeFfi::Unified => ListScope::Unified,
             ScopeFfi::Flagged { account } => ListScope::Flagged(account.into()),
             ScopeFfi::Snoozed { account } => ListScope::Snoozed(account.into()),
+            ScopeFfi::Thread { thread } => ListScope::Thread(thread.into()),
         }
     }
 }
@@ -85,6 +95,13 @@ pub struct RowFfi {
     pub is_thread: bool,
     /// Who it is from, already rendered for display.
     pub from: Option<String>,
+    /// The sender's address, unrendered: `hello@pinepoint-radon.example`.
+    ///
+    /// Beside [`from`](Self::from) rather than folded into it, because the
+    /// two are drawn in different weights on different lines — and because a
+    /// per-sender privacy decision ("always allow this address") is made
+    /// about *this*, never about a display name that anyone can choose.
+    pub from_address: Option<String>,
     /// The two letters the avatar chip shows for the sender.
     ///
     /// Derived here rather than in the frontend, from
@@ -128,6 +145,23 @@ impl ListRow for RowFfi {
     }
 }
 
+impl postio_ui::conversation::ConversationMessage for RowFfi {
+    fn seen(&self) -> bool {
+        self.seen
+    }
+
+    fn received_at(&self) -> chrono::DateTime<chrono::Utc> {
+        // A row carries seconds because that is what crosses a C ABI; the
+        // rules want a time. An unrepresentable stamp sorts as the epoch
+        // rather than panicking a frontend's redraw.
+        chrono::DateTime::from_timestamp(self.received_at, 0).unwrap_or_default()
+    }
+
+    fn ordinal(&self) -> i64 {
+        self.id
+    }
+}
+
 impl From<MessageSummary> for RowFfi {
     fn from(row: MessageSummary) -> Self {
         RowFfi {
@@ -141,6 +175,7 @@ impl From<MessageSummary> for RowFfi {
             // same message (#1150) -- on a field whose doc comment says
             // "already rendered for display".
             initials: postio_ui::row::initials(row.from.as_ref()),
+            from_address: row.from.as_ref().map(|address| address.address.clone()),
             from: row.from.map(|address| address.display().to_string()),
             subject: row.subject,
             preview: row.preview,
