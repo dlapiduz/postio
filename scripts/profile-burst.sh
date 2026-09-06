@@ -44,25 +44,34 @@
 #      check that quietly answers "nothing here" is worse than no check,
 #      because it is the one you believe.
 #
-# A warning to whoever comes next, paid for twice: **neither unwinder gets
-# out of `sha512_block_data_order_avx2`.** Frame pointers invent callers
-# there (see below); DWARF declines to, which is more honest and equally
-# useless -- it reports the symbol with 54% self and 54% children, meaning
-# no parent was attributed to any of it. `sqlite3_step` collects 1.8%. So a
-# profile can say the burn is SQLCipher page decryption under a btree walk,
-# and cannot say which query asked for it. Naming the query wants a
-# different instrument -- SQLite's own trace hook, which
-# `postio_storage::test_support::counting` already uses -- not a third
-# unwinder.
+# Frame pointers, not DWARF, and this was measured rather than assumed.
 #
-# Why --call-graph dwarf rather than -g: the burn lands inside
-# `sha512_block_data_order_avx2`, OpenSSL's hand-written AVX2 assembly, which
-# keeps no frame pointer. Frame-pointer unwinding does not fail there, it
-# invents -- the "callers" it reported were SHA-512's own round constants
-# read as return addresses (`0x7137449123ef65cd` is one of them, and it is in
-# the FIPS 180-4 table). DWARF costs more per sample, hence the halved
-# frequency, and it is the only thing that can say which *query* is doing the
-# decrypting -- which is the whole question #1216 is asking.
+# DWARF was tried for two days' worth of captures on the theory that it would
+# name the *query* behind the burn, since the burn itself lands in
+# `sha512_block_data_order_avx2` -- OpenSSL's hand-written AVX2 assembly, which
+# keeps no frame pointer. It does not, and the reason is worth writing down:
+# **neither unwinder gets out of that symbol.** Frame pointers do not fail
+# there, they invent -- the callers reported were SHA-512's own round constants
+# read as return addresses, and `0x7137449123ef65cd` is in the FIPS 180-4
+# table. DWARF declines to guess, which is more honest and equally useless: it
+# reports the symbol with 56.58% self and 56.58% children, meaning no parent
+# was attributed to any of it, while `sqlite3_step` collects under 2% and
+# `postio_storage`'s own symbols total 0.04%.
+#
+# So the attribution is the same either way -- absent -- and what is left is a
+# flat profile, where the two modes are not close:
+#
+#     DWARF          248 samples in 4.2 MB   ~59 samples/MB
+#     frame pointer  7,000 samples in 0.9 MB ~7,500 samples/MB
+#
+# 125x, because every DWARF sample carries a 16 KB stack copy. For a profile
+# that can only ever be flat, that is the whole decision. (Corruption is not
+# the discriminator: roughly half the dumps in each mode failed to parse, which
+# is the overwrite ring wrapping mid-record, not the unwinder.)
+#
+# Naming the query wants SQLite's own trace hook -- which
+# `postio_storage::test_support::counting` already installs in tests -- not a
+# third unwinder.
 #
 # Also worth knowing, and the reason this uses perf at all: ptrace-based
 # samplers are useless here. `eu-stack` and `gdb` both stop the target at a
@@ -87,12 +96,10 @@ ARM_TIME=20
 # noise: one sample in fifty is 2%, and reading a top ten off that is how an
 # investigation gets sent somewhere there was never any evidence for.
 #
-# Lower than it would be for a flat profile, because DWARF changes the
-# arithmetic: each sample carries a 16 KB stack copy, so the same ring holds
-# far fewer of them -- an 81% burst produced 248 samples in 4 MB where the
-# frame-pointer run produced 7,000 in 1 MB. Rejecting 248 stacks as "thin"
-# threw away the better capture of the two. `-m 64M` above is the other half
-# of that fix.
+# Kept low even though frame-pointer captures run to thousands: a burst
+# caught early, or one whose ring wrapped, can be worth reading at a few
+# hundred, and the classifier says how many it found either way. `-m 64M`
+# above is what keeps a long burn whole rather than its last half-second.
 MIN_SAMPLES=150
 
 while [ $# -gt 0 ]; do
@@ -118,7 +125,7 @@ say() { echo "$(date +%H:%M:%S) $*" | tee -a "$log"; }
 
 # --overwrite keeps only the most recent buffer and writes nothing until
 # signalled; --switch-output=signal is what turns SIGUSR2 into a dump.
-sudo -n perf record -F 499 --call-graph dwarf,16384 -m 64M -p "$pid" \
+sudo -n perf record -F 999 -g -m 64M -p "$pid" \
      --overwrite --switch-output=signal \
      -o "$out/ring.data" -- sleep 100000 >/dev/null 2>&1 &
 sleep 3
