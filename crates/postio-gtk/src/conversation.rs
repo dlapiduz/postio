@@ -26,246 +26,33 @@ use postio_model::ids::MessageId;
 
 use crate::list::Row;
 
-/// How many messages open expanded at most.
+/// The conversation's own rules, which are not GTK's (ADR 0019).
 ///
-/// Every expanded message is a `WebKitWebView`, and "expand everything
-/// unread" over a conversation nobody has read is one per message — which
-/// holds neither the interaction budget nor the memory. Three is what a
-/// person reads before they scroll, and scrolling expands more.
-pub const EAGER_EXPANSION_CAP: usize = 3;
+/// `arrange`, `opening_focus`, `expanded_on_open` and the cap used to be
+/// written out here. They decide where a pane lands and how many web views
+/// opening one costs — the same two questions on macOS, answered by the same
+/// code now rather than by a second implementation of it. What stays in this
+/// file is the drawing.
+pub use postio_ui::conversation::{
+    EAGER_EXPANSION_CAP, Order, arrange, correspondents, expanded_on_open, opening_focus,
+};
 
-/// How a conversation orders its messages.
-///
-/// Was `crate::thread::Order`, when the drill-in column offered `o` to
-/// reverse it (#1003). The column is gone and so is the key: a conversation
-/// stacks oldest first, the way it was had. The type stays because the
-/// ordering itself is still a decision, and one worth being able to state.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Order {
-    /// Oldest first — how a conversation was actually had, and how the pane
-    /// stacks it.
-    #[default]
-    Oldest,
-    /// Newest first, matching the message list.
-    Newest,
-}
-
-/// The rows a conversation shows, given what is in it and how it is ordered.
-///
-/// Pure, and tested without a display: the ordering is the part worth being
-/// sure about, and it has nothing to do with GTK.
-pub fn arrange(rows: &[Row], order: Order, unread_only: bool) -> Vec<Row> {
-    let mut rows: Vec<Row> = rows
-        .iter()
-        .filter(|row| !unread_only || !row.seen)
-        .cloned()
-        .collect();
-    // By id after the timestamp, so two messages that claim the same second —
-    // a sender and their own auto-reply, commonly — do not swap places
-    // between one redraw and the next.
-    rows.sort_by_key(|row| (row.received_at, row.id));
-    if order == Order::Newest {
-        rows.reverse();
-    }
-    rows
-}
-
-/// How many distinct people are in a conversation.
-///
-/// By address, folded: one correspondent who has changed their display name
-/// mid-thread is still one person, and the header's count is a count of
-/// correspondents rather than of `From` headers.
-pub fn people(rows: &[Row]) -> usize {
-    let mut seen: Vec<String> = rows
-        .iter()
-        .filter_map(|row| row.from.as_ref())
-        .map(|from| from.address.to_lowercase())
-        .collect();
-    seen.sort();
-    seen.dedup();
-    seen.len()
-}
-
-/// Which message the pane opens on.
-///
-/// **The first unread**, not the newest. A conversation you open is one you
-/// are part way through, and landing at the end means scrolling back past
-/// everything you have already read. When every message has been read there
-/// is no first unread and the newest is what you came back for.
-///
-/// `None` only for an empty conversation, which the pane does not draw.
-///
-/// `messages` is oldest first, which is the order the pane stacks them in.
-pub fn opening_focus(messages: &[Row]) -> Option<usize> {
-    if messages.is_empty() {
-        return None;
-    }
-    messages
-        .iter()
-        .position(|message| !message.seen)
-        .or(Some(messages.len() - 1))
-}
-
-/// Which messages are expanded when the conversation opens.
-///
-/// Read messages are collapsed: they are one line, and collapsing them is
-/// what makes a long conversation readable at all. From the focused message
-/// onwards the unread ones expand, because that is the part being read — up
-/// to `cap`, after which the rest stay one keystroke away rather than costing
-/// a web view each.
-///
-/// The focused message always expands, even when it has been read: focus
-/// means "this is the one you are looking at", and looking at a one-line
-/// header is not reading.
-pub fn expanded_on_open(messages: &[Row], focus: usize, cap: usize) -> Vec<bool> {
-    let mut expanded = vec![false; messages.len()];
-    let mut spent = 0;
-    for (index, message) in messages.iter().enumerate().skip(focus) {
-        if spent >= cap {
-            break;
-        }
-        if index == focus || !message.seen {
-            expanded[index] = true;
-            spent += 1;
-        }
-    }
-    expanded
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{TimeZone, Utc};
-    use postio_model::ids::MessageId;
-
-    /// A message in the conversation, read or not.
-    fn message(id: i64, seen: bool) -> Row {
-        Row {
-            id: MessageId::new(id),
-            thread: None,
-            from: None,
-            subject: None,
-            preview: None,
-            received_at: Utc.timestamp_opt(1_770_000_000 + id, 0).single().unwrap(),
-            seen,
-            flagged: false,
-            answered: false,
-            draft: false,
-            has_attachments: false,
-            thread_count: 1,
-            participants: Vec::new(),
-        }
+/// The four facts the shared rules read off a row.
+impl postio_ui::conversation::ConversationMessage for Row {
+    fn seen(&self) -> bool {
+        self.seen
     }
 
-    // -- where the pane opens ---------------------------------------------
-
-    #[test]
-    fn a_conversation_opens_on_its_first_unread_message() {
-        // The whole point of the rule: two read, then the one you stopped at.
-        let messages = [
-            message(1, true),
-            message(2, true),
-            message(3, false),
-            message(4, false),
-        ];
-        assert_eq!(opening_focus(&messages), Some(2));
+    fn received_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.received_at
     }
 
-    #[test]
-    fn a_conversation_read_all_the_way_through_opens_on_its_newest() {
-        // There is no first unread, and the end is what you came back for.
-        let messages = [message(1, true), message(2, true), message(3, true)];
-        assert_eq!(opening_focus(&messages), Some(2));
+    fn ordinal(&self) -> i64 {
+        self.id.into()
     }
 
-    #[test]
-    fn a_wholly_unread_conversation_opens_at_the_beginning() {
-        // Not at the newest: this is a conversation you have never read, and
-        // reading it from the end backwards is not how anyone reads.
-        let messages = [message(1, false), message(2, false), message(3, false)];
-        assert_eq!(opening_focus(&messages), Some(0));
-    }
-
-    #[test]
-    fn an_unread_message_older_than_a_read_one_still_wins() {
-        // Read state is not monotonic: someone can mark a later message
-        // unread, or read out of order. "First unread" means first, not
-        // "first after the last read one".
-        let messages = [message(1, true), message(2, false), message(3, true)];
-        assert_eq!(opening_focus(&messages), Some(1));
-    }
-
-    #[test]
-    fn an_empty_conversation_has_nowhere_to_focus() {
-        assert_eq!(opening_focus(&[]), None);
-    }
-
-    // -- what opens expanded ----------------------------------------------
-
-    #[test]
-    fn everything_before_the_focus_stays_collapsed() {
-        // Read messages are one line. That is what makes a long conversation
-        // readable rather than a wall.
-        let messages = [
-            message(1, true),
-            message(2, true),
-            message(3, false),
-            message(4, false),
-        ];
-        let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
-        assert_eq!(expanded, vec![false, false, true, true]);
-    }
-
-    #[test]
-    fn a_long_unread_conversation_does_not_expand_all_of_it() {
-        // The cost question. Thirty unread messages is thirty web views, and
-        // the cap is what stops the pane from opening one per message.
-        let messages: Vec<Row> = (0..30).map(|id| message(id, false)).collect();
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
-
-        assert_eq!(
-            expanded.iter().filter(|open| **open).count(),
-            EAGER_EXPANSION_CAP,
-            "opening a conversation must not cost a web view per message"
-        );
-        assert!(
-            expanded[..EAGER_EXPANSION_CAP].iter().all(|open| *open),
-            "the ones that do expand are the ones being read, from the focus \
-             forward"
-        );
-    }
-
-    #[test]
-    fn the_focused_message_expands_even_when_it_has_been_read() {
-        // Focus means "this is the one you are looking at", and looking at a
-        // one-line header is not reading. This is the fully-read case: focus
-        // lands on the newest and it has to open.
-        let messages = [message(1, true), message(2, true), message(3, true)];
-        let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
-        assert_eq!(expanded, vec![false, false, true]);
-    }
-
-    #[test]
-    fn a_read_message_after_the_focus_stays_collapsed() {
-        // Only the focus is expanded unconditionally; past it, unread is what
-        // earns a web view.
-        let messages = [message(1, false), message(2, true), message(3, false)];
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
-        assert_eq!(expanded, vec![true, false, true]);
-    }
-
-    #[test]
-    fn a_cap_of_one_opens_only_what_is_focused() {
-        // The fallback shape ADR 0015 names if the stack proves too
-        // expensive: one reader, the rest collapsed.
-        let messages: Vec<Row> = (0..5).map(|id| message(id, false)).collect();
-        let expanded = expanded_on_open(&messages, 1, 1);
-        assert_eq!(expanded, vec![false, true, false, false, false]);
-    }
-
-    #[test]
-    fn an_empty_conversation_expands_nothing() {
-        assert!(expanded_on_open(&[], 0, EAGER_EXPANSION_CAP).is_empty());
+    fn sender(&self) -> Option<&postio_model::address::EmailAddress> {
+        self.from.as_ref()
     }
 }
 
