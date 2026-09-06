@@ -71,11 +71,6 @@ cp "$GENERATED/postio_ffiFFI.modulemap" "$C_TARGET/module.modulemap"
 cp "$GENERATED/postio_ffi.swift" "$SWIFT_TARGET/"
 echo "  -> $C_TARGET, $SWIFT_TARGET"
 
-if [ "$LIB_ONLY" = 1 ]; then
-    echo "library and bindings only, as asked."
-    exit 0
-fi
-
 # The design tokens, emitted from the same parsed source the GTK frontend uses
 # (#661). Generated rather than typed: a Swift file with `#5980a6` in it is a
 # copy that is right on the day it is written.
@@ -86,6 +81,11 @@ if [ -n "$DESIGN" ] && [ -f "$DESIGN" ]; then
         "$DESIGN" macos/Sources/PostioKit/Generated/Tokens.swift
 else
     echo "  no design system found; skipping (the application will not build)" >&2
+fi
+
+if [ "$LIB_ONLY" = 1 ]; then
+    echo "library and bindings only, as asked."
+    exit 0
 fi
 
 echo "--- swift build ---"

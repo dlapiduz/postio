@@ -58,9 +58,10 @@ pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecover
 pub use search::{MatchRangeFfi, SnippetFfi};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
-    AppearanceFfi, DensityFfi, GroupFfi, SettingsError, SettingsSectionFfi, SettingsStatusFfi,
-    ThemeFfi, settings_appearance, settings_group_label, settings_humanize_interval, settings_load,
-    settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
+    AppearanceFfi, DensityFfi, GroupFfi, RowMetricsFfi, SettingsError, SettingsSectionFfi,
+    SettingsStatusFfi, ThemeFfi, row_metrics, settings_appearance, settings_group_label,
+    settings_humanize_interval, settings_load, settings_patch_appearance, settings_path,
+    settings_save, settings_sections, settings_status,
 };
 
 /// Every command the registry knows, in cheat-sheet order.

@@ -66,6 +66,13 @@ public final class PostioSession {
     /// simple and loses nothing — the nesting is in `parent`.
     public var mailboxes: [MailboxFfi] { inner.mailboxes() }
 
+    /// The `[ui]` table this session was opened with.
+    ///
+    /// Row density, theme, and what a row draws. Read from here rather than
+    /// from `config.toml` by whoever is drawing, so the list and the settings
+    /// window cannot end up with two opinions of the same table.
+    public func appearance() -> AppearanceFfi { inner.appearance() }
+
     /// Show `scope`, and answer the generation the window is now on.
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }

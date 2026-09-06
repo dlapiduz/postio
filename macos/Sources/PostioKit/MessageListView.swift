@@ -16,12 +16,23 @@ public struct MessageListView: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
+        Self.makeTable(controller: controller)
+    }
+
+    /// Build the scrolling table this view wraps.
+    ///
+    /// Separated from `makeNSView` for the reason
+    /// `MessageTableController.cell(reusing:)` is separated from the delegate
+    /// method: a SwiftUI `Context` cannot be constructed in a test, and
+    /// everything decided here -- the row height the density asks for above
+    /// all -- is ours to get wrong.
+    static func makeTable(controller: MessageTableController) -> NSScrollView {
         let table = NSTableView()
         table.headerView = nil
         table.style = .inset
         // From the cell, not a literal. A row shorter than its contents clips
         // the sender on every row it draws, which is what `62` did.
-        table.rowHeight = MessageRowCell.preferredHeight
+        table.rowHeight = controller.rowHeight
         table.usesAutomaticRowHeights = false
         // The table's own selection is the **cursor**, and only ever one row.
         // The multi-message selection is Postio's, lives behind the boundary,

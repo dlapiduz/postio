@@ -298,3 +298,43 @@ pub fn settings_save(path: String, text: String) -> Result<(), SettingsError> {
         }
     })
 }
+
+/// Canvas 1b's row geometry for one density, in logical pixels.
+///
+/// The numbers are `postio_ui::row::Metrics`, which GTK draws by. Crossing
+/// them rather than restating them in Swift is the difference between one
+/// setting and two settings with one name in the file: a row that is 26px on
+/// one platform and 34 on the other is not "compact" in both.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct RowMetricsFfi {
+    /// Space above and below the row's content.
+    pub pad_y: f32,
+    /// How far in the content starts, accent edge included.
+    pub inset: f32,
+    /// The avatar chip, square.
+    pub avatar: f32,
+    /// Between the avatar and the text column.
+    pub gap: f32,
+    /// Between the sender line and the subject.
+    pub subject_gap: f32,
+    /// Between the snippet and the key hints the focused row reveals.
+    pub hints_gap: f32,
+    /// Whether the snippet line is drawn at all — `false` at the tightest
+    /// density, which is the whole of what makes it the tightest.
+    pub snippet: bool,
+}
+
+/// The geometry `density` asks for.
+#[uniffi::export]
+pub fn row_metrics(density: DensityFfi) -> RowMetricsFfi {
+    let metrics = postio_ui::row::Metrics::for_density(density.into());
+    RowMetricsFfi {
+        pad_y: metrics.pad_y,
+        inset: metrics.inset,
+        avatar: metrics.avatar,
+        gap: metrics.gap,
+        subject_gap: metrics.subject_gap,
+        hints_gap: metrics.hints_gap,
+        snippet: metrics.snippet,
+    }
+}

@@ -8,9 +8,9 @@
 //! been rewritten.
 
 use postio_ffi::{
-    AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, settings_appearance, settings_group_label,
-    settings_humanize_interval, settings_load, settings_patch_appearance, settings_path,
-    settings_save, settings_sections, settings_status,
+    AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, row_metrics, settings_appearance,
+    settings_group_label, settings_humanize_interval, settings_load, settings_patch_appearance,
+    settings_path, settings_save, settings_sections, settings_status,
 };
 
 /// A file with things in it that a naive form would destroy: a comment, a key
@@ -238,4 +238,52 @@ fn the_config_path_is_the_one_the_rest_of_postio_reads() {
     // edit a file nothing loads.
     let path = settings_path().expect("this platform has a config path");
     assert!(path.ends_with("config.toml"), "{path}");
+}
+
+// -- what the list reads (#1215) --------------------------------------------
+
+#[test]
+fn the_session_reports_the_appearance_it_was_opened_with() {
+    // The pane writes `[ui]`; something has to read it, or the settings
+    // window is a form over a file this application ignores.
+    let session = postio_ffi::Session::open(
+        postio_ffi::SessionOptions::in_memory()
+            .with_config_for_test("[ui]\ndensity = \"compact\"\ntheme = \"light\"\n"),
+    )
+    .expect("a session with a [ui] table");
+
+    let appearance = session.appearance();
+    assert_eq!(appearance.density, DensityFfi::Compact);
+    assert_eq!(appearance.theme, ThemeFfi::Light);
+    session.shutdown();
+}
+
+#[test]
+fn a_session_with_no_ui_table_reports_the_built_in_defaults() {
+    // An *empty document*, not an absent one. `SessionOptions::in_memory()`
+    // with no config text falls through to `Config::load()`, which reads the
+    // developer's own `config.toml` -- so written the obvious way this
+    // asserts whatever density the person running it happens to prefer, and
+    // it failed on exactly that. See the isolation issue filed from here.
+    let session =
+        postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory().with_config_for_test(""))
+            .expect("a session with an empty config");
+    assert_eq!(session.appearance().density, DensityFfi::Airy);
+    session.shutdown();
+}
+
+#[test]
+fn a_denser_row_is_shorter_and_the_tightest_one_drops_the_snippet() {
+    // What density *is*, rather than how either frontend draws it. The
+    // snippet is the line that costs the most vertical space and answers the
+    // triage question least, so compact is the setting that drops it — and a
+    // frontend that kept it would be denser in name only.
+    let airy = row_metrics(DensityFfi::Airy);
+    let snug = row_metrics(DensityFfi::Comfortable);
+    let compact = row_metrics(DensityFfi::Compact);
+
+    assert!(airy.pad_y > snug.pad_y && snug.pad_y > compact.pad_y);
+    assert!(airy.avatar > snug.avatar && snug.avatar > compact.avatar);
+    assert!(airy.snippet && snug.snippet);
+    assert!(!compact.snippet, "compact keeps the line it exists to drop");
 }
