@@ -16,6 +16,11 @@ Three things have to hold, and only the last of them did:
     to it.
   * **`--resume` takes the lock or refuses.** It used `mkdir ... || true`, so
     a resume walked straight through another session's live claim.
+  * **An older copy of the scripts can still drop a lock.** The first fix put
+    the owner *inside* the lock directory, where `rmdir` refuses it — and
+    every worktree carries its own copy of these scripts at whatever commit
+    it was cut from, so a release run from a checkout that predates the
+    change left an undroppable lock and an unclaimable issue (#1230).
   * **A claim still bypasses the *label* filters when named.** `epic`,
     `needs-architecture` and the rest are "not agent work by default", not
     "never claimable" — the architect claims a `needs-architecture` issue to
@@ -178,7 +183,7 @@ def main() -> int:
             fail("by-name", "took it without giving it a tree", result)
 
         # ── the lock says who holds it ────────────────────────────────────
-        owner = claims / "issue-4244" / "owner"
+        owner = claims / "issue-4244.owner"
         if not owner.is_file():
             FAILURES.append(
                 "owner: the claim lock records nothing about who took it, so a "
@@ -189,6 +194,25 @@ def main() -> int:
                 f"owner: the lock names {owner.read_text(encoding='utf-8')!r}, "
                 f"not the worktree it created"
             )
+
+        # ── ...beside the lock, not inside it ─────────────────────────────
+        # Every worktree carries its own copy of these scripts at the commit
+        # it was cut from, and the main checkout is pulled when somebody
+        # remembers, so a lock's format is something several versions have to
+        # agree on at once. `rmdir` is what every older copy drops a lock
+        # with, and it refuses a directory with a file in it — which left
+        # #1216 unclaimable within an hour of #1218 landing.
+        lock = claims / "issue-4244"
+        try:
+            lock.rmdir()
+        except OSError as error:
+            FAILURES.append(
+                f"format: a script that has never heard of the owner file "
+                f"cannot drop this lock ({error}), so the issue stays claimed "
+                f"by a session that has gone"
+            )
+        else:
+            lock.mkdir()
 
         # ── --resume takes the lock, or refuses ───────────────────────────
         # A branch on origin for 4242, and its lock already held by another
@@ -209,7 +233,8 @@ def main() -> int:
         # leftover of a session that landed and moved on, and resuming over
         # that one is the flow `--resume` exists for.
         holder.mkdir(parents=True)
-        (held / "owner").write_text(str(holder) + "\n", encoding="utf-8")
+        held_owner = claims / "issue-4242.owner"
+        held_owner.write_text(str(holder) + "\n", encoding="utf-8")
 
         result = claim(repo, base, stub_dir, "--resume", "4242")
         if result.returncode == 0:
@@ -218,7 +243,7 @@ def main() -> int:
             fail("resume", "created a worktree for it anyway", result)
         elif "somebody-elses-tree" not in (result.stdout + result.stderr):
             fail("resume", "refused without naming who is holding it", result)
-        elif not (held / "owner").is_file():
+        elif not held_owner.is_file():
             fail("resume", "a refused resume removed the holder's lock", result)
 
         # ── ...but a lock the holder has left behind is not a claim ───────
@@ -232,7 +257,7 @@ def main() -> int:
             fail("resume-leftover", "refused a lock whose session is gone", result)
         elif not (worktrees / "issue-4242").is_dir():
             fail("resume-leftover", "took it without giving it a tree", result)
-        elif str(worktrees / "issue-4242") not in (held / "owner").read_text(encoding="utf-8"):
+        elif str(worktrees / "issue-4242") not in held_owner.read_text(encoding="utf-8"):
             fail("resume-leftover", "took the lock without recording the new owner", result)
 
     if FAILURES:
