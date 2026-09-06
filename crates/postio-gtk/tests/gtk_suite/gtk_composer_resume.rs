@@ -166,3 +166,65 @@ pub fn composing_after_a_kept_draft_starts_blank() {
         "the draft compose displaced is still resumable by name"
     );
 }
+
+/// #1240: two unsaved drafts are not the same draft.
+///
+/// `resume` decides it is being handed the draft it already has by comparing
+/// ids — and every unsaved draft carries `DraftId::UNASSIGNED`, so
+/// `UNASSIGNED == UNASSIGNED` read as "you are already looking at this" and
+/// it silently declined to swap.
+///
+/// Nothing in production hits it: `resume` exists for the Drafts folder and
+/// a row there always has a real id. It cost real confusion twice in this
+/// suite, though, which is the shape of the bug — a guard that silently
+/// declines leaves the caller believing it swapped and fails an assertion
+/// three steps later.
+pub fn resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.present();
+    settle();
+    let composer = composer::install(&window);
+
+    let unsaved = |subject: &str| {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.subject = subject.to_owned();
+        draft
+    };
+
+    composer.open(unsaved("the first one"));
+    settle();
+    assert_eq!(composer.test_subject(), "the first one");
+
+    composer.resume(unsaved("the second one"));
+    settle();
+    assert_eq!(
+        composer.test_subject(),
+        "the second one",
+        "two unsaved drafts both carry UNASSIGNED; that is the absence of an \
+         identity, not evidence they are the same draft"
+    );
+
+    // And the guard still does its job where an id means something: asking
+    // for the draft already open returns the keyboard and replaces nothing.
+    let named = a_draft(7, "named", "quinn@example.net");
+    composer.resume(named.clone());
+    settle();
+    composer.test_set_subject("edited since");
+    settle();
+    composer.resume(named);
+    settle();
+    assert_eq!(
+        composer.test_subject(),
+        "edited since",
+        "resuming the draft already open must not throw away an edit"
+    );
+}

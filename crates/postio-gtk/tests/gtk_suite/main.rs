@@ -155,6 +155,10 @@ const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
     (
+        "gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
+        gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
+    ),
+    (
         "gtk_settings_sync::the_pane_shows_the_files_values",
         gtk_settings_sync::the_pane_shows_the_files_values as fn(),
     ),
