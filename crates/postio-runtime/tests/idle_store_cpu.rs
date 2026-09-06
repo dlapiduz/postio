@@ -53,7 +53,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use postio_account::backend::{MockBackend, MockMailbox};
+use postio_account::backend::{MailboxEvent, MockBackend, MockMailbox};
 use postio_core::bridge::event_channel;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::seed::seed_large;
@@ -93,17 +93,17 @@ fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 
     let mut readings = Vec::new();
     for messages in SIZES {
-        let (burned, elapsed, called) = idle_for(messages, WINDOW);
+        let (burned, elapsed, woke) = idle_for(messages, WINDOW);
         assert!(
-            called > 0,
-            "the engine asked the backend nothing across {elapsed:?} over \
-             {messages} messages, so this measured a stopped engine rather \
-             than an idling one"
+            woke,
+            "the engine did not answer a delivery after idling {elapsed:?} over \
+             {messages} messages, so this measured a stopped engine rather than \
+             an idling one"
         );
         let share = burned.as_secs_f64() / elapsed.as_secs_f64();
         eprintln!(
             "STORE {messages:>6} messages -> {burned:?} of CPU across {elapsed:?} \
-             ({:.2}% of a core, {called} backend calls)",
+             ({:.2}% of a core)",
             share * 100.0
         );
         assert!(
@@ -133,13 +133,22 @@ fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 }
 
 /// Spawn a real engine over a store of `messages`, let it settle, and return
-/// what it burned while doing nothing, for how long, and how many times it
-/// asked the backend anything during the window.
+/// what it burned while doing nothing, for how long, and whether it was still
+/// answering afterwards.
 ///
-/// That last number is what stops a reading of zero from being good news
-/// about a dead engine. A spawn that failed to connect, or a loop that
-/// ended, idles perfectly.
-fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, u64) {
+/// That last flag is what stops a reading of zero from being good news about a
+/// dead engine: a spawn that failed to connect, or a loop that ended, idles
+/// perfectly.
+///
+/// It is a *delivery*, not a count of calls made during the window, and the
+/// difference is the whole point. A correctly idling engine is parked inside
+/// `IDLE` with a command outstanding, so it makes no new calls at all — the
+/// first version of this counted them and passed only because a 5 s window on
+/// a fast machine still caught the tail of startup. Under CI's scaled window
+/// the engine had long since settled, the count was zero, and a healthy engine
+/// was reported as a stopped one. What proves it is alive is that it still
+/// *answers*.
+fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     let database = test_support::memory();
     let report = seed_large(&database, 11, messages);
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -182,11 +191,22 @@ fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, u64) {
 
     let before = cpu_time();
     let started = Instant::now();
-    let called_before = backend.calls();
     std::thread::sleep(postio_test_support::scaled(window));
-    (
-        cpu_time().saturating_sub(before),
-        started.elapsed(),
-        backend.calls().saturating_sub(called_before),
-    )
+    let burned = cpu_time().saturating_sub(before);
+    let elapsed = started.elapsed();
+
+    // Now poke it. `push_event` is what ends a held `IDLE`, so an engine that
+    // is merely quiet answers and one whose loop has ended does not.
+    let called_before = backend.calls();
+    backend.push_event("INBOX", MailboxEvent::Exists { count: 1 });
+    let give_up = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
+    let mut woke = false;
+    while Instant::now() < give_up && !woke {
+        woke = backend.calls() > called_before;
+        if !woke {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    (burned, elapsed, woke)
 }
