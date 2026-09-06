@@ -211,3 +211,40 @@ impl From<ThemeFfi> for Theme {
         }
     }
 }
+
+/// Where `config.toml` lives on this platform.
+///
+/// `postio_config::paths` already resolves this, per platform and per
+/// `$XDG_CONFIG_HOME`, and a frontend that guessed would edit a file nothing
+/// loads.
+#[uniffi::export]
+pub fn settings_path() -> Result<String, SettingsError> {
+    postio_config::paths::config_path()
+        .map(|path| path.display().to_string())
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })
+}
+
+/// The file at `path`, or an empty document when it is not there yet.
+///
+/// A first run has no `config.toml`, and that is not an error: the pane shows
+/// defaults over an empty document and the file is created on the first save.
+#[uniffi::export]
+pub fn settings_load(path: String) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+/// Save `text` to `path`, the way an editor saves.
+///
+/// Through `postio_config::save`, so the running application learns about the
+/// change the same way it learns about an `$EDITOR` one — see that module for
+/// why an in-place write would be invisible to the watcher.
+#[uniffi::export]
+pub fn settings_save(path: String, text: String) -> Result<(), SettingsError> {
+    postio_config::save::write_atomically(std::path::Path::new(&path), &text).map_err(|err| {
+        SettingsError::Invalid {
+            message: err.to_string(),
+        }
+    })
+}

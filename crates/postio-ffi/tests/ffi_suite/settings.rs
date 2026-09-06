@@ -8,8 +8,8 @@
 //! been rewritten.
 
 use postio_ffi::{
-    AppearanceFfi, DensityFfi, ThemeFfi, settings_appearance, settings_patch_appearance,
-    settings_sections, settings_status,
+    AppearanceFfi, DensityFfi, ThemeFfi, settings_appearance, settings_load,
+    settings_patch_appearance, settings_path, settings_save, settings_sections, settings_status,
 };
 
 /// A file with things in it that a naive form would destroy: a comment, a key
@@ -141,4 +141,65 @@ fn every_appearance_field_round_trips_through_the_boundary() {
         settings_patch_appearance(SAMPLE.to_string(), appearance.clone()).expect("it patches");
     let read_back = settings_appearance(patched).expect("what we wrote parses");
     assert_eq!(read_back, appearance);
+}
+
+// -- the file itself --------------------------------------------------------
+
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir =
+        std::env::temp_dir().join(format!("postio-ffi-settings-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a temp dir");
+    dir
+}
+
+#[test]
+fn a_save_comes_back_byte_for_byte() {
+    // Canvas 3f: typing here and typing in $EDITOR produce the same bytes on
+    // disk. A save that normalised anything -- a trailing newline, a quote
+    // style -- would make that false the first time someone used both.
+    let dir = temp_dir("roundtrip");
+    let path = dir.join("config.toml");
+    let text = "# a comment\n[ui]\ndensity = \"compact\"\n";
+
+    settings_save(path.display().to_string(), text.to_string()).expect("it saves");
+    assert_eq!(settings_load(path.display().to_string()), text);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_file_that_is_not_there_yet_loads_as_an_empty_document() {
+    // ADR 0029's Empty state: a first run has no `config.toml`, and the pane
+    // shows defaults over an empty document rather than an error. The file is
+    // created on the first save.
+    let dir = temp_dir("absent");
+    let missing = dir.join("nothing-here.toml");
+    assert_eq!(settings_load(missing.display().to_string()), "");
+    assert!(
+        settings_appearance(String::new()).is_some(),
+        "defaults are readable"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn saving_creates_the_directory_the_config_belongs_in() {
+    // A first run on a machine with no `~/.config/postio` at all.
+    let dir = temp_dir("mkdir");
+    let path = dir.join("nested").join("config.toml");
+
+    settings_save(path.display().to_string(), "[ui]\n".to_string()).expect("it saves");
+    assert_eq!(settings_load(path.display().to_string()), "[ui]\n");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_config_path_is_the_one_the_rest_of_postio_reads() {
+    // Not a second opinion about where settings live: `postio_config::paths`
+    // already resolves this per platform, and a frontend that guessed would
+    // edit a file nothing loads.
+    let path = settings_path().expect("this platform has a config path");
+    assert!(path.ends_with("config.toml"), "{path}");
 }

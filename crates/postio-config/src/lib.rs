@@ -56,6 +56,7 @@ pub mod keys;
 pub mod live;
 pub mod logging;
 pub mod paths;
+pub mod save;
 pub mod secrets;
 mod source;
 pub mod storage;
