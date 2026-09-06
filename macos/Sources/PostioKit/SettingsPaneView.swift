@@ -20,9 +20,13 @@ import SwiftUI
 /// the idiom that ADR exists to stop.
 public struct SettingsPaneView: View {
     @Bindable private var store: SettingsStore
+    /// The configured accounts, from the session rather than from
+    /// `config.toml`: the store is the truth about which accounts exist.
+    private let accounts: [AccountFfi]
 
-    public init(store: SettingsStore) {
+    public init(store: SettingsStore, accounts: [AccountFfi] = []) {
         self.store = store
+        self.accounts = accounts
     }
 
     public var body: some View {
@@ -80,6 +84,14 @@ public struct SettingsPaneView: View {
                 Text(section.label)
                     .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 Spacer(minLength: 0)
+                // How many there are, where the design puts it. Only for
+                // Accounts, and only when there are some: a "0" beside a
+                // section is a fact nobody needed.
+                if section.key == "accounts", !accounts.isEmpty {
+                    Text("\(accounts.count)")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -130,10 +142,51 @@ public struct SettingsPaneView: View {
     }
 
     @ViewBuilder private var pane: some View {
-        if store.selected == "ui" {
-            appearance
+        switch store.selected {
+        case "ui": appearance
+        case "accounts": accountsPane
+        default: unbuilt
+        }
+    }
+
+    /// The accounts list. No form and no Add button yet — #1206 ships the
+    /// list first, because a pane that cannot even show what is configured is
+    /// the part that makes the rest unverifiable.
+    @ViewBuilder private var accountsPane: some View {
+        if accounts.isEmpty {
+            ContentUnavailableView {
+                Label("No accounts", systemImage: "person.crop.circle.badge.questionmark")
+            } description: {
+                Text(AccountRow.emptyMessage)
+            }
         } else {
-            unbuilt
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(accounts, id: \.id) { account in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(account.initials)
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 30, height: 30)
+                            .background(Color.accentColor.opacity(0.22))
+                            .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(account.address).font(.body)
+                                if let tag = AccountRow.tag(account) {
+                                    Text(tag)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Text(AccountRow.line(account))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 10)
+                    if account.id != accounts.last?.id { Divider() }
+                }
+            }
         }
     }
 

@@ -76,6 +76,9 @@ public final class PostioSession {
     /// The verbs the focused row announces, from this session's bindings.
     public func rowHints() -> [RowHintFfi] { inner.rowHints() }
 
+    /// Every configured account, as the settings pane lists them.
+    public func accounts() -> [AccountFfi] { inner.accounts() }
+
     /// Show `scope`, and answer the generation the window is now on.
     @discardableResult
     public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }

@@ -405,25 +405,10 @@ fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
             .unwrap_or(AccountId::UNASSIGNED)
     }
 }
-
-/// An account row's connection-type and auth-method badge — "IMAP ·
-/// password", "Gmail · OAuth 2" — both already on the account itself, so
-/// unlike the mail weight and the token validity this needs nothing handed
-/// in from the composition root (#878).
-fn account_badge(account: &Account) -> String {
-    let backend = match &account.backend {
-        postio_model::account::Backend::Imap => "IMAP",
-        postio_model::account::Backend::Jmap { .. } => "JMAP",
-        postio_model::account::Backend::Gmail => "Gmail",
-    };
-    let auth = match account.auth {
-        postio_model::account::AuthMethod::Password => "password",
-        postio_model::account::AuthMethod::AppPassword => "app password",
-        postio_model::account::AuthMethod::OAuth2 => "OAuth 2",
-        postio_model::account::AuthMethod::XOAuth2 => "OAuth 2",
-    };
-    format!("{backend} · {auth}")
-}
+// `account_badge` moved to `postio_ui::account`: what an account *is* -- IMAP
+// or Gmail, a password or OAuth 2 -- reads the same in both settings panes,
+// and it needs nothing from either toolkit.
+pub use postio_ui::account::badge as account_badge;
 
 /// One labeled field in the account detail view (#880) — a plain label over
 /// the control. Unlike [`SettingsPanel::sync_row`], there is no second

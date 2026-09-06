@@ -95,5 +95,31 @@ fn a_session_finds_the_account_the_provisioning_helper_wrote() {
         "the helper wrote an account the frontend cannot see, which is the \
          whole failure mode this test exists for"
     );
+
+    // The settings pane lists rows, not a count (#1206). Same failure mode
+    // one level up: an account the store has and the pane cannot draw.
+    let listed = after.accounts();
+    assert_eq!(
+        listed.len(),
+        1,
+        "the accounts pane would show an empty list"
+    );
+    let account = &listed[0];
+    assert_eq!(account.address, ADDRESS);
+    assert!(
+        !account.initials.is_empty(),
+        "the row's chip has no letters"
+    );
+    assert!(
+        account.facts.iter().any(|fact| fact.contains("IMAP")),
+        "the row says nothing about what kind of account this is: {:?}",
+        account.facts
+    );
+    assert!(
+        !account.facts.iter().any(|fact| fact == "disabled"),
+        "a freshly provisioned account is not disabled: {:?}",
+        account.facts
+    );
+
     after.shutdown();
 }
