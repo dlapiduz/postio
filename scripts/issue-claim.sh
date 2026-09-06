@@ -75,6 +75,29 @@ drop_lock() {
     rm -f "$1.owner" 2>/dev/null || true
 }
 
+# The lock this run is holding but has not finished earning, if any.
+#
+# `mkdir` takes the lock before the worktree is cut, which is what makes it
+# atomic -- and under `set -e` every step between the two can end the script.
+# Nothing released it when one did, so a single failed claim made an issue
+# permanently unclaimable: each later attempt found the wreckage of the last
+# and reported "claimed by another session" with no session, no worktree and a
+# lock this script had orphaned. Stable, wrong, and it ends by telling the
+# reader to stop (#1255).
+#
+# The way in was a local branch left behind when a worktree was reused for
+# another issue: `git worktree add -b` refuses, the script exits 255, the lock
+# stays.
+HELD_LOCK=""
+
+# Give back a lock that never became a claim. Safe to call twice.
+release_held_lock() {
+    [ -n "$HELD_LOCK" ] || return 0
+    drop_lock "$HELD_LOCK"
+    HELD_LOCK=""
+}
+trap release_held_lock EXIT
+
 # Whether the session behind a held lock is still there.
 #
 # The same judgment `issue-release.sh --stale` makes, and for the same reason:
@@ -622,6 +645,7 @@ while IFS=$'\t' read -r NUM TITLE; do
         SKIPPED_CLAIMED="$SKIPPED_CLAIMED $NUM"
         continue
     fi
+    HELD_LOCK="$CLAIMS/issue-$NUM"
     printf '%s\n' "$TREE" > "$CLAIMS/issue-$NUM.owner"
     # Cross-machine backstop: someone already pushed a branch for it.
     #
@@ -651,7 +675,7 @@ while IFS=$'\t' read -r NUM TITLE; do
         # known -- and "cannot tell" has to read as "somebody may be working
         # on this", which is the direction that costs time rather than work.
         if [ -z "$BRANCH_UNLANDED" ] || [ "$BRANCH_UNLANDED" -ne 0 ]; then
-            drop_lock "$CLAIMS/issue-$NUM"
+            release_held_lock
             if [ -z "$BRANCH_UNLANDED" ]; then
                 echo "#$NUM has the remote branch $STALE_BRANCH, which could not be" >&2
                 echo "read -- assuming another session is on it." >&2
@@ -678,7 +702,7 @@ while IFS=$'\t' read -r NUM TITLE; do
     # session works (#328) -- and two sessions in one worktree trample each
     # other with the very commands that are safe everywhere else.
     if [ -d "$TREE" ]; then
-        drop_lock "$CLAIMS/issue-$NUM"
+        release_held_lock
         echo "#$NUM already has a worktree at $TREE; not adopting it -- a session may be in it." >&2
         if [ -n "$WANT" ]; then
             echo "If it is truly abandoned, release it first (refuses if dirty):" >&2
@@ -705,6 +729,33 @@ while IFS=$'\t' read -r NUM TITLE; do
         # SwiftPM has the same problem and none of the upside: see lib/.
         drop_swift_build "$TREE"
     else
+        # A local branch with no worktree behind it, which is what reusing a
+        # worktree for another issue leaves. `git worktree add -b` refuses one,
+        # and that refusal is what #1255 was: the claim died holding its lock.
+        #
+        # Judged the way the remote-branch backstop above judges its case
+        # (#1063), and for the same reason -- by patch id, because a landing
+        # rebases and the shas never match even when the content did land.
+        # `git cherry` prefixes `+` for a commit genuinely not upstream.
+        if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            LOCAL_UNLANDED="$(git -C "$REPO_ROOT" cherry "origin/$BASE" "$BRANCH" 2>/dev/null \
+                              | grep -c '^+' || true)"
+            if [ -n "$LOCAL_UNLANDED" ] && [ "$LOCAL_UNLANDED" -eq 0 ] 2>/dev/null; then
+                echo "#$NUM's local branch $BRANCH holds nothing that is not already"
+                echo "on $BASE, so it is not a claim on anything. Removing it."
+                git -C "$REPO_ROOT" branch -D "$BRANCH" >/dev/null 2>&1 || true
+            else
+                # Somebody's work, or a branch that could not be read. Either
+                # way this is not the moment to delete it -- say so and leave
+                # the issue for a session that can look.
+                release_held_lock
+                echo "#$NUM has a local branch $BRANCH with ${LOCAL_UNLANDED:-unreadable}" >&2
+                echo "commit(s) not on $BASE. That is unlanded work, so this claim" >&2
+                echo "stops rather than cutting a worktree over it." >&2
+                SKIPPED_BRANCH="$SKIPPED_BRANCH $NUM"
+                continue
+            fi
+        fi
         git -C "$REPO_ROOT" worktree add --quiet -b "$BRANCH" "$TREE" "origin/$BASE"
         seed_target "$TREE"
     fi
@@ -722,6 +773,10 @@ while IFS=$'\t' read -r NUM TITLE; do
     mkdir -p "$TREE/target/tmp"
 
     gh issue edit "$NUM" --add-assignee @me --add-label in-progress >/dev/null
+
+    # Earned. From here the lock is a claim rather than something this run is
+    # holding on the way to one, so the exit trap must not take it back.
+    HELD_LOCK=""
 
     echo "claimed #$NUM  $TITLE"
     echo
