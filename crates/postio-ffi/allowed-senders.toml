@@ -1,0 +1,8 @@
+# Senders whose remote images Postio loads without asking.
+# Written by Postio; every line here was a deliberate choice.
+
+[addresses]
+ada@example.com
+
+[domains]
+relay.example.net

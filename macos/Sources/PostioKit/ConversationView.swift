@@ -142,7 +142,8 @@ public struct ConversationView: View {
                 row: row,
                 isLatest: index == model.rows.count - 1,
                 collapse: { model.toggle(index) },
-                run: run
+                run: run,
+                openSettings: { run(Intercepted.settings) }
             )
         } else {
             CollapsedMessage(row: row) { model.toggle(index) }
@@ -229,8 +230,15 @@ struct ExpandedMessage: View {
     let isLatest: Bool
     let collapse: () -> Void
     let run: (String) -> Void
+    let openSettings: () -> Void
 
     @State private var height: CGFloat = BodyHeight.minimum
+    /// Whether this *message's* images are showing.
+    ///
+    /// Per message and reset with the pane, which is what "show once" means:
+    /// the standing grant is the popover's, and it is the only thing that
+    /// survives closing the conversation.
+    @State private var showingImages = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -239,7 +247,22 @@ struct ExpandedMessage: View {
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: PostioTokens.space3) {
                 header
-                ReaderView(session: session, message: row.id, remoteImages: .blocked) { measured in
+                // Per message, never per pane: a conversation can hold back
+                // pictures from three senders and one notice above them all
+                // could not say whose.
+                if let notice = session.readerNotice(row.id), !notice.allowed, !showingImages {
+                    BlockedImagesNotice(
+                        notice: notice,
+                        session: session,
+                        show: { showingImages = true },
+                        openSettings: openSettings
+                    )
+                }
+                ReaderView(
+                    session: session,
+                    message: row.id,
+                    remoteImages: remoteImages
+                ) { measured in
                     height = measured
                 }
                 .frame(height: height)
@@ -250,6 +273,17 @@ struct ExpandedMessage: View {
         }
         .background(Color.primary.opacity(0.03))
         Divider()
+    }
+
+    /// Whether this message's remote images may load.
+    ///
+    /// `Blocked` unless somebody said otherwise about *this* message or
+    /// about its sender. The default is the product's, not a convenience:
+    /// fetching one picture tells the sender the message was opened, when,
+    /// and roughly where from.
+    private var remoteImages: RemoteImagesFfi {
+        if showingImages { return .allowed }
+        return session.readerNotice(row.id)?.allowed == true ? .allowed : .blocked
     }
 
     private var header: some View {
