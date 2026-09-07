@@ -251,3 +251,116 @@ fn a_content_id_nothing_declared_does_not_resolve() {
     );
     session.shutdown();
 }
+
+/// A session over a store holding one message addressed to `to` and `cc`.
+///
+/// Recipients are read per open message rather than carried on every list
+/// row: a mailbox is never loaded into memory (`PRODUCT.md` §18), and `To`
+/// and `Cc` are questions asked about the message in front of you.
+fn with_recipients(
+    to: &[(Option<&str>, &str)],
+    cc: &[(Option<&str>, &str)],
+) -> (std::sync::Arc<Session>, i64) {
+    use postio_model::address::EmailAddress;
+
+    let database = test_support::memory();
+    let addresses = |list: &[(Option<&str>, &str)]| -> Vec<EmailAddress> {
+        list.iter()
+            .map(|(name, address)| EmailAddress::new(*name, *address))
+            .collect()
+    };
+
+    let id = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let repository = MessageRepository::new(&connection);
+        let mut message = Message::new(account.id, inbox, Utc::now());
+        message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+        message.to = addresses(to);
+        message.cc = addresses(cc);
+        repository.create(&mut message).expect("a message")
+    };
+
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    (session, id.into())
+}
+
+#[test]
+fn an_open_message_can_say_who_it_was_addressed_to() {
+    // #1259: macOS drew who a message was *from* and never who it was *to*.
+    // GTK's reader has drawn both since #319, from four functions it kept
+    // private — so the second frontend's choice was to write them again or
+    // to share them. This asserts it shares them.
+    let (session, id) = with_recipients(
+        &[(None, "bob@example.com")],
+        &[(Some("Grace Hopper"), "grace@example.com")],
+    );
+
+    let drawn = session.recipients(id).expect("a message has recipients");
+    let shared = postio_ui::reader::header::MessageHeader::of(
+        &[],
+        &[postio_model::address::EmailAddress::new(
+            None::<&str>,
+            "bob@example.com",
+        )],
+        &[postio_model::address::EmailAddress::new(
+            Some("Grace Hopper"),
+            "grace@example.com",
+        )],
+        None,
+        Utc::now(),
+        chrono::Local::now(),
+    );
+
+    assert_eq!(drawn.to, shared.to_line());
+    assert_eq!(drawn.cc, shared.cc);
+    assert_eq!(drawn.cc_label, shared.cc_toggle_label());
+    session.shutdown();
+}
+
+#[test]
+fn a_message_addressed_to_nobody_offers_no_recipient_lines_at_all() {
+    // Not blank lines: a header spends no space on a question this message
+    // does not answer, which is what makes the one-recipient case one line.
+    let (session, id) = with_recipients(&[], &[]);
+    let drawn = session.recipients(id).expect("a message");
+    assert_eq!(drawn.to, None);
+    assert_eq!(drawn.cc, None);
+    assert_eq!(drawn.cc_label, None);
+    session.shutdown();
+}
+
+#[test]
+fn a_message_that_is_not_in_the_store_has_no_recipients_rather_than_empty_ones() {
+    let (session, id) = with_recipients(&[(None, "bob@example.com")], &[]);
+    assert!(session.recipients(id + 4_242).is_none());
+    session.shutdown();
+}
+
+#[test]
+fn the_reading_pane_offers_the_same_four_verbs_the_keyboard_does() {
+    // Reply, reply all and forward were reachable with the pointer; archive
+    // was keyboard-only, which is the gap #1221 closed for the list. Which
+    // four and in what order is the shared list's call, so the two frontends
+    // cannot offer different bars.
+    let (session, _) = with_recipients(&[], &[]);
+
+    let offered = session.reader_actions();
+    assert_eq!(
+        offered.len(),
+        postio_ui::reader::header::ReaderAction::ALL.len()
+    );
+    for (action, shared) in offered
+        .iter()
+        .zip(postio_ui::reader::header::ReaderAction::ALL)
+    {
+        assert_eq!(action.command, shared.command().as_str());
+        assert_eq!(action.title, shared.title());
+        assert_eq!(action.primary, shared.primary());
+    }
+    assert!(
+        offered.iter().any(|action| action.command == "archive"),
+        "archive is still unreachable with the pointer"
+    );
+    session.shutdown();
+}

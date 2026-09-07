@@ -591,6 +591,18 @@ impl Session {
         self.send_draft(draft)
     }
 
+    /// Who this message was addressed to. See [`Session::recipients`].
+    #[uniffi::method(name = "recipients")]
+    pub fn recipients_ffi(&self, message: i64) -> Option<crate::RecipientsFfi> {
+        self.recipients(message)
+    }
+
+    /// The verbs the reading pane offers. See [`Session::reader_actions`].
+    #[uniffi::method(name = "readerActions")]
+    pub fn reader_actions_ffi(&self) -> Vec<crate::ReaderActionFfi> {
+        self.reader_actions()
+    }
+
     /// What this message's reader is holding back, or `None` when nothing is.
     #[uniffi::method(name = "readerNotice")]
     pub fn reader_notice_ffi(&self, message: i64) -> Option<crate::ReaderNoticeFfi> {
@@ -2848,6 +2860,59 @@ impl Session {
                 Sheet::Theme,
             ),
         }
+    }
+
+    /// Who `message` was addressed to, already rendered.
+    ///
+    /// `None` for a message the store does not hold. Answered from the
+    /// envelope, which is known as soon as headers have synced — so a message
+    /// still waiting for its body still says who it went to.
+    ///
+    /// A read of its own rather than a field on `RowFfi`, because the list
+    /// does not draw recipients and paying for them per row would load a
+    /// mailbox's addresses to show one message's.
+    pub fn recipients(&self, message: i64) -> Option<crate::RecipientsFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        let message = postio_storage::repository::MessageRepository::new(&connection)
+            .get(message.into())
+            .ok()
+            .flatten()?;
+
+        // Through the shared header, which is also what GTK's own reader
+        // renders from — one answer to "how does a recipient list read".
+        let lines = postio_ui::reader::header::MessageHeader::of(
+            &message.from,
+            &message.to,
+            &message.cc,
+            message.subject.as_deref(),
+            message.date.unwrap_or(message.received_at),
+            chrono::Local::now(),
+        );
+
+        Some(crate::RecipientsFfi {
+            to: lines.to_line(),
+            cc_label: lines.cc_toggle_label(),
+            cc: lines.cc,
+        })
+    }
+
+    /// The verbs the reading pane offers, in canvas order.
+    ///
+    /// No key travels with them: this boundary's other frontend draws `⌘R`
+    /// rather than `e`, and the chord is [`Session::accelerator`]'s answer.
+    /// What is shared is *which* verbs, which is a product decision — a
+    /// reader offering three on one platform and four on the other is two
+    /// applications.
+    pub fn reader_actions(&self) -> Vec<crate::ReaderActionFfi> {
+        postio_ui::reader::header::ReaderAction::ALL
+            .iter()
+            .map(|action| crate::ReaderActionFfi {
+                command: action.command().as_str().to_string(),
+                title: action.title().to_string(),
+                primary: action.primary(),
+            })
+            .collect()
     }
 
     /// One inline part of `message`, by its `Content-ID`.

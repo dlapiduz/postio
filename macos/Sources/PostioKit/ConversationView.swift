@@ -134,7 +134,9 @@ public struct ConversationView: View {
                 session: session,
                 row: row,
                 isLatest: index == model.rows.count - 1,
+                showingCc: model.isCcRevealed(index),
                 collapse: { model.toggle(index) },
+                toggleCc: { model.toggleCc(index) },
                 run: run,
                 openSettings: { run(Intercepted.settings) }
             )
@@ -221,7 +223,15 @@ struct ExpandedMessage: View {
     let session: PostioSession
     let row: RowFfi
     let isLatest: Bool
+    /// Whether this message's `Cc` list is open.
+    ///
+    /// On the model rather than in `@State` here, unlike `showingImages`:
+    /// a disclosure is a thing a person opened and can be asserted, and
+    /// #1259 is what happens when a piece of the header exists only inside a
+    /// view nobody can look at from a test.
+    let showingCc: Bool
     let collapse: () -> Void
+    let toggleCc: () -> Void
     let run: (String) -> Void
     let openSettings: () -> Void
 
@@ -305,6 +315,7 @@ struct ExpandedMessage: View {
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                recipients
             }
             Spacer(minLength: PostioTokens.space2)
             if isLatest {
@@ -332,34 +343,93 @@ struct ExpandedMessage: View {
         }
     }
 
+    /// Who this message was addressed to (#1259).
+    ///
+    /// Every line already rendered by `postio_ui::reader::header`, which is
+    /// what GTK's own reader draws from — so one recipient list reads the
+    /// same on both. Read when the message is open rather than carried on
+    /// the row: the list draws no recipients, and paying for them per row
+    /// would load a mailbox's addresses to show one message's.
+    ///
+    /// Nothing at all when the message names nobody. A `To:` with no
+    /// recipients after it is a line about the header rather than about the
+    /// message.
+    @ViewBuilder
+    private var recipients: some View {
+        if let lines = session.recipients(row.id) {
+            if let to = lines.to {
+                Text(to)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let label = lines.ccLabel {
+                // Folded until asked: the common message has one recipient,
+                // and `Cc` costs nothing at all when there is none.
+                Button(action: toggleCc) {
+                    HStack(spacing: 2) {
+                        Image(systemName: showingCc ? "chevron.down" : "chevron.right")
+                        Text(label)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(showingCc ? "Hide Cc recipients" : "Show Cc recipients")
+
+                if showingCc, let cc = lines.cc {
+                    Text(cc)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Reply, Reply All, Forward and Archive — the engine's list, in the
+    /// engine's order.
+    ///
+    /// Built from `readerActions()` rather than written out here, so this bar
+    /// and GTK's cannot end up offering different verbs. `archive` was the
+    /// one missing: `a` archived and nothing on screen said so or offered
+    /// another way, which is the keyboard-only gap #1221 closed for the list.
     private var actions: some View {
         HStack(spacing: PostioTokens.space3) {
-            action("Reply", command: "reply", prominent: true)
-            action("Reply All", command: "reply_all", prominent: false)
-            action("Forward", command: "forward", prominent: false)
+            ForEach(
+                ReaderActionPlan.items(
+                    from: session.readerActions(),
+                    available: { session.isAvailable($0, in: .reader) },
+                    bindings: { session.bindings(for: $0) }
+                ),
+                id: \.command
+            ) { item in
+                action(item)
+            }
             Spacer()
         }
     }
 
     @ViewBuilder
-    private func action(_ title: String, command: String, prominent: Bool) -> some View {
+    private func action(_ item: ReaderActionPlan.Item) -> some View {
         let label = HStack(spacing: PostioTokens.space2) {
-            Text(title)
-            if let chord = session.accelerator(for: command) {
+            Text(item.title)
+            if let chord = item.chord {
                 Text(chord).opacity(0.75)
             }
         }
         // Two branches rather than a style-erasing wrapper: `.buttonStyle`
         // takes a concrete type, and the ceremony of hiding that behind one
         // is longer than saying it twice.
-        if prominent {
-            Button(action: { run(command) }, label: { label })
+        if item.prominent {
+            Button(action: { run(item.command) }, label: { label })
                 .buttonStyle(.borderedProminent)
-                .disabled(!session.isAvailable(command, in: .reader))
+                .disabled(!item.enabled)
         } else {
-            Button(action: { run(command) }, label: { label })
+            Button(action: { run(item.command) }, label: { label })
                 .buttonStyle(.bordered)
-                .disabled(!session.isAvailable(command, in: .reader))
+                .disabled(!item.enabled)
         }
     }
 

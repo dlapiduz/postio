@@ -43,6 +43,14 @@ public final class ConversationModel {
     /// looking at any more.
     private var revealed: Set<Int> = []
 
+    /// Which messages have had their `Cc` list opened, by index (#1259).
+    ///
+    /// Per message, never per pane: a conversation can hold eight messages
+    /// addressed to eight different lists, and one disclosure standing for
+    /// all of them would be about none of them — the same reason the blocked
+    /// images notice is per message.
+    private var ccRevealed: Set<Int> = []
+
     public init() {}
 
     /// The messages of the conversation, oldest first.
@@ -63,6 +71,10 @@ public final class ConversationModel {
         self.conversation = conversation
         expanded = conversation.expanded
         revealed = []
+        // The disclosures are about *these* messages. Carrying them across
+        // would open a recipient list somebody never asked to see, on
+        // somebody else's mail.
+        ccRevealed = []
         focused = Int(conversation.focus ?? 0)
     }
 
@@ -111,6 +123,18 @@ public final class ConversationModel {
     /// They arrive as the one-line headers they already were: revealing is
     /// about the divider, not about the bodies, so five hidden messages cost
     /// five lines rather than five web views.
+    /// Whether message `index` is showing its `Cc` addresses.
+    public func isCcRevealed(_ index: Int) -> Bool { ccRevealed.contains(index) }
+
+    /// Open or close message `index`'s `Cc` list.
+    public func toggleCc(_ index: Int) {
+        if ccRevealed.contains(index) {
+            ccRevealed.remove(index)
+        } else {
+            ccRevealed.insert(index)
+        }
+    }
+
     public func reveal(_ run: RunFfi) {
         revealed.insert(Int(run.start))
     }
