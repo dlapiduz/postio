@@ -177,17 +177,44 @@ impl Section {
 
     /// The `config.toml` table this pane owns, for the footer line.
     ///
-    /// `None` for the two panes that own no table: `Privacy` keeps its
-    /// state outside the file entirely, and `Config file` is the file.
+    /// `None` for the three panes that own no table: `Accounts` lives in the
+    /// encrypted store (#470), `Privacy` keeps its state outside the file
+    /// entirely, and `Config file` *is* the file.
     pub fn table(self) -> Option<&'static str> {
         match self {
-            Section::Accounts => Some("[accounts]"),
+            // **Not `[accounts]`.** That table was retired by #470 because
+            // nothing read it: accounts live in the encrypted store, written
+            // by onboarding and by the settings window. A footer claiming
+            // otherwise sends somebody to edit a file that does not describe
+            // their account, which is worse than saying nothing.
+            Section::Accounts => None,
             Section::Filters => Some("[filters]"),
             Section::Composing => Some("[compose]"),
             Section::Appearance => Some("[ui]"),
             Section::Keyboard => Some("[keys]"),
             Section::Sync => Some("[sync]"),
             Section::Privacy | Section::ConfigFile => None,
+        }
+    }
+
+    /// Where this pane's settings actually live, in a phrase for a footer.
+    ///
+    /// [`table`](Self::table) answers "which `config.toml` table", which is
+    /// `None` for three panes — and a footer that then says nothing is a
+    /// footer that has stopped doing its job. This says the true thing for
+    /// every pane, which for two of them is not a file a person can edit.
+    pub fn stored_in(self) -> &'static str {
+        match self {
+            // The one people most need told, because every other pane in the
+            // window *is* about the file.
+            Section::Accounts => "accounts are in the encrypted store, not in config.toml",
+            Section::Filters => "[filters] in config.toml · applied live",
+            Section::Composing => "[compose] in config.toml · applied live",
+            Section::Appearance => "[ui] in config.toml · applied live",
+            Section::Keyboard => "[keys] in config.toml · applied live",
+            Section::Sync => "[sync] in config.toml · applied live",
+            Section::Privacy => "kept outside config.toml, with the app's own state",
+            Section::ConfigFile => "config.toml · applied live",
         }
     }
 }
@@ -295,10 +322,36 @@ idle = true
     }
 
     #[test]
-    fn every_section_that_owns_a_table_names_one_and_the_two_that_do_not_say_so() {
+    fn every_pane_says_where_its_settings_actually_live() {
+        // A footer that says nothing is a footer that has stopped working,
+        // and one that says `[accounts] in config.toml` sends somebody to
+        // edit a file that does not describe their account.
+        for section in Section::ALL {
+            let said = section.stored_in();
+            assert!(!said.is_empty(), "{} says nothing", section.label());
+            if let Some(table) = section.table() {
+                assert!(
+                    said.contains(table),
+                    "{} owns {table} and does not say so: {said}",
+                    section.label()
+                );
+            }
+        }
+        assert!(
+            !Section::Accounts.stored_in().contains("[accounts]"),
+            "accounts have not been in config.toml since #470"
+        );
+        assert!(Section::Accounts.stored_in().contains("encrypted store"));
+    }
+
+    #[test]
+    fn every_section_that_owns_a_table_names_one_and_the_three_that_do_not_say_so() {
         for section in Section::ALL {
             match section {
-                Section::Privacy | Section::ConfigFile => assert_eq!(
+                // Accounts joined these when the footer was found claiming
+                // `[accounts] in config.toml` about accounts that have lived
+                // in the encrypted store since #470.
+                Section::Accounts | Section::Privacy | Section::ConfigFile => assert_eq!(
                     section.table(),
                     None,
                     "{} owns no config.toml table",

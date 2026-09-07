@@ -60,11 +60,25 @@ public final class ComposeModel: Identifiable {
 
     /// The footer: where the draft lives, and what will be sent.
     ///
-    /// Both halves are claims Postio should be willing to make on screen. The
-    /// MIME shape is the boundary's wording, not this frontend's.
+    /// Both halves are claims Postio should be willing to make on screen, so
+    /// both have to be *true*. The path is abbreviated the way a person
+    /// writes it — `~/Library/…` — because a footer is read at a glance and
+    /// `/Users/diego` is a prefix that tells them nothing they do not know.
+    ///
+    /// The MIME shape is the boundary's wording and follows what will
+    /// actually leave, which is why `rich` is not simply the switch: rich
+    /// composition is not built (#1271), so a message sent from here is
+    /// plain however the switch is drawn.
     public var footer: String {
-        "draft in \(draft.path) · \(outgoingShape(rich: rich))"
+        "draft in \(PostioPath.abbreviated(draft.path)) · \(outgoingShape(rich: sendsRich))"
     }
+
+    /// Whether this draft will actually leave as rich mail.
+    ///
+    /// Not the switch: the switch is a control, and this is a claim about
+    /// what goes on the wire. Until #1271 there is no rich document to send.
+    public var sendsRich: Bool { false }
+
 
     /// The draft as the store should have it.
     public var edited: DraftFfi {

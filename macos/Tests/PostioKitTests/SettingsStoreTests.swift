@@ -144,4 +144,15 @@ import Testing
         #expect(store.status.valid)
         #expect(store.appearance?.theme == .light)
     }
+
+    @Test func theAccountsPaneDoesNotClaimToWriteConfigToml() {
+        // It said `[accounts] in config.toml` about accounts that have lived
+        // in the encrypted store since #470 — a footer pointing somebody at a
+        // file that does not describe their account. Seen by opening the pane.
+        let store = SettingsStore(path: tempPath("accounts-footer"))
+        store.selected = "accounts"
+
+        #expect(!store.footer.contains("[accounts]"), "\(store.footer)")
+        #expect(store.footer.contains("encrypted store"), "\(store.footer)")
+    }
 }

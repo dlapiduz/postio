@@ -57,4 +57,42 @@ import Testing
         #expect(AccountRow.needsAttention(account(facts: ["outlook", "oauth2", "token expired"])))
         #expect(!AccountRow.needsAttention(account(facts: ["imap", "password", "4291 msg"])))
     }
+
+    @Test func theRowSaysHowMuchMailTheAccountHas() {
+        // Canvas 27's line: `imap · password · 4291 msg`. Summed from the
+        // folder counts the window already holds — asking the store to count
+        // again on every settings open would be a scan for a line nobody is
+        // waiting on.
+        let folders = [
+            mailbox(account: 1, total: 4_000),
+            mailbox(account: 1, total: 291),
+            mailbox(account: 2, total: 9_820),
+        ]
+
+        let line = AccountRow.line(account(facts: ["imap", "password"]), mailboxes: folders)
+
+        #expect(line == "imap · password · 4,291 msg", "\(line)")
+    }
+
+    @Test func anAccountWithNoMailSaysNothingAboutIt() {
+        // A "0 msg" beside a freshly added account is a fact nobody needed
+        // and reads as a failure.
+        let line = AccountRow.line(account(facts: ["imap"]), mailboxes: [])
+        #expect(line == "imap")
+    }
+
+    private func mailbox(account: Int64, total: UInt32) -> MailboxFfi {
+        MailboxFfi(
+            id: Int64(total),
+            account: account,
+            parent: nil,
+            name: "Inbox",
+            role: .inbox,
+            unread: 0,
+            total: total,
+            selectable: true,
+            lastSyncedAt: nil,
+            special: true
+        )
+    }
 }

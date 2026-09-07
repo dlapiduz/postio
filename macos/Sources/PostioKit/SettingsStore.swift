@@ -84,8 +84,12 @@ public final class SettingsStore {
     public var footer: String {
         guard status.valid else { return status.statusLine }
         if let failure { return failure }
-        guard let table = current?.table else { return status.statusLine }
-        return "\(table) in config.toml · applied live"
+        // What this pane's settings *are*, which is not always a table in
+        // this file: accounts live in the encrypted store and privacy state
+        // lives beside it, and a footer that named `config.toml` for either
+        // would send somebody to edit a file that does not describe them.
+        guard let section = current else { return status.statusLine }
+        return section.storedIn
     }
 
     /// Re-read the file, for an edit that arrived from `$EDITOR`.

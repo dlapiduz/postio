@@ -39,6 +39,14 @@ pub struct SettingsSectionFfi {
     /// says where a change is going. `None` for the two panes that own no
     /// table of their own.
     pub table: Option<String>,
+    /// Where this pane's settings actually live, in a phrase for the footer.
+    ///
+    /// Not derivable from `table`: three panes own no `config.toml` table,
+    /// and a footer that then says nothing has stopped doing its job. The
+    /// Accounts pane is the one that most needs telling — its settings are
+    /// in the encrypted store, and a footer naming `config.toml` sends
+    /// somebody to edit a file that does not describe their account.
+    pub stored_in: String,
 }
 
 /// The two headings the nav groups its sections under.
@@ -141,6 +149,7 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
             group: section.group().into(),
             description: section.description().to_string(),
             table: section.table().map(str::to_string),
+            stored_in: section.stored_in().to_string(),
         })
         .collect()
 }

@@ -24,6 +24,10 @@ public struct SettingsPaneView: View {
     /// `config.toml`: the store is the truth about which accounts exist.
     private let accounts: [AccountFfi]
 
+    /// Every folder, so an account row can say how much mail it has without
+    /// asking the store to count it again.
+    private let mailboxes: [MailboxFfi]
+
     /// The session, for the things the accounts pane can actually *do* —
     /// adding one, mostly. `nil` when the store never opened, in which case
     /// the pane still draws: settings are a file, and being unable to read
@@ -44,10 +48,12 @@ public struct SettingsPaneView: View {
     public init(
         store: SettingsStore,
         accounts: [AccountFfi] = [],
+        mailboxes: [MailboxFfi] = [],
         session: PostioSession? = nil
     ) {
         self.store = store
         self.accounts = accounts
+        self.mailboxes = mailboxes
         self.session = session
     }
 
@@ -287,7 +293,7 @@ public struct SettingsPaneView: View {
                                 Image(systemName: "exclamationmark.triangle")
                                     .foregroundStyle(.secondary)
                             }
-                            Text(AccountRow.line(account))
+                            Text(AccountRow.line(account, mailboxes: mailboxes))
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
@@ -471,7 +477,7 @@ public struct SettingsPaneView: View {
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(store.status.valid ? Color.secondary : Color.red)
             Spacer()
-            Text(store.path)
+            Text(PostioPath.abbreviated(store.path))
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .truncationMode(.head)

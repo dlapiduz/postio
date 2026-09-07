@@ -38,12 +38,26 @@ import Testing
     @Test func theFooterNamesTheFileAndWhatWillLeave() {
         let model = ComposeModel(id: 1, draft: draft())
         #expect(model.footer == "draft in /Users/someone/mail · text/plain, format=flowed")
+    }
 
+    @Test func theFooterSaysWhatWillActuallyLeave_notWhatTheSwitchSays() {
+        // The switch is a control; the footer is a claim about the wire.
+        // Rich composition is not built (#1271), so a message from here is
+        // plain however the switch is drawn — and the footer must not say
+        // otherwise, because that is the one thing it exists to say.
+        let model = ComposeModel(id: 1, draft: draft(rich: true))
         model.rich = true
-        #expect(
-            model.footer.hasSuffix("html + text/plain"),
-            "rich mail always carries a plain alternative, and the footer says so"
-        )
+
+        #expect(model.footer.hasSuffix("text/plain, format=flowed"))
+        #expect(!model.sendsRich)
+    }
+
+    @Test func theFooterWritesTheHomeDirectoryTheWayAPersonDoes() {
+        // A footer is read at a glance, and `/Users/diego` is a prefix that
+        // tells somebody nothing they do not already know.
+        let path = NSHomeDirectory() + "/Library/Application Support/Postio/postio.db"
+        #expect(PostioPath.abbreviated(path).hasPrefix("~/Library/"))
+        #expect(PostioPath.abbreviated("/var/tmp/elsewhere") == "/var/tmp/elsewhere")
     }
 
     @Test func typingMakesTheDraftDirtyAndTheEditCarriesIt() {

@@ -202,6 +202,13 @@ public struct ComposeView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            // Drawn and disabled rather than removed: the canvas has this
+            // control, and the honest state of it is "not yet". A live switch
+            // over a body that cannot carry marks would make the footer's
+            // claim about what leaves untrue, which is the one thing that
+            // footer is for.
+            .disabled(true)
+            .help("Rich composition is not built yet — messages are sent as plain text")
             .accessibilityLabel("How this message is written")
         }
         .padding(.horizontal, PostioTokens.space4)

@@ -1,3 +1,4 @@
+import Foundation
 import PostioFFI
 
 /// How an account reads in the settings pane.
@@ -9,8 +10,30 @@ import PostioFFI
 /// two descriptions of one account.
 public enum AccountRow {
     /// The `·`-joined line under the address.
-    public static func line(_ account: AccountFfi) -> String {
-        account.facts.joined(separator: " · ")
+    ///
+    /// `mailboxes` adds what the canvas draws and the boundary cannot say
+    /// cheaply: how much mail this account has. It is summed from the folder
+    /// counts the window already holds rather than counted again — the
+    /// sidebar has them, they are cached on the mailbox rows, and asking the
+    /// store for a second opinion on every settings open would be a scan for
+    /// a line nobody is waiting on.
+    ///
+    /// The size the canvas also shows (`1.8 GB`) is not here: it is a
+    /// measurement the engine reports and nothing carries it yet (#1287).
+    public static func line(_ account: AccountFfi, mailboxes: [MailboxFfi] = []) -> String {
+        var facts = account.facts
+        let messages = mailboxes
+            .filter { $0.account == account.id }
+            .reduce(0) { $0 + Int($1.total) }
+        if messages > 0 {
+            facts.append("\(formatted(messages)) msg")
+        }
+        return facts.joined(separator: " · ")
+    }
+
+    /// `4291` as `4,291` — a five-digit number is read wrong without it.
+    private static func formatted(_ count: Int) -> String {
+        count.formatted(.number.grouping(.automatic))
     }
 
     /// The tag beside the address, or `nil` when there is nothing to say.

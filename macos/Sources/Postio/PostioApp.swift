@@ -57,6 +57,7 @@ struct PostioApp: App {
             SettingsPaneView(
                 store: settings,
                 accounts: engine.accounts,
+                mailboxes: engine.mailboxes,
                 session: engine.session
             )
                 .preferredColorScheme(engine.colorScheme)
