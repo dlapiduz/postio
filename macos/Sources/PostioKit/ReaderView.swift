@@ -48,7 +48,7 @@ public struct ReaderView: NSViewRepresentable {
             cidHandler: coordinator.cid,
             baseHandler: coordinator.closed
         )
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = PassingWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = coordinator.policy
         view.uiDelegate = coordinator.policy
         view.setValue(false, forKey: "drawsBackground")
@@ -170,5 +170,27 @@ public struct ReaderView: NSViewRepresentable {
                 )
             }
         }
+    }
+}
+
+/// A reader web view that lets the scroll wheel through to the pane behind it.
+///
+/// The conversation stacks bodies inside **one** scroll view and sizes each
+/// web view to its whole document — `BodyHeight` is that measurement — so a
+/// body never has anything of its own to scroll. `WKWebView` does not know
+/// that: it consumes every wheel event over its own frame regardless, and the
+/// conversation's scroll view never sees one.
+///
+/// The effect is that the message *is* the pane, so pointing at it and
+/// scrolling does nothing at all. Only the few points of padding either side
+/// of a body still scrolled, which is not a thing anyone would find.
+///
+/// Forwarding is unconditionally right here **because** of that sizing: there
+/// is no case where this view has scrollable content of its own to keep. If a
+/// body ever grows past `BodyHeight.maximum` and starts scrolling internally,
+/// this has to become conditional — and that clamp is where to look.
+final class PassingWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
     }
 }

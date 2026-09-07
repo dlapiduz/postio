@@ -289,6 +289,52 @@ mod through_the_boundary {
     /// `actions::wire`, so all of them exercised a bus the shipped application
     /// never has.
     #[test]
+    fn select_all_then_a_verb_acts_on_the_view() {
+        // #1300. Every message verb defaults to `MessageTarget::Selection`.
+        // `aim::refine` narrows that for thread rows — and in a threaded
+        // folder every row is one, which is why the rest of this module never
+        // noticed. What it deliberately does *not* narrow is `Ctrl+A`: that
+        // stays a predicate over the view, resolved by the actions against
+        // app state.
+        //
+        // The boundary never wrote to that state, so select-all-then-flag
+        // resolved against an empty one and acted on nothing at all.
+        let database = test_support::memory();
+        let (mailbox, message) = {
+            let connection = database.connection().expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            let id = MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message")
+                .get();
+            (inbox, id)
+        };
+
+        let session = Session::open(SessionOptions::in_memory_with(database.clone()))
+            .expect("a session over the seeded store");
+        session.open_scope(ScopeFfi::Mailbox {
+            mailbox: mailbox.into(),
+        });
+        session.row_at(0);
+        session.settle_for_test();
+        let row = session.row_at(0).expect("the first row is resident now");
+
+        session.set_cursor(Some(row.id));
+        // The gesture: mark the whole view, then act on it.
+        session.invoke("select_all");
+        session.invoke("flag");
+        session.settle_for_test();
+
+        assert!(
+            settle_until(|| is_flagged(&database, message)),
+            "select-all stayed a predicate the actions resolved against an app \
+             state the boundary never mirrored its view into"
+        );
+        session.shutdown();
+    }
+
+    #[test]
     fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
         // The report was "emails are not marked read in the UI when open for the
         // dwell time". The dwell was innocent: it armed, it fired, and it sent
@@ -323,9 +369,6 @@ mod through_the_boundary {
 
         // The reported verb, and it carries its own target: the dwell names
         // the message it timed, so this tests the *bus* rather than the aim.
-        // (Verbs whose default target is `Selection` need the boundary to
-        // mirror its selection into the `SharedState` the actions read, which
-        // it does not yet — #1300.)
         session.set_cursor(Some(row.id));
         session.mark_read_on_dwell(row.id);
         session.settle_for_test();

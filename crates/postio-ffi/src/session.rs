@@ -104,11 +104,13 @@ struct DeferredBus(Arc<Mutex<Option<Arc<postio_core::dispatch::Dispatcher>>>>);
 
 impl DeferredBus {
     /// Build the real bus over `database` and hand it over.
-    fn arm(&self, database: &postio_storage::Database) {
-        let actions = postio_session::actions::Actions::new(
-            database.clone(),
-            postio_core::state::SharedState::default(),
-        );
+    ///
+    /// `state` is the same handle the session mirrors its view into before
+    /// each send — the actions resolve `MessageTarget::Selection` against it,
+    /// so a second `SharedState` here would resolve every such verb against
+    /// an empty one (#1300).
+    fn arm(&self, database: &postio_storage::Database, state: postio_core::state::SharedState) {
+        let actions = postio_session::actions::Actions::new(database.clone(), state);
         let bus =
             postio_session::actions::wire(postio_core::dispatch::Dispatcher::builder(), actions)
                 .build();
@@ -373,6 +375,14 @@ fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap:
 #[derive(uniffi::Object)]
 pub struct Session {
     wiring: Mutex<Option<Wiring>>,
+    /// What the actions resolve `MessageTarget::Selection` against (#1300).
+    ///
+    /// Brought into step with the view by `aim::mirror` immediately before
+    /// each send, rather than kept in step by a signal — see that function.
+    state: postio_core::state::SharedState,
+    /// Where mirroring's events go, which is nowhere: the view is where they
+    /// came from and telling it back would be a round trip to nothing.
+    quiet: postio_core::bridge::EventSink,
     /// The list, windowed. Behind its own lock rather than inside `wiring`'s
     /// so that a row lookup -- which happens on every table redraw -- does not
     /// contend with whatever else is holding the session.
@@ -1267,6 +1277,15 @@ impl Session {
         // store hoisted: `open` is delicate about its order (the keyring
         // before the store, deliberately) and this changes none of it.
         let deferred = DeferredBus::default();
+        // What the actions resolve `MessageTarget::Selection` against, and
+        // what `invoke` mirrors the view into immediately before sending.
+        // `aim::mirror`'s own doc argues the pull: a push would have to fire
+        // on every `j`, and a pull cannot be a gesture out of date.
+        let state = postio_core::state::SharedState::default();
+        // The events mirroring produces have nowhere to go — the view is
+        // where they came from — so this reader is dropped on purpose.
+        let (quiet, quiet_reader) = event_channel();
+        drop(quiet_reader);
         let (runtime, commands, owned_bridge) = match options.bridge {
             Some((runtime, commands)) => (runtime, commands, None),
             None => {
@@ -1326,7 +1345,7 @@ impl Session {
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
             let sync_config = config.sync;
-            deferred.arm(&database);
+            deferred.arm(&database, state.clone());
             let mut wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
@@ -1342,6 +1361,8 @@ impl Session {
             let keys = config.keys;
             return Ok(Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
+                state,
+                quiet,
                 resolver: Mutex::new(build_resolver(&keys)),
                 ui: config.ui,
                 keys,
@@ -1409,13 +1430,15 @@ impl Session {
         let sync_config = config.sync;
         let ui_config = config.ui;
 
-        deferred.arm(&database);
+        deferred.arm(&database, state.clone());
         let wiring = Wiring::new(database, blobs, runtime, sink, commands)
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))
             .with_watch(postio_session::watch_policy(&sync_config));
         Ok(Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
+            state,
+            quiet,
             resolver: Mutex::new(build_resolver(&keys)),
             ui: ui_config,
             keys,
@@ -2584,6 +2607,13 @@ impl Session {
             cursor,
             rows: &*list,
         };
+        // Before the send and after the aim is whole: the actions resolve
+        // `MessageTarget::Selection` against app state, and app state is not
+        // the frontend's list — so without this every verb that `refine`
+        // leaves aimed at the selection resolved against an empty state and
+        // acted on nothing (#1300). `postio-app` has pulled the same way
+        // since it had a bus; this is the same function, not a second copy.
+        postio_core::aim::mirror(&self.state, &self.quiet, &aim);
         let command = postio_core::aim::command_for(id, &aim);
         drop(selection);
         drop(list);

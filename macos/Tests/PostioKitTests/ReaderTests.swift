@@ -101,3 +101,54 @@ struct ReaderTests {
         #expect(CidSchemeHandler.contentId(from: empty) == nil)
     }
 }
+
+/// The scroll wheel reaches the pane behind a message body (user report:
+/// "I can't scroll inside a message").
+///
+/// The conversation stacks bodies inside one scroll view and sizes each web
+/// view to its whole document, so a body has nothing of its own to scroll.
+/// `WKWebView` consumes every wheel event over its frame anyway, so pointing
+/// at a message and scrolling did nothing — only the few points of padding
+/// either side of a body still worked, which is not a thing anyone finds.
+@MainActor
+@Suite struct ReaderScrollingTests {
+    /// A responder that records what was forwarded to it.
+    final class Catcher: NSView {
+        var caught = 0
+        override func scrollWheel(with event: NSEvent) { caught += 1 }
+    }
+
+    @Test func aBodyHandsTheWheelToWhateverIsBehindIt() throws {
+        let catcher = Catcher()
+        let web = PassingWebView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        catcher.addSubview(web)
+
+        // A real scroll event: `NSEvent.mouseEvent` cannot make one — that
+        // constructor is for button events and rejects `.scrollWheel`.
+        let scroll = try #require(
+            CGEvent(
+                scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: 1,
+                wheel1: 10,
+                wheel2: 0,
+                wheel3: 0
+            )
+        )
+        let wheel = try #require(NSEvent(cgEvent: scroll))
+        web.scrollWheel(with: wheel)
+
+        #expect(
+            catcher.caught == 1,
+            "the body swallowed the wheel, so the conversation never scrolls"
+        )
+    }
+
+    @Test func aBodyIsSizedToItsWholeDocumentSoItHasNothingToScroll() {
+        // The premise the forwarding rests on. If this clamp ever starts
+        // truncating real messages, the forwarding above has to become
+        // conditional — so the two are asserted together, on purpose.
+        #expect(BodyHeight.clamped(9_000) == 9_000)
+        #expect(BodyHeight.maximum >= 12_000)
+    }
+}
