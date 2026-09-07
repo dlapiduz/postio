@@ -144,6 +144,56 @@ def main() -> int:
             f"exit {result.returncode}:\n{combined}",
         )
 
+        # -- A runner that starts nothing must not report success -----------
+        #
+        # The regression #1151 found: `xargs -a` is a GNU extension, BSD
+        # rejects it, and with its stderr discarded no child ever ran. The
+        # old success test was "nothing recorded a failure", which is true
+        # both when every test passed and when none of them started -- the
+        # two answers a suite must never confuse. So this asserts the
+        # positive fact instead: a log per test, or it did not run.
+        #
+        # `PATH` is emptied of a working `xargs` by pointing at a stub that
+        # refuses, which is what BSD did on every Mac for the life of this
+        # script.
+        stub = base / "stub-bin"
+        stub.mkdir()
+        (stub / "xargs").write_text(
+            "#!/bin/sh\necho 'xargs: invalid option -- a' >&2\nexit 1\n"
+        )
+        (stub / "xargs").chmod(0o755)
+
+        starved = base / "starved"
+        starved.mkdir()
+        write(starved, "test-a.py", PASSES)
+        broken = patience.run(
+            [
+                "bash",
+                str(RUNNER),
+                "--dir",
+                str(starved),
+                "--logs",
+                str(base / "logs-starved"),
+                "--jobs",
+                "2",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, "PATH": f"{stub}:{os.environ.get('PATH', '')}"},
+        )
+        combined = broken.stdout + broken.stderr
+        case(
+            "a runner that could not start its children says so, not 'passed'",
+            broken.returncode != 0 and "every self-test passed" not in combined,
+            f"exit {broken.returncode}:\n{combined}",
+        )
+        case(
+            "and says how many of them actually ran",
+            "ran 0 of 1" in combined,
+            f"it did not say what it managed:\n{combined}",
+        )
+
     for failure in FAILURES:
         print(f"FAIL  {failure}", file=sys.stderr)
     if FAILURES:

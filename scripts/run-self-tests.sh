@@ -65,17 +65,41 @@ COUNT="$(wc -l < "$LIST" | tr -d ' ')"
 echo "running $COUNT self-tests, $JOBS at a time"
 
 # One log per test, named after it, and the failures recorded by *exit status*
-# rather than by what they printed. `xargs` returns non-zero if any child did.
+# rather than by what they printed.
+#
+# `< "$LIST"` and not `-a "$LIST"`: `-a` is a GNU extension and BSD xargs
+# rejects the option outright. With stderr going to /dev/null below, that
+# failure was invisible -- no child ever ran, `.failed` stayed empty, and this
+# script printed "every self-test passed" and exited 0 on every Mac. Which
+# hid `test-run-self-tests.py`, the one test that reports this script broken,
+# along with all eighty-four others. #1151 is the issue about self-tests only
+# ever running on Linux; this is that issue inside its own runner, and it is
+# the same GNU-ism that cost `jobserver.sh` months of two-job builds.
 FAILED="$LOGS/.failed"
 : > "$FAILED"
 # shellcheck disable=SC2016
-xargs -P "$JOBS" -I{} -a "$LIST" sh -c '
+xargs -P "$JOBS" -I{} sh -c '
     log="$2/$(basename "$1").log"
     if ! python3 "$1" > "$log" 2>&1; then
         printf "%s\n" "$1" >> "$2/.failed"
         exit 1
     fi
-' _ {} "$LOGS" >/dev/null 2>&1
+' _ {} "$LOGS" < "$LIST" >/dev/null 2>&1
+
+# Success is a positive fact, not the absence of a recorded failure.
+#
+# The check above was `[ ! -s "$FAILED" ]` alone, which is true both when
+# every test passed and when nothing ran at all -- and those are the two
+# answers a suite must never confuse. A runner that cannot start its children
+# has to say so, or it is the silent skip this whole repository writes gates
+# against, in the one place where it hides every other gate.
+RAN="$(find "$LOGS" -maxdepth 1 -name '*.py.log' | wc -l | tr -d ' ')"
+if [ "$RAN" -ne "$COUNT" ]; then
+    echo
+    echo "::error::ran $RAN of $COUNT self-tests; the runner could not start them" >&2
+    echo "This is not a test failure -- no test reported one. Nothing ran." >&2
+    exit 1
+fi
 
 if [ ! -s "$FAILED" ]; then
     echo "every self-test passed"
