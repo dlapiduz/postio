@@ -639,6 +639,12 @@ impl Session {
         self.narrow_paste(html)
     }
 
+    /// The plain text of a rich body. See [`Session::plain_text_of`].
+    #[uniffi::method(name = "plainTextOf")]
+    pub fn plain_text_of_ffi(&self, html: String) -> String {
+        self.plain_text_of(&html)
+    }
+
     /// The script that applies a mark to the composer's selection.
     ///
     /// `nil` for a command that is not one of the marks. See
@@ -1936,6 +1942,27 @@ impl Session {
             text,
             dropped: narrowed.lost.summary(),
         }
+    }
+
+    /// What a rich body reads as in plain text.
+    ///
+    /// What the Rich/Plain switch needs at the moment it flips to Plain
+    /// (#1293). The rule the composer follows is "whichever surface is
+    /// active is authoritative" -- rich edits the document, plain edits the
+    /// text -- and that rule says nothing about the switch itself, which is
+    /// exactly when the inactive field is stale and about to become the only
+    /// one that matters. Composing in Rich and switching to Plain sent an
+    /// empty message.
+    ///
+    /// Flowed, like every other plain part Postio builds, so a paragraph
+    /// rewraps in a narrow window rather than arriving with a ragged
+    /// 72-column edge.
+    ///
+    /// Its own call rather than reading `narrow_paste`'s `text`: that
+    /// returns the same string, and a call to `narrowPaste` at the switch
+    /// would tell the next reader this was a paste.
+    pub fn plain_text_of(&self, html: &str) -> String {
+        postio_body::render(&postio_body::parse(html)).0
     }
 
     /// The script that applies a mark, from

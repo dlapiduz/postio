@@ -367,6 +367,16 @@ public final class PostioSession {
     /// same keystrokes wrote while both still round-tripped cleanly.
     public func editorScript() -> String { inner.editorScript() }
 
+    /// What a rich body reads as in plain text, flowed.
+    ///
+    /// What the Rich/Plain switch needs at the moment it flips (#1293).
+    /// Named for that call site rather than reusing `narrowPaste`, which
+    /// returns the same string but would tell the next reader this was a
+    /// paste.
+    public func plainTextOf(_ html: String) -> String {
+        inner.plainTextOf(html: html)
+    }
+
     /// The script that applies a mark to the composer's selection, or `nil`
     /// for a command that is not one of the marks.
     public func markScript(_ command: String) -> String? {

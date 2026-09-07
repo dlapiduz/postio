@@ -246,6 +246,14 @@ public struct ComposeView: View {
                 Text("Rich").tag(true)
                 Text("Plain").tag(false)
             }
+            // The plain field is about to become the only one that matters,
+            // and everything typed in Rich went into the document (#1293).
+            // Derived here rather than only at save, so what will be sent is
+            // what is on screen the moment the switch moves.
+            .onChange(of: model.rich) { was, now in
+                guard was, !now, let html = model.bodyHtml, !html.isEmpty else { return }
+                model.switchedToPlain(text: session.plainTextOf(html))
+            }
             .pickerStyle(.segmented)
             .fixedSize()
             // Live since #1271. It was drawn disabled while the body was a

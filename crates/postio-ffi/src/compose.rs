@@ -211,18 +211,43 @@ pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
 ///
 /// [`Document`]: postio_body::Document
 fn body_of(edited: &DraftFfi) -> MessageBody {
+    let marks = edited.body_html.as_deref().unwrap_or_default();
+
     if !edited.rich {
+        // The plain field is authoritative here -- *unless* it is empty and
+        // there are marks, which is the shape the Rich/Plain switch leaves
+        // behind (#1293). Everything was typed into the rich surface, so the
+        // plain field was never touched; `send_draft` then drops the HTML
+        // part, correctly, and an empty message goes out.
+        //
+        // The frontend derives the text at the switch, which is where this
+        // belongs and where the person can see the result. This is the net
+        // under that, because the alternative to resurrecting words somebody
+        // may have cleared on purpose is sending nothing at all -- and only
+        // one of those is silent.
+        let text = if edited.body.is_empty() && !marks.is_empty() {
+            postio_body::render(&postio_body::parse(marks)).0
+        } else {
+            edited.body.clone()
+        };
         return MessageBody {
-            text: Some(edited.body.clone()),
+            text: Some(text),
             // Kept, not cleared. The switch is on the document (#1271):
             // turning it off changes what will be *built*, and throwing the
             // marks away would make turning it back on a loss nobody warned
-            // about.
+            // about. `send_draft` is what stops them reaching the wire.
             html: edited.body_html.clone(),
         };
     }
 
-    let document = postio_body::parse(edited.body_html.as_deref().unwrap_or_default());
+    // Rich with no document yet is the other direction of the same switch:
+    // written plain, then turned Rich. The words are in the plain field, and
+    // building the document from nothing would discard them.
+    let document = if marks.is_empty() {
+        postio_body::Document::from_flowed_text(&edited.body)
+    } else {
+        postio_body::parse(marks)
+    };
     let (text, html) = postio_body::render(&document);
     MessageBody {
         text: Some(text),
