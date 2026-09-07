@@ -112,6 +112,12 @@ case " $* " in
         grep -E '^\[timing\]|^issue:|^crates:|https://github.com/|^merged\.|auto-merge|MERGE DID NOT|Checks failed|hit a conflict|^Refusing|^error|^issue-land exit' "$LAND_LOG" || true
         echo "--- last lines ---"
         tail -n 5 "$LAND_LOG"
+        # Said out loud, because a flake's diagnosis is usually in the
+        # attempt before this one and nobody looks for a file they have not
+        # been told about (#710).
+        if [ -f "$LAND_LOG.1" ]; then
+            echo "previous attempt: $LAND_LOG.1"
+        fi
         exit 0
         ;;
     *" --detach "*)
@@ -119,6 +125,15 @@ case " $* " in
         for arg in "$@"; do
             [ "$arg" = "--detach" ] || DETACHED_ARGS+=("$arg")
         done
+        # Keep the previous attempt, one deep. A gate failure's diagnosis is
+        # often in the whole run's output rather than in the failing test's
+        # own block -- SQLCipher prints its reason as C `fprintf`, which
+        # `cargo test`'s per-test capture never holds -- and the obvious
+        # response to a flake is to land again. Truncating here meant that
+        # evidence survived exactly as long as it took to notice it was
+        # wanted: two occurrences of #710 were destroyed that way in one
+        # session, by the session that had just been asked to keep them.
+        [ -f "$LAND_LOG" ] && mv -f "$LAND_LOG" "$LAND_LOG.1" 2>/dev/null
         : > "$LAND_LOG"
         if command -v setsid >/dev/null 2>&1; then
             setsid bash -c 'bash "$0" "${@:1}"; echo "issue-land exit $?"' "$0" ${DETACHED_ARGS[@]+"${DETACHED_ARGS[@]}"} \
