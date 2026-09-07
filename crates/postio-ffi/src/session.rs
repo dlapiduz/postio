@@ -726,6 +726,12 @@ impl Session {
         self.reindex_account(account)
     }
 
+    /// How much disk this account's mail takes, in the canvas' words.
+    #[uniffi::method(name = "accountWeight")]
+    pub fn account_weight_ffi(&self, account: i64) -> Option<String> {
+        self.account_weight(account)
+    }
+
     /// Change what an account calls itself — the one field the account form
     /// edits.
     #[uniffi::method(name = "setDisplayName")]
@@ -1568,6 +1574,35 @@ impl Session {
             &name,
         )
         .err()
+    }
+
+    /// What this account's mail weighs. See
+    /// [`account_weight_ffi`](Self::account_weight_ffi).
+    ///
+    /// `None` when there is nothing to weigh — a fresh account says nothing
+    /// rather than `0 B`, which reads as a failure.
+    ///
+    /// Three aggregates over `messages`, asked when a settings window opens
+    /// and not otherwise. Deliberately not cached: a stale size is a claim
+    /// about a store that has changed since, and the whole line is one a
+    /// person glances at once.
+    pub fn account_weight(&self, account: i64) -> Option<String> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        let footprint = postio_storage::repository::MessageRepository::new(&connection)
+            .footprint(postio_model::ids::AccountId::new(account))
+            .ok()?;
+        postio_ui::format::mail_weight(
+            &postio_core::event::MailFootprint {
+                total_bytes: footprint.total_bytes,
+                attachment_bytes: footprint.attachment_bytes,
+                local_bytes: footprint.local_bytes,
+                complete: footprint.complete,
+            },
+            // What is on this disk, which is what the row is about. Whether
+            // the attachments *would* add more is the Sync pane's question.
+            false,
+        )
     }
 
     /// Re-index an account. See [`reindex_account_ffi`](Self::reindex_account_ffi).

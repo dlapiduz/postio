@@ -275,3 +275,85 @@ fn a_provider_that_offers_a_browser_sign_in_reports_the_scopes_its_row_asks_for(
     let scopes = postio_ffi::sign_in_scopes(format!("someone@{domain}"));
     assert_eq!(scopes.requested, expected);
 }
+
+// -- what an account's mail weighs (#1287) -----------------------------------
+
+#[test]
+fn an_account_with_no_mail_weighs_nothing_and_says_nothing() {
+    // `0 B` beside a freshly added account reads as a failure. Silence is
+    // the honest answer to "how much is here" when the answer is none.
+    let (session, _) = a_session();
+    assert_eq!(session.account_weight(1), None);
+}
+
+#[test]
+fn an_account_with_mail_says_how_much_of_it_is_on_this_disk() {
+    use chrono::Utc;
+    use postio_model::Message;
+    use postio_storage::repository::MessageRepository;
+
+    let database = postio_storage::test_support::memory();
+    let account = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let repository = MessageRepository::new(&connection);
+        for _ in 0..3 {
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            message.size = 400_000;
+            message.sync.body_state = postio_model::message::BodyState::Full;
+            repository.create(&mut message).expect("a message");
+        }
+        account.id.get()
+    };
+    let session = Session::open(SessionOptions::in_memory_with(database).with_secrets(
+        std::sync::Arc::new(postio_account::secret::MemorySecretStore::default()),
+    ))
+    .expect("a session");
+
+    let said = session
+        .account_weight(account)
+        .expect("three messages weigh something");
+
+    // The wording is `postio_ui::format::mail_weight`'s, so both frontends
+    // describe a store the same way.
+    assert!(said.contains("downloaded"), "{said}");
+    assert!(said.contains("MB") || said.contains("KB"), "{said}");
+}
+
+#[test]
+fn weighing_an_account_is_a_fixed_handful_of_statements_not_one_per_message() {
+    // The cost this must never grow: aggregates per account are fine, a
+    // query per message is a settings window that hangs on a large store.
+    //
+    // Counted one level down, against `MessageRepository::footprint` — which
+    // is what `account_weight` calls. The session takes its connections from
+    // a pool, and the trace hook is per connection, so counting *through* it
+    // would count nothing and pass without measuring anything (the counting
+    // support says so out loud rather than letting that happen).
+    use chrono::Utc;
+    use postio_model::Message;
+    use postio_storage::repository::MessageRepository;
+    use postio_storage::test_support::counting;
+
+    let database = postio_storage::test_support::memory();
+    let connection = database.connection().expect("a connection");
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    let repository = MessageRepository::new(&connection);
+    for _ in 0..50 {
+        let mut message = Message::new(account.id, inbox, Utc::now());
+        message.size = 1_000;
+        repository.create(&mut message).expect("a message");
+    }
+
+    counting::install(&connection);
+    let counts = counting::counted(|| {
+        let _ = MessageRepository::new(&connection).footprint(account.id);
+    });
+
+    assert!(
+        counts.statements <= 8,
+        "weighing an account took {} statements over 50 messages; that is \
+         per-message work in a window that opens on a whole store",
+        counts.statements
+    );
+}

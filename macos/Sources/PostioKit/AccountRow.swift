@@ -18,15 +18,24 @@ public enum AccountRow {
     /// store for a second opinion on every settings open would be a scan for
     /// a line nobody is waiting on.
     ///
-    /// The size the canvas also shows (`1.8 GB`) is not here: it is a
-    /// measurement the engine reports and nothing carries it yet (#1287).
-    public static func line(_ account: AccountFfi, mailboxes: [MailboxFfi] = []) -> String {
+    /// `weight` is what the mail takes on disk, worded by
+    /// `postio_ui::format::mail_weight` so both frontends describe a store
+    /// the same way. `nil` when there is nothing to weigh — a fresh account
+    /// says nothing rather than `0 B`, which reads as a failure.
+    public static func line(
+        _ account: AccountFfi,
+        mailboxes: [MailboxFfi] = [],
+        weight: String? = nil
+    ) -> String {
         var facts = account.facts
         let messages = mailboxes
             .filter { $0.account == account.id }
             .reduce(0) { $0 + Int($1.total) }
         if messages > 0 {
             facts.append("\(formatted(messages)) msg")
+        }
+        if let weight, !weight.isEmpty {
+            facts.append(weight)
         }
         return facts.joined(separator: " · ")
     }

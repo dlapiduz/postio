@@ -74,6 +74,24 @@ import Testing
         #expect(line == "imap · password · 4,291 msg", "\(line)")
     }
 
+    @Test func theRowSaysWhatTheMailWeighsWhenSomethingKnows() {
+        // Canvas 27's full line. The wording is the shared crate's, so both
+        // frontends describe a store the same way.
+        let line = AccountRow.line(
+            account(facts: ["imap", "password"]),
+            mailboxes: [mailbox(account: 1, total: 4_291)],
+            weight: "1.8 GB downloaded"
+        )
+
+        #expect(line == "imap · password · 4,291 msg · 1.8 GB downloaded", "\(line)")
+    }
+
+    @Test func anAccountWithNothingToWeighSaysNothingAboutIt() {
+        // `0 B` beside a freshly added account reads as a failure.
+        let line = AccountRow.line(account(facts: ["imap"]), mailboxes: [], weight: nil)
+        #expect(line == "imap")
+    }
+
     @Test func anAccountWithNoMailSaysNothingAboutIt() {
         // A "0 msg" beside a freshly added account is a fact nobody needed
         // and reads as a failure.

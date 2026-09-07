@@ -420,6 +420,13 @@ public final class PostioSession {
         inner.setDisplayName(account: account, name: name)
     }
 
+    /// How much disk this account's mail takes, in words — or `nil` when
+    /// there is nothing to weigh. A fresh account says nothing rather than
+    /// `0 B`, which reads as a failure.
+    public func weight(of account: Int64) -> String? {
+        inner.accountWeight(account: account)
+    }
+
     /// Rebuild this account's search index from the mail already here.
     /// Blocks, and reaches no server.
     public func reindexAccount(_ account: Int64) -> String? {

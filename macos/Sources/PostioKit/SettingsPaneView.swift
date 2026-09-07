@@ -306,7 +306,13 @@ public struct SettingsPaneView: View {
                                 Image(systemName: "exclamationmark.triangle")
                                     .foregroundStyle(.secondary)
                             }
-                            Text(AccountRow.line(account, mailboxes: mailboxes))
+                            Text(
+                                AccountRow.line(
+                                    account,
+                                    mailboxes: mailboxes,
+                                    weight: session?.weight(of: account.id)
+                                )
+                            )
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
