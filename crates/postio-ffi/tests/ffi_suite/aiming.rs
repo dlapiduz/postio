@@ -325,7 +325,7 @@ mod through_the_boundary {
         // the message it timed, so this tests the *bus* rather than the aim.
         // (Verbs whose default target is `Selection` need the boundary to
         // mirror its selection into the `SharedState` the actions read, which
-        // it does not yet — a separate gap, filed rather than folded in here.)
+        // it does not yet — #1300.)
         session.set_cursor(Some(row.id));
         session.mark_read_on_dwell(row.id);
         session.settle_for_test();
