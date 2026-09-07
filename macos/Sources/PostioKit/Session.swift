@@ -352,6 +352,22 @@ public final class PostioSession {
     /// What the reader is holding back for `message`, or `nil` when nothing
     /// is — a notice with nothing to report teaches people to dismiss the
     /// one that matters.
+    /// Who `message` was addressed to, already rendered.
+    ///
+    /// `nil` for a message the store does not hold. A read of its own rather
+    /// than a field on the row: the list draws no recipients, and paying for
+    /// them per row would load a mailbox's addresses to show one message's.
+    public func recipients(_ message: Int64) -> RecipientsFfi? {
+        inner.recipients(message: message)
+    }
+
+    /// The verbs the reading pane offers, in canvas order.
+    ///
+    /// No key comes with them — `accelerator(for:)` is what spells one on
+    /// this platform. What crosses is which verbs and in what order, which is
+    /// the same on both frontends by construction.
+    public func readerActions() -> [ReaderActionFfi] { inner.readerActions() }
+
     public func readerNotice(_ message: Int64) -> ReaderNoticeFfi? {
         inner.readerNotice(message: message)
     }

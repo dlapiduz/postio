@@ -194,4 +194,41 @@ import Testing
         #expect(model.runs.isEmpty)
         #expect(model.focus == nil)
     }
+
+    // MARK: - Recipients (#1259)
+
+    @Test func ccStartsFoldedAndOpensWhenAsked() {
+        // A disclosure that starts open is not one. The common message has
+        // one recipient and no Cc, and it should cost exactly one line.
+        let model = ConversationModel()
+        model.show(conversation())
+
+        #expect(!model.isCcRevealed(0))
+        model.toggleCc(0)
+        #expect(model.isCcRevealed(0))
+        model.toggleCc(0)
+        #expect(!model.isCcRevealed(0))
+    }
+
+    @Test func openingOneMessagesCcSaysNothingAboutAnothers() {
+        // A conversation can hold eight messages with eight recipient lists,
+        // and one disclosure standing for all of them would be about none.
+        let model = ConversationModel()
+        model.show(conversation())
+
+        model.toggleCc(0)
+        #expect(model.isCcRevealed(0))
+        #expect(!model.isCcRevealed(1))
+    }
+
+    @Test func movingToAnotherConversationDoesNotCarryDisclosuresAcross() {
+        // The state is about *these* messages. Carrying it would open a
+        // recipient list somebody never asked to see, on somebody else's mail.
+        let model = ConversationModel()
+        model.show(conversation())
+        model.toggleCc(0)
+
+        model.show(conversation())
+        #expect(!model.isCcRevealed(0))
+    }
 }
