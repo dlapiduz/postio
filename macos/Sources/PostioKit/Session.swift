@@ -357,6 +357,40 @@ public final class PostioSession {
     /// `nil` for a message the store does not hold. A read of its own rather
     /// than a field on the row: the list draws no recipients, and paying for
     /// them per row would load a mailbox's addresses to show one message's.
+    /// The composer's editing bridge — the one script Postio runs.
+    ///
+    /// `postio_ui::compose::EDITOR_SCRIPT`, the same bytes WebKitGTK
+    /// injects. It crosses rather than being written again here because it
+    /// decides the *dialect* the surface emits: a second copy would produce
+    /// `<div>`s where this one produces `<p>`s, the boundary would narrow
+    /// them differently, and the two composers would disagree about what the
+    /// same keystrokes wrote while both still round-tripped cleanly.
+    public func editorScript() -> String { inner.editorScript() }
+
+    /// The script that applies a mark to the composer's selection, or `nil`
+    /// for a command that is not one of the marks.
+    public func markScript(_ command: String) -> String? {
+        inner.markScript(command: command)
+    }
+
+    /// The script that links the selection to `href`, or `nil` when a
+    /// message may not point there.
+    public func linkScript(_ href: String) -> String? {
+        inner.linkScript(href: href)
+    }
+
+    /// Narrow pasted markup to what a message may carry, and say what that
+    /// cost.
+    ///
+    /// Pure: no store, no network. The sentence in `dropped` is the
+    /// engine's, so both composers say the same thing about the same paste.
+    public func narrowPaste(_ html: String) -> PastedFfi {
+        inner.narrowPaste(html: html)
+    }
+
+    /// The draft `id` as the store has it, or `nil`.
+    public func draft(_ id: Int64) -> DraftFfi? { inner.draft(id: id) }
+
     public func recipients(_ message: Int64) -> RecipientsFfi? {
         inner.recipients(message: message)
     }

@@ -18,6 +18,13 @@ public struct ComposeView: View {
     private let close: () -> Void
 
     @FocusState private var focus: Field?
+    /// Whether the Link button is asking where to point.
+    ///
+    /// A mark that needs an argument cannot be a plain toggle: `insert_link`
+    /// is the one entry in the bar that has to ask something before it can
+    /// do anything, which is why it does not go through `markScript`.
+    @State private var askingForLink = false
+    @State private var linkAddress = ""
 
     private enum Field: Hashable {
         case to, cc, subject, body
@@ -40,14 +47,24 @@ public struct ComposeView: View {
             formatBar
             Divider()
             if !model.attachments.isEmpty { attachments }
-            TextEditor(text: Bindable(model).body)
-                .font(.system(.body, design: model.rich ? .default : .monospaced))
-                .focused($focus, equals: .body)
-                // Another editor holds it: two writers would each silently
-                // undo the other.
-                .disabled(model.isHandedOff)
-                .padding(PostioTokens.space3)
-                .accessibilityLabel("Message body")
+            if model.rich {
+                // A document, not a text field (#1271): the format bar's
+                // marks have to apply to something, and on both frontends
+                // that something is a contenteditable web view over
+                // `postio_body`'s dialect.
+                ComposeEditor(session: session, model: model)
+                    // Another editor holds it: two writers would each
+                    // silently undo the other.
+                    .disabled(model.isHandedOff)
+                    .accessibilityLabel("Message body")
+            } else {
+                TextEditor(text: Bindable(model).body)
+                    .font(.system(.body, design: .monospaced))
+                    .focused($focus, equals: .body)
+                    .disabled(model.isHandedOff)
+                    .padding(PostioTokens.space3)
+                    .accessibilityLabel("Message body")
+            }
             if let status = model.status {
                 statusRow(status)
             }
@@ -197,13 +214,32 @@ public struct ComposeView: View {
                 .frame(width: 72, alignment: .leading)
             ForEach(ComposeFormat.marks, id: \.command) { mark in
                 Button {
+                    // The registry command *and* the document. `invoke`
+                    // keeps this on the one path a keystroke takes -- undo
+                    // included -- and `applyMark` is what reaches the
+                    // surface the marks actually apply to (#1271).
                     session.invoke(mark.command)
+                    if mark.command == ComposeFormat.link {
+                        linkAddress = ""
+                        askingForLink = true
+                    } else {
+                        model.applyMark(mark.command)
+                    }
                 } label: {
                     Image(systemName: mark.symbol)
+                        // Lit when the caret is inside the mark, from the
+                        // bridge's own reflection channel rather than from
+                        // anything this window tracks -- a toolbar that
+                        // guessed would be wrong the moment somebody moved
+                        // the caret with the mouse.
+                        .foregroundStyle(
+                            model.isMarkActive(mark.command)
+                                ? Color(nsColor: PostioTokens.colorAccent) : Color.primary
+                        )
                 }
                 .help(tooltip(mark.title, mark.command))
                 .accessibilityLabel(mark.title)
-                .disabled(!model.rich)
+                .disabled(!model.marksApply)
             }
             Spacer()
             Picker("", selection: Bindable(model).rich) {
@@ -212,17 +248,26 @@ public struct ComposeView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
-            // Drawn and disabled rather than removed: the canvas has this
-            // control, and the honest state of it is "not yet". A live switch
-            // over a body that cannot carry marks would make the footer's
-            // claim about what leaves untrue, which is the one thing that
-            // footer is for.
-            .disabled(true)
-            .help("Rich composition is not built yet — messages are sent as plain text")
+            // Live since #1271. It was drawn disabled while the body was a
+            // text field, because a switch over a body that cannot carry
+            // marks would make the footer's claim about what leaves untrue.
+            // The body carries marks now, and the footer follows the switch.
+            .disabled(model.isHandedOff)
+            .help("Rich sends html and a plain-text alternative; Plain sends flowed text")
             .accessibilityLabel("How this message is written")
         }
         .padding(.horizontal, PostioTokens.space4)
         .padding(.vertical, PostioTokens.space2)
+        .alert("Link to", isPresented: $askingForLink) {
+            TextField("https://example.com", text: $linkAddress)
+            Button("Link") { model.applyMark(ComposeFormat.link, href: linkAddress) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            // Said before it is refused rather than after: the subset is
+            // http, https and mailto, and a link to anything else would be
+            // created, look right, and vanish at the next parse.
+            Text("A message can link to http, https or mailto.")
+        }
     }
 
     private func statusRow(_ status: String) -> some View {
@@ -306,6 +351,13 @@ public enum ComposeFormat {
         public let symbol: String
         public let title: String
     }
+
+    /// The one mark that has to ask something before it can be applied.
+    ///
+    /// Named rather than written as a literal at the `if`, for the reason
+    /// `Intercepted` names its commands: a literal that no longer matches
+    /// the registry is a button that silently does nothing.
+    public static let link = "insert_link"
 
     public static let marks: [Mark] = [
         Mark(command: "bold", symbol: "bold", title: "Bold"),

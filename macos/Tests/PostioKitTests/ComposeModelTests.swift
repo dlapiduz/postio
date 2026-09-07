@@ -18,6 +18,7 @@ import Testing
             bcc: "",
             subject: subject,
             body: "",
+            bodyHtml: nil,
             rich: rich,
             inReplyTo: nil,
             path: "/Users/someone/mail",
@@ -40,16 +41,24 @@ import Testing
         #expect(model.footer == "draft in /Users/someone/mail · text/plain, format=flowed")
     }
 
-    @Test func theFooterSaysWhatWillActuallyLeave_notWhatTheSwitchSays() {
-        // The switch is a control; the footer is a claim about the wire.
-        // Rich composition is not built (#1271), so a message from here is
-        // plain however the switch is drawn — and the footer must not say
-        // otherwise, because that is the one thing it exists to say.
-        let model = ComposeModel(id: 1, draft: draft(rich: true))
-        model.rich = true
+    @Test func theFooterSaysWhatWillActuallyLeave() {
+        // The switch is a control; the footer is a claim about the wire, and
+        // the two agreeing is not automatic. This asserted the footer stayed
+        // *plain* while the switch said Rich, because there was no rich
+        // document to send (#1271) — the invariant was never "always plain",
+        // it was "the footer follows what leaves". Rich composition exists
+        // now, so the same invariant has the other answer.
+        let rich = ComposeModel(id: 1, draft: draft(rich: true))
+        #expect(rich.footer.hasSuffix("html + text/plain"))
+        #expect(rich.sendsRich)
 
-        #expect(model.footer.hasSuffix("text/plain, format=flowed"))
-        #expect(!model.sendsRich)
+        // And the half that is easy to lose and expensive to notice: rich
+        // still carries a plain alternative, so the footer names both.
+        #expect(rich.footer.contains("text/plain"))
+
+        let plain = ComposeModel(id: 1, draft: draft(rich: false))
+        #expect(plain.footer.hasSuffix("text/plain, format=flowed"))
+        #expect(!plain.sendsRich)
     }
 
     @Test func theFooterWritesTheHomeDirectoryTheWayAPersonDoes() {
