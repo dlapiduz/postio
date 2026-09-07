@@ -616,3 +616,87 @@ fn a_draft_sent_as_rich_carries_both_parts_onto_the_queue() {
         body.text
     );
 }
+
+#[test]
+fn writing_rich_and_switching_to_plain_sends_the_words_rather_than_nothing() {
+    // #1293, and the sequence a person actually performs: everything is
+    // typed into the rich surface, so `body` -- the plain field -- was never
+    // touched. Every other test in this file sets both fields by hand, which
+    // is exactly what hid this.
+    //
+    // `send_draft` clears the HTML part when the switch says plain, which is
+    // right: the footer promises `text/plain, format=flowed`. So if the text
+    // was never derived, what is queued has no body at all.
+    let (session, database, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+    draft.subject = "The gate".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<p>The gate closes at six.</p>".to_owned());
+    // Deliberately not set: nothing typed into a `TextEditor` that was not on
+    // screen.
+    draft.body = String::new();
+
+    // The switch goes to Plain, and nothing else changes.
+    draft.rich = false;
+
+    assert_eq!(session.send_draft(draft), None, "no complaint");
+
+    let connection = database.connection().expect("a connection");
+    let queued = DraftRepository::new(&connection)
+        .list_for_account(postio_model::ids::AccountId::new(1))
+        .expect("a list");
+    let body = &queued[0].body;
+    assert_eq!(body.html, None, "plain must not put HTML on the wire");
+    assert!(
+        body.text
+            .as_deref()
+            .is_some_and(|text| text.contains("gate closes at six")),
+        "an empty message was queued: {:?}",
+        body.text
+    );
+}
+
+#[test]
+fn the_plain_text_of_a_document_is_available_on_its_own() {
+    // What the switch needs at the moment it flips, and it needs a name that
+    // is true at that call site: `narrowPaste` returns the same string but
+    // reading `narrowPaste` there would say this was a paste.
+    let (session, _, _) = a_message_to_answer();
+    let text = session.plain_text_of("<p>The gate closes at <strong>six</strong>.</p>");
+    assert_eq!(text.trim(), "The gate closes at six.");
+}
+
+#[test]
+fn switching_the_other_way_keeps_the_words_too() {
+    // Plain -> Rich -> send. The document is built from the plain text, so
+    // nothing typed is lost in that direction either.
+    let (session, database, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+    draft.body = "The gate closes at six.".to_owned();
+    draft.rich = true;
+    draft.body_html = None;
+
+    assert_eq!(session.send_draft(draft), None, "no complaint");
+
+    let connection = database.connection().expect("a connection");
+    let queued = DraftRepository::new(&connection)
+        .list_for_account(postio_model::ids::AccountId::new(1))
+        .expect("a list");
+    let body = &queued[0].body;
+    assert!(
+        body.text
+            .as_deref()
+            .is_some_and(|text| text.contains("gate closes at six")),
+        "the plain alternative lost the words: {:?}",
+        body.text
+    );
+    assert!(
+        body.html
+            .as_deref()
+            .is_some_and(|html| html.contains("gate closes at six")),
+        "rich was asked for and no HTML part was built: {:?}",
+        body.html
+    );
+}

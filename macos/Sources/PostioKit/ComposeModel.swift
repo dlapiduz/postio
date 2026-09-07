@@ -147,6 +147,28 @@ public final class ComposeModel: Identifiable {
         markRequest = MarkRequest(command: command, serial: marksAsked, href: href)
     }
 
+    /// The Rich/Plain switch has gone to Plain; `text` is what the document
+    /// reads as.
+    ///
+    /// The composer's rule is "whichever surface is active is
+    /// authoritative", and it has nothing to say about the moment of the
+    /// switch — which is exactly when the field about to become
+    /// authoritative is the stale one. Everything typed in Rich went into
+    /// the document, so `body` was never touched; without this, switching to
+    /// Plain and sending queued an empty message (#1293).
+    ///
+    /// The marks are kept, because the switch is on the document: turning it
+    /// back on must cost nothing.
+    ///
+    /// Words already in the plain field are not overwritten. Somebody who
+    /// wrote plain, tried Rich and came back has text there that is theirs.
+    public func switchedToPlain(text: String) {
+        rich = false
+        if body.isEmpty {
+            body = text
+        }
+    }
+
     /// Say why a link was refused, or clear the last complaint.
     ///
     /// A refused scheme is something to say rather than a link that is

@@ -179,4 +179,31 @@ import Testing
         // silently does nothing -- which is what this whole issue is about.
         #expect(ComposeFormat.marks.contains { $0.command == ComposeFormat.link })
     }
+
+    // MARK: - The switch (#1293)
+
+    @Test func switchingToPlainCarriesTheWordsIntoThePlainField() {
+        // The sequence a person performs: everything typed into the rich
+        // surface, so `body` was never touched -- and then Plain, where it is
+        // suddenly the only field that matters. Not setting `body` by hand is
+        // the whole point; setting it is what hid this.
+        let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>The gate closes at six.</p>"))
+        #expect(model.body.isEmpty)
+
+        model.switchedToPlain(text: "The gate closes at six.")
+
+        #expect(model.body == "The gate closes at six.")
+        #expect(!model.rich)
+        // And the marks are still there, because the switch is on the
+        // document: turning it back on must cost nothing.
+        #expect(model.bodyHtml == "<p>The gate closes at six.</p>")
+    }
+
+    @Test func switchingToPlainDoesNotOverwriteWordsAlreadyTypedThere() {
+        // Somebody who wrote plain, tried Rich, and came back has words in
+        // the plain field that are theirs.
+        let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>marks</p>", body: "typed"))
+        model.switchedToPlain(text: "marks")
+        #expect(model.body == "typed")
+    }
 }
