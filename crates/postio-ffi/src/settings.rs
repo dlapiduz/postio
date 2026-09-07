@@ -19,6 +19,7 @@
 
 use postio_config::Config;
 use postio_config::compose::{ComposeConfig, SignaturePlacement, patch_compose};
+use postio_config::filters::{FilterConfig, patch_filters};
 use postio_config::sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 use postio_config::ui::{Density, Theme, UiConfig, patch_ui};
 use postio_config::validate;
@@ -260,6 +261,23 @@ pub struct SyncingFfi {
     pub notify: bool,
 }
 
+/// One saved search, as the Filters pane draws it.
+///
+/// The `key` is the `[filters.<key>]` identity and is **not** what the user
+/// sees: #292 keeps the key stable and TOML-safe so a rename cannot orphan a
+/// filter, and `name` is whatever they actually called it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilterFfi {
+    /// The stable `[filters.<key>]` identity. Never shown as a label.
+    pub key: String,
+    /// What the user called it, or the key when nobody has renamed it.
+    pub name: String,
+    /// The search expression this filter runs.
+    pub query: String,
+    /// Whether it appears in the sidebar.
+    pub pinned: bool,
+}
+
 /// Every settings section, in canvas 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
@@ -412,6 +430,118 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
     sync.initial_sync_messages = syncing.initial_sync_messages;
     sync.notify = syncing.notify;
     patch_sync(&text, &sync).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Every filter in `text`, in the order the sidebar shows them.
+///
+/// Empty for a file with no `[filters]` in it — which is different from a
+/// file that will not parse, and the pane says so differently.
+#[uniffi::export]
+pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {
+    let filters = Config::from_toml_str(&text).ok()?.filters;
+    let mut rows: Vec<(Option<u32>, String, FilterFfi)> = filters
+        .into_iter()
+        .map(|(key, filter)| {
+            let name = filter.name.clone().unwrap_or_else(|| key.clone());
+            (
+                filter.order,
+                key.clone(),
+                FilterFfi {
+                    key,
+                    name,
+                    query: filter.query,
+                    pinned: filter.pinned,
+                },
+            )
+        })
+        .collect();
+    // `None` sorts after everything that has an order, then by key — the
+    // alphabetical order every filter had before reordering existed, so a
+    // file nobody has reordered reads exactly as it used to.
+    rows.sort_by(|left, right| {
+        (left.0.is_none(), left.0, &left.1).cmp(&(right.0.is_none(), right.0, &right.1))
+    });
+    Some(rows.into_iter().map(|(_, _, filter)| filter).collect())
+}
+
+/// Write one filter's editable fields back into `text`.
+///
+/// One filter rather than the whole set, because that is what a pane edits
+/// and because rewriting all of them to change one is how the fields this
+/// build does not know get lost. The key is the identity and is never
+/// written from here: renaming is `name`, and moving a filter to a new key
+/// would orphan whatever refers to it (#292).
+#[uniffi::export]
+pub fn settings_patch_filter(text: String, filter: FilterFfi) -> Result<String, SettingsError> {
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    let Some(existing) = filters.get_mut(&filter.key) else {
+        return Err(SettingsError::Invalid {
+            message: format!("there is no filter called {}", filter.key),
+        });
+    };
+    existing.query = filter.query;
+    existing.pinned = filter.pinned;
+    // Blank means "not renamed", which is what `None` says in the file — so
+    // clearing the field restores the key as the label rather than saving an
+    // empty name that draws as nothing.
+    let name = filter.name.trim();
+    existing.name = (!name.is_empty() && name != filter.key).then(|| name.to_owned());
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Remove a filter entirely.
+#[uniffi::export]
+pub fn settings_remove_filter(text: String, key: String) -> Result<String, SettingsError> {
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    filters.remove(&key);
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// Add a filter under `key`, running `query`.
+#[uniffi::export]
+pub fn settings_add_filter(
+    text: String,
+    key: String,
+    query: String,
+) -> Result<String, SettingsError> {
+    let key = key.trim().to_owned();
+    if key.is_empty() {
+        return Err(SettingsError::Invalid {
+            message: "a filter needs a name".to_owned(),
+        });
+    }
+    let mut filters = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .filters;
+    if filters.contains_key(&key) {
+        return Err(SettingsError::Invalid {
+            message: format!("there is already a filter called {key}"),
+        });
+    }
+    filters.insert(
+        key,
+        FilterConfig {
+            query,
+            ..FilterConfig::default()
+        },
+    );
+    patch_filters(&text, &filters).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })
 }

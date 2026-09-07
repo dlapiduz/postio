@@ -76,6 +76,12 @@ public final class SettingsStore {
         settingsSyncing(text: text)
     }
 
+    /// Every filter, in the order the sidebar shows them. `nil` when the
+    /// file will not parse; empty when there simply are none.
+    public var filters: [FilterFfi]? {
+        settingsFilters(text: text)
+    }
+
     /// The sections under one heading, in nav order.
     public func sections(in group: GroupFfi) -> [SettingsSectionFfi] {
         sections.filter { $0.group == group }
@@ -174,6 +180,25 @@ public final class SettingsStore {
         guard var next = syncing else { return }
         change(&next)
         write { try settingsPatchSyncing(text: $0, syncing: next) }
+    }
+
+    /// Change one filter and save. See `apply`.
+    public func applyFilter(_ filter: FilterFfi) {
+        reload()
+        write { try settingsPatchFilter(text: $0, filter: filter) }
+    }
+
+    /// Remove a filter and save.
+    public func removeFilter(_ key: String) {
+        reload()
+        write { try settingsRemoveFilter(text: $0, key: key) }
+    }
+
+    /// Add a filter running `query`, and say what went wrong if it could not
+    /// be added — a name already taken, or an empty one.
+    public func addFilter(key: String, query: String) {
+        reload()
+        write { try settingsAddFilter(text: $0, key: key, query: query) }
     }
 
     /// Save whatever `patch` makes of the file, and describe what happened.

@@ -50,6 +50,9 @@ public struct SettingsPaneView: View {
     @State private var renamedTo = ""
     /// The remote-image grants, read when the Privacy pane appears.
     @State private var grants: [GrantFfi] = []
+    /// The new filter being typed, if one is.
+    @State private var newFilterKey = ""
+    @State private var newFilterQuery = ""
 
     public init(
         store: SettingsStore,
@@ -185,6 +188,7 @@ public struct SettingsPaneView: View {
         case "sync": syncing
         case "keys": keyboard
         case "privacy": privacy
+        case "filters": filters
         case "": configFile
         default: unbuilt
         }
@@ -463,6 +467,109 @@ public struct SettingsPaneView: View {
         } else {
             unreadable
         }
+    }
+
+    // -- Filters (#1156) ----------------------------------------------------
+
+    /// The saved searches, and what each one runs.
+    ///
+    /// The key is the identity (#292) and is deliberately not editable here:
+    /// renaming writes `name`, so a filter cannot be orphaned by being moved
+    /// to a new key. What the row shows is the name; what it edits is the
+    /// query, the label, and whether the sidebar carries it.
+    @ViewBuilder private var filters: some View {
+        if let current = store.filters {
+            VStack(alignment: .leading, spacing: 0) {
+                if current.isEmpty {
+                    ContentUnavailableView {
+                        Label("No filters", systemImage: "line.3.horizontal.decrease.circle")
+                    } description: {
+                        Text(
+                            "A filter is a saved search. Add one below, or write "
+                                + "`[filters.<name>]` in the config file."
+                        )
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(current, id: \.key) { filter in
+                                filterRow(filter)
+                                if filter.key != current.last?.key { Divider() }
+                            }
+                        }
+                    }
+                }
+                Divider()
+                HStack(spacing: PostioTokens.space2) {
+                    TextField("Name", text: $newFilterKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    TextField("is:unread", text: $newFilterQuery)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Add") {
+                        store.addFilter(key: newFilterKey, query: newFilterQuery)
+                        if store.failure == nil {
+                            newFilterKey = ""
+                            newFilterQuery = ""
+                        }
+                    }
+                    .disabled(
+                        newFilterKey.trimmingCharacters(in: .whitespaces).isEmpty
+                            || newFilterQuery.trimmingCharacters(in: .whitespaces).isEmpty
+                    )
+                }
+                .padding(.vertical, PostioTokens.space2)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    @ViewBuilder private func filterRow(_ filter: FilterFfi) -> some View {
+        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+            HStack {
+                TextField(
+                    filter.key,
+                    text: Binding(
+                        get: { filter.name },
+                        set: { value in
+                            var next = filter
+                            next.name = value
+                            store.applyFilter(next)
+                        })
+                )
+                .textFieldStyle(.plain)
+                .font(.body.weight(.medium))
+                Spacer()
+                Toggle(
+                    "In the sidebar",
+                    isOn: Binding(
+                        get: { filter.pinned },
+                        set: { value in
+                            var next = filter
+                            next.pinned = value
+                            store.applyFilter(next)
+                        })
+                )
+                .toggleStyle(.checkbox)
+                Button("Remove") { store.removeFilter(filter.key) }
+                    .buttonStyle(.link)
+            }
+            TextField(
+                "is:unread",
+                text: Binding(
+                    get: { filter.query },
+                    set: { value in
+                        var next = filter
+                        next.query = value
+                        store.applyFilter(next)
+                    })
+            )
+            .textFieldStyle(.roundedBorder)
+            .font(.system(.callout, design: .monospaced))
+        }
+        .padding(.vertical, PostioTokens.space3)
     }
 
     // -- Privacy (#1156) ----------------------------------------------------
@@ -802,13 +909,19 @@ public struct SettingsPaneView: View {
         }
     }
 
+    /// For a section this build does not know.
+    ///
+    /// All eight of canvas 3f's panes are drawn now, so nothing reaches this
+    /// from the shipped nav. It stays because the nav is `postio_ui`'s and a
+    /// newer core can name a section this build has never heard of — which
+    /// should say so rather than draw an empty pane.
     private var unbuilt: some View {
         ContentUnavailableView {
-            Label("Not on macOS yet", systemImage: "gearshape")
+            Label("Not in this build", systemImage: "gearshape")
         } description: {
             Text(
-                "This section is only editable in the file for now — ⌘E opens it in your editor. "
-                    + "The panes are shipping one at a time (#1156)."
+                "This section is newer than this build of Postio. It is still "
+                    + "editable in the file — the Config file pane has all of it."
             )
         }
     }
