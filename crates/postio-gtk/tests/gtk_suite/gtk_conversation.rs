@@ -114,8 +114,19 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     );
     assert_eq!(
         built.borrow().len(),
-        EAGER_EXPANSION_CAP,
-        "opening a conversation must not build a reader per message: {:?}",
+        EAGER_EXPANSION_CAP + 1,
+        "opening a conversation must not build a reader per message. The cap, \
+         plus exactly one: focus warms a reader for the message below it, so \
+         moving down does not wait for a web process to start and flash black \
+         while it does (#1216). One spare, and only after focus lands -- \
+         during the expansions themselves there is no `next message` to \
+         answer for: {:?}",
+        built.borrow()
+    );
+    assert!(
+        !built.borrow().contains(&MessageId::new(1)),
+        "the spare is for the message *after* the focused one, not the last \
+         collapsed one above it: {:?}",
         built.borrow()
     );
 

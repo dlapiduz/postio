@@ -461,6 +461,23 @@ impl Reader {
 
     /// The widget to place in [`crate::shell::Shell::reader`]: the banner
     /// and the `WebView`, stacked.
+    /// Start this reader's web process now, before anything needs it.
+    ///
+    /// A `WebView` does not spawn its process when it is built -- measured:
+    /// building one leaves the process count unchanged, and the first *load*
+    /// is what starts it. So a reader built ahead of time is not ready ahead
+    /// of time, and expanding a message still waits for a process to start,
+    /// relocate its libraries and paint. Until it has, it composites black:
+    /// that is the flicker moving between messages in a conversation (#1216).
+    ///
+    /// An empty document is enough. What matters is that the process exists
+    /// and has finished starting by the time a real message is rendered into
+    /// it, which is why this is called on a spare rather than on the reader
+    /// somebody is waiting for.
+    pub fn warm(&self) {
+        self.view.load_html("", None);
+    }
+
     pub fn widget(&self) -> gtk::Widget {
         self.container.clone().upcast()
     }

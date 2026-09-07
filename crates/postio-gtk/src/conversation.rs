@@ -632,6 +632,26 @@ mod imp {
         /// column are showing, and the one a per-message verb aims at.
         pub(super) focused: Cell<Option<MessageId>>,
         pub(super) factory: RefCell<Option<ReaderFactory>>,
+        /// A reader built and started before anything asks for one.
+        ///
+        /// A `WebView` spawns its web process on the first *load*, not when
+        /// it is built, so a reader made at the moment a message expands
+        /// makes the person wait for a process to start, relocate and paint
+        /// -- and it composites black until it has. That is the flicker
+        /// moving between messages (#1216).
+        ///
+        /// So expansion takes this one, already warm, and a replacement is
+        /// warmed on the idle after. One spare, not a pool: the cost is a
+        /// resident web process, and one is enough to cover the gap between
+        /// two keystrokes.
+        ///
+        /// Held **with the message it was built for**. The factory binds a
+        /// reader to a message -- `fill_reader` starts the read for it -- so
+        /// a spare is not interchangeable, and the pane warms the one that is
+        /// about to be wanted: the next message down the stack, which is the
+        /// gesture this is for. Expanding anything else falls back to
+        /// building one, exactly as before.
+        pub(super) spare: RefCell<Option<(MessageId, crate::reader::Reader)>>,
         pub(super) on_reply: RefCell<Vec<ReplyHandler>>,
         pub(super) on_forward: RefCell<Vec<MessageHandler>>,
         pub(super) on_focus: RefCell<Vec<MessageHandler>>,
@@ -701,6 +721,7 @@ mod imp {
                     "conversation-footer",
                 ),
                 scroller: gtk::ScrolledWindow::default(),
+                spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 entries: RefCell::new(Vec::new()),
                 focused: Cell::new(None),
@@ -1123,6 +1144,11 @@ impl ConversationView {
         }
         self.expand(message);
         self.imp().focused.set(Some(message));
+        // After `focused` is set, and not in `expand`: opening a conversation
+        // expands several messages before focus exists, and "the next one"
+        // has no answer until it does. One warm per navigation, which is the
+        // gesture -- read this one, move down.
+        self.warm_the_next();
         for entry in self.imp().entries.borrow().iter() {
             entry.header.set_selected(entry.message == message);
         }
@@ -1220,15 +1246,83 @@ impl ConversationView {
         }
         entry.expanded.set(true);
         entry.actions.set_visible(true);
-        if let Some(factory) = imp.factory.borrow().as_ref()
-            && let Some(reader) = factory(message)
-        {
+        // The spare, if it was built for *this* message, and that is the
+        // whole of the pre-warm: its web process has already started, so the
+        // body paints rather than flashing black while one boots (#1216).
+        let taken = match imp.spare.borrow_mut().take() {
+            Some((warmed, reader)) if warmed == message => Some(reader),
+            // Built for a different message: it cannot be used, and holding
+            // it would keep a process for a body nobody asked for.
+            Some(_) | None => None,
+        };
+        if let Some(reader) = taken.or_else(|| {
+            imp.factory
+                .borrow()
+                .as_ref()
+                .and_then(|factory| factory(message))
+        }) {
             let widget = reader.widget();
             widget.set_hexpand(true);
             entry.body.append(&widget);
             *entry.reader.borrow_mut() = Some(reader);
         }
         entry.body.set_visible(true);
+    }
+
+    /// Build and start a reader for the message most likely to open next.
+    ///
+    /// A `WebView` spawns its web process on the first *load*, not when it is
+    /// built, so a reader made at the moment a message expands makes the
+    /// person wait for a process to start, relocate and paint -- and it
+    /// composites black until it has. That is the flicker moving through a
+    /// conversation (#1216).
+    ///
+    /// The next message *down the stack*, because that is the gesture: read
+    /// one, move to the next. Anything else falls back to building a reader
+    /// the old way, so this is an optimisation for the common path and never
+    /// a correctness question.
+    ///
+    /// On an idle callback rather than inline: the caller has just expanded a
+    /// message, and starting a second web process there would spend on this
+    /// keystroke exactly what the spare exists to save.
+    fn warm_the_next(&self) {
+        let Some(next) = self.next_unexpanded() else {
+            return;
+        };
+        if matches!(*self.imp().spare.borrow(), Some((held, _)) if held == next) {
+            return;
+        }
+        let pane = self.clone();
+        glib::idle_add_local_once(move || {
+            let imp = pane.imp();
+            if matches!(*imp.spare.borrow(), Some((held, _)) if held == next) {
+                return;
+            }
+            let built = imp
+                .factory
+                .borrow()
+                .as_ref()
+                .and_then(|factory| factory(next));
+            if let Some(reader) = built {
+                reader.warm();
+                *imp.spare.borrow_mut() = Some((next, reader));
+            }
+        });
+    }
+
+    /// The first message after the focused one that has no body yet.
+    fn next_unexpanded(&self) -> Option<MessageId> {
+        let imp = self.imp();
+        let entries = imp.entries.borrow();
+        let focused = imp.focused.get();
+        let from = focused
+            .and_then(|id| entries.iter().position(|entry| entry.message == id))
+            .map_or(0, |index| index + 1);
+        entries
+            .iter()
+            .skip(from)
+            .find(|entry| !entry.expanded.get())
+            .map(|entry| entry.message)
     }
 
     /// The reader already built for `message`'s entry, if it has one.
