@@ -410,6 +410,30 @@ pub struct Wired {
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
 pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
+    // The composer's editing surface is ADR 0003's `WebView`, and its first
+    // load starts a WebKit web process: measured, 28.7ms on the first open of
+    // a composer against 0.2ms on every one after it. Without this it all
+    // lands on the first message somebody sits down to write, which is the one
+    // composition they are most likely to notice (#1216).
+    //
+    // On an idle turn, and not here, because startup has 500ms to reach a
+    // usable window and this is thirty of them spent on something nobody has
+    // asked for yet. Before the account check below, because a window with no
+    // account is a window in onboarding, and the composition after that one is
+    // still the first one.
+    //
+    // The composition root's call to make, like the search source below:
+    // `postio-gtk` must not decide on its own that every window it builds is
+    // worth a web process.
+    glib::idle_add_local_once({
+        let window = glib::object::ObjectExt::downgrade(window);
+        move || {
+            if let Some(window) = window.upgrade() {
+                window.composer().warm();
+            }
+        }
+    });
+
     let Some(account) = first_account(&wiring.database) else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"

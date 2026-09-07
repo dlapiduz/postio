@@ -59,6 +59,7 @@ mod gtk_composer_schedule_send;
 mod gtk_composer_signature_default;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
+mod gtk_composer_warm;
 mod gtk_conversation;
 mod gtk_cursor_preview;
 mod gtk_dispatch;
@@ -507,6 +508,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_list_mark_read::filling_a_folder_announces_structure_and_not_every_page",
         gtk_list_mark_read::filling_a_folder_announces_structure_and_not_every_page as fn(),
+    ),
+    (
+        "gtk_composer_warm::the_editing_surface_can_be_warmed_before_anyone_composes",
+        gtk_composer_warm::the_editing_surface_can_be_warmed_before_anyone_composes as fn(),
     ),
     (
         "gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one",
