@@ -14,7 +14,7 @@ public struct AddAccountSheet: View {
     @Bindable private var model: AddAccountModel
     /// Called when the sheet is finished with, saying whether an account was
     /// actually added — Cancel and a successful add both close it, and the
-    /// difference decides whether anything needs starting (#1298).
+    /// difference decides whether anything needs starting (#1299).
     private let done: (Bool) -> Void
 
     @FocusState private var focusedAddress: Bool

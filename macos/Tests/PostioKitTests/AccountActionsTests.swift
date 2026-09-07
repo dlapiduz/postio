@@ -110,7 +110,7 @@ import Testing
     }
 }
 
-/// Telling the application an account arrived (#1298).
+/// Telling the application an account arrived (#1299).
 ///
 /// The sheet writes the row through the boundary and that is all it can do:
 /// the engines were started when the session opened, so a new account has

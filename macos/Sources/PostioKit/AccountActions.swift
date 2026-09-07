@@ -51,7 +51,7 @@ public final class AccountActions {
     /// Set by the application, which owns the session and the accounts list.
     /// The sheet writes the row through the boundary and then has to say so:
     /// the row alone changes nothing, because the engines were started when
-    /// the session opened and a new account has none (#1298).
+    /// the session opened and a new account has none (#1299).
     public var accountAdded: (() -> Void)?
 
     /// An account was added. Tell whoever is listening.

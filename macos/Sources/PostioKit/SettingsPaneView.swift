@@ -255,7 +255,7 @@ public struct SettingsPaneView: View {
                 // Only when the sheet actually wrote one: cancelling must not
                 // announce an account that is not there. Without this the row
                 // exists and nothing syncs it until the next launch, which
-                // reads as an account that did not save (#1298).
+                // reads as an account that did not save (#1299).
                 if added { actions.added() }
                 adding = nil
                 reconnecting = nil

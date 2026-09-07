@@ -119,7 +119,7 @@ final class Engine {
             }
             // An account added while this is running writes its row and gets
             // no engine, because the engines were started just above. Saying
-            // so here is what makes it sync without a relaunch (#1298).
+            // so here is what makes it sync without a relaunch (#1299).
             settingsActions.accountAdded = { [weak self] in
                 guard let self, let session = self.session else { return }
                 self.accounts = session.accounts()
