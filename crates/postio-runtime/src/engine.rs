@@ -2413,6 +2413,22 @@ async fn sync_pass(
             full = summary.full,
             "sync finished"
         );
+        // When this folder last synced, which nothing wrote until #1281 —
+        // the column had been in the schema since migration 0001 and both
+        // frontends' sidebars read it, so every Postio told its user it had
+        // never synced however much mail it held.
+        //
+        // Here rather than beside the fetch, because this is the point at
+        // which a pass has *completed*: a pass that failed halfway has not
+        // synced the folder, and a timestamp that moved anyway would answer
+        // "when did this last try" to a question nobody asked.
+        if let Err(error) =
+            MailboxRepository::new(connection).record_sync(mailbox, chrono::Utc::now())
+        {
+            // Worth a line and not worth failing the pass: the mail is
+            // fetched and stored, and what is lost is a sentence in a footer.
+            tracing::warn!(%error, "the folder synced but the time could not be recorded");
+        }
         // `MessageListChanged` is the view's blunt instrument: it means the
         // *order* moved, and `MessageList::invalidate` answers it by telling
         // GTK every row was removed and re-added — every visible row widget

@@ -1,5 +1,6 @@
 //! Mailboxes: the folder tree, its special-use roles, and the sidebar's counts.
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
 };
@@ -271,6 +272,37 @@ impl<'a> MailboxRepository<'a> {
                 counts.flagged,
                 counts.snoozed
             ],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound {
+                entity: "mailbox",
+                id: id.get(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Record that a sync pass over this mailbox **completed**, at `at`.
+    ///
+    /// A column that nothing wrote until #1281. The schema has had it since
+    /// migration 0001, both frontends' sidebars read it, and every store in
+    /// the world held `NULL` — so a Postio with five thousand messages in it
+    /// told its user, truthfully as far as the code went, that it had never
+    /// synced.
+    ///
+    /// A narrow `UPDATE` rather than [`update`](Self::update): the row's
+    /// counts are maintained by migration 0003's triggers, and writing the
+    /// whole row back from a `Mailbox` read minutes ago would overwrite them
+    /// with whatever was true then.
+    ///
+    /// **Completion, not attempt.** A pass that failed halfway has not
+    /// synced this folder, and a timestamp that moved anyway would turn
+    /// "when did this last work" into "when did this last try", which is the
+    /// question nobody is asking.
+    pub fn record_sync(&self, id: MailboxId, at: DateTime<Utc>) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE mailboxes SET last_synced_at = ?2 WHERE id = ?1",
+            params![id.get(), to_millis(at)],
         )?;
         if changed == 0 {
             return Err(Error::NotFound {

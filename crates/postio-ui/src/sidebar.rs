@@ -230,8 +230,13 @@ pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String 
             // A store full of mail and no recorded time. "Never synced"
             // beside five thousand archived messages is a claim the store
             // itself contradicts, so the line says only what is true: nothing
-            // is happening. Read off the running application, where nothing
-            // in production writes `last_synced_at` at all (#1281).
+            // is happening.
+            //
+            // This was the *normal* case until #1281 — nothing in production
+            // wrote `last_synced_at` at all — and is now the narrow one: a
+            // store whose passes all happened before the engine started
+            // recording them. One completed sync moves it to the ordinary
+            // branch above.
             (None, true) => "idle".to_owned(),
         },
     }
@@ -284,9 +289,10 @@ mod status_tests {
     #[test]
     fn a_store_full_of_mail_never_claims_it_has_never_synced() {
         // Read off the running application: five thousand archived messages
-        // under a footer reading "never synced". Nothing in production writes
-        // `last_synced_at` (#1281), so the honest line is the half that is
-        // true — and the claim the store itself contradicts is not made.
+        // under a footer reading "never synced", because nothing wrote
+        // `last_synced_at` (#1281). The engine records it now; this stays for
+        // a store whose passes all predate that, and says only the half that
+        // is true rather than the claim the store itself contradicts.
         assert_eq!(status(Activity::Idle, None, true), "idle");
     }
 
