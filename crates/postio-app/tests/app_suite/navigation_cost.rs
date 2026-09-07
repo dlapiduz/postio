@@ -311,6 +311,43 @@ pub fn switching_surfaces_stays_within_a_blink() {
             window.list().model().n_items()
         );
     }
+    // ── scrolling, which is the interaction that happens most ──────────
+    {
+        let list = window.list();
+        let rows = list.model().n_items();
+        let widgets_before = postio_gtk::row::rows_built();
+        let fetches_before = postio_gtk::feed::fetches();
+        let emissions_before = postio_gtk::list::emissions();
+        let started = Instant::now();
+        let mut steps = 0;
+        for page in 1..=20u32 {
+            list.set_scroll_offset(f64::from(page) * 700.0);
+            // Drain what this scroll asked for, or the loop measures widget
+            // recycling alone and never sees a delivery land. Bounded: a step
+            // that asks for nothing must not wait for one.
+            for _ in 0..40 {
+                while gtk::glib::MainContext::default().iteration(false) {}
+                std::thread::sleep(Duration::from_micros(200));
+            }
+            steps += 1;
+        }
+        // The duration includes this loop's own drain (40 pumps a step, so
+        // ~8ms of sleeping) and moves with how much of the folder happens to
+        // be resident already. The counts below are the part that means
+        // something: they are the same on every machine, and they are what
+        // a repaint costs (#1216).
+        eprintln!(
+            "  scroll {steps} pages over {rows} rows: {:>10.2?} incl. drain",
+            started.elapsed()
+        );
+        eprintln!(
+            "      built {} row widgets, {} page fetches, {} items_changed",
+            postio_gtk::row::rows_built() - widgets_before,
+            postio_gtk::feed::fetches() - fetches_before,
+            postio_gtk::list::emissions() - emissions_before
+        );
+    }
+
     for round in 1..=3 {
         timed(&format!("prev folder, round {round}"), || {
             window.act(postio_core::Command::PrevFolder);
