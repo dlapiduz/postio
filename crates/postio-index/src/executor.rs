@@ -1029,25 +1029,37 @@ impl Plan {
         // query against 18k contacts, 15 s for a full pool (#746). Hoisted,
         // the same workload is single-digit milliseconds, and
         // `hydrate_probes_contacts_by_address_key` pins the plan.
+        // **One correlated lookup, not three.** This asked `recipients` for the
+        // sender three times per candidate -- the name, the address, and the
+        // normalized address -- and the last two were the same row reached by
+        // the same join, differing only in the column selected. Measured on a
+        // real store after the search plan was fixed, this statement was
+        // 384 ms of a 520 ms cold search: the largest single cost in a search,
+        // and two thirds of it was asking the same question again.
+        //
+        // So the subquery finds the sender's `recipients` row once, and the
+        // outer query joins it and `addresses` by primary key. The contacts
+        // probe still compares against a plain column -- now the joined
+        // `a.address_normalized` rather than a nested subquery -- which is
+        // what keeps it on `idx_contacts_account_address` rather than walking
+        // every contact per candidate (#746, and
+        // `hydrate_probes_contacts_by_address_key` pins it).
         format!(
             "SELECT
                  sub.id, sub.thread_id, sub.mailbox_id, sub.subject, sub.received_at,
-                 sub.from_name, sub.from_address,
+                 sender.name AS from_name, a.address AS from_address,
                  (SELECT max(c.times_seen) FROM contacts c
-                    WHERE c.address_normalized = sub.from_normalized
+                    WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
                  0 AS unused
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
-                     (SELECT name FROM recipients WHERE message_id = m.id AND kind = 'from'
-                        ORDER BY position LIMIT 1) AS from_name,
-                     (SELECT a.address FROM recipients r JOIN addresses a ON a.id = r.address_id
+                     (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
-                        ORDER BY r.position LIMIT 1) AS from_address,
-                     (SELECT a.address_normalized FROM recipients r JOIN addresses a ON a.id = r.address_id
-                        WHERE r.message_id = m.id AND r.kind = 'from'
-                        ORDER BY r.position LIMIT 1) AS from_normalized
-                   FROM messages m WHERE m.id IN ({placeholders})) sub",
+                        ORDER BY r.position LIMIT 1) AS from_recipient
+                   FROM messages m WHERE m.id IN ({placeholders})) sub
+             LEFT JOIN recipients sender ON sender.id = sub.from_recipient
+             LEFT JOIN addresses a ON a.id = sender.address_id",
         )
     }
 

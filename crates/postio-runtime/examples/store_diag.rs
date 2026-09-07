@@ -86,12 +86,18 @@ fn open(path: &str, key_hex: &str, cache_kib: i64) -> Connection {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .expect("open the store read-only");
-    connection
-        .execute_batch("PRAGMA cipher_memory_security = OFF;")
-        .expect("cipher_memory_security");
-    connection
-        .execute_batch(&format!("PRAGMA key = \"x'{}'\";", *key.to_hex()))
-        .expect("PRAGMA key");
+    // Through `db::configure` rather than by hand, and that is the point:
+    // it is the one place that knows how a store is unlocked -- the key, the
+    // memory-security pragma before it, and the page MAC after it. This file
+    // used to reimplement those three, and when the MAC changed
+    // (`PageMac::CURRENT`, #1216) it kept applying SQLCipher's old default and
+    // reported the store as "file is not a database" -- which reads as a
+    // corrupt mailbox rather than a diagnostic that had not kept up.
+    //
+    // Safe on a read-only connection: the one write `configure` can make is
+    // `auto_vacuum` on a database with no schema yet, and a store worth
+    // diagnosing has one.
+    postio_storage::db::configure(&connection, &key).expect("unlock the store");
     connection
         .execute_batch(&format!(
             "PRAGMA cache_size = -{cache_kib}; PRAGMA busy_timeout = 5000; \
