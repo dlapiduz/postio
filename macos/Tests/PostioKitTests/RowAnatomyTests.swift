@@ -318,6 +318,46 @@ import Testing
         #expect(MessageRowView.edge == 3)
     }
 
+    /// The same measurement in both appearances.
+    ///
+    /// `colorSelectedBg` is a different colour in each — a 12% tint of the
+    /// accent in light, the accent's deep step in dark — so an edge that is
+    /// visible in one and not the other is a real defect, not a test detail.
+    private func edgeIsVisible(in appearance: NSAppearance.Name) -> Bool {
+        let view = MessageRowView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        view.selectionHighlightStyle = .regular
+        view.isSelected = true
+
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            // An opaque backdrop first, because that is what a person sees:
+            // in the light appearance the tint is a **12% alpha** accent, so
+            // its RGB is identical to the edge's and only its alpha differs.
+            // Measured against transparency the two look the same colour and
+            // the edge vanishes — which is a fact about reading a bitmap, not
+            // about the row.
+            PostioTokens.colorSurface.setFill()
+            view.bounds.fill()
+            view.drawSelection(in: view.bounds)
+        }
+        image.unlockFocus()
+
+        guard let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!),
+            let edge = bitmap.colorAt(x: 1, y: 20)?.usingColorSpace(.sRGB),
+            let body = bitmap.colorAt(x: 100, y: 20)?.usingColorSpace(.sRGB)
+        else { return false }
+        let dr = edge.redComponent - body.redComponent
+        let dg = edge.greenComponent - body.greenComponent
+        let db = edge.blueComponent - body.blueComponent
+        return (dr * dr + dg * dg + db * db).squareRoot() > 0.1
+    }
+
+    @Test func theEdgeIsVisibleInBothAppearances() {
+        #expect(edgeIsVisible(in: .darkAqua), "no edge in dark")
+        #expect(edgeIsVisible(in: .aqua), "no edge in light")
+    }
+
     @Test func aRowDrawsItsOwnSelectionRatherThanInheritingOne() {
         // `drawSelection` is overridden, so AppKit's fill never runs. Asserted
         // by drawing into a bitmap and finding the accent edge down the
@@ -326,9 +366,20 @@ import Testing
         view.selectionHighlightStyle = .regular
         view.isSelected = true
 
+        // Pinned, and this is the whole reason the test flaked on CI: the
+        // selection tint is an `NSColor` with a dynamic provider, so it
+        // resolves against whatever drawing appearance happens to be current.
+        // On a desktop that is the app's; in a headless test process it is
+        // whatever AppKit defaults to, and the tint and the accent can land
+        // close enough together that no edge is measurable. Naming the
+        // appearance makes the composite the same on any machine.
         let image = NSImage(size: view.bounds.size)
         image.lockFocus()
-        view.drawSelection(in: view.bounds)
+        NSAppearance(named: .darkAqua)?.performAsCurrentDrawingAppearance {
+            PostioTokens.colorSurface.setFill()
+            view.bounds.fill()
+            view.drawSelection(in: view.bounds)
+        }
         image.unlockFocus()
 
         let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!

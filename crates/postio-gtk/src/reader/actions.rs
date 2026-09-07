@@ -102,16 +102,23 @@ mod tests {
         let mut overrides = postio_config::KeyBindings::default();
         // `undo`'s default is `u`; rebinding it to `a` collides with
         // Archive's own default in every context they share, so Archive
-        // loses its key rather than being handed one that now runs something
-        // else.
+        // loses `a` rather than being handed a key that now runs something
+        // else — which is the rule this protects.
+        //
+        // What it does *not* lose is every key: since the second keyboard
+        // layer landed, Archive also carries `mod+shift+a`, and that becomes
+        // its primary once `a` is gone. Showing it is the honest answer —
+        // the hint names a key that really does archive — and "no key at
+        // all" is now only true of a command with no alternate.
         overrides
             .overrides_mut()
             .insert("undo".to_string(), "a".to_string());
         let keymap = Keymap::resolve(&overrides);
         let keys: Vec<_> = hints(&keymap).into_iter().map(|(_, key)| key).collect();
         assert_eq!(
-            keys[3], None,
-            "Archive has no key to show once undo has taken `a`"
+            keys[3],
+            Some("ctrl+shift+a".to_string()),
+            "Archive falls back to its own second key, never to `a`: {keys:?}"
         );
     }
 }

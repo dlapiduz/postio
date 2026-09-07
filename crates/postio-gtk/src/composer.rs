@@ -4131,7 +4131,11 @@ mod tests {
         assert_eq!(
             keys_of(&Keymap::resolve(&Default::default())),
             vec![
-                Some("ctrl+Return".to_string()),
+                // Send's primary moved to `mod+shift+d` when the second
+                // keyboard layer landed; `mod+Return` is its alternate now.
+                // A hint shows the *primary*, which is what a person is
+                // being taught.
+                Some("ctrl+shift+d".to_string()),
                 Some("ctrl+shift+Return".to_string()),
                 Some("ctrl+s".to_string()),
             ],
@@ -4162,24 +4166,33 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_left_shows_no_hint_rather_than_a_blank_one() {
-        // Giving `save_draft` the key `send` has by default leaves one of the
-        // two without a binding -- an explicit `[keys]` entry outranks a
-        // default, so it is `send` that loses it. It must drop its hint
-        // rather than render an empty one, which is the rule
-        // `reader::actions` already follows. All three of these live in the
-        // composer context, so this really is a collision rather than two
-        // surfaces harmlessly sharing a key.
+        // Taking a command's only key leaves it with nothing to show, and it
+        // must drop the hint rather than render an empty one — the rule
+        // `reader::actions` follows too.
+        //
+        // It has to be `save_draft` that loses it, and that is the point of
+        // the fixture: since the second keyboard layer landed, most verbs
+        // carry an alternate and *cannot* be left with nothing. Send keeps
+        // `mod+shift+d` when `mod+Return` is taken from it, which is the
+        // honest answer and no longer this case. `save_draft` has one key and
+        // no alternate, so it is the one that can still be emptied.
+        //
+        // An explicit `[keys]` entry outranks a default, so `send` wins the
+        // contested key and `save_draft` is what loses it.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("save_draft".to_string(), "mod+Return".to_string());
+            .insert("send".to_string(), "mod+s".to_string());
 
         let keys = keys_of(&Keymap::resolve(&overrides));
         assert_eq!(
-            keys[2],
-            Some("ctrl+Return".to_string()),
+            keys[0],
+            Some("ctrl+s".to_string()),
             "the override wins the key"
         );
-        assert_eq!(keys[0], None, "and Send shows no hint at all: {keys:?}");
+        assert_eq!(
+            keys[2], None,
+            "and Save draft shows no hint at all: {keys:?}"
+        );
     }
 }

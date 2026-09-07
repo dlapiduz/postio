@@ -1479,10 +1479,15 @@ mod tests {
 
     #[test]
     fn a_command_that_lost_its_key_drops_its_hint_rather_than_naming_the_wrong_one() {
-        // Taking `a` for something else in the same context leaves Archive
-        // with no key at all — reachable only from the palette. A hint that
-        // kept printing "a archive" here would be teaching a key that does
-        // something else.
+        // Taking `a` for something else in the same context must never leave
+        // the row printing "a archive": that would teach a key which now does
+        // something else, and it is the whole point of this case.
+        //
+        // Since the second keyboard layer landed, Archive carries
+        // `mod+shift+a` as well, which becomes its primary once `a` is gone.
+        // The hint follows the key rather than disappearing — it still names
+        // something that really archives. `postio_ui::row::hints` is where
+        // that is decided, so both frontends say the same thing.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
@@ -1490,8 +1495,11 @@ mod tests {
         let hints = hints_for(&Keymap::resolve(&overrides));
         assert_eq!(
             hints,
-            vec![("e".to_string(), "reply")],
-            "archive lost its key to forward, so its hint disappears rather than lying"
+            vec![
+                ("e".to_string(), "reply"),
+                ("ctrl+shift+a".to_string(), "archive"),
+            ],
+            "archive lost `a` to forward and must not go on naming it"
         );
     }
 
