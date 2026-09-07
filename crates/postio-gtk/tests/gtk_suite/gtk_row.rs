@@ -726,3 +726,42 @@ fn render(window: &gtk::Window) -> Option<Vec<u8>> {
             .to_vec(),
     )
 }
+
+/// Building rows must not resolve a keymap.
+///
+/// GTK builds a `MessageRowView` per row it realises, and every row wants a
+/// correct key hint before anything hands it the live keymap. Resolving the
+/// registry's defaults to get one is quadratic in the number of commands, and
+/// paying it per row is what made switching folders spend about a second
+/// rebuilding the list (#1216). Counted rather than timed: the count is the
+/// same on every machine.
+pub fn building_rows_does_not_resolve_a_keymap() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    // One up front, so a lazily-built cache is already warm and the count
+    // below is measuring rows rather than the first of anything.
+    let _ = MessageRowView::new();
+    let before = postio_core::config::resolutions();
+    let rows: Vec<_> = (0..200).map(|_| MessageRowView::new()).collect();
+    assert_eq!(rows.len(), 200);
+    assert_eq!(
+        postio_core::config::resolutions(),
+        before,
+        "building 200 rows resolved {} keymaps",
+        postio_core::config::resolutions() - before
+    );
+
+    // The hints still have to be right, or the cheap answer is the wrong one.
+    let view = MessageRowView::new();
+    view.set_row(Some(canvas_row()));
+    assert_eq!(
+        view.hints(),
+        postio_gtk::row::hints(postio_core::Keymap::defaults())
+    );
+}
