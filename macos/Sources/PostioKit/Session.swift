@@ -425,6 +425,21 @@ public final class PostioSession {
     /// Always allow every address at this domain.
     public func allowDomain(_ domain: String) { inner.allowDomain(domain: domain) }
 
+    /// A draft prefilled from a `mailto:` link.
+    ///
+    /// The parsing is `Mailto`'s — RFC 6068 is the platform's URL machinery —
+    /// and what a mail client does with the result is the boundary's, so both
+    /// frontends behave alike.
+    public func mailtoDraft(_ mailto: Mailto) -> DraftFfi? {
+        inner.mailtoDraft(
+            to: mailto.to,
+            cc: mailto.cc,
+            bcc: mailto.bcc,
+            subject: mailto.subject,
+            body: mailto.body
+        )
+    }
+
     /// Every standing permission to load remote images.
     ///
     /// The Privacy pane's model. Blocked-until-allowed only means something

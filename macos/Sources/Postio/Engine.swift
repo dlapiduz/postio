@@ -596,6 +596,18 @@ final class Engine {
         compose.open(draft)
     }
 
+    /// Open a composer on a `mailto:` link. `false` when there is nothing to
+    /// open one from, which the caller says out loud rather than swallowing.
+    ///
+    /// The draft is the boundary's — recipients, subject and body assembled
+    /// there, so GTK gets the same behaviour from the same code — and only
+    /// the window is this frontend's.
+    func write(mailto: Mailto) -> Bool {
+        guard let session, let draft = session.mailtoDraft(mailto) else { return false }
+        compose.open(draft)
+        return true
+    }
+
     /// A reply to the message the cursor is on.
     ///
     /// The cursor, not the selection: `PRODUCT.md` §9 keeps them apart, and

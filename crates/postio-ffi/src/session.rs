@@ -566,6 +566,23 @@ impl Session {
         self.new_draft()
     }
 
+    /// A draft prefilled from a `mailto:` link.
+    ///
+    /// The recipients arrive already parsed — RFC 6068 is the platform's URL
+    /// machinery to unpick, and each frontend has one. What is *not* the
+    /// platform's is what a mail client does with the result, which is this.
+    #[uniffi::method(name = "mailtoDraft")]
+    pub fn mailto_draft_ffi(
+        &self,
+        to: Vec<String>,
+        cc: Vec<String>,
+        bcc: Vec<String>,
+        subject: Option<String>,
+        body: Option<String>,
+    ) -> Option<crate::DraftFfi> {
+        self.mailto_draft(to, cc, bcc, subject, body)
+    }
+
     /// A reply to `message` — to its sender, or to everyone on it.
     #[uniffi::method(name = "replyDraft")]
     pub fn reply_draft_ffi(&self, message: i64, all: bool) -> Option<crate::DraftFfi> {
@@ -1932,6 +1949,38 @@ impl Session {
             account.address.to_string(),
             self.drafts_path(),
         ))
+    }
+
+    /// A draft from a link. See [`mailto_draft_ffi`](Self::mailto_draft_ffi).
+    ///
+    /// The body **is** honoured, and it is worth saying why that is safe: it
+    /// goes into a composer the user is looking at, unsent, with the send button
+    /// under their hand. A `mailto:` that arrives with a body prefilled is
+    /// RFC 6068's own design, and refusing it would break every "email us
+    /// about this" link that carries a reference number.
+    ///
+    /// Nothing is sent, nothing is fetched, and no header a link cannot
+    /// legitimately set is set from here.
+    pub fn mailto_draft(
+        &self,
+        to: Vec<String>,
+        cc: Vec<String>,
+        bcc: Vec<String>,
+        subject: Option<String>,
+        body: Option<String>,
+    ) -> Option<crate::DraftFfi> {
+        let mut draft = self.new_draft()?;
+        let join = |addresses: Vec<String>| addresses.join(", ");
+        draft.to = join(to);
+        draft.cc = join(cc);
+        draft.bcc = join(bcc);
+        if let Some(subject) = subject {
+            draft.subject = subject;
+        }
+        if let Some(body) = body {
+            draft.body = body;
+        }
+        Some(draft)
     }
 
     /// A reply. See [`reply_draft_ffi`](Self::reply_draft_ffi).

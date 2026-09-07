@@ -700,3 +700,75 @@ fn switching_the_other_way_keeps_the_words_too() {
         body.html
     );
 }
+
+// --- a draft from a `mailto:` link (#1156 follow-on) ------------------------
+
+/// A session with an account to write from.
+///
+/// `a_message_to_answer` already builds one; this drops the message, because
+/// a `mailto:` answers nothing.
+fn a_session_with_an_account() -> (std::sync::Arc<Session>, postio_storage::Database) {
+    let (session, database, _) = a_message_to_answer();
+    (session, database)
+}
+
+#[test]
+fn a_mailto_link_becomes_a_draft_addressed_the_way_it_asked() {
+    // RFC 6068's fields, assembled here rather than in either frontend, so
+    // clicking the same link on both platforms opens the same draft.
+    let (session, _) = a_session_with_an_account();
+
+    let draft = session
+        .mailto_draft(
+            vec!["ada@example.com".to_owned(), "grace@example.net".to_owned()],
+            vec!["alan@example.org".to_owned()],
+            vec![],
+            Some("About invoice 4021".to_owned()),
+            Some("Reference: 4021".to_owned()),
+        )
+        .expect("an account to write from");
+
+    assert_eq!(draft.to, "ada@example.com, grace@example.net");
+    assert_eq!(draft.cc, "alan@example.org");
+    assert_eq!(draft.bcc, "");
+    assert_eq!(draft.subject, "About invoice 4021");
+    assert_eq!(
+        draft.body, "Reference: 4021",
+        "a link may prefill a body — it lands in a composer the user is \
+         looking at, unsent, and refusing it would break every \
+         `email us about this` link that carries a reference"
+    );
+}
+
+#[test]
+fn a_bare_mailto_opens_an_empty_draft_rather_than_refusing() {
+    // `mailto:` with nothing after it is a valid link and means "write a new
+    // message". It must not read as a failure.
+    let (session, _) = a_session_with_an_account();
+
+    let draft = session
+        .mailto_draft(vec![], vec![], vec![], None, None)
+        .expect("an empty link is still a draft");
+
+    assert_eq!(draft.to, "");
+    assert_eq!(draft.subject, "");
+}
+
+#[test]
+fn a_mailto_with_no_account_to_write_from_answers_none() {
+    // A fresh install. The frontend says so out loud rather than opening a
+    // composer that cannot send.
+    let session = Session::open(SessionOptions::in_memory()).expect("a session");
+
+    assert!(
+        session
+            .mailto_draft(
+                vec!["ada@example.com".to_owned()],
+                vec![],
+                vec![],
+                None,
+                None
+            )
+            .is_none()
+    );
+}

@@ -26,6 +26,11 @@ struct PostioApp: App {
                 .background(WindowConfigurator())
                 // `[ui].theme`, not the system's, when the file says so.
                 .preferredColorScheme(engine.colorScheme)
+                // The delegate is created before the engine has a session, so
+                // it is handed a closure rather than the engine: a `mailto:`
+                // that arrives during launch finds whatever is true when it
+                // is clicked, not what was true when the delegate was built.
+                .onAppear { urls.write = { engine.write(mailto: $0) } }
         }
         .onChange(of: phase) { _, now in
             // Orderly rather than at process exit: the store is SQLCipher, and
