@@ -33,6 +33,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import prereq  # noqa: E402
+
+# Linux-only, declared rather than skipped (#1151): this stands down
+# with a sentence and exit 77, which `run-self-tests.sh` counts and
+# names, so the macOS run does not quietly claim to have covered it.
+prereq.only_on("linux", reason=(
+    "install-local.sh installs a .desktop file and hicolor icons into XDG directories, which is a freedesktop layout with no macOS meaning"
+))
 
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "install-local.sh"
