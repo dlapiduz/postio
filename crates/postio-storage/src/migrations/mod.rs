@@ -85,7 +85,7 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.last().map_or(0, |migration| migration.version)
 }
 
-static MIGRATIONS: [Migration; 14] = [
+static MIGRATIONS: [Migration; 15] = [
     Migration {
         version: 1,
         name: "initial_schema",
@@ -155,6 +155,11 @@ static MIGRATIONS: [Migration; 14] = [
         version: 14,
         name: "snoozed_due_index_is_partial",
         sql: include_str!("0014_snoozed_due_index_is_partial.sql"),
+    },
+    Migration {
+        version: 15,
+        name: "draft_is_rich",
+        sql: include_str!("0015_draft_is_rich.sql"),
     },
 ];
 

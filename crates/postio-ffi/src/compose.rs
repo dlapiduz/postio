@@ -76,9 +76,27 @@ pub struct DraftFfi {
     pub bcc: String,
     /// The subject line.
     pub subject: String,
-    /// The body, as text. Rich composition keeps the same text and adds
-    /// marks; see [`rich`](Self::rich).
+    /// The body, as text.
+    ///
+    /// For a rich draft this is the `text/plain` alternative, derived from
+    /// the document rather than typed: **rich mail sends `text/html` and a
+    /// `text/plain` part always**, and a frontend that had to remember to
+    /// build the second one would eventually send only the first. That is
+    /// invisible to the sender and it is the whole message to a recipient
+    /// reading in a terminal or with a screen reader.
     pub body: String,
+    /// The body as marked-up text, when this draft is rich.
+    ///
+    /// Canonical, not "whatever the editing surface last had in its DOM":
+    /// what crosses inbound is a working copy, and what is kept is what
+    /// `postio_body::parse` makes of it (ADR 0004 Q3). So a `<div>` from a
+    /// browser paste comes back as a paragraph and a `<script>` cannot be
+    /// stored at all -- the type has no variant that could hold one.
+    ///
+    /// `None` for a plain draft. Not thrown away when the switch is turned
+    /// off, though: the switch is on the document, and turning it back on
+    /// should not have cost the marks.
+    pub body_html: Option<String>,
     /// Whether this is being written as rich text.
     ///
     /// It decides what leaves: `text/html` plus a `text/plain` fallback
@@ -131,7 +149,11 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         bcc: render(&draft.bcc),
         subject: draft.subject.clone(),
         body: draft.body.text.clone().unwrap_or_default(),
-        rich: draft.body.html.is_some(),
+        body_html: draft.body.html.clone(),
+        // The stored flag, not `html.is_some()` (#1271): a plain draft that
+        // is keeping its marks in case the switch goes back on has an HTML
+        // part and is not rich.
+        rich: draft.rich,
         in_reply_to: draft.in_reply_to.map(|id| id.get()),
         path,
         attachments: draft
@@ -163,14 +185,49 @@ pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     draft.cc = parse(&edited.cc);
     draft.bcc = parse(&edited.bcc);
     draft.subject = edited.subject.clone();
-    draft.body = MessageBody {
-        text: Some(edited.body.clone()),
-        // Rich composition is its own surface (#1271); until it exists the
-        // HTML part is not invented here, and `rich` says what *will* be
-        // sent rather than what has been typed.
-        html: draft.body.html.clone(),
-    };
+    draft.body = body_of(edited);
+    draft.rich = edited.rich;
     draft
+}
+
+/// The body a draft is stored with, from what the composer sent over.
+///
+/// # Rich is not "keep the HTML the editor had"
+///
+/// The surface hands over its DOM's `innerHTML`, which is a working copy and
+/// never the record. It is narrowed to the [`Document`] dialect here, and the
+/// document is what is rendered back out -- so the stored HTML is always
+/// something `postio_body` can hold, whatever the editor or the paste
+/// produced, and the round trip is idempotent rather than accumulating
+/// whatever a web view felt like emitting.
+///
+/// # The plain alternative is derived, never trusted
+///
+/// `text` for a rich draft comes from the same document, flowed. It is not
+/// taken from `edited.body`, because that field is what a *plain* composer
+/// types into and a rich one has no reason to keep current -- and a frontend
+/// that forgot would send an empty `text/plain` to everyone reading without
+/// HTML. Deriving it means the two alternatives cannot disagree.
+///
+/// [`Document`]: postio_body::Document
+fn body_of(edited: &DraftFfi) -> MessageBody {
+    if !edited.rich {
+        return MessageBody {
+            text: Some(edited.body.clone()),
+            // Kept, not cleared. The switch is on the document (#1271):
+            // turning it off changes what will be *built*, and throwing the
+            // marks away would make turning it back on a loss nobody warned
+            // about.
+            html: edited.body_html.clone(),
+        };
+    }
+
+    let document = postio_body::parse(edited.body_html.as_deref().unwrap_or_default());
+    let (text, html) = postio_body::render(&document);
+    MessageBody {
+        text: Some(text),
+        html: Some(html),
+    }
 }
 
 /// `Ada Norwood <ada@example.com>, bo@example.com`.
@@ -202,4 +259,25 @@ pub enum ComposeError {
         /// What went wrong.
         message: String,
     },
+}
+
+/// What a paste became, and what it cost.
+///
+/// Both halves of the acceptance line in one answer: the markup narrowed to
+/// the dialect, and the sentence saying what the dialect could not hold. The
+/// sentence is `postio_body::Lost::summary`'s, so the two composers say the
+/// same thing about the same paste.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PastedFfi {
+    /// The paste as the dialect holds it, ready to put in the document.
+    pub html: String,
+    /// The same content as plain text, for the `text/plain` alternative and
+    /// for a composer that is not in rich mode.
+    pub text: String,
+    /// What was lost, as one sentence, or `None` when nothing was.
+    ///
+    /// `None` rather than an empty string, and silence is the right answer:
+    /// a composer that announced every paste would train people to ignore
+    /// the one that mattered.
+    pub dropped: Option<String>,
 }
