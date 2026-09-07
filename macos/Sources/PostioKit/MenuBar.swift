@@ -114,6 +114,20 @@ public enum MenuBar {
         // itself. Naming it is what makes `NSApp.windowsMenu` work.
         let windowItem = NSMenuItem()
         let windows = NSMenu(title: "Window")
+        // **Close comes first, and ⌘W only works because it is here.** A
+        // window closes on that chord through a menu item and nowhere else,
+        // exactly as ⌘V pastes through one — so replacing SwiftUI's bar
+        // (#1262) took both away together, and neither is recoverable by any
+        // amount of correct work elsewhere.
+        //
+        // Convention puts Close under File; this bar's File menu is the
+        // registry's, and mixing an AppKit window verb into it would make the
+        // registry's own list a half-truth. Window is where the other two
+        // window verbs already are, and is where it can sit beside them
+        // without either menu lying about what it owns.
+        windows.addItem(
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windows.addItem(.separator())
         windows.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

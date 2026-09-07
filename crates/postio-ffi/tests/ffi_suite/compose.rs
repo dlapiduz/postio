@@ -772,3 +772,94 @@ fn a_mailto_with_no_account_to_write_from_answers_none() {
             .is_none()
     );
 }
+
+// --- replying to HTML-only mail (user report) -------------------------------
+
+/// A message whose body is HTML and nothing else — the ordinary shape of most
+/// real mail, and the one a reply used to lose entirely.
+fn an_html_only_message() -> (std::sync::Arc<Session>, postio_storage::Database, i64) {
+    let database = test_support::memory();
+    let message = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let mut message = Message::new(account.id, inbox, Utc::now());
+        message.subject = Some("The gate".to_owned());
+        message.from = vec![EmailAddress::new(Some("Ada Norwood"), "ada@example.com")];
+        message.to = vec![account.address.clone()];
+        let repository = MessageRepository::new(&connection);
+        let id = repository.create(&mut message).expect("a message");
+        repository
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    // No `text` at all. `postio_model::mime` fills that field
+                    // from a `text/plain` part and never invents one.
+                    text: None,
+                    html: Some("<p>The gate closes at six.</p><p>Bring the key.</p>".to_owned()),
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::message::BodyState::Full,
+            )
+            .expect("the body is stored");
+        id.get()
+    };
+
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
+    let session = Session::open(
+        SessionOptions::in_memory_with(database.clone()).with_blobs_for_test(blobs, scratch),
+    )
+    .expect("a session");
+    (session, database, message)
+}
+
+#[test]
+fn replying_to_html_only_mail_quotes_what_it_is_answering() {
+    // The report: "reply doesn't quote a message correctly". It quoted the
+    // attribution line and nothing else, because `plain_quote` reads
+    // `body.text` and an HTML-only message has none — which is most mail.
+    let (session, _database, message) = an_html_only_message();
+
+    let draft = session.reply_draft(message, false).expect("a reply");
+
+    assert!(
+        draft.body.contains("Ada Norwood wrote:"),
+        "the attribution is still there: {:?}",
+        draft.body
+    );
+    assert!(
+        draft.body.contains("> The gate closes at six."),
+        "the message being answered has to be in the quote: {:?}",
+        draft.body
+    );
+    assert!(
+        draft.body.contains("> Bring the key."),
+        "every line of it, not just the first: {:?}",
+        draft.body
+    );
+    assert!(
+        !draft.body.contains('<'),
+        "quoted as text, not as markup: {:?}",
+        draft.body
+    );
+}
+
+#[test]
+fn a_plain_text_message_is_still_quoted_from_its_own_text() {
+    // The rendering is a *fallback*. A message that has real plain text must
+    // keep using it — it is what the sender wrote, and a round trip through
+    // HTML would not be.
+    let (session, _database, message) = a_message_to_answer();
+
+    let draft = session.reply_draft(message, false).expect("a reply");
+
+    assert!(
+        draft.body.contains("> The gate closes at six."),
+        "{:?}",
+        draft.body
+    );
+}

@@ -2028,6 +2028,26 @@ impl Session {
         {
             source.body = body;
         }
+        // An HTML-only message has no `text` at all: `postio_model::mime`
+        // fills that field from a `text/plain` part and never invents one,
+        // which is right for a parser and wrong for a quote. `plain_quote`
+        // then falls through to its `_` arm and produces the attribution
+        // line with **nothing under it** — a reply that silently loses the
+        // message it is answering, on the majority of real mail.
+        //
+        // Rendered here rather than in `postio-model`, which cannot depend
+        // on `postio-body` (see that crate's `outgoing` docs) — this is the
+        // nearest layer that can, and it is the one that already assembles
+        // the draft.
+        if source.body.text.as_deref().is_none_or(str::is_empty)
+            && let Some(html) = source.body.html.as_deref()
+            && !html.is_empty()
+        {
+            let rendered = postio_body::render(&postio_body::parse(html)).0;
+            if !rendered.trim().is_empty() {
+                source.body.text = Some(rendered);
+            }
+        }
         let account = postio_storage::repository::AccountRepository::new(&connection)
             .get(source.account_id)
             .ok()??;

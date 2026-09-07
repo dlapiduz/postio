@@ -175,3 +175,38 @@ import Testing
         }
     }
 }
+
+/// ⌘W closes a window, which needs a menu item like everything else.
+///
+/// The same shape as the missing Paste (#1298): on this platform a window
+/// closes on that chord *through a menu item* and nowhere else, so replacing
+/// SwiftUI's bar took Close away with Edit, and the Settings window could not
+/// be closed from the keyboard at all. Reported from real use, and visible in
+/// this session's own transcript — a ⌘W sent to the Settings window did
+/// nothing and it was not noticed at the time.
+@MainActor
+@Suite(.serialized) struct CloseWindowTests {
+    private var hasWindowServer: Bool { NSScreen.main != nil }
+    private var isCI: Bool { ProcessInfo.processInfo.environment["CI"] != nil }
+
+    @Test func theMountedBarCanCloseAWindow() throws {
+        try #require(
+            windowServerVerdict(isCI: isCI, hasWindowServer: hasWindowServer) != .fail,
+            "CI must have a window server; a skip here is indistinguishable from a pass"
+        )
+        try #require(hasWindowServer, "no window server: skipping, and saying so")
+
+        _ = NSApplication.shared
+        MenuBar.install(bindings: { _ in [] }, available: { _ in true }, run: { _ in })
+
+        let items = NSApp.mainMenu?.items.compactMap(\.submenu).flatMap(\.items) ?? []
+        let close = try #require(
+            items.first { $0.title == "Close" },
+            "no Close item anywhere on the bar, so ⌘W closes nothing"
+        )
+        #expect(close.keyEquivalent == "w")
+        #expect(close.keyEquivalentModifierMask == .command)
+        #expect(close.action == #selector(NSWindow.performClose(_:)))
+        #expect(close.target == nil, "Close goes down the responder chain to the key window")
+    }
+}
