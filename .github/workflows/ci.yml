@@ -237,6 +237,18 @@ jobs:
           echo "tooling self-tests: $answer"
           printf '%s\n' "$files" | sed 's/^/  changed: /'
 
+      # `test-check-dependency-policy.py`'s two real cases run `cargo-deny`,
+      # and until #1290 they skipped here on every run since they were
+      # written: the tool exists only inside the `supply-chain` job's musl
+      # container, so the job that runs the self-tests had never had it. A
+      # prebuilt binary rather than `cargo install`, which would compile it
+      # from source on a job that compiles none of the workspace.
+      - name: Install cargo-deny, which two self-tests exercise
+        if: steps.tooling.outputs.run == 'yes'
+        uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+        with:
+          tool: cargo-deny
+
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
         run: |
@@ -695,6 +707,14 @@ jobs:
             ~/.cargo/git/db
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # The same prerequisite the Linux job installs, for the same two
+      # cases (#1290). It has to be on *both* runners or the rule below
+      # turns whichever lacks it red.
+      - name: Install cargo-deny, which two self-tests exercise
+        uses: taiki-e/install-action@84f5ac3124727fb3d284d4d22ee9ab3654fd09a6 # v2.87.7
+        with:
+          tool: cargo-deny
 
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set

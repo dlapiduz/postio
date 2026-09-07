@@ -9,8 +9,14 @@ Each case builds a tiny sandbox workspace, breaks one thing, and asserts the
 check notices. The licence case reconstructs #639: a crate that hard-codes a
 licence outside the allow-list instead of inheriting the workspace's.
 
-cargo-deny is not in `mise.toml`, so the cases that need it skip when it is
-absent rather than failing this test on a machine that made that choice.
+Two of the cases run `cargo-deny` itself. It is not in `mise.toml`, so on a
+laptop that made that choice they stand down and say so -- and **under CI they
+do not**, because a runner without it is a broken runner and a skip nobody can
+tell from a pass is not a test (`scripts/lib/prereq.py`). That is the whole of
+#1290: the guard was `if not have_cargo_deny(): return True`, which meant the
+only two cases that exercise the check had never once run in CI on either
+platform, in a job that was green throughout. `ci.yml` installs the tool in
+both jobs that run the self-tests.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import prereq  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECK = ROOT / "scripts" / "checks" / "check-dependency-policy.py"
@@ -116,8 +123,7 @@ def case_missing_deny_toml() -> bool:
 
 def case_licence_outside_the_allow_list() -> bool:
     """#639 itself: a crate hard-coding a licence the policy does not allow."""
-    if not have_cargo_deny():
-        print("  SKIP: cargo-deny is not installed")
+    if not prereq.available("cargo-deny", present=have_cargo_deny()):
         return True
     with tempfile.TemporaryDirectory() as tmp:
         root = sandbox(Path(tmp), DRIFTED_CRATE)
@@ -134,8 +140,7 @@ def case_licence_outside_the_allow_list() -> bool:
 
 def case_clean_tree_passes() -> bool:
     """The inheriting crate is what every other Postio crate looks like."""
-    if not have_cargo_deny():
-        print("  SKIP: cargo-deny is not installed")
+    if not prereq.available("cargo-deny", present=have_cargo_deny()):
         return True
     with tempfile.TemporaryDirectory() as tmp:
         root = sandbox(Path(tmp), INHERITING_CRATE)
