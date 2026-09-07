@@ -58,6 +58,7 @@ struct PostioApp: App {
                 store: settings,
                 accounts: engine.accounts,
                 mailboxes: engine.mailboxes,
+                actions: engine.settingsActions,
                 session: engine.session
             )
                 .preferredColorScheme(engine.colorScheme)

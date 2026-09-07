@@ -26,6 +26,26 @@ public final class AccountActions {
     /// *Partial* state, which asks for a password rather than a retry.
     public private(set) var missingCredential = false
 
+    /// How far a re-index has got: messages done, and how many there are.
+    ///
+    /// A pass over five thousand messages takes long enough that a button
+    /// with no progress is indistinguishable from a button that does nothing.
+    public private(set) var progress: (done: UInt32, total: UInt32)?
+
+    /// What the button says while it works — `Re-indexing… 1,203 of 4,985`.
+    public var progressLabel: String? {
+        guard let progress, progress.total > 0 else { return nil }
+        return "\(Int(progress.done).formatted(.number)) of "
+            + "\(Int(progress.total).formatted(.number))"
+    }
+
+    /// A report from the boundary. Ignored unless a re-index is running, so
+    /// a late event cannot make an idle pane look busy.
+    public func reindexProgressed(done: UInt32, total: UInt32) {
+        guard running == .reindexing else { return }
+        progress = (done, total)
+    }
+
     public init() {}
 
     /// Whether anything is in flight.
@@ -99,15 +119,23 @@ public final class AccountActions {
         failed = complaint != nil
     }
 
+    /// Pretend a re-index started, so the reporting can be asserted without
+    /// a session and a store behind it.
+    #if DEBUG
+        func beginReindexForTesting() { begin(.reindexing) }
+    #endif
+
     private func begin(_ what: Running) {
         running = what
         outcome = nil
         failed = false
         missingCredential = false
+        progress = nil
     }
 
     private func finish(_ said: String, failed: Bool) {
         running = nil
+        progress = nil
         outcome = said
         self.failed = failed
     }

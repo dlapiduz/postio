@@ -179,6 +179,11 @@ final class Engine {
     /// The messages being written, and the windows they are waiting for.
     let compose = ComposeStore()
 
+    /// What the settings window's account actions are doing, held here
+    /// because their progress arrives as events and a window that owned them
+    /// would have to be open at the moment one landed.
+    let settingsActions = AccountActions()
+
     /// The conversation the reading pane is showing (#1263).
     ///
     /// Held by the engine rather than by the view so that an event can fill
@@ -398,6 +403,10 @@ final class Engine {
             controller.showCursor(on: row)
             cursorShowing = message
             openConversation(atRow: row)
+        case let .reindexProgress(_, done, total):
+            // The settings window asked for this, and it is the only thing
+            // that draws it.
+            settingsActions.reindexProgressed(done: done, total: total)
         case let .syncProgress(_, done, total):
             syncing = done < total
         case .connectionChanged:

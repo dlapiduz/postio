@@ -322,3 +322,68 @@ fn a_thread_row_names_the_people_in_the_conversation() {
     assert_eq!(row.thread_count, 3);
     session.shutdown();
 }
+
+#[test]
+fn re_indexing_reports_as_it_goes_rather_than_only_at_the_end() {
+    // A pass over five thousand messages takes long enough that a button
+    // with no progress is indistinguishable from a button that does nothing.
+    // The events have to arrive *while* it runs, which here means: by the
+    // time the call returns, several have been queued rather than one.
+    let database = test_support::memory();
+    let account = {
+        let connection = database.connection().expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let repository = MessageRepository::new(&connection);
+        for n in 0..40 {
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            message.subject = Some(format!("message {n}"));
+            let id = repository.create(&mut message).expect("a message");
+            repository
+                .set_body(
+                    id,
+                    &postio_storage::repository::StoredBody {
+                        text: Some(format!("the body of message {n}")),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::message::BodyState::Full,
+                )
+                .expect("a body");
+        }
+        account.id.get()
+    };
+
+    // The FTS tables a real store gets when it is opened. An in-memory one
+    // built by `test_support` has the schema and not the index.
+    postio_session::ensure_search_index(&database).expect("a search index");
+
+    let session =
+        Session::open(SessionOptions::in_memory_with(database)).expect("a session over the store");
+    // Whatever opening produced, so what is counted below is the re-index's.
+    while session.try_next_event().is_some() {}
+
+    assert_eq!(session.reindex_account(account), None, "no complaint");
+
+    let mut reports = Vec::new();
+    while let Some(event) = session.try_next_event() {
+        if let postio_ffi::UiEvent::ReindexProgress { done, total, .. } = event {
+            reports.push((done, total));
+        }
+    }
+
+    assert!(
+        !reports.is_empty(),
+        "nothing was reported at all, so the window has nothing to draw"
+    );
+    let (_, total) = reports[0];
+    assert!(
+        total > 0,
+        "a total of zero is a progress bar with no meaning"
+    );
+    assert!(
+        reports.iter().any(|(done, _)| *done > 0),
+        "every report said zero: {reports:?}"
+    );
+}

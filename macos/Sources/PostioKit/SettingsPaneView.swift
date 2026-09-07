@@ -41,7 +41,11 @@ public struct SettingsPaneView: View {
     /// The account being signed in again, if one is.
     @State private var reconnecting: Int64?
     /// Test, re-index and remove, and what the last one said.
-    @State private var actions = AccountActions()
+    ///
+    /// Owned by the application rather than by this view: a re-index reports
+    /// through the event stream, and a window that owned it would have to be
+    /// open at the moment each report landed.
+    private let actions: AccountActions
     /// What the display-name field currently holds.
     @State private var renamedTo = ""
 
@@ -49,11 +53,13 @@ public struct SettingsPaneView: View {
         store: SettingsStore,
         accounts: [AccountFfi] = [],
         mailboxes: [MailboxFfi] = [],
+        actions: AccountActions = AccountActions(),
         session: PostioSession? = nil
     ) {
         self.store = store
         self.accounts = accounts
         self.mailboxes = mailboxes
+        self.actions = actions
         self.session = session
     }
 
@@ -251,6 +257,13 @@ public struct SettingsPaneView: View {
         }
     }
 
+    /// What the re-index button says, including how far it has got.
+    private var reindexTitle: String {
+        guard actions.running == .reindexing else { return "Re-index store" }
+        guard let progress = actions.progressLabel else { return "Re-indexing…" }
+        return "Re-indexing… \(progress)"
+    }
+
     /// Sign in to `account` again, in the browser.
     ///
     /// The sheet, pre-filled and opened at the step that asks: an expired
@@ -348,7 +361,7 @@ public struct SettingsPaneView: View {
                 Button(actions.running == .testing ? "Testing…" : "Test connection") {
                     Task { await actions.test(account, through: session) }
                 }
-                Button(actions.running == .reindexing ? "Re-indexing…" : "Re-index store") {
+                Button(reindexTitle) {
                     Task { await actions.reindex(account, through: session) }
                 }
                 Button("Remove account…") { actions.askToRemove(account) }

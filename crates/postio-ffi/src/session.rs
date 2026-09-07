@@ -1573,16 +1573,28 @@ impl Session {
     /// Re-index an account. See [`reindex_account_ffi`](Self::reindex_account_ffi).
     ///
     /// Synchronous and bounded by the mail already on this machine: nothing
-    /// here reaches a server. The progress the shared function reports is
-    /// dropped for now — a window that draws it is #1284.
+    /// here reaches a server. It reports as it goes, because a pass over five
+    /// thousand messages takes long enough that a button with no progress is
+    /// indistinguishable from a button that does nothing (#1284).
     pub fn reindex_account(&self, account: i64) -> Option<String> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Some("There is no store open.".to_owned());
         };
+        let local = self.local.0.clone();
         match postio_session::reindex_account(
             &database,
             postio_model::ids::AccountId::new(account),
-            |_, _| {},
+            |done, total| {
+                // `try_send` on an unbounded channel: the only way it fails
+                // is a session that has already shut down, and a re-index
+                // that kept running to report to nobody would be worse than
+                // one that quietly finishes.
+                let _ = local.try_send(UiEvent::ReindexProgress {
+                    account,
+                    done,
+                    total,
+                });
+            },
         ) {
             Ok(_) => None,
             Err(error) => Some(format!("The index could not be rebuilt: {error}")),
@@ -3492,6 +3504,30 @@ impl Session {
             engine = self.events.next() => engine.map(UiEvent::from),
             local = self.local.1.recv() => local.ok(),
         }?;
+        self.recount_if_the_list_changed(&event);
+        Some(event)
+    }
+
+    /// The next event if one is already waiting; `None` rather than a wait.
+    ///
+    /// Test-only. `next_event_blocking` is the honest shape for a headless
+    /// consumer and the wrong one for a test that wants to drain what has
+    /// arrived *so far*: with the channel still open it blocks forever, and
+    /// a test asking for one report more than was emitted hangs the binary
+    /// rather than failing (which is how two of these were found — see
+    /// `docs/notes/2026-09-06-a-test-keyring-that-was-quietly-the-login-keychain.md`
+    /// for the same symptom from a different cause).
+    #[cfg(feature = "testing")]
+    pub fn try_next_event(&self) -> Option<UiEvent> {
+        // Both channels, the way `next_event` selects over both: the engine's
+        // and this boundary's own. A drain that read only the engine's would
+        // silently miss every event this side invents — `PageReady`,
+        // `ConversationReady`, `ReindexProgress` — which is most of what a
+        // test about this crate wants to see.
+        let event = match self.events.try_next() {
+            Some(engine) => UiEvent::from(engine),
+            None => self.local.1.try_recv().ok()?,
+        };
         self.recount_if_the_list_changed(&event);
         Some(event)
     }

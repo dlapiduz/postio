@@ -166,6 +166,21 @@ pub enum UiEvent {
         /// What it is doing now.
         state: ConnectionStateFfi,
     },
+    /// How far a re-index has got.
+    ///
+    /// Boundary-local, like `PageReady`: re-indexing is something a person
+    /// asked this window for, not something the engine does on its own. A
+    /// pass over five thousand messages takes long enough that a button with
+    /// no progress is indistinguishable from a button that does nothing
+    /// (#1284).
+    ReindexProgress {
+        /// The account being re-indexed.
+        account: i64,
+        /// Messages indexed so far.
+        done: u32,
+        /// Messages to index in total.
+        total: u32,
+    },
     /// How far a synchronisation has got.
     ///
     /// The only thing a first run has to show that something is happening: a

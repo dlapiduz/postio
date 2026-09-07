@@ -78,4 +78,34 @@ import Testing
 
         #expect(actions.outcome == nil)
     }
+
+    // -- what a long re-index says while it runs (#1284) -------------------
+
+    @Test func aReindexThatIsNotRunningIgnoresAReportThatArrivesLate() {
+        // Events arrive whenever they arrive. One landing after the pass has
+        // finished must not make an idle pane look busy.
+        let actions = AccountActions()
+        actions.reindexProgressed(done: 10, total: 100)
+
+        #expect(actions.progress == nil)
+        #expect(actions.progressLabel == nil)
+    }
+
+    @Test func theLabelReadsTheWayAPersonCounts() {
+        // Five-digit numbers are read wrong without separators, and this is
+        // the number that says whether to wait or go and make tea.
+        let actions = AccountActions()
+        actions.beginReindexForTesting()
+        actions.reindexProgressed(done: 1_203, total: 4_985)
+
+        #expect(actions.progressLabel == "1,203 of 4,985")
+    }
+
+    @Test func aTotalOfZeroDrawsNothingRatherThanZeroOfZero() {
+        let actions = AccountActions()
+        actions.beginReindexForTesting()
+        actions.reindexProgressed(done: 0, total: 0)
+
+        #expect(actions.progressLabel == nil)
+    }
 }
