@@ -70,7 +70,19 @@ fi
 # Takes `cargo test` syntax; the selectors used here mean the same to both.
 run_tests() {
     if [ "$POSTIO_TEST_RUNNER" = "nextest" ]; then
-        cargo nextest run "$@"
+        # `--no-tests=pass`, because nextest exits 4 when a run selects
+        # nothing and this gate reads a non-zero exit as a failure. A crate
+        # with no tests ran all of them: `postio-bench` is bench targets and
+        # nothing else, on purpose, and the first branch to touch it -- a
+        # `criterion` bump -- could not land (#1308).
+        #
+        # `cargo test` has never behaved that way, so without this the gate's
+        # answer depends on which runner happens to be installed, and the
+        # machine without the pinned one is the machine that passes. "No
+        # tests" and "tests failed" are different answers; only the second
+        # stops a landing, and the self-test asserts both directions on both
+        # runners.
+        cargo nextest run --no-tests=pass "$@"
     else
         cargo test "$@"
     fi
