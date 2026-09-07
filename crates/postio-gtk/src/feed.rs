@@ -226,8 +226,20 @@ impl PageSource for Source {
     }
 }
 
+/// How many pages of a mailbox the feed has asked the store for.
+///
+/// "Never load a whole mailbox into memory" is a product promise, and this is
+/// the number that keeps it honest: a folder switch should cost a screenful of
+/// rows and their neighbours, not a mailbox. Counted rather than timed, for the
+/// reason [`crate::list::emissions`] gives.
+pub fn fetches() -> u64 {
+    FETCHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+static FETCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl Inner {
     fn request(self: Rc<Self>, page: u32) {
+        FETCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.results.borrow().is_some() {
             self.request_hits(page);
             return;

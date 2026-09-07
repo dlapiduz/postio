@@ -143,7 +143,18 @@ mod row_imp {
         type Type = super::MessageRow;
     }
 
-    impl ObjectImpl for MessageRow {}
+    impl ObjectImpl for MessageRow {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: std::sync::OnceLock<Vec<glib::subclass::Signal>> =
+                std::sync::OnceLock::new();
+            SIGNALS.get_or_init(|| {
+                // What this row says has changed, while the row itself stayed
+                // where it is. A bound view re-reads and redraws; the model
+                // stays quiet. See `MessageRow::set_row`.
+                vec![glib::subclass::Signal::builder("changed").build()]
+            })
+        }
+    }
 }
 
 glib::wrapper! {
@@ -189,9 +200,39 @@ impl MessageRow {
     /// Replace the data in place, keeping the object's identity.
     ///
     /// This is what makes a flag change cheap: the same `GObject` stays where
-    /// it is, so nothing above has to rediscover which row the selection is on.
+    /// it is, so nothing above has to rediscover which row the selection is on
+    /// — and, since #1216, nothing above has to be told through the *model*
+    /// either. A row emits `changed` for itself, which a bound view answers by
+    /// redrawing one row. Saying it through `items_changed` instead is how
+    /// reading one message came to repaint the whole visible list: that signal
+    /// can only mean "these positions answer with different rows now", and
+    /// `GtkListView` answers it by rebuilding every widget in range.
+    ///
+    /// Quiet when nothing actually moved, so a page redelivered unchanged —
+    /// which a resync does constantly — costs no redraw at all.
     pub fn set_row(&self, row: Row) {
-        *self.imp().row.borrow_mut() = Some(row);
+        {
+            let mut held = self.imp().row.borrow_mut();
+            if held.as_ref() == Some(&row) {
+                return;
+            }
+            *held = Some(row);
+        }
+        self.emit_by_name::<()>("changed", &[]);
+    }
+
+    /// Call `on_change` whenever this row's contents are replaced.
+    ///
+    /// The handler id is the caller's to disconnect: a `GtkListItem` is
+    /// recycled across many rows, and a connection left behind would redraw a
+    /// widget for a message it is no longer showing.
+    pub fn connect_changed(&self, on_change: impl Fn(&Self) + 'static) -> glib::SignalHandlerId {
+        self.connect_local("changed", false, move |values| {
+            if let Some(row) = values.first().and_then(|value| value.get::<Self>().ok()) {
+                on_change(&row);
+            }
+            None
+        })
     }
 }
 
@@ -272,6 +313,20 @@ mod imp {
         }
     }
 }
+
+/// How many `items_changed` this process has emitted from a message list.
+///
+/// A diagnostic in the counting idiom `postio_storage::test_support::counting`
+/// uses for SQLite: a number that is the same on every machine, where the
+/// duration it causes is not. `GtkListView` answers each emission by
+/// re-examining the model and rebuilding the widgets it tracks, so what a
+/// navigation costs is roughly linear in this — which is why it is worth
+/// counting rather than timing (#1216).
+pub fn emissions() -> u64 {
+    EMISSIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static EMISSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 glib::wrapper! {
     /// A `GListModel` over a mailbox, windowed rather than loaded.
@@ -376,6 +431,7 @@ impl MessageList {
         *self.imp().source.borrow_mut() = Some(source);
         self.imp().window.borrow_mut().reset(total);
 
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, removed, total);
     }
 
@@ -409,8 +465,18 @@ impl MessageList {
             .window
             .borrow_mut()
             .deliver(generation, page, items);
+        // A page that came back as the same messages in the same order landed
+        // *inside* the rows that were already there, and each of those has
+        // already said so for itself. Announcing it again through the model
+        // would tell `GtkListView` that a page of positions answers with
+        // different rows now, and it would rebuild every widget in range —
+        // the whole visible list blinking because one message was read.
+        if delivered.reconciled {
+            return;
+        }
         if let Some(range) = delivered.changed {
             let span = range.end - range.start;
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.items_changed(range.start, span, span);
         }
     }
@@ -454,6 +520,7 @@ impl MessageList {
         // first ends that statement, and the borrow, before the signal fires.
         let change = self.imp().window.borrow_mut().set_total(total);
         if let Some((position, removed, added)) = change {
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.items_changed(position, removed, added);
         }
     }
@@ -476,6 +543,7 @@ impl MessageList {
         // is gone before `items_changed` can re-enter `item()`.
         let inserted = self.imp().window.borrow_mut().inserted_at_top(count);
         if inserted {
+            EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.items_changed(0, 0, count);
         }
     }
@@ -502,6 +570,7 @@ impl MessageList {
         let Some(position) = self.imp().window.borrow_mut().update(incoming) else {
             return false;
         };
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(position, 1, 1);
         true
     }
@@ -518,6 +587,7 @@ impl MessageList {
             return;
         }
         let total = self.imp().window.borrow_mut().invalidate();
+        EMISSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.items_changed(0, total, total);
     }
 

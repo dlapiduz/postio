@@ -149,6 +149,19 @@ pub struct Delivered {
     /// an evicted page is by definition one nothing is bound to any more, so
     /// nothing needs telling.
     pub evicted: Vec<u32>,
+    /// Every row landed on top of a row that was already resident, in the
+    /// same order and the same number: the same messages, with new contents.
+    ///
+    /// The distinction matters because it is the difference between "these
+    /// positions answer with different rows now" and "these rows say
+    /// something different now", and a toolkit list answers the first by
+    /// throwing away the widgets in range and building them again. Reading
+    /// one message refetches its page, and every row in that page comes back
+    /// identical but for one flag — so announcing it as a replacement makes
+    /// the whole visible list blink for a flag on one row. A row that can
+    /// announce its own change needs no such announcement, and `changed`
+    /// still carries the range for whoever cannot.
+    pub reconciled: bool,
 }
 
 /// The paging and generation bookkeeping behind a windowed message list.
@@ -350,13 +363,18 @@ impl<T: ListRow> ListWindow<T> {
                 stale: true,
                 changed: None,
                 evicted: Vec::new(),
+                reconciled: false,
             };
         }
         self.pending.remove(&page);
 
-        let existing: HashMap<MessageId, T> = self
-            .pages
-            .remove(&page)
+        let previous = self.pages.remove(&page);
+        // Taken before `existing` consumes them: whether the page came back
+        // as the same messages in the same order is a question about
+        // position, which a map keyed by id cannot answer.
+        let previous_ids: Vec<Option<MessageId>> =
+            previous.iter().flatten().map(|row: &T| row.id()).collect();
+        let existing: HashMap<MessageId, T> = previous
             .into_iter()
             .flatten()
             .filter_map(|row| Some((row.id()?, row)))
@@ -381,10 +399,17 @@ impl<T: ListRow> ListWindow<T> {
         let span = count.min(self.total.saturating_sub(start));
         let changed = (span > 0).then_some(start..start + span);
 
+        let reconciled = previous_ids.len() == self.pages[&page].len()
+            && previous_ids
+                .iter()
+                .zip(&self.pages[&page])
+                .all(|(before, now)| before.is_some() && *before == now.id());
+
         Delivered {
             stale: false,
             changed,
             evicted,
+            reconciled,
         }
     }
 
