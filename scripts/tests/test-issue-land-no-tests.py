@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import prereq  # noqa: E402  -- same
 
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
@@ -156,6 +157,19 @@ def case(name: str, condition: bool, detail: str) -> None:
 
 def main() -> int:
     for runner in ("nextest", "cargo"):
+        # `POSTIO_TEST_RUNNER=nextest` makes `issue-land.sh` call
+        # `cargo nextest` outright rather than falling open to `cargo test`,
+        # so without the tool the two cases below do not test the gate: they
+        # watch a landing fail on `no such command: nextest`. That reads as a
+        # pass for the second one, which asserts only that the landing
+        # stopped. Locally this stands down and says so; under CI it fails,
+        # because the runner is meant to have it -- `ci.yml` installs it in
+        # every job that runs the self-tests, for exactly this case.
+        if runner == "nextest" and not prereq.available(
+            "cargo-nextest", present=prereq.have("cargo-nextest")
+        ):
+            continue
+
         with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
             base = Path(directory)
             root, stub_dir = world(base, with_a_failing_test=False)
