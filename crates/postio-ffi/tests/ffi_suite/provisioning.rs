@@ -357,3 +357,81 @@ fn weighing_an_account_is_a_fixed_handful_of_statements_not_one_per_message() {
         counts.statements
     );
 }
+
+// --- the fourth route: a store already on this machine (#1278) --------------
+
+/// A maildir, as one arrives on somebody's disk.
+fn a_maildir() -> tempfile::TempDir {
+    let tree = tempfile::tempdir().expect("a temporary directory");
+    for subdir in ["cur", "new", "tmp"] {
+        std::fs::create_dir_all(tree.path().join(subdir)).expect("a maildir subdirectory");
+    }
+    std::fs::write(
+        tree.path().join("cur").join("1770000000.host:2,S"),
+        "Subject: already here\r\n\r\nbody\r\n",
+    )
+    .expect("a delivered message");
+    tree
+}
+
+#[test]
+fn a_directory_that_is_not_a_mail_store_is_refused_before_anything_is_written() {
+    let (session, database) = a_session();
+    let tree = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(tree.path().join("holiday.jpg"), "not mail").expect("a file");
+    let path = tree.path().display().to_string();
+
+    // The sheet asks first, while somebody is still looking at the field.
+    let complaint = session
+        .inspect_local_store(path.clone())
+        .expect("that is not a mail store");
+    assert!(
+        complaint.contains(&path),
+        "the complaint names the directory: {complaint}"
+    );
+
+    // And asking again at the end refuses rather than writing a row that
+    // points at nothing.
+    assert!(
+        session
+            .add_local_account("ada@example.com".to_owned(), path)
+            .is_some()
+    );
+    let connection = database.connection().expect("checkout");
+    assert!(
+        AccountRepository::new(&connection)
+            .list_enabled()
+            .expect("read")
+            .is_empty(),
+        "nothing was written"
+    );
+}
+
+#[test]
+fn a_maildir_becomes_an_account_with_no_credential_anywhere() {
+    let (session, database) = a_session();
+    let tree = a_maildir();
+    let path = tree.path().display().to_string();
+
+    assert_eq!(
+        session.inspect_local_store(path.clone()),
+        None,
+        "a maildir is a store Postio can open"
+    );
+    assert_eq!(
+        session.add_local_account("ada@example.com".to_owned(), path.clone()),
+        None,
+        "and adding it needs nothing else — no password, no server"
+    );
+
+    let connection = database.connection().expect("checkout");
+    let accounts = AccountRepository::new(&connection)
+        .list_enabled()
+        .expect("read");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(
+        accounts[0].backend,
+        postio_model::account::Backend::Maildir { root: path },
+        "the account is the directory"
+    );
+}

@@ -227,3 +227,76 @@ fn a_login_that_differs_from_the_address_is_what_both_servers_are_told() {
     assert_eq!(account.incoming.username, "ada@icloud.example");
     assert_eq!(account.outgoing.username, "ada@icloud.example");
 }
+
+// --- a local maildir (#1278) ------------------------------------------------
+
+#[test]
+fn a_local_account_is_one_write_and_no_credential() {
+    // A maildir account signs in to nothing. Writing an empty credential
+    // under the user's address would put a secret-shaped nothing in the
+    // keyring that every later "is this signed in?" has to interpret.
+    let database = test_support::memory();
+    let keyring = MemorySecretStore::new();
+
+    let provisioned = postio_session::provision::provision_local(&database, ADDRESS, "/srv/mail")
+        .expect("a local account needs nothing but a directory");
+
+    let Provisioned::Created(id) = provisioned else {
+        panic!("the first account is created, not already there");
+    };
+    let connection = database.connection().expect("checkout");
+    let account = AccountRepository::new(&connection)
+        .get(id)
+        .expect("read")
+        .expect("the account");
+    assert_eq!(
+        account.backend,
+        postio_model::account::Backend::Maildir {
+            root: "/srv/mail".to_owned()
+        }
+    );
+    assert!(
+        keyring.is_empty(),
+        "nothing was put in the keyring, because there is no credential"
+    );
+}
+
+#[test]
+fn adding_the_same_local_store_twice_changes_nothing() {
+    let database = test_support::memory();
+
+    let first =
+        postio_session::provision::provision_local(&database, ADDRESS, "/srv/mail").expect("first");
+    let again = postio_session::provision::provision_local(&database, ADDRESS, "/srv/other")
+        .expect("second");
+
+    let Provisioned::Created(id) = first else {
+        panic!("created");
+    };
+    assert!(
+        matches!(again, Provisioned::AlreadyProvisioned(found) if found == id),
+        "a second run reports the account that is there rather than moving it"
+    );
+}
+
+#[test]
+fn a_home_relative_path_is_stored_as_the_directory_it_names() {
+    // The row is read by whatever process opens the store next, and `~/mail`
+    // means whatever that process's home is. The account *is* the directory,
+    // so the directory is what gets written down.
+    let home = std::env::var("HOME").expect("a home directory");
+
+    assert_eq!(
+        postio_session::provision::absolute("~/mail"),
+        std::path::PathBuf::from(&home).join("mail")
+    );
+    assert_eq!(
+        postio_session::provision::absolute("/srv/mail"),
+        std::path::PathBuf::from("/srv/mail")
+    );
+    assert_eq!(
+        postio_session::provision::absolute("~ada/mail"),
+        std::path::PathBuf::from("~ada/mail"),
+        "another user's home is not Postio's to guess the layout of"
+    );
+}

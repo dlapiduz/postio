@@ -120,15 +120,32 @@ import Testing
         #expect(model.problem?.contains("browser") == true)
     }
 
-    @Test func aLocalStoreSaysTheSameThing() {
+    @Test func aLocalStoreOffersThreeFormatsAndOpensTheOneItCan() {
+        // The picker draws what the canvas draws. Refusing the two that are
+        // not built, by name, is what stops the sheet writing an account
+        // that then turns out to have no mail in it (#1278).
         let model = AddAccountModel()
         model.address = unknown
         model.next()
         model.route = .localStore
         model.next()
+        model.format = .mbox
 
         #expect(model.finish(through: nil) == false)
-        #expect(model.problem?.contains("not built here yet") == true)
+        #expect(model.problem?.contains("maildir") == true)
+        #expect(model.problem?.contains("mbox") == true)
+    }
+
+    @Test func nothingIsSaidAboutAStorePathOnARouteThatHasNoStore() {
+        // `storeProblem` runs as somebody types, on every route, and step 3
+        // asks for a path on all of them — but only the local route is
+        // pointing Postio at mail that is already there.
+        let model = AddAccountModel()
+        model.address = unknown
+        model.next()
+        model.route = .imap
+
+        #expect(model.storeProblem(through: nil) == nil)
     }
 
     // -- signing in through the browser (#1276) ---------------------------

@@ -241,8 +241,18 @@ public struct AddAccountSheet: View {
     private var store: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space4) {
             labelled("Store path") {
-                TextField("~/mail", text: $model.storePath)
-                    .textFieldStyle(.roundedBorder)
+                VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                    TextField("~/mail", text: $model.storePath)
+                        .textFieldStyle(.roundedBorder)
+                    // Said where the field is, as it is typed: a directory
+                    // picked by mistake must not become an account that looks
+                    // empty (#1278).
+                    if let problem = model.storeProblem(through: session) {
+                        Text(problem)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             labelled("Format") {
                 Picker("", selection: $model.format) {

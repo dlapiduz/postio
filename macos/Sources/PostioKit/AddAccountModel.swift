@@ -94,6 +94,18 @@ public final class AddAccountModel: Identifiable {
         }
     }
 
+    /// What step 3 says about the directory in the field: `nil` while it is
+    /// a store Postio can open, and the reason when it is not.
+    ///
+    /// Read as the person types rather than on Continue. A directory picked
+    /// by mistake — a Downloads folder, a mailbox in some other format — must
+    /// say so where the field is, not after an account has been made that
+    /// looks empty.
+    public func storeProblem(through session: PostioSession?) -> String? {
+        guard route == .localStore, !storePath.isEmpty else { return nil }
+        return session?.inspectLocalStore(storePath)
+    }
+
     /// The estimate under the sync window: `about 4,000 messages · 1.2 GB`.
     ///
     /// Deliberately vague and deliberately present. Nobody can know before
@@ -153,9 +165,20 @@ public final class AddAccountModel: Identifiable {
             problem = "Signing in happens in your browser — press Sign in."
             return false
         case .localStore:
-            problem =
-                "Opening a store that already exists is not built here yet (#1278)."
-            return false
+            // The picker offers three formats because the canvas does. Only
+            // one of them opens today, and saying which beats an account
+            // that turns out to be empty.
+            guard format == .maildir else {
+                problem =
+                    "Postio opens maildir stores. \(format.rawValue) is not built yet."
+                return false
+            }
+            guard let session else { return false }
+            if let complaint = session.addLocalAccount(address: address, path: storePath) {
+                problem = complaint
+                return false
+            }
+            return true
         }
     }
 

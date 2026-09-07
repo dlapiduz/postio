@@ -731,6 +731,24 @@ impl Session {
         )
     }
 
+    /// Add an account that is a directory on this machine. `None` when it
+    /// was added, a sentence when it was not.
+    #[uniffi::method(name = "addLocalAccount")]
+    pub fn add_local_account_ffi(&self, address: String, path: String) -> Option<String> {
+        self.add_local_account(address, path)
+    }
+
+    /// Whether `path` is a mail store Postio can open: `None` when it is, a
+    /// sentence naming the directory when it is not.
+    ///
+    /// Asked while somebody is still looking at the field, so the sheet can
+    /// say what is wrong with the directory before it is written down —
+    /// rather than adding an account that turns out to have no mail in it.
+    #[uniffi::method(name = "inspectLocalStore")]
+    pub fn inspect_local_store_ffi(&self, path: String) -> Option<String> {
+        self.inspect_local_store(path)
+    }
+
     /// Sign in to `address` through the system browser, and add the account.
     ///
     /// Returns when the flow is over: `None` on success, a sentence on
@@ -1561,6 +1579,34 @@ impl Session {
             Ok(_) => None,
             Err(error) => Some(error.to_string()),
         }
+    }
+
+    /// Add a local account. See
+    /// [`add_local_account_ffi`](Self::add_local_account_ffi).
+    ///
+    /// One write and no keyring: a maildir account signs in to nothing, so
+    /// there is no credential to store first and nothing to roll back.
+    pub fn add_local_account(&self, address: String, path: String) -> Option<String> {
+        if !address.contains('@') {
+            return Some(format!("{address} does not look like an email address."));
+        }
+        if let Some(complaint) = self.inspect_local_store(path.clone()) {
+            return Some(complaint);
+        }
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open to add an account to.".to_owned());
+        };
+        match postio_session::provision::provision_local(&database, &address, &path) {
+            Ok(_) => None,
+            Err(error) => Some(error.to_string()),
+        }
+    }
+
+    /// Look at a directory. See
+    /// [`inspect_local_store_ffi`](Self::inspect_local_store_ffi).
+    pub fn inspect_local_store(&self, path: String) -> Option<String> {
+        let root = postio_session::provision::absolute(&path);
+        postio_account::maildir::LocalStore::looks_like_a_maildir(&root).err()
     }
 
     /// The keyring this session was opened with.

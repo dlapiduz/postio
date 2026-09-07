@@ -314,6 +314,77 @@ where
     Ok(settings)
 }
 
+/// Add an account that is a directory on this machine (#1278).
+///
+/// # Why it is not [`provision`] with an empty password
+///
+/// There is no credential. A maildir account signs in to nothing, and the
+/// keyring is where a credential goes — writing an empty one would put a
+/// secret-shaped nothing under the user's address, which every later
+/// "is this account signed in?" question then has to interpret. So this
+/// makes one write, not two, and the ordering argument above does not apply:
+/// there is nothing to roll back.
+///
+/// The root is resolved to an absolute path before it is stored. A row
+/// holding `~/mail` would mean different directories to different processes,
+/// and the account is that directory.
+pub fn provision_local(
+    database: &Database,
+    address: &str,
+    root: &str,
+) -> Result<Provisioned, ProvisionError> {
+    let email = EmailAddress::new(None::<String>, address.to_owned());
+    let connection = database.connection().map_err(ProvisionError::Store)?;
+    let existing = AccountRepository::new(&connection)
+        .list_enabled()
+        .map_err(ProvisionError::Store)?
+        .into_iter()
+        .find(|found| found.address.address.eq_ignore_ascii_case(address));
+    if let Some(found) = existing {
+        return Ok(Provisioned::AlreadyProvisioned(found.id));
+    }
+
+    let mut account = Account::new(address.to_owned(), email.clone());
+    account.backend = postio_model::account::Backend::Maildir {
+        root: absolute(root).to_string_lossy().into_owned(),
+    };
+    // There is no server and no sign-in, but the row's auth column is not
+    // nullable and every reader of it asks "which credential". `Password`
+    // with nothing in the keyring is the shape that already means "nothing
+    // stored", which is exactly true here.
+    account.auth = AuthMethod::Password;
+    let mut identity = Identity::new(AccountId::UNASSIGNED, email);
+    identity.is_default = true;
+    account.identities = vec![identity];
+
+    AccountRepository::new(&connection)
+        .create(&mut account)
+        .map(Provisioned::Created)
+        .map_err(ProvisionError::Store)
+}
+
+/// `~/mail` as the directory it names.
+///
+/// A leading `~` only, and only when it is the whole first component: `~ada`
+/// is another user's home on some systems and this is not the place to guess
+/// at their layout. Anything else is returned as it was given.
+pub fn absolute(path: &str) -> std::path::PathBuf {
+    let trimmed = path.trim();
+    let Some(rest) = trimmed.strip_prefix('~') else {
+        return std::path::PathBuf::from(trimmed);
+    };
+    let Some(rest) = rest
+        .strip_prefix('/')
+        .or(if rest.is_empty() { Some("") } else { None })
+    else {
+        return std::path::PathBuf::from(trimmed);
+    };
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => std::path::PathBuf::from(home).join(rest),
+        _ => std::path::PathBuf::from(trimmed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

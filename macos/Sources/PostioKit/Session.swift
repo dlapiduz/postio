@@ -448,6 +448,23 @@ public final class PostioSession {
         )
     }
 
+    /// Add an account that is a directory on this machine.
+    ///
+    /// `nil` when it was added; a sentence when it was not. No credential is
+    /// stored, because there is none: the account signs in to nothing.
+    public func addLocalAccount(address: String, path: String) -> String? {
+        inner.addLocalAccount(address: address, path: path)
+    }
+
+    /// Whether a directory is a mail store Postio can open.
+    ///
+    /// `nil` when it is; a sentence naming the directory when it is not. The
+    /// sheet asks while somebody is still looking at the field, so what is
+    /// wrong with a directory is said before an account points at it.
+    public func inspectLocalStore(_ path: String) -> String? {
+        inner.inspectLocalStore(path: path)
+    }
+
     /// Open a session against this account's server and close it again.
     ///
     /// **Blocks**, so it belongs on a detached task. It is the same path sync

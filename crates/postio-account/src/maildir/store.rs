@@ -83,12 +83,6 @@ impl LocalStore {
         &self.root
     }
 
-    /// Whether folders are dot-prefixed siblings rather than nested
-    /// directories.
-    pub fn is_maildirpp(&self) -> bool {
-        self.maildirpp
-    }
-
     /// Whether `root` is a maildir at all, and what is wrong with it if not.
     ///
     /// The message is the one a person reads in the Add Account sheet, so it
@@ -459,10 +453,6 @@ mod tests {
             .collect();
 
         assert_eq!(names, ["INBOX", "Archives", "Archives/2026", "Sent"]);
-        assert!(
-            !store.is_maildirpp(),
-            "nested directories are the fs layout"
-        );
     }
 
     #[test]
@@ -472,9 +462,10 @@ mod tests {
         maildir(&tree.path().join(".Archives"));
         maildir(&tree.path().join(".Archives.2026"));
 
+        // Which layout this is, is settled by the names that come back:
+        // read as fs, the dotted children are hidden and nothing but the
+        // inbox would be listed at all.
         let store = LocalStore::open(tree.path()).unwrap();
-        assert!(store.is_maildirpp(), "dotted siblings are Maildir++");
-
         let names: Vec<String> = store
             .folders()
             .unwrap()
