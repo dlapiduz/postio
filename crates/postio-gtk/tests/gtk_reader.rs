@@ -2,7 +2,9 @@
 //! `postio-xxz` end to end, against the corpus fixtures they exist for.
 //!
 //! One test function, for the reason `gtk_shell.rs` gives — GTK is
-//! single-threaded and initialised once. Skips without a display. The
+//! single-threaded and initialised once — and `harness = false`, so that one
+//! function runs on the **main thread**. That is not a style choice: see
+//! `main` at the foot of this file. Skips without a display. The
 //! network-isolation case is the one part of this file that *does* touch a
 //! socket: a listener on `127.0.0.1` this process owns, there only to prove
 //! nothing else ever connects to it.
@@ -27,8 +29,16 @@ use postio_model::test_corpus;
 use postio_ui::reader::document;
 use webkit6::prelude::*;
 
-#[test]
 fn the_reader_renders_and_hardens_the_corpus() {
+    // The whole point of the harness at the foot of this file. A libtest
+    // `#[test]` would be running on a thread of its own here, and this test
+    // deadlocks there (#272).
+    assert_eq!(
+        std::thread::current().name(),
+        Some("main"),
+        "this case must run on the main thread -- see `main` below"
+    );
+
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
@@ -722,6 +732,12 @@ fn each_reader_costs_a_web_process_of_its_own() {
         scratch_path("two-contexts"),
     );
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // Unparent before re-parenting, or `append` refuses the child --
+    //   Gtk-CRITICAL: gtk_box_append: assertion 'gtk_widget_get_parent
+    //   (child) == NULL' failed
+    // -- and leaves `first` where it was, for the `set_child` below to
+    // unparent instead, mid-load, with its WebView live.
+    window.set_child(None::<&gtk::Widget>);
     holder.append(&first.widget());
     holder.append(&second.widget());
     window.set_child(Some(&holder));
@@ -908,5 +924,121 @@ fn pump_for(duration: Duration) {
     while Instant::now() < deadline {
         glib::MainContext::default().iteration(false);
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The one case, named for a libtest-compatible runner.
+const CASES: &[(&str, fn())] = &[(
+    "the_reader_renders_and_hardens_the_corpus",
+    the_reader_renders_and_hardens_the_corpus as fn(),
+)];
+
+/// `harness = false`, so the case above runs on the main thread.
+///
+/// # What a libtest thread cost
+///
+/// libtest runs every `#[test]` on a thread it spawns — `--test-threads=1`
+/// included, which only stops it spawning *more* than one. WebKit gives each
+/// thread that asks a `WTF::RunLoop` of its own, and dropping a `WebView`
+/// does not tear its process down where the drop happens: it queues the
+/// destruction of the `WebProcessProxy` — and so of its `WebsiteDataStore`,
+/// which must send `removeSession` to the network process — onto that
+/// RunLoop.
+///
+/// Nothing drains a spawned thread's RunLoop. When the thread ends, glibc
+/// runs `WTF::RunLoop::threadWillExit` from `__nptl_deallocate_tsd` and the
+/// queued work is *destroyed* rather than run, on a thread already exiting,
+/// where `IPC::Connection`'s lock is never granted. The process then parks
+/// forever at 0% CPU with every thread asleep. Caught live with `gdb -p`:
+///
+/// ```text
+/// WTF::RunLoop::threadWillExit
+///  -> WebKit::WebProcessProxy::~WebProcessProxy
+///  -> WebKit::WebsiteDataStore::~WebsiteDataStore
+///  -> WebKit::NetworkProcessProxy::removeSession
+///  -> IPC::Connection::sendMessageWithAsyncReply
+///  -> WTF::LockAlgorithm<...>::lockSlow            <- never returns
+/// ```
+///
+/// The main thread's RunLoop is never torn down before `exit()`, so the same
+/// work completes there. That is the whole fix, and it is why the case
+/// asserts its own thread name rather than trusting this file to keep its
+/// `[[test]]` entry: delete `harness = false` from `Cargo.toml` and the
+/// binary goes back to hanging for 241s on every CI run it meets.
+///
+/// # Why not `gtk_suite`
+///
+/// `check-one-gtk-test-per-binary.py` points there, and for an ordinary GTK
+/// case it is right. This one owns a `TcpListener` and proves that nothing
+/// ever connects to it; a shared binary makes that claim about every case
+/// beside it too. It stays alone, and takes the harness with it.
+///
+/// The `--list` output is a contract with whatever runs this binary: a runner
+/// takes `--ignored` as a subset of plain `--list`, so answering both with
+/// the same names tells a process-per-test runner that everything is ignored
+/// — it then runs nothing and reports success. `gtk_suite`'s `main` carries
+/// the same shape and `list_contract.rs` is what notices when it drifts.
+fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let only_ignored = arguments.iter().any(|a| a == "--ignored");
+
+    if arguments.iter().any(|a| a == "--list") {
+        // Nothing here is ignored, so `--ignored` names nothing.
+        if !only_ignored {
+            for (name, _) in CASES {
+                println!("{name}: test");
+            }
+        }
+        // `--format terse` is machine-readable: the names and nothing else.
+        // The count is what `cargo test` and the tooling's test counting read.
+        if !arguments.iter().any(|a| a == "terse") {
+            println!();
+            let listed = if only_ignored { 0 } else { CASES.len() };
+            println!("{listed} tests, 0 benchmarks");
+        }
+        return;
+    }
+
+    if only_ignored {
+        println!("\ntest result: ok. 0 passed; 0 failed");
+        return;
+    }
+
+    // `--exact` means the argument is a whole test name, not a substring: a
+    // process-per-test runner passes it for every case.
+    let exact = arguments.iter().any(|a| a == "--exact");
+    let filters: Vec<&str> = arguments
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
+
+    let mut failed = 0usize;
+    let mut ran = 0usize;
+    for (name, case) in CASES {
+        let matched = filters
+            .iter()
+            .any(|f| if exact { name == f } else { name.contains(f) });
+        if !filters.is_empty() && !matched {
+            continue;
+        }
+        ran += 1;
+        println!("test {name} ...");
+        if std::panic::catch_unwind(case).is_err() {
+            println!("test {name} ... FAILED");
+            failed += 1;
+        } else {
+            println!("test {name} ... ok");
+        }
+    }
+
+    if failed == 0 {
+        println!("\ntest result: ok. {ran} passed; 0 failed");
+    } else {
+        println!(
+            "\ntest result: FAILED. {} passed; {failed} failed",
+            ran - failed
+        );
+        std::process::exit(1);
     }
 }

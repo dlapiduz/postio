@@ -42,6 +42,11 @@ postio-ui.workspace = true
 # exactly one thread and libtest runs tests on a pool — see
 # tests/gtk_suite.rs for the whole story. #329.
 [[test]]
+name = "gtk_reader"
+path = "tests/gtk_reader.rs"
+harness = false
+
+[[test]]
 name = "gtk_suite"
 path = "tests/gtk_suite/main.rs"
 harness = false
