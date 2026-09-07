@@ -68,6 +68,12 @@ pub mod cancel;
 pub mod discovery;
 #[cfg(feature = "imap")]
 pub mod imap;
+
+/// A maildir on this machine, behind the same `MailBackend` seam as a
+/// server (#1278). Optional for the reason `imap` is: what it drags in
+/// should not be in a build that never opens one.
+#[cfg(feature = "maildir")]
+pub mod maildir;
 pub mod oauth;
 pub mod secret;
 mod single_flight;

@@ -27,6 +27,11 @@ imap = [
     "dep:tokio-rustls",
 ]
 
+# The maildir-backed implementation (#1278): mail already on this machine,
+# behind the same seam as a server. Off by default — a build that never
+# opens one should not carry `io-maildir` or its parser.
+maildir = ["dep:io-maildir"]
+
 # Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
 # fixtures. Off by default so nothing in a normal build carries them; the
 # self dev-dependency below turns it on for this crate's own test suite.
@@ -99,6 +104,7 @@ toml = "1.1.4"
 tracing = "0.1"
 url = "2.5.8"
 zeroize = "1.9.0"
+io-maildir = { version = "0.3.1", default-features = false, features = ["client", "parser"], optional = true }
 
 
 # `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the
