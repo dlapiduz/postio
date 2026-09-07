@@ -6,7 +6,7 @@ import Testing
 
 /// What the sidebar says under the folders.
 @Suite struct SidebarFooterTests {
-    private func folder(_ id: Int64, syncedAt: Int64?) -> MailboxFfi {
+    private func folder(_ id: Int64, syncedAt: Int64?, total: UInt32 = 4) -> MailboxFfi {
         MailboxFfi(
             id: id,
             account: 1,
@@ -14,7 +14,7 @@ import Testing
             name: "Inbox",
             role: .inbox,
             unread: 0,
-            total: 0,
+            total: total,
             selectable: true,
             lastSyncedAt: syncedAt,
             special: true
@@ -41,8 +41,21 @@ import Testing
     @Test func aStoreThatHasNeverSyncedSaysSo() {
         #expect(
             SidebarFooter.status(
-                mailboxes: [folder(1, syncedAt: nil)], offline: false, syncing: false, now: now
+                mailboxes: [folder(1, syncedAt: nil, total: 0)],
+                offline: false, syncing: false, now: now
             ) == "idle · never synced"
+        )
+    }
+
+    @Test func aStoreFullOfMailNeverClaimsItHasNeverSynced() {
+        // Read off the running application: five thousand archived messages
+        // under a footer reading "never synced". Nothing writes the time yet
+        // (#1281), and the line says only the half that is true.
+        #expect(
+            SidebarFooter.status(
+                mailboxes: [folder(1, syncedAt: nil, total: 4985)],
+                offline: false, syncing: false, now: now
+            ) == "idle"
         )
     }
 

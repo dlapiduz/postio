@@ -63,6 +63,13 @@ struct Shell: View {
                                     roots: engine.folderRoots.filter { $0.account == account.id },
                                     children: { engine.children(of: $0) }
                                 )
+                                // The account is a heading, not a folder.
+                                // Inside a `List(selection:)` every row is
+                                // selectable unless it says otherwise, so
+                                // clicking the address highlighted it as
+                                // though mail had been opened, and nothing
+                                // was.
+                                .selectionDisabled()
                             }
                         }
                     }
@@ -90,18 +97,11 @@ struct Shell: View {
                 .onTapGesture { engine.focus(.reader) }
         }
         .toolbar {
-            // The sidebar toggle first, where every Mac window puts it. The
-            // registry command runs the same AppKit action, so the button and
-            // `\` are one behaviour rather than two.
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    engine.run("toggle_sidebar")
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .help("Show or hide the sidebar")
-                .accessibilityLabel("Show or hide the sidebar")
-            }
+            // No sidebar-toggle item here: `NavigationSplitView` puts one at
+            // the leading edge itself, and adding a second drew two identical
+            // buttons an inch apart. `toggle_sidebar` runs the same AppKit
+            // action the built-in one does, so the key and the button are one
+            // behaviour with one control.
             // Icons only, in the canvas' order, every one a registry command
             // with a tooltip that names the key it is bound to.
             ToolbarItemGroup {

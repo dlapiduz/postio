@@ -45,13 +45,6 @@ public struct ConversationView: View {
 
     /// The binding in force for `command`, drawn the way macOS draws it.
     ///
-    /// `MenuPlan.accelerator` rather than a second renderer: the chord beside
-    /// `Reply` here and the one in the Message menu are the same key, and two
-    /// spellings of it would be two things to get wrong when somebody rebinds.
-    private func accelerator(for command: String) -> String? {
-        session.binding(for: command).flatMap(MenuPlan.accelerator(from:))
-    }
-
     private var entries: [Entry] {
         let runs = model.runs
         var entries: [Entry] = []
@@ -108,7 +101,7 @@ public struct ConversationView: View {
                 } label: {
                     HStack(spacing: PostioTokens.space2) {
                         Text("Expand all")
-                        if let chord = accelerator(for: "expand_all") {
+                        if let chord = session.accelerator(for: "expand_all") {
                             Text(chord)
                                 .foregroundStyle(.secondary)
                         }
@@ -352,7 +345,7 @@ struct ExpandedMessage: View {
     private func action(_ title: String, command: String, prominent: Bool) -> some View {
         let label = HStack(spacing: PostioTokens.space2) {
             Text(title)
-            if let chord = accelerator(for: command) {
+            if let chord = session.accelerator(for: command) {
                 Text(chord).opacity(0.75)
             }
         }
@@ -370,10 +363,6 @@ struct ExpandedMessage: View {
         }
     }
 
-    /// The binding in force for `command`, drawn the way macOS draws it.
-    private func accelerator(for command: String) -> String? {
-        session.binding(for: command).flatMap(MenuPlan.accelerator(from:))
-    }
 }
 
 /// The square of initials beside a sender.

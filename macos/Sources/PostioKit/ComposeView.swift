@@ -226,7 +226,7 @@ public struct ComposeView: View {
     }
 
     private func accelerator(_ command: String) -> String? {
-        MenuPlan.accelerator(among: session.bindings(for: command))
+        session.accelerator(for: command)
     }
 
     private func tooltip(_ title: String, _ command: String) -> String {

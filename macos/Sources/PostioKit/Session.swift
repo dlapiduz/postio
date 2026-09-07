@@ -326,6 +326,19 @@ public final class PostioSession {
         inner.bindingFor(command: command)
     }
 
+    /// The chord a surface draws beside a command, or `nil` when there is
+    /// none to draw.
+    ///
+    /// **The one place a key is turned into glyphs.** Both keyboard layers
+    /// are live, and every surface that names a key wants the same one — the
+    /// `⌘` chord, falling back to the mnemonic — so asking here is what stops
+    /// one button saying `⌘R` and the one beside it saying `E`. It did:
+    /// the conversation pane drew mnemonics for a week because it asked for
+    /// the *primary* binding, which is the other layer.
+    public func accelerator(for command: String) -> String? {
+        MenuPlan.accelerator(among: bindings(for: command))
+    }
+
     /// Every binding in force for a command, the primary first.
     ///
     /// Both of the canvas' keyboard layers, because they are two bindings on
