@@ -30,6 +30,7 @@ Exit status: 0 all cases behaved, 1 otherwise.
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -57,6 +58,13 @@ def stub(directory: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
+# `/bin/true` on Linux, `/usr/bin/true` on macOS -- and a hardcoded `/bin/true`
+# is why this test reported the runner broken on a Mac (#1151). The runner was
+# fine: it made the directory and exec'd exactly what it was handed, which did
+# not exist. Resolved rather than written, so neither path is spelled here.
+TRUE = shutil.which("true") or "/usr/bin/true"
+
+
 def run(script: Path, tmpdir: Path, root: Path, *, with_sccache: bool) -> int:
     """Run `script` over /bin/true with TMPDIR pointed at a missing directory."""
     stubs = root / "stubs"
@@ -75,7 +83,7 @@ def run(script: Path, tmpdir: Path, root: Path, *, with_sccache: bool) -> int:
     if not with_sccache:
         environment["SCCACHE_DIR"] = str(root / "unused-sccache")
     return subprocess.run(
-        [str(script), "/bin/true"],
+        [str(script), TRUE],
         env=environment,
         capture_output=True,
         text=True,

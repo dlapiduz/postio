@@ -32,8 +32,20 @@ fi
 #   error: 2 targets failed:
 #       `-p postio-account --lib`
 #       `-p postio-sync --test sync_suite`
-mapfile -t TARGETS < <(
-    sed -n '/^error: [0-9]* targets\? failed:$/,$ {
+# Read line by line rather than with `mapfile`: that is a bash 4 builtin, and
+# macOS ships bash 3.2 -- where this script died with `mapfile: command not
+# found`, then `TARGETS: unbound variable`, and the release gate retried
+# nothing at all. Same family as the `sleep infinity` in `jobserver.sh` that
+# #1151 is about: a GNU-ism in shell that reads as portable.
+TARGETS=()
+while IFS= read -r line; do
+    [ -n "$line" ] && TARGETS+=("$line")
+done < <(
+    # `targets\{0,1\}` and not `targets\?`: `\?` is a GNU BRE extension, and
+    # BSD sed matches it literally -- so on macOS this pattern never matched,
+    # the target list came back empty, and the gate reported "no per-target
+    # summary to retry" for a summary that was right there.
+    sed -n '/^error: [0-9]* targets\{0,1\} failed:$/,$ {
         s/^ *`\(.*\)`$/\1/p
     }' "$LOG"
 )
