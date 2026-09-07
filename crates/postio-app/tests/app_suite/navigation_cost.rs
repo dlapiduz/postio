@@ -148,6 +148,22 @@ pub fn switching_surfaces_stays_within_a_blink() {
         );
     }
 
+    // A settle that pumps without sleeping, to tell real waiting from this
+    // harness's own 10 ms polling granularity. If a folder switch shrinks by
+    // roughly ten times under it, the second it appeared to take was the
+    // measurement, not the app.
+    fn settle_tight(done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        done()
+    }
+
     eprintln!("navigation over {} messages:", report.message_count);
 
     // The store side of a folder switch, timed directly, so the UI numbers
@@ -252,7 +268,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
         window.act(postio_core::Command::NextFolder);
         let acted = started.elapsed();
         let started = Instant::now();
-        settle_until(|| window.list().model().n_items() > 0);
+        settle_tight(|| window.list().model().n_items() > 0);
         let settled = started.elapsed();
         eprintln!("  next folder, round {round}: act {acted:>10.2?}  settle {settled:>10.2?}");
         eprintln!(

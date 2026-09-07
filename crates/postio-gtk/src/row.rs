@@ -43,6 +43,7 @@ use chrono::Local;
 use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use postio_core::Keymap;
+use std::borrow::Cow;
 // The people in a conversation, short and newest-biased. The rule lives in
 // `postio-ui`: the list row and the conversation header both draw this line,
 // and two surfaces shortening the same names two ways is what moving it
@@ -396,7 +397,11 @@ mod imp {
         /// as the keymap rather than the derived hints so a row change picks
         /// up the same hints a keymap change would, with no ordering
         /// dependency between `set_row` and `set_keymap` on bind.
-        pub(super) keymap: RefCell<Keymap>,
+        /// Borrowed from [`Keymap::defaults`] until a live keymap arrives, so
+        /// a row costs nothing to build. GTK builds one of these per row it
+        /// realises: resolving the defaults here was quadratic per row, and
+        /// owning a copy of them was a hundred allocations per row (#1216).
+        pub(super) keymap: RefCell<Cow<'static, Keymap>>,
         pub(super) first: Cell<bool>,
         /// Whether an action would hit this row.
         pub(super) selected: Cell<bool>,
@@ -445,7 +450,7 @@ mod imp {
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
-                keymap: RefCell::new(Keymap::resolve(&Default::default())),
+                keymap: RefCell::new(Cow::Borrowed(Keymap::defaults())),
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),
@@ -680,8 +685,8 @@ impl MessageRowView {
     /// palette and the cheat sheet.
     pub fn set_keymap(&self, keymap: &Keymap) {
         let imp = self.imp();
-        if *imp.keymap.borrow() != *keymap {
-            imp.keymap.replace(keymap.clone());
+        if **imp.keymap.borrow() != *keymap {
+            imp.keymap.replace(Cow::Owned(keymap.clone()));
             imp.laid.replace(None);
             self.queue_resize();
         }

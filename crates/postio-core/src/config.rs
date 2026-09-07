@@ -22,7 +22,8 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use postio_config::change::ConfigChanged;
 use postio_config::live::{LiveConfig, Reload};
@@ -40,6 +41,18 @@ use crate::{ActionId, Context, ContextSet, Event, registry};
 /// belongs with the schema it compares, not with the runtime that reacts to
 /// it. This alias keeps the name `postio_core` consumers already use.
 pub type ConfigChange = ConfigChanged;
+
+/// How many keymaps this process has resolved from the registry.
+///
+/// A diagnostic, not a knob. Resolution is quadratic in the number of
+/// commands, so the interesting question about any surface is not how long it
+/// took but how many times it asked — a count that is the same on every
+/// machine, which a duration is not. See [`Keymap::defaults`] and #1216.
+pub fn resolutions() -> u64 {
+    RESOLUTIONS.load(Ordering::Relaxed)
+}
+
+static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// The bindings in force: the registry's defaults with `[keys]` applied.
 ///
@@ -64,6 +77,26 @@ impl Keymap {
         Self::resolve_on(overrides, Platform::host())
     }
 
+    /// The registry's own bindings, resolved once for the whole process.
+    ///
+    /// This is what a widget wants when it has no config yet and still has to
+    /// draw a correct key hint on its first frame. Resolution is quadratic in
+    /// the number of commands — every claim asks every binding already made
+    /// whether the key is taken, and each of those questions goes back to the
+    /// registry for the holder's contexts — so paying for it per widget is
+    /// only invisible while the widget is rare. `MessageRowView` is not: GTK
+    /// builds one per row it realises, and that was most of the second a
+    /// folder switch spent rebuilding the list (#1216).
+    ///
+    /// Cacheable because both inputs are fixed for the life of the process:
+    /// the registry is static and `Platform::host()` cannot change. Anything
+    /// reading `[keys]` must still go through [`resolve`](Self::resolve) —
+    /// this is the *unconfigured* answer, not the live one.
+    pub fn defaults() -> &'static Self {
+        static DEFAULTS: OnceLock<Keymap> = OnceLock::new();
+        DEFAULTS.get_or_init(|| Self::resolve(&KeyBindings::default()))
+    }
+
     /// [`resolve`](Self::resolve) for a named platform.
     ///
     /// `mod` is expanded here, once, so everything downstream — the resolver,
@@ -77,6 +110,7 @@ impl Keymap {
     /// lets either host assert both answers, the same discipline the path
     /// resolution uses.
     pub fn resolve_on(overrides: &KeyBindings, platform: Platform) -> Self {
+        RESOLUTIONS.fetch_add(1, Ordering::Relaxed);
         let mut keymap = Keymap::default();
         for spec in registry::every_action() {
             keymap.bindings.insert(spec.id, Vec::new());

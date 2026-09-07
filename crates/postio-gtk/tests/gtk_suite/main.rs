@@ -496,6 +496,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_row::the_row_draws_the_canvas_anatomy_at_every_density as fn(),
     ),
     (
+        "gtk_row::building_rows_does_not_resolve_a_keymap",
+        gtk_row::building_rows_does_not_resolve_a_keymap as fn(),
+    ),
+    (
         "gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one",
         gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one as fn(),
     ),

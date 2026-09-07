@@ -105,7 +105,7 @@ impl ActionBar {
         // `Window::apply_keymap` is what keeps this current once a real
         // config loads, but nothing here should depend on that call having
         // already happened by the time anyone looks.
-        this.set_keymap(&Keymap::resolve(&Default::default()));
+        this.set_keymap(Keymap::defaults());
         this
     }
 
