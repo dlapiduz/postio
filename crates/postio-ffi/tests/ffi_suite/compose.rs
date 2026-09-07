@@ -371,3 +371,248 @@ fn an_empty_edit_is_refused_and_the_draft_keeps_its_words() {
     assert!(format!("{refusal}").contains("empty"), "{refusal}");
     std::fs::remove_file(&path).ok();
 }
+
+// -- Rich composition (#1271) ------------------------------------------------
+//
+// The switch existed and decided what would be *built*; the body was a text
+// field, so there was never an HTML part to build one out of. `rich` was
+// therefore a claim the composer could not keep, which is why its footer said
+// "plain" whatever the switch was set to.
+
+#[test]
+fn a_rich_draft_keeps_its_marks_across_a_save() {
+    // The acceptance line: marks apply to the body and survive save. They
+    // survive by being *stored*, so this reads the draft back out of the
+    // store rather than trusting what save handed back.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("an account");
+    draft.to = "bo@example.com".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<p>The gate closes at <strong>six</strong>.</p>".to_owned());
+    draft.body = "The gate closes at six.".to_owned();
+
+    let saved = session.save_draft(draft).expect("a saved draft");
+    let reopened = session.draft(saved.id).expect("the draft is in the store");
+
+    assert!(reopened.rich, "the draft stopped being rich on the way in");
+    assert_eq!(
+        reopened.body_html.as_deref(),
+        Some("<p>The gate closes at <strong>six</strong>.</p>"),
+        "the marks did not survive the round trip"
+    );
+}
+
+#[test]
+fn a_rich_body_is_stored_as_the_dialect_not_as_whatever_was_typed() {
+    // The editing surface hands over a DOM's innerHTML, which is a working
+    // copy and not the record (ADR 0004 Q3). What is kept is what `parse`
+    // makes of it -- so a `<div>` from the browser becomes a paragraph, and
+    // a `<script>` cannot be stored at all.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("an account");
+    draft.to = "bo@example.com".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<div>hello<script>alert(1)</script></div>".to_owned());
+
+    let saved = session.save_draft(draft).expect("a saved draft");
+    let html = saved.body_html.expect("a rich draft has an HTML part");
+    assert!(
+        !html.contains("script"),
+        "a script survived into the stored draft: {html}"
+    );
+    assert!(html.contains("hello"), "the words were lost too: {html}");
+}
+
+#[test]
+fn turning_rich_off_stops_building_html_without_throwing_the_words_away() {
+    // The switch is on the document, not on the window: turning it off
+    // changes what will be built, and must not silently discard what was
+    // written in case it is turned back on.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("an account");
+    draft.to = "bo@example.com".to_owned();
+    draft.rich = false;
+    draft.body = "The gate closes at six.".to_owned();
+    draft.body_html = Some("<p>The gate closes at <strong>six</strong>.</p>".to_owned());
+
+    let saved = session.save_draft(draft).expect("a saved draft");
+    assert!(!saved.rich, "the switch was ignored");
+    assert_eq!(saved.body, "The gate closes at six.");
+}
+
+#[test]
+fn a_rich_draft_reports_the_shape_it_will_actually_leave_as() {
+    // The footer's claim, and the acceptance line "rich sends text/html plus
+    // a text/plain fallback, always". `postio_ui::compose::outgoing_shape` is
+    // the wording; what matters here is that the boundary now agrees the
+    // draft *is* rich, which it could not before.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("an account");
+    draft.to = "bo@example.com".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<p>hi</p>".to_owned());
+
+    let saved = session.save_draft(draft).expect("a saved draft");
+    assert!(saved.rich);
+    assert!(
+        postio_ui::compose::outgoing_shape(saved.rich).contains("text/plain"),
+        "rich must still carry a plain alternative"
+    );
+}
+
+#[test]
+fn a_rich_draft_always_carries_a_plain_alternative_of_its_own_words() {
+    // Not an empty `text/plain`: the fallback is the message for anyone
+    // reading in a terminal or with a screen reader, so it has to say what
+    // the HTML says. Derived rather than asked for, because a composer that
+    // relied on the frontend to send both would eventually send one.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("an account");
+    draft.to = "bo@example.com".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<p>The gate closes at <strong>six</strong>.</p>".to_owned());
+    draft.body = String::new();
+
+    let saved = session.save_draft(draft).expect("a saved draft");
+    assert!(
+        saved.body.contains("gate closes at six"),
+        "the plain alternative is empty, so half the recipients get nothing: {:?}",
+        saved.body
+    );
+}
+
+#[test]
+fn a_paste_says_what_the_dialect_could_not_hold() {
+    // The acceptance line. Against `postio_body`'s own answer rather than a
+    // sentence typed here: both composers show this string, and a copy in a
+    // test would drift exactly as a copy in the code would.
+    let (session, _, _) = a_message_to_answer();
+    let pasted = session.narrow_paste(
+        "<p style='color:red'>hi</p><table><tr><td>a</td></tr></table>\
+         <img src='https://example.com/a.png'>"
+            .to_owned(),
+    );
+
+    let expected = postio_body::narrow(
+        "<p style='color:red'>hi</p><table><tr><td>a</td></tr></table>\
+         <img src='https://example.com/a.png'>",
+    );
+    assert_eq!(pasted.dropped, expected.lost.summary());
+    assert!(
+        pasted.dropped.is_some(),
+        "a paste that lost a table, an image and its colours said nothing"
+    );
+}
+
+#[test]
+fn a_paste_the_dialect_holds_whole_says_nothing_at_all() {
+    // Silence is the right answer when nothing was lost. A composer that
+    // announced every paste would train people to ignore the one that
+    // mattered.
+    let (session, _, _) = a_message_to_answer();
+    let pasted = session.narrow_paste("<p>Hello <em>there</em>.</p>".to_owned());
+    assert_eq!(pasted.dropped, None);
+}
+
+#[test]
+fn a_paste_comes_back_as_the_dialect_and_as_plain_text() {
+    // Both, because the composer needs the first to put in the document and
+    // the second to keep the plain alternative honest.
+    let (session, _, _) = a_message_to_answer();
+    let pasted = session.narrow_paste("<div>Hello <b>there</b>.</div>".to_owned());
+
+    assert!(
+        pasted.html.contains("<strong>"),
+        "not the dialect: {}",
+        pasted.html
+    );
+    assert!(
+        !pasted.html.contains("<b>"),
+        "element form was not normalised"
+    );
+    assert_eq!(pasted.text.trim(), "Hello there.");
+}
+
+#[test]
+fn the_editing_bridge_crosses_so_the_two_composers_run_one_dialect() {
+    // #1271's last acceptance line. The script is the thing that decides
+    // whether the surface emits `<p>` or `<div>`, and a second copy on the
+    // macOS side would be a second dialect that still round-trips through a
+    // Document -- drift nothing would catch.
+    let (session, _, _) = a_message_to_answer();
+    assert_eq!(session.editor_script(), postio_ui::compose::EDITOR_SCRIPT);
+    assert!(
+        session
+            .editor_script()
+            .contains("defaultParagraphSeparator"),
+        "the setting that pins the dialect is not in what crossed"
+    );
+}
+
+#[test]
+fn a_draft_sent_as_plain_puts_no_html_on_the_wire_even_while_it_keeps_its_marks() {
+    // The two halves of "the switch is on the document" pulling against each
+    // other, and the place they have to be reconciled.
+    //
+    // Storage keeps the marks, so turning Rich back on does not cost them.
+    // But `postio_model::outgoing` builds a `multipart/alternative` from
+    // `body.html.is_some()` -- so a queued draft that kept its marks would
+    // send HTML while its own footer said "text/plain, format=flowed". The
+    // footer is a claim about what leaves; this is what keeps it true.
+    let (session, database, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+    draft.subject = "The gate".to_owned();
+    draft.rich = false;
+    draft.body = "Six is fine.".to_owned();
+    draft.body_html = Some("<p>Six is <strong>fine</strong>.</p>".to_owned());
+
+    assert_eq!(session.send_draft(draft), None, "no complaint");
+
+    let connection = database.connection().expect("a connection");
+    let queued = DraftRepository::new(&connection)
+        .list_for_account(postio_model::ids::AccountId::new(1))
+        .expect("a list");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].body.html, None,
+        "a draft queued as plain still carries an HTML part, so it will \
+         leave as multipart/alternative and the footer lied"
+    );
+    assert_eq!(queued[0].body.text.as_deref(), Some("Six is fine."));
+}
+
+#[test]
+fn a_draft_sent_as_rich_carries_both_parts_onto_the_queue() {
+    // The other direction, and the acceptance line: rich sends `text/html`
+    // plus a `text/plain` fallback, always.
+    let (session, database, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.to = "bo@example.com".to_owned();
+    draft.subject = "The gate".to_owned();
+    draft.rich = true;
+    draft.body_html = Some("<p>Six is <strong>fine</strong>.</p>".to_owned());
+    draft.body = String::new();
+
+    assert_eq!(session.send_draft(draft), None, "no complaint");
+
+    let connection = database.connection().expect("a connection");
+    let queued = DraftRepository::new(&connection)
+        .list_for_account(postio_model::ids::AccountId::new(1))
+        .expect("a list");
+    let body = &queued[0].body;
+    assert!(
+        body.html
+            .as_deref()
+            .is_some_and(|html| html.contains("<strong>")),
+        "the marks did not reach the queue: {:?}",
+        body.html
+    );
+    assert!(
+        body.text
+            .as_deref()
+            .is_some_and(|text| text.contains("Six is fine")),
+        "no plain alternative, so a terminal reader gets nothing: {:?}",
+        body.text
+    );
+}

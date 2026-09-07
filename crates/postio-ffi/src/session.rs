@@ -624,6 +624,46 @@ impl Session {
         self.detach_from_draft(draft, attachment)
     }
 
+    /// The draft `id` as the store has it. See [`Session::draft`].
+    ///
+    /// `nil` when there is no such draft -- a composer reopened on a draft
+    /// somebody deleted elsewhere gets nothing rather than a blank one.
+    #[uniffi::method(name = "draft")]
+    pub fn draft_ffi(&self, id: i64) -> Option<crate::DraftFfi> {
+        self.draft(id)
+    }
+
+    /// Narrow pasted markup to the dialect. See [`Session::narrow_paste`].
+    #[uniffi::method(name = "narrowPaste")]
+    pub fn narrow_paste_ffi(&self, html: String) -> crate::PastedFfi {
+        self.narrow_paste(html)
+    }
+
+    /// The script that applies a mark to the composer's selection.
+    ///
+    /// `nil` for a command that is not one of the marks. See
+    /// [`Session::mark_script`].
+    #[uniffi::method(name = "markScript")]
+    pub fn mark_script_ffi(&self, command: String) -> Option<String> {
+        self.mark_script(&command)
+    }
+
+    /// The script that links the selection to `href`, or `nil` when a
+    /// message may not point there. See [`Session::link_script`].
+    #[uniffi::method(name = "linkScript")]
+    pub fn link_script_ffi(&self, href: String) -> Option<String> {
+        self.link_script(&href)
+    }
+
+    /// The one script the composer's editing surface runs.
+    ///
+    /// See [`Session::editor_script`]. Crosses so that both frontends run
+    /// one dialect rather than two that happen to agree today.
+    #[uniffi::method(name = "editorScript")]
+    pub fn editor_script_ffi(&self) -> String {
+        self.editor_script().to_owned()
+    }
+
     /// Write the draft to the store, and answer it with its id.
     #[uniffi::method(name = "saveDraft")]
     pub fn save_draft_ffi(&self, draft: crate::DraftFfi) -> Option<crate::DraftFfi> {
@@ -1858,6 +1898,84 @@ impl Session {
     }
 
     /// Save. See [`save_draft_ffi`](Self::save_draft_ffi).
+    /// The draft `id` as the store has it, or `None`.
+    ///
+    /// What a composer reopens with, and what a test asserting that marks
+    /// survived a save has to read: a round trip proved against the value
+    /// `save` handed back proves only that `save` returned its argument.
+    pub fn draft(&self, id: i64) -> Option<crate::DraftFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connection().ok()?;
+        let draft = postio_storage::repository::DraftRepository::new(&connection)
+            .get(postio_model::ids::DraftId::new(id))
+            .ok()??;
+        let from = self
+            .writing_account(&database)
+            .map(|account| account.address.to_string())
+            .unwrap_or_default();
+        Some(crate::compose::to_ffi(&draft, from, self.drafts_path()))
+    }
+
+    /// Narrow pasted markup to what a message may carry, and say what that
+    /// cost.
+    ///
+    /// The composer calls this on paste rather than letting the editing
+    /// surface keep whatever a browser put on the clipboard. Two reasons,
+    /// and only the first is about tidiness: the dialect is what the store
+    /// can hold, so markup the surface kept would be silently narrowed at
+    /// save time anyway -- and the person would watch their table turn into
+    /// four lines of text with nothing on screen explaining it.
+    ///
+    /// Pure: no store, no network, no state. It answers the same way for the
+    /// same input on either frontend, which is the point.
+    pub fn narrow_paste(&self, html: String) -> crate::PastedFfi {
+        let narrowed = postio_body::narrow(&html);
+        let (text, html) = postio_body::render(&narrowed.document);
+        crate::PastedFfi {
+            html,
+            text,
+            dropped: narrowed.lost.summary(),
+        }
+    }
+
+    /// The script that applies a mark, from
+    /// [`postio_ui::compose::mark_script`].
+    ///
+    /// Shared for the same reason the bridge is: two hosts running different
+    /// scripts for `bold` would produce different markup, and the two
+    /// composers would disagree about what the same button did.
+    pub fn mark_script(&self, command: &str) -> Option<String> {
+        postio_ui::compose::mark_script(command)
+    }
+
+    /// The script that links the selection to `href`, or `None` when a
+    /// message may not point there.
+    ///
+    /// The gate is the canonical subset's, applied before the document is
+    /// touched -- so a refused scheme is something the composer can say,
+    /// rather than a link that is created, looks right, and vanishes at the
+    /// next parse.
+    pub fn link_script(&self, href: &str) -> Option<String> {
+        postio_ui::compose::link_script(href)
+    }
+
+    /// The composer's editing bridge, for a frontend to inject.
+    ///
+    /// See [`postio_ui::compose::EDITOR_SCRIPT`]. It crosses rather than
+    /// being written again in Swift because it is what decides the *dialect*
+    /// the surface emits -- a second copy would emit `<div>`s where this one
+    /// emits `<p>`s, `parse` would narrow them differently, and the two
+    /// composers would disagree about what the same keystrokes wrote while
+    /// both still round-tripped through a `Document`.
+    pub fn editor_script(&self) -> &'static str {
+        postio_ui::compose::EDITOR_SCRIPT
+    }
+
+    /// Write the draft to the store and answer it with its id.
+    ///
+    /// Idempotent on that id: a composer that forgot it would insert a
+    /// second row on every autosave, and the Drafts folder would fill with
+    /// one half-written message.
     pub fn save_draft(&self, edited: crate::DraftFfi) -> Option<crate::DraftFfi> {
         let (database, _) = self.store_and_blobs()?;
         let mut draft = self.rehydrate(&database, &edited)?;
@@ -2037,6 +2155,19 @@ impl Session {
         }
         if !draft.is_sendable() {
             return Some("This draft has already been queued to send.".to_owned());
+        }
+        // What leaves is what the switch says, and the switch is not the
+        // presence of an HTML part (#1271).
+        //
+        // A plain draft may still be *holding* marks: turning Rich off does
+        // not throw them away, in case it is turned back on. But
+        // `postio_model::outgoing` builds a `multipart/alternative` from
+        // `body.html.is_some()`, so queueing that draft as it stands would
+        // send HTML under a footer that says `text/plain, format=flowed`.
+        // The footer is a claim about what leaves; this is where it is kept
+        // true, at the one point after which the marks no longer matter.
+        if !draft.rich {
+            draft.body.html = None;
         }
         let Ok((connection, _permit)) = database.interactive_write() else {
             return Some("The store would not take a write.".to_owned());

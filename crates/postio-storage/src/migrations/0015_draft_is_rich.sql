@@ -1,0 +1,14 @@
+-- Whether a draft is being written as rich text (#1271).
+--
+-- It was derived: `rich` meant "this draft has an HTML part". That reads
+-- correctly right up to the moment somebody turns the switch off, because
+-- the composer's rule is that the switch is on the *document* -- turning it
+-- off changes what will be built, and must not throw the marks away in case
+-- it is turned back on. A derived flag cannot express "has marks, sending
+-- plain": storing the marks turns the switch back on by itself.
+--
+-- So it is a column. `0` for every existing row, which is right rather than
+-- merely convenient: a draft written before rich composition existed was
+-- written plain, whatever happens to be in its `body_html` from a quoted
+-- reply.
+ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
