@@ -11,10 +11,16 @@
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};
 use postio_model::address::EmailAddress;
-
-/// Shown in place of a blank line — a missing subject is a fact about the
-/// message, not something to render as if it were not there.
-const NO_SUBJECT: &str = "(no subject)";
+// The header's wording, shared with the macOS reader so the two cannot say
+// different things about the same message (#1285). Every line the header
+// draws comes from `MessageHeader::of` now, so the four free functions this
+// file used to keep — and `NO_SUBJECT` — are reached through it rather than
+// imported one by one.
+//
+// Renamed on the way in: the struct below is this crate's *widget*, and two
+// `MessageHeader`s in one file would be a needless puzzle for the next
+// reader.
+use postio_ui::reader::header::MessageHeader as MessageHeaderLines;
 
 /// Above the remote-image banner and the body: who this is from, who it was
 /// addressed to, what it is about, and when it arrived.
@@ -173,25 +179,36 @@ impl MessageHeader {
         subject: Option<&str>,
         date: DateTime<Utc>,
     ) {
-        self.subject.set_label(&subject_text(subject));
-        self.sender.set_label(&address_list(from));
-        self.date.set_label(&absolute_date(date, Local::now()));
+        // Every line here is `postio_ui::reader::header`'s, not this
+        // widget's: what a header *says* is a mail client's answer, given
+        // once, and the same six rules living here as well is what #1285 is
+        // about. This method is now the toolkit half alone — which label
+        // takes which string, and what is visible.
+        let header = MessageHeaderLines::of(from, to, cc, subject, date, Local::now());
 
-        if to.is_empty() {
-            self.to.set_visible(false);
-        } else {
-            self.to.set_visible(true);
-            self.to.set_label(&format!("To: {}", address_list(to)));
+        self.subject.set_label(&header.subject);
+        self.sender.set_label(&header.from);
+        self.date.set_label(&header.date);
+
+        match header.to_line() {
+            Some(line) => {
+                self.to.set_visible(true);
+                self.to.set_label(&line);
+            }
+            None => self.to.set_visible(false),
         }
 
-        if cc.is_empty() {
-            self.cc_toggle.set_visible(false);
-            self.cc_toggle.set_active(false);
-            self.cc_revealer.set_reveal_child(false);
-        } else {
-            self.cc_toggle.set_visible(true);
-            self.cc_toggle.set_label(&format!("Cc ({})", cc.len()));
-            self.cc_label.set_label(&address_list(cc));
+        match (header.cc_toggle_label(), header.cc.as_deref()) {
+            (Some(label), Some(addresses)) => {
+                self.cc_toggle.set_visible(true);
+                self.cc_toggle.set_label(&label);
+                self.cc_label.set_label(addresses);
+            }
+            _ => {
+                self.cc_toggle.set_visible(false);
+                self.cc_toggle.set_active(false);
+                self.cc_revealer.set_reveal_child(false);
+            }
         }
     }
 
@@ -300,104 +317,8 @@ impl Default for MessageHeader {
     }
 }
 
-/// `"Name <address>"` when a display name is present, the bare address
-/// otherwise — never a name repeated as its own address.
-fn address_line(address: &EmailAddress) -> String {
-    match address
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    {
-        Some(name) => format!("{name} <{}>", address.address),
-        None => address.address.clone(),
-    }
-}
-
-fn address_list(addresses: &[EmailAddress]) -> String {
-    addresses
-        .iter()
-        .map(address_line)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn subject_text(subject: Option<&str>) -> String {
-    subject
-        .map(str::trim)
-        .filter(|subject| !subject.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| NO_SUBJECT.to_string())
-}
-
-/// The header's date line: always absolute, unlike the list row's relative
-/// [`crate::row::timestamp`] — a message once opened is not "3h ago" any
-/// more, it is dated.
-fn absolute_date(at: DateTime<Utc>, now: DateTime<Local>) -> String {
-    let local = at.with_timezone(&now.timezone());
-    local.format("%a, %-d %b %Y at %H:%M").to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{Local, TimeZone, Utc};
-
-    use super::*;
-
-    fn addr(name: Option<&str>, address: &str) -> EmailAddress {
-        EmailAddress::new(name, address)
-    }
-
-    #[test]
-    fn a_named_address_shows_both_the_name_and_the_address() {
-        let a = addr(Some("Ada Lovelace"), "ada@example.com");
-        assert_eq!(address_line(&a), "Ada Lovelace <ada@example.com>");
-    }
-
-    #[test]
-    fn an_unnamed_address_shows_just_the_address() {
-        let a = addr(None, "ada@example.com");
-        assert_eq!(address_line(&a), "ada@example.com");
-    }
-
-    #[test]
-    fn a_blank_display_name_is_treated_as_absent() {
-        let a = addr(Some("   "), "ada@example.com");
-        assert_eq!(address_line(&a), "ada@example.com");
-    }
-
-    #[test]
-    fn several_addresses_join_with_a_comma() {
-        let list = [
-            addr(Some("Ada"), "ada@example.com"),
-            addr(None, "bob@example.com"),
-        ];
-        assert_eq!(
-            address_list(&list),
-            "Ada <ada@example.com>, bob@example.com"
-        );
-    }
-
-    #[test]
-    fn a_missing_subject_says_so_rather_than_showing_nothing() {
-        assert_eq!(subject_text(None), NO_SUBJECT);
-        assert_eq!(subject_text(Some("   ")), NO_SUBJECT);
-    }
-
-    #[test]
-    fn a_real_subject_passes_through_verbatim() {
-        assert_eq!(subject_text(Some("Dinner Friday?")), "Dinner Friday?");
-    }
-
-    #[test]
-    fn the_date_line_is_always_absolute() {
-        // Built in the local zone and handed over as UTC, the same way
-        // `row.rs`'s own timestamp test does it: fixing both ends in UTC
-        // would only pass in one timezone.
-        let local = |y, m, d, h, min| Local.with_ymd_and_hms(y, m, d, h, min, 0).unwrap();
-        let now = local(2026, 8, 26, 9, 0);
-        let at = local(2026, 8, 12, 14, 32).with_timezone(&Utc);
-
-        assert_eq!(absolute_date(at, now), "Wed, 12 Aug 2026 at 14:32");
-    }
-}
+// The header's wording is tested where it now lives: `postio_ui::reader::
+// header` carries these seven cases under the same names, because they moved
+// with the functions they were written for (#1285). A second copy here would
+// be this crate asserting another crate's rules — green whatever this widget
+// does with them, which is the half that is actually this file's.
