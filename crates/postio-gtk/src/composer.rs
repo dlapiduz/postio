@@ -770,6 +770,25 @@ impl Composer {
     /// rule and what makes `Esc` safe. A `draft` that arrives with something
     /// in it is a specific request about a specific message and wins
     /// instead; see [`opening`] for why, and for the #691 it cost.
+    /// Start the editing surface before anybody asks to compose.
+    ///
+    /// The composer's surface is ADR 0003's `WebView`, and its first load
+    /// starts a WebKit web process — tens of milliseconds that would otherwise
+    /// all land on the first composition somebody writes (#1216). Called on an
+    /// idle turn once the window is up, so it is paid when nobody is waiting.
+    ///
+    /// Not an open: the pane stays where it is and the keyboard does not move.
+    /// Safe to call more than once, and a no-op once anything has been loaded,
+    /// so it cannot discard a draft.
+    pub fn warm(&self) {
+        self.imp().body.warm();
+    }
+
+    /// Whether the editing surface has been started. See [`warm`](Self::warm).
+    pub fn is_warm(&self) -> bool {
+        self.imp().body.is_warm()
+    }
+
     pub fn open(&self, draft: Draft) {
         // Already composing: `c` a second time is a no-op that puts the
         // keyboard back, never a reset of what is being typed. Detached, the

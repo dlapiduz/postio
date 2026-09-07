@@ -17,6 +17,7 @@ mod click_preview;
 mod command_wiring;
 mod compose_detach;
 mod compose_typing;
+mod composer_warm;
 mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_recipients;
@@ -125,6 +126,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "navigation_cost::switching_surfaces_stays_within_a_blink",
         navigation_cost::switching_surfaces_stays_within_a_blink as fn(),
+    ),
+    (
+        "composer_warm::the_window_warms_its_editing_surface_without_being_asked",
+        composer_warm::the_window_warms_its_editing_surface_without_being_asked as fn(),
     ),
     (
         "click_preview::clicking_a_message_fills_the_reading_pane",

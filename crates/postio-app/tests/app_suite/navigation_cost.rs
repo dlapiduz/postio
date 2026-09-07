@@ -253,10 +253,27 @@ pub fn switching_surfaces_stays_within_a_blink() {
     }
 
     // ── the composer taking over the pane ───────────────────────────────
-    timed("open the composer", || {
+    // Repeated, because the first composition is the one a person notices and
+    // the ones after it are what it should cost. The editing surface is a
+    // `WebView` whose first load starts a web process, so before #1216's warm
+    // the first open was 34ms against 9ms for the rest.
+    for round in 1..=5 {
+        let widgets_before = postio_gtk::row::rows_built();
+        let started = Instant::now();
         window.act(postio_core::Command::Compose { draft: None });
+        let acted = started.elapsed();
+        let started = Instant::now();
         settle_until(|| window.composer().is_open());
-    });
+        let settled = started.elapsed();
+        eprintln!(
+            "  composer round {round}: act {acted:>10.2?}  settle {settled:>10.2?}  rows {}",
+            postio_gtk::row::rows_built() - widgets_before
+        );
+        window.composer().discard();
+        settle_until(|| !window.composer().is_open());
+    }
+    window.act(postio_core::Command::Compose { draft: None });
+    settle_until(|| window.composer().is_open());
 
     // ── reordering the list ─────────────────────────────────────────────
     // Repeated, because the first of anything pays for what the others find

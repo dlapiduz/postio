@@ -208,6 +208,12 @@ struct EditorState {
     coalesce: Duration,
     format: Cell<FormatState>,
     format_watchers: RefCell<Vec<FormatWatcher>>,
+    /// Whether anything has ever been loaded into the view.
+    ///
+    /// The first `load_html` on a fresh `WebView` starts a WebKit web process,
+    /// which is tens of milliseconds, and it would otherwise all fall on the
+    /// first composition somebody writes. See [`Editor::warm`].
+    loaded: Cell<bool>,
 }
 
 /// The editing surface with its document attached: Document in, WebKit's
@@ -254,6 +260,7 @@ impl Editor {
             coalesce,
             format: Cell::new(FormatState::default()),
             format_watchers: RefCell::new(Vec::new()),
+            loaded: Cell::new(false),
         });
 
         content.connect_script_message_received(Some(EDITED_MESSAGE), {
@@ -304,7 +311,33 @@ impl Editor {
         self.state.history.borrow_mut().clear();
         self.state.last_edit.set(None);
         seed(&self.view, &document.editor_html());
+        self.state.loaded.set(true);
         *self.state.document.borrow_mut() = document;
+    }
+
+    /// Start the editing surface before anybody is waiting for it.
+    ///
+    /// The first `load_html` on a fresh `WebView` starts a WebKit web process.
+    /// Measured here, splitting `Composer::open` into its parts: 28.7ms on the
+    /// first open against 0.2ms on every one after it — so without this, the
+    /// whole cost falls on the first composition a person writes, which is the
+    /// one they notice (#1216).
+    ///
+    /// Seeds an empty document, which is what a fresh composer holds anyway,
+    /// so a later [`load`](Self::load) replaces a blank page rather than
+    /// starting one. Does nothing once anything has been loaded — including a
+    /// draft somebody is part-way through typing, which a second seed would
+    /// throw away.
+    pub fn warm(&self) {
+        if self.state.loaded.get() {
+            return;
+        }
+        self.load(Document::default());
+    }
+
+    /// Whether the editing surface has been started. See [`warm`](Self::warm).
+    pub fn is_warm(&self) -> bool {
+        self.state.loaded.get()
     }
 
     /// The document as it now stands. The record; the DOM is its copy.
