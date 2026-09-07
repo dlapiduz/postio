@@ -554,6 +554,199 @@ fn the_reader_renders_and_hardens_the_corpus() {
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.
+/// The web processes **this test** owns, by pid.
+///
+/// Scoped to our own descendants, and that is not a detail. The first version
+/// counted every `WebKitWebProces` on the machine, and a developer running
+/// this with Postio open counts *its* web processes -- which are alive before
+/// and after whatever the test does, so the assertion passed without ever
+/// observing the reader. WebKit puts the process under a `bwrap` sandbox, so
+/// the walk is up the parent chain rather than a direct child check.
+///
+/// `-x` against the **truncated** name: Linux cuts `comm` to fifteen
+/// characters, so it is `WebKitWebProces` and `pgrep -x WebKitWebProcess`
+/// matches nothing, warning about it on stderr where it is easy to miss. `-f`
+/// is worse -- it matches the `bwrap` wrapper too, counting each process
+/// twice, and this binary's own command line with them.
+fn web_processes() -> Vec<i32> {
+    let mine = std::process::id() as i32;
+    let out = std::process::Command::new("pgrep")
+        .args(["-x", "WebKitWebProces"])
+        .output()
+        .expect("pgrep");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+        .filter(|pid| descends_from(*pid, mine))
+        .collect()
+}
+
+/// Whether `pid` has `ancestor` somewhere above it.
+fn descends_from(pid: i32, ancestor: i32) -> bool {
+    let mut current = pid;
+    for _ in 0..16 {
+        if current == ancestor {
+            return true;
+        }
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{current}/status")) else {
+            return false;
+        };
+        let Some(parent) = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:"))
+            .and_then(|value| value.trim().parse::<i32>().ok())
+        else {
+            return false;
+        };
+        if parent <= 1 {
+            return false;
+        }
+        current = parent;
+    }
+    false
+}
+
+/// Rendering a second message must reuse the first one's web process.
+///
+/// The report is a **black flicker** moving between messages, alongside a
+/// WebKit web process spawning and dying about once a second while doing it.
+/// The two are one thing: a process that has just started has not finished
+/// relocating its libraries -- the first profile of this burst was
+/// `do_lookup_x`, `_dl_relocate_object_no_relro` and little else -- and a
+/// process with nothing drawn yet composites black.
+///
+/// Nothing in Postio asks for a second process. `Reader` builds its `WebView`
+/// once and reuses it, `show_occupant` only toggles visibility, and every
+/// message loads through `load_html` against the same `postio-reader:///`
+/// base, so there is no cross-site navigation to swap on. This asks whether
+/// WebKit replaces the process regardless.
+#[test]
+fn rendering_the_next_message_keeps_the_web_process() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("process-reuse"),
+    );
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let first = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
+    let finished = track_load_finished(&reader);
+    reader.render(&first.body, None);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let before = web_processes();
+    assert!(
+        !before.is_empty(),
+        "no web process after rendering a message, so this test cannot see \
+         what it is about"
+    );
+
+    let second = postio_model::mime::parse(test_corpus::load("html-newsletter").bytes());
+    let finished = track_load_finished(&reader);
+    reader.render(&second.body, None);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let after = web_processes();
+
+    let kept: Vec<i32> = before
+        .iter()
+        .filter(|p| after.contains(p))
+        .copied()
+        .collect();
+    eprintln!("before {before:?}, after {after:?}, kept {kept:?}");
+    window.set_visible(false);
+
+    assert!(
+        !kept.is_empty(),
+        "every web process alive after the first message was gone after the \
+         second, so rendering a message replaces the process rather than \
+         reusing it -- which is the black flicker, since a process that has \
+         just started has nothing drawn. before={before:?} after={after:?}"
+    );
+}
+
+/// A second reader costs a second web process, and that is the flicker.
+///
+/// The conversation pane builds a `Reader` per expanded message -- lazily, so
+/// a thirty-message thread does not cost thirty views up front, and `collapse`
+/// keeps the widget so reopening is cheap. Both of those are right. What is
+/// left is that the *first* expansion of each message still builds one, and
+/// `Reader::with_allowlist` gives every reader a `WebContext` of its own.
+/// WebKit runs a web process per context, so moving through a conversation
+/// spawns one per message -- which is what "a process a second while opening
+/// messages" was, and why each arrives showing black: it has not finished
+/// relocating its libraries.
+///
+/// Recorded rather than fixed. Sharing one context needs the `postio-reader:`
+/// scheme handler to route by URI instead of closing over one message's
+/// blobs, which is a change to how parts are addressed, not a tuning knob.
+#[test]
+fn each_reader_costs_a_web_process_of_its_own() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let window = gtk::Window::new();
+    let first = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("one-context"),
+    );
+    window.set_child(Some(&first.widget()));
+    window.present();
+    let parsed = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
+    let finished = track_load_finished(&first);
+    first.render(&parsed.body, None);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let after_one = web_processes();
+
+    // A second reader, as the conversation pane makes for the next message.
+    let second = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("two-contexts"),
+    );
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    holder.append(&first.widget());
+    holder.append(&second.widget());
+    window.set_child(Some(&holder));
+    let finished = track_load_finished(&second);
+    second.render(&parsed.body, None);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let after_two = web_processes();
+
+    eprintln!("one reader {after_one:?}, two readers {after_two:?}");
+    window.set_visible(false);
+
+    assert!(
+        after_two.len() > after_one.len(),
+        "a second reader did not cost a second web process ({after_one:?} -> \
+         {after_two:?}). If that is now true, the contexts are shared and the \
+         comment above is stale -- delete it rather than the assertion"
+    );
+}
+
+/// A blob source with nothing in it, for a render that needs no `cid:` parts.
+struct NoBlobs;
+
+impl BlobSource for NoBlobs {
+    fn resolve(&self, _content_id: &str) -> Option<(Vec<u8>, String)> {
+        None
+    }
+}
+
 fn wait_for_connection(rx: &mpsc::Receiver<()>, timeout: Duration) -> bool {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while Instant::now() < deadline {
