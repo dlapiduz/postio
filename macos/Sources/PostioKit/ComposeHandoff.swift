@@ -90,6 +90,10 @@ public enum ComposeHandoff {
             configured: configured, isApplication: isApplication(configured)
         ) {
         case .platformDefault:
+            // POSTIO-CONSENT: only from the compose window's hand-off button,
+            // pressed for one draft. The URL is a `file:` URL inside Postio's
+            // own private directory -- nothing leaves this machine and no
+            // network is touched. What is being asked for is a local editor.
             return NSWorkspace.shared.open(file)
                 ? nil
                 : "Nothing on this Mac opened that file, so the draft is still here."
@@ -102,6 +106,9 @@ public enum ComposeHandoff {
                 return "This Mac has no application called \(name), so the draft is still here."
             }
             do {
+                // POSTIO-CONSENT: as above, and narrower -- the application
+                // is the one named in `[compose] editor`, and it is handed
+                // one local file the user chose to hand it.
                 try await NSWorkspace.shared.openApplication(
                     at: application,
                     configuration: openInFront(file)
