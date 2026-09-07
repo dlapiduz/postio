@@ -34,6 +34,26 @@ use crate::list::Row;
 /// person reads before they scroll, and scrolling expands more.
 pub const EAGER_EXPANSION_CAP: usize = 3;
 
+/// How many message bodies keep a live `WebKitWebView` at once.
+///
+/// `EAGER_EXPANSION_CAP` bounds how many open *when a conversation opens*.
+/// Nothing bounded how many accumulate as it is **scrolled**: `expand` builds
+/// a reader the first time each message opens and `collapse` deliberately
+/// keeps it, so reading down a thirty-message thread ended with thirty web
+/// processes, held until the thread changed. At roughly 50 MB each that is
+/// well over a gigabyte for one conversation.
+///
+/// So the bodies are windowed, the way the message list is windowed over
+/// paged SQLite: the ones near the focus stay live, and the furthest is
+/// released when a new one opens. An entry whose reader was released stays
+/// *expanded* -- scrolling back rebuilds it, which is the same cost the first
+/// open paid and is why the window is generous enough that ordinary reading
+/// never reaches the edge.
+///
+/// Six: the three a conversation opens with, the one focus warms ahead, and
+/// two of slack so moving up and down a few messages never rebuilds.
+pub const LIVE_BODY_CAP: usize = 6;
+
 /// How a conversation orders its messages.
 ///
 /// Was `crate::thread::Order`, when the drill-in column offered `o` to
@@ -1142,8 +1162,14 @@ impl ConversationView {
         {
             return;
         }
-        self.expand(message);
+        // Focus first, then expand. `expand` releases the bodies furthest
+        // from the focus to stay under `LIVE_BODY_CAP`, and with the *old*
+        // focus still set it measured distance from where the reader used to
+        // be -- so opening a message at the far end of a long thread released
+        // the body it had just built, and scrolling back showed an expanded
+        // entry with nothing in it.
         self.imp().focused.set(Some(message));
+        self.expand(message);
         // After `focused` is set, and not in `expand`: opening a conversation
         // expands several messages before focus exists, and "the next one"
         // has no answer until it does. One warm per navigation, which is the
@@ -1241,7 +1267,10 @@ impl ConversationView {
         let Some(entry) = entries.iter().find(|entry| entry.message == message) else {
             return;
         };
-        if entry.expanded.get() {
+        // Expanded *and* still holding its reader. An entry whose body was
+        // released to stay under `LIVE_BODY_CAP` is expanded with nothing in
+        // it, and asking for it again has to rebuild rather than return.
+        if entry.expanded.get() && entry.reader.borrow().is_some() {
             return;
         }
         entry.expanded.set(true);
@@ -1267,6 +1296,48 @@ impl ConversationView {
             *entry.reader.borrow_mut() = Some(reader);
         }
         entry.body.set_visible(true);
+        drop(entries);
+        self.release_distant_bodies();
+    }
+
+    /// Drop the live bodies furthest from the focus, down to
+    /// [`LIVE_BODY_CAP`].
+    ///
+    /// Furthest rather than oldest: what a person is about to want is what is
+    /// near where they are reading, and a thread is navigated up and down
+    /// rather than in one direction. Released entries stay expanded, so
+    /// scrolling back rebuilds them.
+    fn release_distant_bodies(&self) {
+        let imp = self.imp();
+        let entries = imp.entries.borrow();
+        let focus = imp
+            .focused
+            .get()
+            .and_then(|id| entries.iter().position(|entry| entry.message == id))
+            .unwrap_or(0);
+
+        let mut live: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.reader.borrow().is_some())
+            .map(|(index, _)| index)
+            .collect();
+        if live.len() <= LIVE_BODY_CAP {
+            return;
+        }
+        // Furthest from the focus first, and release exactly the excess.
+        live.sort_by_key(|index| std::cmp::Reverse(index.abs_diff(focus)));
+        let excess = live.len() - LIVE_BODY_CAP;
+        for index in live.into_iter().take(excess) {
+            let entry = &entries[index];
+            let released = entry.reader.borrow_mut().take();
+            if let Some(reader) = released {
+                // Off the widget tree as well as out of the field: a parked
+                // widget keeps its `WebView`, and the `WebView` is the web
+                // process this exists to give back.
+                entry.body.remove(&reader.widget());
+            }
+        }
     }
 
     /// Build and start a reader for the message most likely to open next.
@@ -1323,6 +1394,20 @@ impl ConversationView {
             .skip(from)
             .find(|entry| !entry.expanded.get())
             .map(|entry| entry.message)
+    }
+
+    /// How many message bodies are holding a live `WebKitWebView`.
+    ///
+    /// The number [`LIVE_BODY_CAP`] bounds, and the one worth asserting on:
+    /// expanded entries and live bodies are no longer the same set, because a
+    /// released entry stays expanded with nothing in it.
+    pub fn live_body_count(&self) -> usize {
+        self.imp()
+            .entries
+            .borrow()
+            .iter()
+            .filter(|entry| entry.reader.borrow().is_some())
+            .count()
     }
 
     /// The reader already built for `message`'s entry, if it has one.

@@ -870,3 +870,67 @@ fn mine_flags(pane: &ConversationView) -> Vec<bool> {
         .map(|header| header.is_mine())
         .collect()
 }
+
+/// Reading down a long thread does not accumulate a body per message.
+///
+/// `EAGER_EXPANSION_CAP` bounds how many open when a conversation opens.
+/// Nothing bounded how many accumulate as it is *scrolled*: `expand` built a
+/// reader the first time each message opened and `collapse` deliberately kept
+/// it, so a thirty-message thread ended with thirty `WebKitWebView`s and
+/// thirty web processes, held until the thread changed. At roughly 50 MB each
+/// that is over a gigabyte for one conversation (#1216).
+pub fn a_long_thread_keeps_a_bounded_number_of_bodies() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+
+    let live: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+    let counter = Rc::clone(&live);
+    pane.set_reader_factory(move |_message| {
+        *counter.borrow_mut() += 1;
+        Some(stub_reader())
+    });
+
+    window.set_child(Some(&pane.widget()));
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let messages: Vec<Row> = (0..30).map(|id| message(id, true)).collect();
+    pane.open(messages.clone());
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    // Read down the whole thread, as a person does.
+    for id in 0..30 {
+        pane.focus_message(MessageId::new(id));
+        while gtk::glib::MainContext::default().iteration(false) {}
+    }
+
+    let held = pane.live_body_count();
+    assert!(
+        held <= postio_gtk::conversation::LIVE_BODY_CAP,
+        "reading down a thirty-message thread left {held} live bodies, over \
+         the {} cap -- each is a `WebKitWebView` and a web process",
+        postio_gtk::conversation::LIVE_BODY_CAP
+    );
+
+    // And the ones kept are the ones near where the reading stopped, not an
+    // arbitrary six: scrolling back a message must not rebuild.
+    assert!(
+        pane.reader_for(MessageId::new(29)).is_some(),
+        "the message the reader stopped on must still have its body"
+    );
+
+    // Scrolling back rebuilds rather than showing an empty body.
+    pane.focus_message(MessageId::new(0));
+    while gtk::glib::MainContext::default().iteration(false) {}
+    assert!(
+        pane.reader_for(MessageId::new(0)).is_some(),
+        "an entry whose body was released must rebuild when it is opened \
+         again, not stay expanded and empty"
+    );
+
+    window.set_visible(false);
+}
