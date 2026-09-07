@@ -20,6 +20,7 @@ struct WindowConfigurator: NSViewRepresentable {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             window.setFrameAutosaveName(Self.autosaveName)
+            hideTitle(of: window)
             recover(window)
             persistSplits(in: window)
         }
@@ -27,6 +28,35 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     func updateNSView(_: NSView, context _: Context) {}
+
+    /// Keep the title bar empty, the way the canvas draws it.
+    ///
+    /// The application's own name in its own chrome is a line of the window
+    /// spent telling you what you knew when you opened it. SwiftUI titles a
+    /// `WindowGroup` from its scene and puts it back whenever the scene
+    /// updates — the same habit that took the menu bar (#1262) — so setting
+    /// it once at launch lasted until the first redraw. Hidden *and* emptied,
+    /// and re-applied whenever the window updates: `titleVisibility` alone
+    /// left the string to come back the moment something restored it.
+    @MainActor
+    private func hideTitle(of window: NSWindow) {
+        Self.emptyTitle(of: window)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didUpdateNotification,
+            object: window,
+            queue: .main
+        ) { note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { Self.emptyTitle(of: window) }
+        }
+    }
+
+    @MainActor
+    private static func emptyTitle(of window: NSWindow) {
+        guard window.titleVisibility != .hidden || !window.title.isEmpty else { return }
+        window.titleVisibility = .hidden
+        window.title = ""
+    }
 
     /// Give the split view an autosave name so its column widths persist.
     ///

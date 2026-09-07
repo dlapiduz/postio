@@ -28,11 +28,12 @@ impl From<ActivityFfi> for postio_ui::sidebar::Activity {
 /// finished — rather than a question about a session. The wording is
 /// `postio_ui::sidebar`'s so both frontends' footers read the same.
 #[uniffi::export]
-pub fn sidebar_status(activity: ActivityFfi, since_seconds: Option<i64>) -> String {
+pub fn sidebar_status(activity: ActivityFfi, since_seconds: Option<i64>, has_mail: bool) -> String {
     postio_ui::sidebar::status(
         activity.into(),
         // A clock that has gone backwards -- a machine that slept, an NTP
         // correction -- reads as "just now" rather than as a negative age.
         since_seconds.map(|seconds| seconds.max(0) as u64),
+        has_mail,
     )
 }

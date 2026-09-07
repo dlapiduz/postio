@@ -22,7 +22,13 @@ public enum SidebarFooter {
         // Ranked rather than combined: offline outranks a sync that cannot be
         // running, and a sync in flight outranks a time from the last one.
         let activity: ActivityFfi = offline ? .offline : (syncing ? .syncing : .idle)
-        return sidebarStatus(activity: activity, sinceSeconds: since(mailboxes, now))
+        return sidebarStatus(
+            activity: activity,
+            sinceSeconds: since(mailboxes, now),
+            // Whether there is mail here at all, which is what tells "has
+            // never synced" apart from "synced, but nobody wrote down when".
+            hasMail: mailboxes.contains { $0.total > 0 }
+        )
     }
 
     /// Whether the dot is filled — anything but idle is "something is

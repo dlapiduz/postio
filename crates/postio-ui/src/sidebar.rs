@@ -206,7 +206,8 @@ pub enum Activity {
 /// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
 ///
 /// `since` is how many seconds ago the last pass *completed*, or `None` for a
-/// store that has never finished one.
+/// store that has never finished one — or, today, for one whose passes were
+/// never recorded. `has_mail` is what tells those two apart.
 ///
 /// Two facts, and the order matters. The state comes first because it is what
 /// a glance is for — is anything wrong — and the time second because it is
@@ -214,18 +215,24 @@ pub enum Activity {
 /// all: "synced 40s ago" during a sync is a report on the previous pass being
 /// read as a report on this one, which is the shape of the bug that made the
 /// GTK footer say "0% synced" and "never synced" at once.
-pub fn status(activity: Activity, since: Option<u64>) -> String {
+pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String {
     match activity {
         // Nothing can be happening, so nothing else on the line is worth
         // saying. "idle" here would be a claim that nothing needs doing.
         Activity::Offline => "offline".to_owned(),
         Activity::Syncing => "syncing".to_owned(),
-        Activity::Idle => match since {
-            Some(seconds) => format!("idle · synced {}", elapsed(seconds)),
+        Activity::Idle => match (since, has_mail) {
+            (Some(seconds), _) => format!("idle · synced {}", elapsed(seconds)),
             // The state a new account is in for the whole of its first pass,
             // and the one most likely to be read as broken if the line just
             // said "idle".
-            None => "idle · never synced".to_owned(),
+            (None, false) => "idle · never synced".to_owned(),
+            // A store full of mail and no recorded time. "Never synced"
+            // beside five thousand archived messages is a claim the store
+            // itself contradicts, so the line says only what is true: nothing
+            // is happening. Read off the running application, where nothing
+            // in production writes `last_synced_at` at all (#1281).
+            (None, true) => "idle".to_owned(),
         },
     }
 }
@@ -252,36 +259,54 @@ mod status_tests {
     #[test]
     fn an_idle_account_says_how_long_ago_it_synced() {
         // The canvas' footer: a state, then the last time anything happened.
-        assert_eq!(status(Activity::Idle, Some(40)), "idle · synced 40s");
-        assert_eq!(status(Activity::Idle, Some(12 * 60)), "idle · synced 12m");
-        assert_eq!(status(Activity::Idle, Some(3 * 3600)), "idle · synced 3h");
-        assert_eq!(status(Activity::Idle, Some(2 * 86_400)), "idle · synced 2d");
+        assert_eq!(status(Activity::Idle, Some(40), true), "idle · synced 40s");
+        assert_eq!(
+            status(Activity::Idle, Some(12 * 60), true),
+            "idle · synced 12m"
+        );
+        assert_eq!(
+            status(Activity::Idle, Some(3 * 3600), true),
+            "idle · synced 3h"
+        );
+        assert_eq!(
+            status(Activity::Idle, Some(2 * 86_400), true),
+            "idle · synced 2d"
+        );
     }
 
     #[test]
     fn a_store_that_has_never_synced_says_so_rather_than_saying_nothing() {
         // The state a new account is in for its whole first pass, and the one
         // most likely to be read as "broken" if the line just says "idle".
-        assert_eq!(status(Activity::Idle, None), "idle · never synced");
+        assert_eq!(status(Activity::Idle, None, false), "idle · never synced");
+    }
+
+    #[test]
+    fn a_store_full_of_mail_never_claims_it_has_never_synced() {
+        // Read off the running application: five thousand archived messages
+        // under a footer reading "never synced". Nothing in production writes
+        // `last_synced_at` (#1281), so the honest line is the half that is
+        // true — and the claim the store itself contradicts is not made.
+        assert_eq!(status(Activity::Idle, None, true), "idle");
     }
 
     #[test]
     fn syncing_says_syncing_and_does_not_claim_a_time() {
         // While a pass is running, "synced 40s ago" is about the *previous*
         // pass and reads as a report on this one.
-        assert_eq!(status(Activity::Syncing, Some(40)), "syncing");
+        assert_eq!(status(Activity::Syncing, Some(40), true), "syncing");
     }
 
     #[test]
     fn offline_is_the_state_that_outranks_the_others() {
         // "idle" while the machine has no connection is a claim that nothing
         // needs doing, which is the opposite of what is true.
-        assert_eq!(status(Activity::Offline, Some(40)), "offline");
-        assert_eq!(status(Activity::Offline, None), "offline");
+        assert_eq!(status(Activity::Offline, Some(40), true), "offline");
+        assert_eq!(status(Activity::Offline, None, false), "offline");
     }
 
     #[test]
     fn a_sync_that_has_only_just_happened_still_reads_as_seconds() {
-        assert_eq!(status(Activity::Idle, Some(0)), "idle · synced 0s");
+        assert_eq!(status(Activity::Idle, Some(0), true), "idle · synced 0s");
     }
 }

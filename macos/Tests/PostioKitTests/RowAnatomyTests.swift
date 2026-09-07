@@ -169,13 +169,29 @@ import Testing
         }
     }
 
-    @Test func turningHintsOffGivesTheListTheSpaceBack() {
+    @Test func theHintsCostTheListNoHeightAtAll() {
+        // They used to cost a whole line of *every* row so that one row could
+        // use it — a third of the height of the mail on screen, empty
+        // everywhere the cursor was not. Seen by running the application and
+        // holding it beside the canvas; every test passed, because they only
+        // ever compared the densities to each other.
         for density in [DensityFfi.airy, .comfortable, .compact] {
             #expect(
                 MessageRowCell.preferredHeight(for: density, reservingHints: false)
-                    < MessageRowCell.preferredHeight(for: density, reservingHints: true)
+                    == MessageRowCell.preferredHeight(for: density, reservingHints: true),
+                "\(density) still pays for a line it draws once"
             )
         }
+    }
+
+    @Test func aRowIsThreeLinesAndItsPaddingAndNothingElse() {
+        // The absolute check the relative ones could not make. A row is the
+        // sender, the subject, the snippet, the gaps between them and the
+        // padding — and at 13pt that is under 80pt, not the 97 it was.
+        #expect(MessageRowCell.preferredHeight(for: .airy) < 80)
+        #expect(MessageRowCell.preferredHeight(for: .comfortable) < 72)
+        // Compact drops the snippet, so it is two lines.
+        #expect(MessageRowCell.preferredHeight(for: .compact) < 50)
     }
 }
 

@@ -59,6 +59,26 @@ import Testing
         }
     }
 
+    @Test func everySurfaceThatNamesAKeyNamesTheSameOne() {
+        // The bug this closes: the conversation pane asked for the *primary*
+        // binding and drew `E` beside Reply while the Message menu drew `⌘R`.
+        // Both are live, both are correct, and a window showing each in a
+        // different place teaches neither.
+        for row in canvas where !row.chord.isEmpty && !row.mnemonic.isEmpty {
+            // What the rule draws, against what asking for the primary
+            // binding alone would have drawn. They must differ, and the first
+            // is the one every surface gets.
+            let drawn = MenuPlan.accelerator(among: bindings(row.command))
+            let fromThePrimaryAlone = MenuPlan.accelerator(from: row.mnemonic)
+
+            #expect(drawn == row.chord)
+            #expect(
+                drawn != fromThePrimaryAlone,
+                "\(row.command) draws its mnemonic where the canvas draws a chord"
+            )
+        }
+    }
+
     @Test func aCommandWithNoChordDrawsItsMnemonicRatherThanNothing() {
         // Archive-thread is `A` and nothing else — the canvas says so with a
         // dash. A menu item with no accelerator at all is worse than one
