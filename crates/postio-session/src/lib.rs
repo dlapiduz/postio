@@ -50,6 +50,7 @@ pub mod reachability;
 pub mod reading;
 pub mod refresh;
 pub mod search;
+pub mod signin;
 
 use std::path::Path;
 use std::sync::Arc;

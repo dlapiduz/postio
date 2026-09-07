@@ -253,3 +253,47 @@ async fn a_mismatched_state_is_dropped_and_the_real_redirect_still_completes_the
         .expect("the real redirect still succeeds");
     assert_eq!(response.access_token.expose(), "real-token");
 }
+
+#[tokio::test]
+async fn the_flow_says_which_port_the_answer_will_come_back_on() {
+    // A frontend that has just sent somebody to their browser has something
+    // to say while they are gone, and it cannot know the port without being
+    // told: the listener binds `:0`, because a fixed port is one something
+    // else may already hold.
+    let server = MockTokenServer::start(
+        r#"{"access_token":"final-access-token","refresh_token":"r","expires_in":3600}"#,
+    );
+    let (opener, opened) = ChannelOpener::new();
+    let cancel = CancelToken::new();
+    let req = request(server.url.clone());
+    let seen = std::sync::Arc::new(Mutex::new(None));
+
+    let reported = std::sync::Arc::clone(&seen);
+    let flow = tokio::spawn(async move {
+        postio_account::oauth::authorize_watching(req, &opener, &cancel, &|port| {
+            *reported.lock().expect("port mutex") = Some(port);
+        })
+        .await
+    });
+
+    let authorize_url = opened.await.expect("the flow opens a browser URL");
+    play_the_browser(&authorize_url, "the-auth-code").await;
+    flow.await.expect("joins").expect("authorize succeeds");
+
+    let port = seen
+        .lock()
+        .expect("port mutex")
+        .expect("a port was reported");
+    assert!(port > 0);
+    // The same port the browser was actually sent to, which is the only
+    // thing that makes saying it out loud worth anything.
+    let redirect = authorize_url
+        .query_pairs()
+        .find(|(key, _)| key == "redirect_uri")
+        .map(|(_, value)| value.to_string())
+        .expect("the authorize URL names a redirect");
+    assert!(
+        redirect.contains(&port.to_string()),
+        "reported {port}, sent them to {redirect}"
+    );
+}

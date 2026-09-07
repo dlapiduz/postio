@@ -173,19 +173,62 @@ public struct AddAccountSheet: View {
                     .foregroundStyle(.secondary)
             }
         case .outlook, .gmail:
-            VStack(alignment: .leading, spacing: PostioTokens.space3) {
+            VStack(alignment: .leading, spacing: PostioTokens.space4) {
                 Text("Signing in opens your browser")
                     .font(.headline)
                 Text(
                     """
                     Postio never shows you a sign-in form of its own: a password \
                     typed into a mail client is a password that client could \
-                    keep. Consent happens in Safari and returns on a loopback \
-                    port, and only a refresh token comes back — into the login \
-                    Keychain.
+                    keep. Consent happens in your browser and returns on a \
+                    loopback port, and only a refresh token comes back — into \
+                    the login Keychain.
                     """
                 )
                 .foregroundStyle(.secondary)
+
+                // What is asked for, and — as plainly — what is not. A
+                // provider's consent screen lists what an application *may*
+                // do; only Postio can say what it deliberately left out.
+                let scopes = signInScopes(address: model.address)
+                VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                    Label(scopes.askedFor, systemImage: "checkmark.circle")
+                    Label(scopes.notAskedFor, systemImage: "minus.circle")
+                        .foregroundStyle(.secondary)
+                    if !scopes.requested.isEmpty {
+                        Text(scopes.requested.joined(separator: "\n"))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .font(.callout)
+
+                labelled("Your OAuth client id") {
+                    TextField("", text: $model.clientId)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Your OAuth client id")
+                }
+                Text(
+                    """
+                    Postio ships no client id: one inside an open-source \
+                    application is one every user of it shares, and a provider \
+                    that notices revokes it for all of them at once. Register \
+                    one for yourself, or add this account with a password over \
+                    IMAP instead.
+                    """
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+                if model.signingIn {
+                    HStack(spacing: PostioTokens.space3) {
+                        ProgressView().controlSize(.small)
+                        Text(model.signInMessage)
+                            .font(.system(.callout, design: .monospaced))
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
         case .localStore:
             Text("Choose the store on the next step.")
@@ -236,10 +279,15 @@ public struct AddAccountSheet: View {
                 Button("Back") { model.back() }
             }
             Spacer()
-            Button("Cancel", role: .cancel) { done() }
-                .keyboardShortcut(.cancelAction)
-            Button(model.step == .store ? "Start sync" : "Continue") {
-                if model.step == .store {
+            Button("Cancel", role: .cancel) {
+                model.cancelSignIn(through: session)
+                done()
+            }
+            .keyboardShortcut(.cancelAction)
+            Button(continueTitle) {
+                if signsInHere {
+                    Task { if await model.signIn(through: session) { done() } }
+                } else if model.step == .store {
                     if model.finish(through: session) { done() }
                 } else {
                     model.next()
@@ -247,8 +295,19 @@ public struct AddAccountSheet: View {
             }
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
-            .disabled(!model.canContinue)
+            .disabled(!model.canContinue || model.signingIn)
         }
+    }
+
+    /// Whether pressing the button starts a browser sign-in rather than
+    /// moving on: the OAuth routes have nothing further to fill in.
+    private var signsInHere: Bool {
+        model.step == .credentials && (model.route == .outlook || model.route == .gmail)
+    }
+
+    private var continueTitle: String {
+        if signsInHere { return model.signingIn ? "Signing in…" : "Sign in" }
+        return model.step == .store ? "Start sync" : "Continue"
     }
 
     private func labelled<Content: View>(

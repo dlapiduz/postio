@@ -379,6 +379,15 @@ pub struct Session {
     /// the composer's footer says where a draft lives, and a footer naming a
     /// path the draft is not in is worse than no footer.
     store_at: std::path::PathBuf,
+    /// The sign-in in flight, so closing the sheet can cancel it.
+    ///
+    /// A token rather than a task handle: cancelling has to unwind the
+    /// loopback listener and stop a token exchange from firing for a flow
+    /// nobody is waiting on, and `CancelToken` is what the flow already
+    /// understands.
+    sign_in: Mutex<Option<postio_account::cancel::CancelToken>>,
+    /// The port that flow is listening on, or zero.
+    sign_in_port: Arc<std::sync::atomic::AtomicU16>,
     /// Where the remote-image grants live: beside the store, because they
     /// are state Postio writes rather than configuration a person edits.
     ///
@@ -616,6 +625,34 @@ impl Session {
         self.add_imap_account(
             address, password, imap_host, imap_port, smtp_host, smtp_port,
         )
+    }
+
+    /// Sign in to `address` through the system browser, and add the account.
+    ///
+    /// Returns when the flow is over: `None` on success, a sentence on
+    /// failure, and `Some("cancelled")`'s own wording when the user closed
+    /// the tab. Blocks — it is waiting on a person — so a Swift caller runs
+    /// it off the main actor, the way it opens a session.
+    #[uniffi::method(name = "signInWithBrowser")]
+    pub fn sign_in_with_browser_ffi(
+        &self,
+        address: String,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> Option<String> {
+        self.sign_in_with_browser(address, client_id, client_secret)
+    }
+
+    /// What the sign-in in flight is doing — the port, mostly.
+    #[uniffi::method(name = "signInProgress")]
+    pub fn sign_in_progress_ffi(&self) -> crate::SignInProgressFfi {
+        self.sign_in_progress()
+    }
+
+    /// Give up on the sign-in in flight. Closing the sheet means this.
+    #[uniffi::method(name = "cancelSignIn")]
+    pub fn cancel_sign_in_ffi(&self) {
+        self.cancel_sign_in();
     }
 
     /// How many rows the current scope has — a table's `numberOfRows`.
@@ -1062,6 +1099,8 @@ impl Session {
                 cursor_row: Mutex::new(None),
                 account_scope: Mutex::new(postio_core::Scope::default()),
                 conversation: Arc::default(),
+                sign_in: Mutex::new(None),
+                sign_in_port: Arc::default(),
                 store_at: std::path::PathBuf::from(":memory:"),
                 // A file of its own per session: an in-memory store has no
                 // directory to sit beside, and one shared path made a grant
@@ -1134,6 +1173,8 @@ impl Session {
             cursor_row: Mutex::new(None),
             account_scope: Mutex::new(postio_core::Scope::default()),
             conversation: Arc::default(),
+            sign_in: Mutex::new(None),
+            sign_in_port: Arc::default(),
             allow_list_at: store_at
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -1390,6 +1431,136 @@ impl Session {
     fn secret_store(&self) -> Option<Arc<dyn postio_account::secret::SecretStore>> {
         let guard = self.wiring.lock().expect("wiring lock");
         Some(guard.as_ref()?.secrets.clone())
+    }
+
+    /// Sign in through the browser. See
+    /// [`sign_in_with_browser_ffi`](Self::sign_in_with_browser_ffi).
+    ///
+    /// Every decision here is `postio_session::signin`'s, which is where the
+    /// GTK frontend's own sign-in is moving: the endpoints, the consent, the
+    /// **proof that the token opens the account's real IMAP session before
+    /// anything is written**, and the credential-then-row order. A consent
+    /// path implemented twice is two answers to what Postio asked permission
+    /// for, and the wrong one is invisible.
+    pub fn sign_in_with_browser(
+        &self,
+        address: String,
+        client_id: String,
+        client_secret: Option<String>,
+    ) -> Option<String> {
+        use postio_session::signin;
+
+        if client_id.trim().is_empty() {
+            // ADR 0006 Q1: Postio ships no client id. Said as a fact about
+            // the product rather than as a validation error, because it is
+            // one — and the alternative is a shared credential every user of
+            // an open-source mail client would be sharing.
+            return Some(
+                "Signing in needs an OAuth client id you registered yourself —                  Postio ships none, because a client id inside an open-source                  application is one every user of it shares."
+                    .to_owned(),
+            );
+        }
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open to add an account to.".to_owned());
+        };
+        let Some(secrets) = self.secret_store() else {
+            return Some("There is no keyring to store the token in.".to_owned());
+        };
+
+        let domain = address
+            .rsplit_once('@')
+            .map(|(_, domain)| domain.to_ascii_lowercase())
+            .unwrap_or_default();
+        let Some(preset) = postio_account::discovery::preset_for_domain(&domain) else {
+            return Some(format!(
+                "Postio does not know how to sign in to {domain}. Add it as an                  IMAP account with a password instead."
+            ));
+        };
+        let Some(offer) = preset.oauth() else {
+            return Some(format!(
+                "{} does not offer a browser sign-in. Add it as an IMAP                  account with a password instead.",
+                preset.display_name()
+            ));
+        };
+        let settings = preset.settings_for(&address);
+        let scopes = offer.scopes.clone();
+        let client = signin::OAuthClient {
+            client_id: client_id.trim().to_owned(),
+            client_secret: client_secret.filter(|secret| !secret.trim().is_empty()),
+        };
+
+        let cancel = postio_account::cancel::CancelToken::new();
+        *self.sign_in.lock().expect("sign-in lock") = Some(cancel.clone());
+        let progress = self.sign_in_port.clone();
+        progress.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        // A runtime of its own, alive for exactly this flow. The session's
+        // belongs to the engines, and this waits on a person.
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return Some("Postio could not start the sign-in.".to_owned());
+        };
+        let outcome = runtime.block_on(async {
+            let endpoints = signin::endpoints_for(
+                offer.authorize.as_deref(),
+                offer.token.as_deref(),
+                offer.issuer.as_deref(),
+                &cancel,
+            )
+            .await?;
+            let signed_in = signin::sign_in(
+                &settings,
+                &client,
+                &endpoints,
+                &scopes,
+                &postio_account::oauth::browser::SystemBrowserOpener,
+                &cancel,
+                &|port| progress.store(port, std::sync::atomic::Ordering::SeqCst),
+            )
+            .await?;
+            signin::provision_oauth(
+                &database, secrets, &settings, &client, signed_in, &scopes, None,
+            )
+            .await
+            .map_err(signin::SignInError::Failed)
+        });
+
+        *self.sign_in.lock().expect("sign-in lock") = None;
+        progress.store(0, std::sync::atomic::Ordering::SeqCst);
+        match outcome {
+            Ok(_) => None,
+            // Closing the tab is not a failure and must not be reported as
+            // one; the sheet stays where it was.
+            Err(signin::SignInError::Cancelled) => Some("The sign-in was cancelled.".to_owned()),
+            Err(signin::SignInError::Failed(message)) => Some(message),
+        }
+    }
+
+    /// What the sign-in in flight is doing. See
+    /// [`sign_in_progress_ffi`](Self::sign_in_progress_ffi).
+    pub fn sign_in_progress(&self) -> crate::SignInProgressFfi {
+        let waiting = self.sign_in.lock().expect("sign-in lock").is_some();
+        let port = self.sign_in_port.load(std::sync::atomic::Ordering::SeqCst);
+        crate::SignInProgressFfi {
+            waiting,
+            port,
+            message: match (waiting, port) {
+                (false, _) => String::new(),
+                (true, 0) => "Asking the provider where to send you…".to_owned(),
+                (true, port) => format!(
+                    "Waiting for your browser. The answer comes back to                      127.0.0.1:{port}, and nowhere else."
+                ),
+            },
+        }
+    }
+
+    /// Give up on the sign-in in flight.
+    pub fn cancel_sign_in(&self) {
+        if let Some(cancel) = self.sign_in.lock().expect("sign-in lock").take() {
+            cancel.cancel();
+        }
     }
 
     /// A new message. See [`new_draft_ffi`](Self::new_draft_ffi).

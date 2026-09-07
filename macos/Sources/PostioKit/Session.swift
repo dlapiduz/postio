@@ -388,6 +388,31 @@ public final class PostioSession {
         )
     }
 
+    /// Sign in to `address` through the system browser and add the account.
+    ///
+    /// **Blocks until the flow is over** — it is waiting on a person in
+    /// another application — so it belongs on a detached task, the way
+    /// opening a session does. `nil` when the account was added; a sentence
+    /// otherwise, including when the user closed the tab.
+    ///
+    /// The client id is the user's own. Postio ships none (ADR 0006 Q1): a
+    /// credential inside an open-source application is one every user of it
+    /// shares.
+    public func signInWithBrowser(
+        address: String,
+        clientId: String,
+        clientSecret: String?
+    ) -> String? {
+        inner.signInWithBrowser(
+            address: address, clientId: clientId, clientSecret: clientSecret)
+    }
+
+    /// What the sign-in in flight is doing — the loopback port, mostly.
+    public var signInProgress: SignInProgressFfi { inner.signInProgress() }
+
+    /// Give up on the sign-in in flight. Closing the sheet means this.
+    public func cancelSignIn() { inner.cancelSignIn() }
+
     // -- writing mail (#1272) ---------------------------------------------
 
     /// A new message, from the account that would send it.

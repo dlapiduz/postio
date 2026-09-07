@@ -63,7 +63,9 @@ pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi};
 pub use palette::PaletteEntryFfi;
-pub use provisioning::{ProviderHintFfi, RouteFfi, provider_hint};
+pub use provisioning::{
+    ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
+};
 pub use reader::{InlinePart, ReaderNoticeFfi, RemoteImagesFfi, middle_truncate};
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
