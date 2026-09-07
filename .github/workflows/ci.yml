@@ -75,6 +75,12 @@ jobs:
       # which the ruleset counts as passed. A gate that reports green having
       # done nothing is exactly what #666's other half is about.
       macos: ${{ steps.classify.outputs.macos }}
+      # Whether the tooling self-tests need to run, so `macos-tooling` can be
+      # gated without starting a macOS runner to find out. `boundaries` still
+      # decides for itself, deliberately: #1151's third acceptance line is
+      # that the Linux job is unchanged in what it runs and how long it
+      # takes, and both callers run the same `ci-tooling-needed.sh`.
+      tooling: ${{ steps.tooling.outputs.run }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -101,6 +107,19 @@ jobs:
           fi
           printf '%s\n' "$files" | scripts/ci-changes.sh "${{ github.event_name }}" | tee -a "$GITHUB_OUTPUT"
           printf '%s\n' "$files" | sed 's/^/  changed: /'
+          printf '%s\n' "$files" > "$RUNNER_TEMP/changed-files"
+
+      # The same question `boundaries` asks itself, asked once more here so a
+      # macOS runner is only ever started when the answer is yes. macOS
+      # minutes bill at ten times Linux ones, and a job that starts to
+      # discover it has nothing to do is the expensive way to find out.
+      - name: Decide whether the tooling self-tests need to run
+        id: tooling
+        run: |
+          answer=$(scripts/ci-tooling-needed.sh "${{ github.event_name }}" \
+                     < "$RUNNER_TEMP/changed-files")
+          echo "run=$answer" >> "$GITHUB_OUTPUT"
+          echo "tooling self-tests on macOS: $answer"
 
   fmt:
     name: rustfmt
@@ -617,3 +636,72 @@ jobs:
       # above touches, and both of which fail on their own terms.
       - name: Assemble Postio.app
         run: scripts/macos-bundle.sh
+
+  # The tooling self-tests, on the platform whose shell they were never run
+  # on (#1151).
+  #
+  # `scripts/jobserver.sh` started its holder with `sleep infinity`, a GNU
+  # extension BSD rejects. On macOS the holder exited instantly, no pool ever
+  # existed, and every cargo on the machine fell back to two jobs on a
+  # ten-core box -- for months, with a green board.
+  # `scripts/tests/test-jobserver.py` catches it in two seconds. It had simply
+  # never been run on a Mac.
+  #
+  # `scripts/` is the least platform-specific-looking code in this repository
+  # and is mostly shell, which is where portability breaks live. The
+  # self-tests are the only thing that tests it, and until this they tested it
+  # on one platform: the gate ran where the bug was not, which is the shape
+  # `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`
+  # records one layer up.
+  #
+  # # Why its own job and not a step in `macos`
+  #
+  # `macos` is gated on `changes.outputs.macos`, and `ci-changes.sh` answers
+  # `no` for `scripts/tests/`, `scripts/checks/` and `scripts/issue-*.sh` --
+  # which are exactly the changes the self-tests exist for. Hanging them off
+  # that gate would skip them on every diff that most needs them. So this is
+  # gated on the tooling question instead, which is the same one `boundaries`
+  # asks, from the same script.
+  #
+  # The Linux job keeps its own copy of that decision rather than reading this
+  # one: #1151 asks that it be unchanged in what it runs and how long it
+  # takes, and rewiring it to depend on `changes` would be neither.
+  macos-tooling:
+    name: Tooling self-tests (macOS)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.tooling == 'yes'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The pin decides; see the note in the `fmt` job. Several self-tests
+      # build a cargo sandbox, so this job needs a toolchain even though it
+      # compiles none of the workspace.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      # `.cargo/config.toml` names `postio-cc` and `postio-linker` as bare
+      # program names (#1101), and a sandbox that inherits that config needs
+      # them on PATH like any other build here.
+      - name: Install the linker and cc shims
+        run: scripts/install-shims.sh
+
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
+      # prerequisite is a broken runner rather than somebody's laptop. Set
+      # explicitly, the way the Swift job sets it, rather than relied upon:
+      # a self-test that skips here is indistinguishable from one that
+      # passed, and that is the failure this whole job exists to stop.
+      - name: Prove the tooling still holds itself up on macOS
+        env:
+          CI: "true"
+        run: scripts/run-self-tests.sh --logs "$RUNNER_TEMP/self-test-logs"

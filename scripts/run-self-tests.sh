@@ -29,7 +29,9 @@
 # Usage:
 #   scripts/run-self-tests.sh [--jobs N] [--dir DIR] [--logs DIR]
 #
-# Exit status: 0 every self-test passed, 1 one or more failed.
+# Exit status: 0 every self-test that applies here passed, 1 one or more
+# failed, and a test that stood down for this platform (exit 77) is counted
+# and named rather than folded into either.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,15 +77,33 @@ echo "running $COUNT self-tests, $JOBS at a time"
 # along with all eighty-four others. #1151 is the issue about self-tests only
 # ever running on Linux; this is that issue inside its own runner, and it is
 # the same GNU-ism that cost `jobserver.sh` months of two-job builds.
+#
+# A child's exit status says which of three things happened: 0 passed,
+# 77 stood down, anything else failed.
+#
+# Exit 77 is the third: a self-test declaring that it cannot be
+# meaningful on this platform (`scripts/lib/prereq.py`'s `only_on`). #1151
+# asks that such a test *say so* rather than skip silently, so it is counted
+# and named below instead of being folded into the passes -- a Linux-only
+# test on a macOS runner has to be visible in the log, or the suite is
+# claiming coverage it does not have.
+NOT_APPLICABLE_EXIT=77
 FAILED="$LOGS/.failed"
+STOOD_DOWN="$LOGS/.not-applicable"
 : > "$FAILED"
+: > "$STOOD_DOWN"
 # shellcheck disable=SC2016
 xargs -P "$JOBS" -I{} sh -c '
     log="$2/$(basename "$1").log"
-    if ! python3 "$1" > "$log" 2>&1; then
-        printf "%s\n" "$1" >> "$2/.failed"
-        exit 1
+    python3 "$1" > "$log" 2>&1
+    status=$?
+    [ "$status" -eq 0 ] && exit 0
+    if [ "$status" -eq '"$NOT_APPLICABLE_EXIT"' ]; then
+        printf "%s\n" "$1" >> "$2/.not-applicable"
+        exit 0
     fi
+    printf "%s\n" "$1" >> "$2/.failed"
+    exit 1
 ' _ {} "$LOGS" < "$LIST" >/dev/null 2>&1
 
 # Success is a positive fact, not the absence of a recorded failure.
@@ -101,8 +121,15 @@ if [ "$RAN" -ne "$COUNT" ]; then
     exit 1
 fi
 
+STOOD="$(wc -l < "$STOOD_DOWN" | tr -d ' ')"
+if [ "$STOOD" -gt 0 ]; then
+    echo
+    echo "$STOOD not applicable on this platform, and said so:"
+    sed 's|.*/|  |' "$STOOD_DOWN"
+fi
+
 if [ ! -s "$FAILED" ]; then
-    echo "every self-test passed"
+    echo "every self-test that applies here passed"
     exit 0
 fi
 

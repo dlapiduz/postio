@@ -66,6 +66,14 @@ def case(name: str, condition: bool, detail: str) -> None:
         FAILURES.append(f"{name}: {detail}")
 
 
+NOT_APPLICABLE = (
+    "#!/usr/bin/env python3\n"
+    "import sys\n"
+    "print('not applicable on this platform: no mutter here')\n"
+    "sys.exit(77)\n"
+)
+
+
 def run(directory: Path, logs: Path):
     return patience.run(
         ["bash", str(RUNNER), "--dir", str(directory), "--logs", str(logs), "--jobs", "2"],
@@ -192,6 +200,35 @@ def main() -> int:
             "and says how many of them actually ran",
             "ran 0 of 1" in combined,
             f"it did not say what it managed:\n{combined}",
+        )
+
+        # -- Declared not-applicable is neither a pass nor a failure --------
+        #
+        # #1151's second acceptance line: a self-test that cannot be
+        # meaningful on this platform has to *say so*, and a silent skip is
+        # what it must not be. Exit 77 is the declaration; the run counts it
+        # and names it, so a Linux-only test is visible in the macOS log
+        # rather than indistinguishable from one that ran and passed.
+        elsewhere = base / "elsewhere"
+        elsewhere.mkdir()
+        write(elsewhere, "test-a.py", PASSES)
+        write(elsewhere, "test-elsewhere.py", NOT_APPLICABLE)
+        result = run(elsewhere, base / "logs-elsewhere")
+        combined = result.stdout + result.stderr
+        case(
+            "a test that declares itself not applicable does not fail the run",
+            result.returncode == 0,
+            f"exit {result.returncode}:\n{combined}",
+        )
+        case(
+            "and the run says one stood down, rather than counting it as passed",
+            "1 not applicable" in combined,
+            f"the run did not account for it:\n{combined}",
+        )
+        case(
+            "and names which one, so it can be checked rather than trusted",
+            "test-elsewhere.py" in combined,
+            f"it did not name the test that stood down:\n{combined}",
         )
 
     for failure in FAILURES:

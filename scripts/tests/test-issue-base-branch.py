@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
+import prereq  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
 CLAIM = HERE / "issue-claim.sh"
@@ -228,9 +229,9 @@ def report(name: str, result, calls: str) -> str:
 
 
 def main() -> int:
-    if shutil.which("cargo") is None:
-        print("skip: no cargo on PATH", file=sys.stderr)
-        return 0
+    # Under CI a runner with no cargo is a broken runner, and returning 0
+    # here made this test green having run nothing at all (#1151).
+    prereq.require("cargo", present=prereq.have("cargo"))
     channel = pinned_channel()
 
     # --- A: a worktree claimed with --base lands back onto that base --------
