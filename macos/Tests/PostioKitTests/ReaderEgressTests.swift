@@ -56,20 +56,45 @@ struct ReaderEgressTests {
         func stop() { listener.cancel() }
     }
 
-    /// Render `html` in a hardened web view and give it time to fetch.
-    ///
-    /// Offscreen but in a real window: a web view with no window never lays
-    /// out, and a view that never lays out never loads an image — which would
-    /// make this test pass for the wrong reason, reporting zero connections
-    /// because nothing rendered rather than because nothing was allowed.
-    /// Render `html` in a hardened web view and give it time to fetch.
+    /// Render `html` in a hardened web view and spend a fixed window on it.
     ///
     /// No `NSWindow`: putting one in a test process and tearing it down
     /// segfaults the runner. A web view with a real frame lays out and loads
     /// its resources without one — which the "allowed" case below confirms,
     /// and which is why that case has to exist. Without it a zero-connection
     /// result would be indistinguishable from a view that never rendered.
+    ///
+    /// POSTIO-FIXED-DEADLINE: nothing is waited *for* here. This is the form
+    /// the "must not happen" cases want — the window is spent whatever the
+    /// result, to give a fetch every chance to occur. Shortening it would
+    /// weaken them; lengthening it would only make a passing run slower.
     private func render(_ html: String) async {
+        _ = await render(html, within: .milliseconds(1500)) { false }
+    }
+
+    /// Render `html` and stop as soon as `done()`, or at the deadline.
+    ///
+    /// The "must happen" case needs the opposite of the window above. It used
+    /// to share it, and read `beacon.connections` after a flat 1.5s with no
+    /// await on the load — so on a runner where WebKit's networking took
+    /// longer than that, the fetch had simply not happened yet and the case
+    /// failed having proved nothing (#1213). A shared macOS runner is slower
+    /// and busier than the desktop that number was chosen on.
+    ///
+    /// So it waits for the thing it is waiting for. The deadline is generous
+    /// rather than tight, because it costs nothing when the test passes: a
+    /// connection that arrives in 200ms returns in 200ms whatever the bound
+    /// says, and it is only spent on a run that was going to fail anyway.
+    ///
+    /// This is the shape `gtk_reader.rs` already uses for the same pair of
+    /// claims on Linux — `pump_for` for the blocked case,
+    /// `wait_for_connection` for the allowed one.
+    @discardableResult
+    private func render(
+        _ html: String,
+        within limit: Duration = .seconds(15),
+        until done: () -> Bool
+    ) async -> Bool {
         let configuration = ReaderConfiguration.hardened(
             cidHandler: ClosedSchemeHandler(),
             baseHandler: ClosedSchemeHandler()
@@ -78,11 +103,17 @@ struct ReaderEgressTests {
             frame: NSRect(x: 0, y: 0, width: 600, height: 400),
             configuration: configuration
         )
+        defer { view.stopLoading() }
         view.loadHTMLString(html, baseURL: URL(string: "postio-reader:///"))
 
-        // Long enough for a fetch to have happened if one were going to.
-        try? await Task.sleep(for: .milliseconds(1500))
-        view.stopLoading()
+        let slice = Duration.milliseconds(100)
+        var spent = Duration.zero
+        while spent < limit {
+            if done() { return true }
+            try? await Task.sleep(for: slice)
+            spent += slice
+        }
+        return done()
     }
 
     @Test func aBlockedRemoteImageIsNeverFetched() async throws {
@@ -116,10 +147,12 @@ struct ReaderEgressTests {
         let policy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
             + "img-src postio-cid: data: http: https:; font-src data:; base-uri 'none'; "
             + "form-action 'none'; frame-src 'none'; connect-src 'none'"
-        await render(document(policy: policy, port: port))
+        let fetched = await render(document(policy: policy, port: port)) {
+            beacon.connections > 0
+        }
 
         #expect(
-            beacon.connections > 0,
+            fetched,
             "nothing was fetched even with remote images allowed, so the blocked case above proves nothing"
         )
     }
