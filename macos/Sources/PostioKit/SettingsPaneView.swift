@@ -38,6 +38,8 @@ public struct SettingsPaneView: View {
     @State private var reconnecting: Int64?
     /// Test, re-index and remove, and what the last one said.
     @State private var actions = AccountActions()
+    /// What the display-name field currently holds.
+    @State private var renamedTo = ""
 
     public init(
         store: SettingsStore,
@@ -263,6 +265,7 @@ public struct SettingsPaneView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 selected = open ? nil : account.id
+                renamedTo = account.displayName
             } label: {
                 HStack(alignment: .top, spacing: 12) {
                     Text(account.initials)
@@ -320,7 +323,15 @@ public struct SettingsPaneView: View {
     private func accountForm(_ account: AccountFfi) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             field("DISPLAY NAME") {
-                Text(account.displayName.isEmpty ? account.address : account.displayName)
+                HStack(spacing: 8) {
+                    TextField("", text: $renamedTo)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 260)
+                        .onSubmit { actions.rename(account, to: renamedTo, through: session) }
+                        .accessibilityLabel("Display name")
+                    Button("Save") { actions.rename(account, to: renamedTo, through: session) }
+                        .disabled(renamedTo == account.displayName || actions.isBusy)
+                }
             }
             field("LOCAL STORE") {
                 Text(store.path)
@@ -337,6 +348,17 @@ public struct SettingsPaneView: View {
                 Button("Remove account…") { actions.askToRemove(account) }
             }
             .disabled(actions.isBusy)
+            if actions.missingCredential {
+                // The Partial state: a row that exists with nothing in the
+                // keyring to sign in with. It asks for a password rather
+                // than a retry, which is a different offer from "the server
+                // said no".
+                Label(
+                    "This account has no password in your Keychain yet.",
+                    systemImage: "key.slash"
+                )
+                .font(.callout)
+            }
             if let outcome = actions.outcome {
                 // What happened, where it was asked for. A connection test
                 // whose answer appears somewhere else is a test nobody reads.

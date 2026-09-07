@@ -680,6 +680,13 @@ impl Session {
         self.reindex_account(account)
     }
 
+    /// Change what an account calls itself — the one field the account form
+    /// edits.
+    #[uniffi::method(name = "setDisplayName")]
+    pub fn set_display_name_ffi(&self, account: i64, name: String) -> Option<String> {
+        self.set_display_name(account, name)
+    }
+
     /// Take an account away — its row, and its credentials.
     #[uniffi::method(name = "removeAccount")]
     pub fn remove_account_ffi(&self, account: i64) -> Option<String> {
@@ -1468,6 +1475,7 @@ impl Session {
     pub fn test_connection(&self, account: i64) -> crate::ConnectionReportFfi {
         let refusal = |message: &str| crate::ConnectionReportFfi {
             reachable: false,
+            missing_credential: false,
             message: message.to_owned(),
         };
         let Some((database, _)) = self.store_and_blobs() else {
@@ -1497,8 +1505,23 @@ impl Session {
         let report = runtime.block_on(postio_session::checkup::test_connection(&found, secrets));
         crate::ConnectionReportFfi {
             reachable: report.reachable,
+            missing_credential: report.missing_credential,
             message: report.message,
         }
+    }
+
+    /// Change what an account calls itself. See
+    /// [`set_display_name_ffi`](Self::set_display_name_ffi).
+    pub fn set_display_name(&self, account: i64, name: String) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        postio_session::checkup::set_display_name(
+            &database,
+            postio_model::ids::AccountId::new(account),
+            &name,
+        )
+        .err()
     }
 
     /// Re-index an account. See [`reindex_account_ffi`](Self::reindex_account_ffi).

@@ -36,6 +36,14 @@ pub struct ConnectionReport {
     pub reachable: bool,
     /// What happened, for the person who pressed the button.
     pub message: String,
+    /// Whether the failure was that there is **no credential** for this
+    /// account rather than a wrong or rejected one.
+    ///
+    /// The settings pane's *Partial* state: a row that exists with nothing in
+    /// the keyring to sign in with. It calls for a different offer — put a
+    /// password in, or sign in again — than a server that said no, and a
+    /// pane that could not tell them apart would offer the wrong one.
+    pub missing_credential: bool,
 }
 
 /// Open a session against the account's own server and close it again.
@@ -57,6 +65,7 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                     "Postio could not read this account's credential from the \
                      keyring: {error}. Is the keyring unlocked?"
                 ),
+                missing_credential: true,
             };
         }
     };
@@ -70,6 +79,7 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                 message: format!(
                     "Postio could not start a TLS connection on this machine: {error}"
                 ),
+                missing_credential: false,
             };
         }
     };
@@ -80,10 +90,12 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                 "{} answered and accepted this account.",
                 account.incoming.host
             ),
+            missing_credential: false,
         },
         Err(error) => ConnectionReport {
             reachable: false,
             message: explain(&error),
+            missing_credential: false,
         },
     }
 }
@@ -139,6 +151,29 @@ pub async fn remove_account(
         }
     }
     Ok(())
+}
+
+/// Change what an account calls itself.
+///
+/// The one field the canvas' account form edits. Everything else on a row —
+/// the servers, the auth method — came from the preset table or from a
+/// sign-in, and editing those is changing *which account this is*, which is
+/// adding one.
+pub fn set_display_name(database: &Database, account: AccountId, name: &str) -> Result<(), String> {
+    let connection = database
+        .connection()
+        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
+    let repository = AccountRepository::new(&connection);
+    let Some(mut found) = repository
+        .get(account)
+        .map_err(|error| format!("Postio could not read its local store: {error}"))?
+    else {
+        return Err("That account is not in the store.".to_owned());
+    };
+    found.display_name = name.trim().to_owned();
+    repository
+        .update(&mut found)
+        .map_err(|error| format!("The account could not be updated: {error}"))
 }
 
 /// Turn a backend error into something the user can act on.

@@ -131,3 +131,66 @@ fn a_port_that_answers_but_is_not_imap_says_which_host_that_was() {
     assert!(said.contains("not like an IMAP server"), "{said}");
     assert!(said.contains("imap.example.com"));
 }
+
+#[tokio::test]
+async fn an_account_with_nothing_in_the_keyring_is_partial_rather_than_wrong() {
+    // The settings pane's third state: a row that exists with nothing to sign
+    // in with. It calls for a different offer — put a password in — than a
+    // server that said no, and a pane that could not tell them apart would
+    // make the wrong one.
+    let database = test_support::temp();
+    let empty = MemorySecretStore::new();
+    let account = {
+        let connection = database.connection().expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection);
+        AccountRepository::new(&connection)
+            .get(account.id)
+            .expect("a read")
+            .expect("the account")
+    };
+
+    let report = postio_session::checkup::test_connection(&account, Arc::new(empty.reopen())).await;
+
+    assert!(!report.reachable);
+    assert!(
+        report.missing_credential,
+        "nothing was in the keyring: {}",
+        report.message
+    );
+}
+
+#[test]
+fn renaming_an_account_changes_what_it_calls_itself_and_nothing_else() {
+    let database = test_support::temp();
+    let (id, address) = {
+        let connection = database.connection().expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection);
+        (account.id, account.address.address.clone())
+    };
+
+    postio_session::checkup::set_display_name(&database, id, "  Ada at work  ")
+        .expect("the rename lands");
+
+    let connection = database.connection().expect("a connection");
+    let stored = AccountRepository::new(&connection)
+        .get(id)
+        .expect("a read")
+        .expect("the account");
+    assert_eq!(stored.display_name, "Ada at work", "trimmed");
+    assert_eq!(
+        stored.address.address, address,
+        "and the address it signs in with is untouched"
+    );
+}
+
+#[test]
+fn renaming_an_account_that_is_gone_says_so() {
+    let database = test_support::temp();
+    let error = postio_session::checkup::set_display_name(
+        &database,
+        postio_model::ids::AccountId::new(404),
+        "Nobody",
+    )
+    .expect_err("there is no such account");
+    assert!(error.contains("not in the store"), "{error}");
+}

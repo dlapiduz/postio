@@ -22,6 +22,9 @@ public final class AccountActions {
     public private(set) var failed = false
     /// The account a removal is waiting to be confirmed for.
     public private(set) var confirmingRemoval: AccountFfi?
+    /// Whether the last test found no credential at all — the pane's
+    /// *Partial* state, which asks for a password rather than a retry.
+    public private(set) var missingCredential = false
 
     public init() {}
 
@@ -34,6 +37,7 @@ public final class AccountActions {
         begin(.testing)
         let id = account.id
         let report = await Task.detached { session.testConnection(id) }.value
+        missingCredential = report.missingCredential
         finish(report.message, failed: !report.reachable)
     }
 
@@ -82,10 +86,24 @@ public final class AccountActions {
         finish(complaint ?? "\(account.address) was removed.", failed: complaint != nil)
     }
 
+    /// Rename an account. Synchronous: it is one row, and no server is
+    /// consulted.
+    public func rename(
+        _ account: AccountFfi,
+        to name: String,
+        through session: PostioSession?
+    ) {
+        guard let session, running == nil else { return }
+        let complaint = session.setDisplayName(account.id, to: name)
+        outcome = complaint ?? "Renamed to \(name.trimmingCharacters(in: .whitespaces))."
+        failed = complaint != nil
+    }
+
     private func begin(_ what: Running) {
         running = what
         outcome = nil
         failed = false
+        missingCredential = false
     }
 
     private func finish(_ said: String, failed: Bool) {

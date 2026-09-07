@@ -64,4 +64,18 @@ import Testing
         #expect(!actions.isBusy)
         #expect(actions.outcome == nil, "nothing was attempted, so nothing is reported")
     }
+
+    @Test func nothingIsPartialUntilSomethingHasBeenTested() {
+        // The state is a *finding*, not a guess: asking the keyring on every
+        // settings open would raise a permission prompt per account.
+        let actions = AccountActions()
+        #expect(!actions.missingCredential)
+    }
+
+    @Test func renamingWithNoSessionChangesNothingAndSaysNothing() {
+        let actions = AccountActions()
+        actions.rename(account(), to: "Ada at work", through: nil)
+
+        #expect(actions.outcome == nil)
+    }
 }

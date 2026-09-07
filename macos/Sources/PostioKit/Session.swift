@@ -413,6 +413,13 @@ public final class PostioSession {
         inner.testConnection(account: account)
     }
 
+    /// Change what an account calls itself — the one field the account form
+    /// edits. Everything else on a row came from the preset table or from a
+    /// sign-in, and editing those is changing which account this is.
+    public func setDisplayName(_ account: Int64, to name: String) -> String? {
+        inner.setDisplayName(account: account, name: name)
+    }
+
     /// Rebuild this account's search index from the mail already here.
     /// Blocks, and reaches no server.
     public func reindexAccount(_ account: Int64) -> String? {

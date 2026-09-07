@@ -58,6 +58,10 @@ impl AccountFfi {
 pub struct ConnectionReportFfi {
     /// Whether the account could sign in.
     pub reachable: bool,
+    /// Whether the failure was that there is **no** credential for this
+    /// account rather than a rejected one — the pane's *Partial* state,
+    /// which calls for a different offer.
+    pub missing_credential: bool,
     /// What happened, in words somebody can act on. The wording is
     /// `postio_session::checkup`'s, so both frontends explain a rejected
     /// password the same way — including the part the error cannot know,
