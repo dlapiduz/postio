@@ -22,7 +22,7 @@ blake3 = "1.8.7"
 # The store's master key comes from the kernel's entropy pool and nowhere
 # else (ADR 0014 Q3). `getrandom` is the OS RNG with no generator in front of
 # it to be reproduced.
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 # Key material overwrites itself when it drops, the same discipline
 # `postio-account`'s `Password` already keeps.
 zeroize = "1.9.0"
@@ -44,7 +44,7 @@ tempfile = { version = "3.27.0", optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
 # the store must compress as well as decompress; the C library is BSD-3-Clause,
 # which `deny.toml` already allows.
-zstd = "0.13.3"
+zstd = "0.14.0"
 thiserror = "2.0.20"
 tracing = "0.1"
 

@@ -51,7 +51,7 @@ async-trait = "0.1.92"
 # randomness behind it. Both already resolve at these exact versions
 # transitively under `io-pim-discovery`'s `pacc` feature (unused here), so
 # depending on them directly adds no new version to the graph.
-base64 = "0.22.1"
+base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
 # `oauth::exchange`'s token POST and RFC 8414 metadata GET: the same
 # io-http coroutines `io-pim-discovery` already builds on for autoconfig,
