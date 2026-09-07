@@ -29,9 +29,39 @@ public enum ComposeHandoff {
         return settingsComposing(text: settingsLoad(path: path))?.editor ?? ""
     }
 
+    /// What this Mac has by that name.
+    ///
+    /// Three answers, because two conflated a terminal editor with a typo:
+    /// `vim` is real and has no window, `vum` is neither, and telling
+    /// somebody the second "runs in a terminal" is a wrong answer
+    /// confidently given (#1297).
+    public static func found(_ name: String) -> FoundEditorFfi {
+        if applicationURL(name) != nil { return .application }
+        // A real program with no window of its own — `vim`, `nano`, `emacs
+        // -nw`. Looked for the way a shell would, on `PATH`.
+        return onPath(name) ? .terminalProgram : .nothing
+    }
+
     /// Whether this Mac has an application by that name.
     public static func isApplication(_ name: String) -> Bool {
         applicationURL(name) != nil
+    }
+
+    /// Whether a bare name resolves to an executable on `PATH`.
+    private static func onPath(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !trimmed.contains("/") else { return false }
+        let path = ProcessInfo.processInfo.environment["PATH"]
+            // An application launched from Finder inherits no shell
+            // environment, so `PATH` is often absent entirely. These are the
+            // directories a terminal editor actually lives in.
+            ?? "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+        return path.split(separator: ":").contains { directory in
+            FileManager.default.isExecutableFile(
+                atPath: URL(fileURLWithPath: String(directory))
+                    .appendingPathComponent(trimmed).path
+            )
+        }
     }
 
     /// The application `name` refers to, in the three spellings somebody
@@ -86,9 +116,7 @@ public enum ComposeHandoff {
     /// reporting success before that would be reporting a guess.
     @MainActor
     public static func open(_ file: URL, using configured: String) async -> String? {
-        switch settingsHandoffTarget(
-            configured: configured, isApplication: isApplication(configured)
-        ) {
+        switch settingsHandoffTarget(configured: configured, found: found(configured)) {
         case .platformDefault:
             // POSTIO-CONSENT: only from the compose window's hand-off button,
             // pressed for one draft. The URL is a `file:` URL inside Postio's
@@ -97,7 +125,7 @@ public enum ComposeHandoff {
             return NSWorkspace.shared.open(file)
                 ? nil
                 : "Nothing on this Mac opened that file, so the draft is still here."
-        case .needsTerminal(_, let advice):
+        case .needsTerminal(_, let advice), .missing(_, let advice):
             return advice
         case .application(let name):
             guard let application = applicationURL(name) else {

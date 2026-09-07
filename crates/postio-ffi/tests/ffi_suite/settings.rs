@@ -414,7 +414,7 @@ fn clearing_the_editor_hands_the_choice_back_to_the_platform() {
     let read_back = settings_composing(written).expect("parses");
     assert_eq!(read_back.editor, "");
     assert_eq!(
-        settings_handoff_target(read_back.editor, false),
+        settings_handoff_target(read_back.editor, postio_ffi::FoundEditorFfi::Nothing),
         postio_ffi::HandoffTargetFfi::PlatformDefault
     );
 }
@@ -423,7 +423,10 @@ fn clearing_the_editor_hands_the_choice_back_to_the_platform() {
 fn an_editor_that_is_not_an_application_says_it_needs_a_terminal() {
     // The case the setting exists for, and the one that would otherwise be a
     // button doing nothing: somebody types the name of the editor they use.
-    let target = settings_handoff_target("vim".to_owned(), false);
+    let target = settings_handoff_target(
+        "vim".to_owned(),
+        postio_ffi::FoundEditorFfi::TerminalProgram,
+    );
 
     let postio_ffi::HandoffTargetFfi::NeedsTerminal { name, advice } = target else {
         panic!("expected a terminal program, got {target:?}");

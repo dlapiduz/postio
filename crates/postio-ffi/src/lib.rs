@@ -75,9 +75,9 @@ pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
-    FilterFfi, GroupFfi, HandoffTargetFfi, RowActionFfi, RowHintFfi, RowMetricsFfi, SettingsError,
-    SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi, ThemeFfi,
-    row_actions, row_metrics, row_timestamp, settings_add_filter, settings_appearance,
+    FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, RowActionFfi, RowHintFfi, RowMetricsFfi,
+    SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi,
+    ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter, settings_appearance,
     settings_composing, settings_filters, settings_group_label, settings_handoff_label,
     settings_handoff_target, settings_humanize_interval, settings_load, settings_patch_appearance,
     settings_patch_composing, settings_patch_filter, settings_patch_syncing, settings_path,

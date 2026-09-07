@@ -874,13 +874,13 @@ public struct SettingsPaneView: View {
     private func editorAdvice(_ configured: String) -> String {
         switch settingsHandoffTarget(
             configured: configured,
-            isApplication: ComposeHandoff.isApplication(configured)
+            found: ComposeHandoff.found(configured)
         ) {
         case .platformDefault:
             "Empty: the draft opens in whatever this Mac opens a text file with."
         case .application(let name):
             "Drafts open in \(name)."
-        case .needsTerminal(_, let advice):
+        case .needsTerminal(_, let advice), .missing(_, let advice):
             advice
         }
     }

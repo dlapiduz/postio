@@ -162,6 +162,22 @@ pub struct ComposingFfi {
     pub editor: String,
 }
 
+/// What the platform found when it looked for the configured editor.
+///
+/// Three answers, not two: a name that is not an application is a terminal
+/// program on macOS and a *typo* on freedesktop, and telling somebody their
+/// editor runs in a terminal when they misspelled it is a wrong answer
+/// confidently given (#1297).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FoundEditorFfi {
+    /// Something this platform can open in a window of its own.
+    Application,
+    /// A real program, but a terminal one.
+    TerminalProgram,
+    /// Nothing by that name at all.
+    Nothing,
+}
+
 /// What the hand-off should do with the configured editor.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum HandoffTargetFfi {
@@ -179,21 +195,38 @@ pub enum HandoffTargetFfi {
         /// What to tell the person who chose it.
         advice: String,
     },
+    /// A name the platform could not find. Almost always a typo.
+    Missing {
+        /// The name as it was typed.
+        name: String,
+        /// What to tell the person who typed it.
+        advice: String,
+    },
 }
 
 /// What to do about the configured editor.
 ///
-/// `is_application` is the frontend's answer to the one question only the
-/// platform can settle — whether an application by that name exists here.
-/// Everything that follows from it is decided in `postio_ui::handoff`, once,
-/// so both frontends behave the same way about a name that is not one.
+/// `found` is the frontend's answer to the one question only the platform can
+/// settle — `NSWorkspace` and the applications directories here, a desktop
+/// entry or a `PATH` lookup there. Everything that follows from it is decided
+/// in `postio_ui::handoff`, once, so both frontends say the same thing about
+/// the same name.
 #[uniffi::export]
-pub fn settings_handoff_target(configured: String, is_application: bool) -> HandoffTargetFfi {
-    match postio_ui::handoff::target(&configured, is_application) {
+pub fn settings_handoff_target(configured: String, found: FoundEditorFfi) -> HandoffTargetFfi {
+    let found = match found {
+        FoundEditorFfi::Application => postio_ui::handoff::Found::Application,
+        FoundEditorFfi::TerminalProgram => postio_ui::handoff::Found::TerminalProgram,
+        FoundEditorFfi::Nothing => postio_ui::handoff::Found::Nothing,
+    };
+    match postio_ui::handoff::target(&configured, found) {
         postio_ui::handoff::Target::PlatformDefault => HandoffTargetFfi::PlatformDefault,
         postio_ui::handoff::Target::Application(name) => HandoffTargetFfi::Application { name },
         postio_ui::handoff::Target::NeedsTerminal(name) => HandoffTargetFfi::NeedsTerminal {
             advice: postio_ui::handoff::terminal_advice(&name),
+            name,
+        },
+        postio_ui::handoff::Target::Missing(name) => HandoffTargetFfi::Missing {
+            advice: postio_ui::handoff::missing_advice(&name),
             name,
         },
     }

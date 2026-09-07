@@ -497,6 +497,48 @@ fn report(errors: &[postio_config::validate::ValidationError]) {
 /// slip in here. Until then, the settings panel itself is the sandboxed
 /// fallback — it already edits the same file.
 fn spawn_editor(path: &Path) {
+    // `[compose] editor` first, when it is set (#1297). `path` is
+    // `config.toml` itself — it is the file being opened — so the setting is
+    // read from the same file, live, rather than from a copy taken at
+    // startup that a `[compose]` edit would have made stale.
+    //
+    // What the name *means* is `postio_ui::handoff`'s, so this and the macOS
+    // frontend reach the same conclusion about the same value. What only
+    // this platform can answer is what it found, and it has two of the three
+    // answers available to it: freedesktop cannot tell a windowed program
+    // from a terminal one by looking (see this function's own note above), so
+    // it never reports `TerminalProgram` — the caveat there stays a caveat.
+    // It *can* tell that a name is not on `PATH` at all, which is a typo, and
+    // saying so is the whole reason that third answer exists.
+    let configured = Config::load_from_path(path)
+        .unwrap_or_default()
+        .compose
+        .editor;
+    match postio_ui::handoff::target(&configured, found_on_path(&configured)) {
+        postio_ui::handoff::Target::Application(name) => {
+            spawn(std::ffi::OsString::from(name), path);
+            return;
+        }
+        postio_ui::handoff::Target::Missing(name) => {
+            tracing::warn!(
+                editor = %name,
+                "{}",
+                postio_ui::handoff::missing_advice(&name)
+            );
+            return;
+        }
+        postio_ui::handoff::Target::NeedsTerminal(name) => {
+            tracing::warn!(
+                editor = %name,
+                "{}",
+                postio_ui::handoff::terminal_advice(&name)
+            );
+            return;
+        }
+        // Nothing chosen: the desktop's own convention, exactly as before.
+        postio_ui::handoff::Target::PlatformDefault => {}
+    }
+
     let Some(editor) = std::env::var_os("VISUAL").or_else(|| std::env::var_os("EDITOR")) else {
         tracing::warn!(
             path = %path.display(),
@@ -504,6 +546,11 @@ fn spawn_editor(path: &Path) {
         );
         return;
     };
+    spawn(editor, path);
+}
+
+/// Start `editor` on `path`, and say so if it will not start.
+fn spawn(editor: std::ffi::OsString, path: &Path) {
     if let Err(error) = std::process::Command::new(&editor).arg(path).spawn() {
         tracing::warn!(
             editor = %editor.to_string_lossy(),
@@ -511,5 +558,40 @@ fn spawn_editor(path: &Path) {
             %error,
             "cannot launch the editor"
         );
+    }
+}
+
+/// What this desktop has by the name in `[compose] editor`.
+///
+/// Two of `Found`'s three answers, and the missing one is deliberate: this
+/// platform cannot tell a windowed program from a terminal one by looking, so
+/// it never claims `TerminalProgram` — `spawn_editor`'s own note above is the
+/// standing caveat about that, and it is unchanged. What it can tell is that
+/// a name resolves to nothing at all, which is a typo and is worth saying.
+///
+/// An empty setting answers `Nothing` and never reaches a lookup:
+/// `handoff::target` reads a blank as "not chosen" before it looks at this.
+fn found_on_path(configured: &str) -> postio_ui::handoff::Found {
+    let name = configured.trim();
+    if name.is_empty() {
+        return postio_ui::handoff::Found::Nothing;
+    }
+    // A path is taken at its word, the way a shell does.
+    if name.contains('/') {
+        return match std::fs::metadata(name) {
+            Ok(_) => postio_ui::handoff::Found::Application,
+            Err(_) => postio_ui::handoff::Found::Nothing,
+        };
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return postio_ui::handoff::Found::Nothing;
+    };
+    let on_path = std::env::split_paths(&paths).any(|directory| {
+        std::fs::metadata(directory.join(name)).is_ok_and(|found| found.is_file())
+    });
+    if on_path {
+        postio_ui::handoff::Found::Application
+    } else {
+        postio_ui::handoff::Found::Nothing
     }
 }
