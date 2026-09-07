@@ -33,6 +33,7 @@ mod keystroke;
 mod label_wiring;
 mod list_contract;
 mod manual_sync;
+mod navigation_cost;
 mod onboarding_probe;
 mod orientation;
 mod parts_open_wiring;
@@ -120,6 +121,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
+    ),
+    (
+        "navigation_cost::switching_surfaces_stays_within_a_blink",
+        navigation_cost::switching_surfaces_stays_within_a_blink as fn(),
     ),
     (
         "click_preview::clicking_a_message_fills_the_reading_pane",
