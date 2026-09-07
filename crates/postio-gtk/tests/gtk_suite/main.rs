@@ -163,6 +163,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
     ),
     (
+        "gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies",
+        gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies as fn(),
+    ),
+    (
         "gtk_settings_sync::the_pane_shows_the_files_values",
         gtk_settings_sync::the_pane_shows_the_files_values as fn(),
     ),
