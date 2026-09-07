@@ -578,6 +578,32 @@ impl Session {
         self.forward_draft(message)
     }
 
+    /// Attach `path` to the draft and answer it with the file on it.
+    ///
+    /// `mime_type` comes from the frontend because sniffing a file's type is
+    /// a platform service — `UniformTypeIdentifiers` here, shared-mime-info
+    /// there — and everything that is not platform-specific happens on the
+    /// other side of this call.
+    #[uniffi::method(name = "attachToDraft")]
+    pub fn attach_to_draft_ffi(
+        &self,
+        draft: crate::DraftFfi,
+        path: String,
+        mime_type: String,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        self.attach_to_draft(draft, path, mime_type)
+    }
+
+    /// Take an attachment off a draft again.
+    #[uniffi::method(name = "detachFromDraft")]
+    pub fn detach_from_draft_ffi(
+        &self,
+        draft: crate::DraftFfi,
+        attachment: i64,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        self.detach_from_draft(draft, attachment)
+    }
+
     /// Write the draft to the store, and answer it with its id.
     #[uniffi::method(name = "saveDraft")]
     pub fn save_draft_ffi(&self, draft: crate::DraftFfi) -> Option<crate::DraftFfi> {
@@ -1773,6 +1799,87 @@ impl Session {
             .save(&mut draft)
             .ok()?;
         Some(crate::compose::to_ffi(
+            &draft,
+            edited.from.clone(),
+            self.drafts_path(),
+        ))
+    }
+
+    /// Attach a file. See [`attach_to_draft_ffi`](Self::attach_to_draft_ffi).
+    ///
+    /// The bytes first, then the row: a draft must never name a blob that is
+    /// not there. The draft is saved on the way out, so an attachment
+    /// survives the window closing — which is the whole reason to put it in
+    /// the store rather than hold a path.
+    pub fn attach_to_draft(
+        &self,
+        edited: crate::DraftFfi,
+        path: String,
+        mime_type: String,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        let Some((database, blobs)) = self.store_and_blobs() else {
+            return Err(crate::ComposeError::Refused {
+                message: "There is no store to attach a file to.".to_owned(),
+            });
+        };
+        let attachment =
+            postio_session::attaching::attach_file(&blobs, std::path::Path::new(&path), &mime_type)
+                .map_err(|message| crate::ComposeError::Refused { message })?;
+
+        let mut draft =
+            self.rehydrate(&database, &edited)
+                .ok_or_else(|| crate::ComposeError::Refused {
+                    message: "This draft is no longer in the store.".to_owned(),
+                })?;
+        draft.attachments.push(attachment);
+        self.write_draft(&database, draft, &edited)
+    }
+
+    /// Take one off again. See
+    /// [`detach_from_draft_ffi`](Self::detach_from_draft_ffi).
+    ///
+    /// The row goes; the blob is left to the store's own reclaim pass, which
+    /// is what `reclaim_orphaned_blobs` is for. Deleting it here would race a
+    /// second draft that had attached the same file — the store deduplicates
+    /// by content, so two drafts can name one blob.
+    pub fn detach_from_draft(
+        &self,
+        edited: crate::DraftFfi,
+        attachment: i64,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Err(crate::ComposeError::Refused {
+                message: "There is no store open.".to_owned(),
+            });
+        };
+        let mut draft =
+            self.rehydrate(&database, &edited)
+                .ok_or_else(|| crate::ComposeError::Refused {
+                    message: "This draft is no longer in the store.".to_owned(),
+                })?;
+        draft.attachments.retain(|held| held.id.get() != attachment);
+        self.write_draft(&database, draft, &edited)
+    }
+
+    /// Save `draft` and answer it as the frontend should now hold it.
+    fn write_draft(
+        &self,
+        database: &postio_storage::Database,
+        mut draft: postio_model::Draft,
+        edited: &crate::DraftFfi,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        let (connection, _permit) =
+            database
+                .interactive_write()
+                .map_err(|error| crate::ComposeError::Refused {
+                    message: format!("The store would not take a write: {error}"),
+                })?;
+        postio_storage::repository::DraftRepository::new(&connection)
+            .save(&mut draft)
+            .map_err(|error| crate::ComposeError::Refused {
+                message: format!("The draft could not be saved: {error}"),
+            })?;
+        Ok(crate::compose::to_ffi(
             &draft,
             edited.from.clone(),
             self.drafts_path(),

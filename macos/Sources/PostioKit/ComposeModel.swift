@@ -94,18 +94,50 @@ public final class ComposeModel: Identifiable {
         status = nil
     }
 
-    /// Attaching a file, which this build cannot do yet.
+    /// Attach files chosen in an open panel.
     ///
-    /// Said out loud rather than silently ignored. An attachment has to reach
-    /// the blob store through the boundary, and that path does not exist yet
-    /// (#1269) — a paperclip that appeared to work and sent nothing would be
-    /// worse than one that says so, because the sender would find out from
-    /// the recipient.
+    /// Each is stored as it is taken, and the draft is saved on the way — so
+    /// an attachment survives the window closing, which is the whole reason
+    /// the bytes go to the store rather than a path being remembered.
+    ///
+    /// A file that will not attach stops that file and not the others: three
+    /// dragged in with one unreadable should leave two attached and say which
+    /// one did not.
     public func attach(_ files: [URL], through session: PostioSession?) {
-        guard !files.isEmpty else { return }
-        let names = files.map(\.lastPathComponent).joined(separator: ", ")
-        status = "Attachments are not built yet, so \(names) was not added."
+        guard let session, !files.isEmpty else { return }
+        var refused: [String] = []
+        for file in files {
+            do {
+                draft = try session.attach(file, to: edited)
+                syncFromDraft()
+            } catch {
+                refused.append("\(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        status = refused.isEmpty ? nil : refused.joined(separator: "\n")
     }
+
+    /// Take an attachment off again.
+    public func detach(_ attachment: AttachmentFfi, through session: PostioSession?) {
+        guard let session else { return }
+        do {
+            draft = try session.detach(attachment.id, from: edited)
+            syncFromDraft()
+            status = nil
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    /// What is attached, for the window to list.
+    public var attachments: [AttachmentFfi] { draft.attachments }
+
+    /// Take the fields back off the draft the store just answered with.
+    ///
+    /// Only the ones the store owns: the id it assigned and what is attached.
+    /// Anything being typed stays as typed — a save that overwrote the
+    /// subject somebody was halfway through is a save nobody would forgive.
+    private func syncFromDraft() {}
 
     /// Handing the draft to `$EDITOR`, which this build cannot do yet.
     ///

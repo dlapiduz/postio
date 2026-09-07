@@ -52,6 +52,11 @@ fn a_message_to_answer() -> (std::sync::Arc<Session>, postio_storage::Database, 
         id.get()
     };
 
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
+
     let state = SharedState::default();
     let bus = postio_session::actions::wire(
         Dispatcher::builder(),
@@ -62,6 +67,7 @@ fn a_message_to_answer() -> (std::sync::Arc<Session>, postio_storage::Database, 
     let bridge = Box::leak(Box::new(bridge));
     let session = Session::open(
         SessionOptions::in_memory_with(database.clone())
+            .with_blobs_for_test(blobs, scratch)
             .on_bridge(bridge.handle(), bridge.commands()),
     )
     .expect("a session over the store");
@@ -232,4 +238,76 @@ fn the_footer_says_where_the_draft_lives_and_what_will_be_sent() {
         postio_ffi::outgoing_shape(false),
         "text/plain, format=flowed"
     );
+}
+
+// -- attachments (#1269) -----------------------------------------------------
+
+#[test]
+fn attaching_a_file_puts_its_bytes_in_the_store_and_names_it_on_the_draft() {
+    let (session, _, _) = a_message_to_answer();
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("gate-plan.txt");
+    std::fs::write(&path, b"the gate closes at six").expect("a file to attach");
+
+    let draft = session.new_draft().expect("a draft");
+    let with_file = session
+        .attach_to_draft(draft, path.display().to_string(), "text/plain".to_owned())
+        .expect("it attaches");
+
+    assert_eq!(with_file.attachments.len(), 1);
+    assert_eq!(with_file.attachments[0].filename, "gate-plan.txt");
+    assert_eq!(with_file.attachments[0].mime_type, "text/plain");
+    // Said the way a person thinks about it rather than in bytes.
+    assert!(
+        with_file.attachments[0].size.contains('B'),
+        "{}",
+        with_file.attachments[0].size
+    );
+    assert!(
+        with_file.id > 0,
+        "and the draft was saved, so the file survives the window closing"
+    );
+}
+
+#[test]
+fn a_file_that_is_not_there_is_refused_and_the_draft_is_untouched() {
+    let (session, _, _) = a_message_to_answer();
+    let draft = session.new_draft().expect("a draft");
+
+    let refusal = session
+        .attach_to_draft(
+            draft.clone(),
+            "/nowhere/at/all/missing.pdf".to_owned(),
+            "application/pdf".to_owned(),
+        )
+        .expect_err("nothing to attach");
+
+    assert!(
+        format!("{refusal}").contains("could not be read"),
+        "{refusal}"
+    );
+    assert!(session.new_draft().expect("a draft").attachments.is_empty());
+}
+
+#[test]
+fn taking_an_attachment_off_leaves_the_rest_alone() {
+    let (session, _, _) = a_message_to_answer();
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let mut draft = session.new_draft().expect("a draft");
+    for name in ["one.txt", "two.txt"] {
+        let path = scratch.path().join(name);
+        std::fs::write(&path, name.as_bytes()).expect("a file");
+        draft = session
+            .attach_to_draft(draft, path.display().to_string(), "text/plain".to_owned())
+            .expect("it attaches");
+    }
+    assert_eq!(draft.attachments.len(), 2);
+
+    let first = draft.attachments[0].id;
+    let left = session
+        .detach_from_draft(draft, first)
+        .expect("it detaches");
+
+    assert_eq!(left.attachments.len(), 1);
+    assert_eq!(left.attachments[0].filename, "two.txt");
 }

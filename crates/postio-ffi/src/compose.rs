@@ -90,6 +90,21 @@ pub struct DraftFfi {
     pub in_reply_to: Option<i64>,
     /// Where the draft lives on this disk, for the footer.
     pub path: String,
+    /// What is attached to it.
+    pub attachments: Vec<AttachmentFfi>,
+}
+
+/// One file attached to a draft.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AttachmentFfi {
+    /// Its row, so one can be taken off again.
+    pub id: i64,
+    /// The name as it will arrive.
+    pub filename: String,
+    /// What it says it is.
+    pub mime_type: String,
+    /// How big, said the way a person thinks about it — `1.8 MB`.
+    pub size: String,
 }
 
 /// What will be sent, in the composer footer's words: `html + text/plain`,
@@ -119,6 +134,21 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
         rich: draft.body.html.is_some(),
         in_reply_to: draft.in_reply_to.map(|id| id.get()),
         path,
+        attachments: draft
+            .attachments
+            .iter()
+            .map(|attachment| AttachmentFfi {
+                id: attachment.id.get(),
+                // A file with no name is not nothing: it still arrives, and
+                // saying so beats a blank row.
+                filename: attachment
+                    .filename
+                    .clone()
+                    .unwrap_or_else(|| "(unnamed)".to_owned()),
+                mime_type: attachment.mime_type.clone(),
+                size: postio_ui::format::human_size(attachment.size),
+            })
+            .collect(),
     }
 }
 
@@ -155,4 +185,21 @@ fn render(addresses: &[postio_model::EmailAddress]) -> String {
 /// What a person typed into a recipient field.
 fn parse(text: &str) -> Vec<postio_model::EmailAddress> {
     address::parse_list(text)
+}
+
+/// Why a change to a draft was refused.
+///
+/// An error rather than an `Option<String>` because these have a *result* to
+/// carry when they work — the draft as it now stands — and a frontend that
+/// got back `None` and had to re-read the draft itself would be a frontend
+/// that could disagree with the store about what is attached.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum ComposeError {
+    /// It could not be done, and this is why in words for the person who
+    /// asked.
+    #[error("{message}")]
+    Refused {
+        /// What went wrong.
+        message: String,
+    },
 }

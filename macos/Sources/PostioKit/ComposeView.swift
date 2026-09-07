@@ -39,6 +39,7 @@ public struct ComposeView: View {
             Divider()
             formatBar
             Divider()
+            if !model.attachments.isEmpty { attachments }
             TextEditor(text: Bindable(model).body)
                 .font(.system(.body, design: model.rich ? .default : .monospaced))
                 .focused($focus, equals: .body)
@@ -85,6 +86,44 @@ public struct ComposeView: View {
             if model.isDirty, !model.sent { model.save(through: session) }
             close()
         }
+    }
+
+    /// What is attached, each with a way off again.
+    ///
+    /// Above the body rather than below it: an attachment is part of what is
+    /// being sent, and a list under the fold is one people forget they added.
+    private var attachments: some View {
+        HStack(spacing: PostioTokens.space2) {
+            Text("Files")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            ForEach(model.attachments, id: \.id) { attachment in
+                HStack(spacing: PostioTokens.space2) {
+                    Image(systemName: "doc")
+                    Text(attachment.filename)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(attachment.size)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        model.detach(attachment, through: session)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(attachment.filename)")
+                }
+                .padding(.horizontal, PostioTokens.space2)
+                .padding(.vertical, 3)
+                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: PostioTokens.radiusMd))
+                .accessibilityElement(children: .contain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, PostioTokens.space4)
+        .padding(.vertical, PostioTokens.space2)
     }
 
     // -- the header fields --------------------------------------------------

@@ -20,7 +20,8 @@ import Testing
             body: "",
             rich: rich,
             inReplyTo: nil,
-            path: "/Users/someone/mail"
+            path: "/Users/someone/mail",
+            attachments: []
         )
     }
 
@@ -100,14 +101,34 @@ import Testing
         #expect(store.model(id) == nil)
     }
 
-    @Test func aThingTheComposerCannotDoYetSaysSoRatherThanSeemingToWork() {
-        // A paperclip that appears to work and sends nothing is worse than
-        // one that says so: the sender finds out from the recipient.
+    @Test func attachingWithNoSessionChangesNothing() {
+        // The window cannot outlive its session, but the model can be asked
+        // anyway, and a crash is not an answer.
         let model = ComposeModel(id: 1, draft: draft())
         model.attach([URL(fileURLWithPath: "/tmp/gate.pdf")], through: nil)
 
-        #expect(model.status?.contains("gate.pdf") == true)
-        #expect(model.status?.contains("not built yet") == true)
+        #expect(model.attachments.isEmpty)
+        #expect(model.status == nil)
+    }
+
+    @Test func aDraftKnowsWhatIsAttachedToIt() {
+        var carrying = draft()
+        carrying.attachments = [
+            AttachmentFfi(id: 7, filename: "gate-plan.pdf", mimeType: "application/pdf", size: "1.8 MB")
+        ]
+        let model = ComposeModel(id: 1, draft: carrying)
+
+        #expect(model.attachments.count == 1)
+        #expect(model.attachments[0].filename == "gate-plan.pdf")
+        // And the edit carries it, so saving does not drop the file.
+        #expect(model.edited.attachments.count == 1)
+    }
+
+    @Test func aFileTypeNothingRecognisesStillGetsAName() {
+        // "Some bytes" beats refusing to attach a file because the type
+        // database had never heard of it.
+        #expect(MimeType.of(URL(fileURLWithPath: "/tmp/thing.qqq")) == MimeType.fallback)
+        #expect(MimeType.of(URL(fileURLWithPath: "/tmp/notes.txt")) == "text/plain")
     }
 
     @Test func handingOffToAnEditorSavesFirstAndThenSaysItCannot() {

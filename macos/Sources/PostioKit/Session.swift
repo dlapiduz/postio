@@ -480,6 +480,26 @@ public final class PostioSession {
         inner.forwardDraft(message: message)
     }
 
+    /// Attach a file to a draft, and answer the draft with it on.
+    ///
+    /// The MIME type is sniffed here because that is a platform service:
+    /// macOS asks `UniformTypeIdentifiers`, freedesktop reads
+    /// shared-mime-info, and neither can answer for the other. Everything
+    /// else — the size guard, the blob write, the row — happens once, on the
+    /// other side of this call.
+    public func attach(_ file: URL, to draft: DraftFfi) throws -> DraftFfi {
+        try inner.attachToDraft(
+            draft: draft,
+            path: file.path,
+            mimeType: MimeType.of(file)
+        )
+    }
+
+    /// Take an attachment off a draft.
+    public func detach(_ attachment: Int64, from draft: DraftFfi) throws -> DraftFfi {
+        try inner.detachFromDraft(draft: draft, attachment: attachment)
+    }
+
     /// Write the draft to the store; answers it with the id it now has.
     public func saveDraft(_ draft: DraftFfi) -> DraftFfi? {
         inner.saveDraft(draft: draft)
