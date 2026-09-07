@@ -21,11 +21,11 @@ path = "src/lib.rs"
 # ordinary dependencies, feature unification would switch that on for every
 # crate in the workspace.
 [dev-dependencies]
-adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 criterion = "0.8.2"
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
-gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true

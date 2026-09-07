@@ -1189,7 +1189,7 @@ fn handle_decide_policy(
     let Some(navigation) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() else {
         return false;
     };
-    let Some(mut action) = navigation.navigation_action() else {
+    let Some(action) = navigation.navigation_action() else {
         return false;
     };
     if !leaves_the_pane(kind, action.navigation_type()) {
