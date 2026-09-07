@@ -59,11 +59,23 @@ impl MaildirBackend {
     /// the difference between "that is not a maildir" and an account that
     /// appears to have no mail in it.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
-        Ok(Self {
-            store: LocalStore::open(root)?,
+        let root = root.into();
+        LocalStore::looks_like_a_maildir(&root)?;
+        Ok(Self::at(root))
+    }
+
+    /// A backend over `root`, whatever is there.
+    ///
+    /// What a stored account gets at startup. The tree is not checked here on
+    /// purpose: a launch must not be the moment a moved directory becomes a
+    /// hard error, and [`MailBackend::connect`] is where the seam already
+    /// says "this account cannot be reached" — with the directory named.
+    pub fn at(root: impl Into<PathBuf>) -> Self {
+        Self {
+            store: LocalStore::at(root),
             fresh_validity: fresh_validity(),
             connected: Mutex::new(false),
-        })
+        }
     }
 
     /// The tree this reads.

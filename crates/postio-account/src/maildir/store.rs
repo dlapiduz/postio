@@ -64,8 +64,18 @@ impl LocalStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         Self::looks_like_a_maildir(&root)?;
+        Ok(Self::at(root))
+    }
+
+    /// A store rooted at `root`, unchecked.
+    ///
+    /// For a caller that will report an unreadable tree itself, at the moment
+    /// it tries to read it. The layout is still read off the tree here — a
+    /// directory that is not there is simply not Maildir++.
+    pub fn at(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         let maildirpp = root.join("cur").is_dir() && has_dotted_child(&root);
-        Ok(Self { root, maildirpp })
+        Self { root, maildirpp }
     }
 
     /// Where this store is.

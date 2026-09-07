@@ -16,6 +16,10 @@ pub fn badge(account: &Account) -> String {
         postio_model::account::Backend::Imap => "IMAP",
         postio_model::account::Backend::Jmap { .. } => "JMAP",
         postio_model::account::Backend::Gmail => "Gmail",
+        // Not "Maildir": the badge says what kind of account this is to
+        // somebody who has one, and what is true of it is that the mail is
+        // already here.
+        postio_model::account::Backend::Maildir { .. } => "Local mail",
     };
     let auth = match account.auth {
         postio_model::account::AuthMethod::Password => "password",
@@ -55,6 +59,21 @@ mod tests {
         assert_eq!(
             badge(&account(Backend::Imap, AuthMethod::AppPassword)),
             "IMAP · app password"
+        );
+    }
+
+    #[test]
+    fn a_local_maildir_reads_as_mail_that_is_already_here() {
+        // The word on the row is for somebody looking at their own account,
+        // not for somebody who knows the format's name.
+        assert_eq!(
+            badge(&account(
+                Backend::Maildir {
+                    root: "/home/ada/mail".to_owned()
+                },
+                AuthMethod::Password
+            )),
+            "Local mail · password"
         );
     }
 

@@ -730,6 +730,37 @@ fn the_backend_choice_round_trips_and_defaults_to_imap() {
 }
 
 #[test]
+fn a_maildir_account_remembers_which_directory_it_is() {
+    // The tree on disk *is* the account (#1278): a maildir row that came
+    // back without its root would be an account pointing at nothing, and
+    // the column it shares with JMAP's session URL was renamed in the same
+    // change that added this — so this is the assertion that the rename did
+    // not quietly drop one of its two readers.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let mut account = test_support::account(&connection);
+
+    account.backend = postio_model::account::Backend::Maildir {
+        root: "/home/ada/mail".to_string(),
+    };
+    AccountRepository::new(&connection)
+        .update(&mut account)
+        .expect("update");
+
+    let read = AccountRepository::new(&connection)
+        .get(account.id)
+        .expect("read")
+        .expect("the account");
+
+    assert_eq!(
+        read.backend,
+        postio_model::account::Backend::Maildir {
+            root: "/home/ada/mail".to_string(),
+        }
+    );
+}
+
+#[test]
 fn two_signatures_in_one_account_cannot_share_a_name() {
     // `signatures.name` is documented "unique per account so the picker never
     // offers two entries a person cannot tell apart", and `idx_signatures_name`

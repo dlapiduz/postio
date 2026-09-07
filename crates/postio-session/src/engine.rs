@@ -143,6 +143,14 @@ fn backend_for(
         postio_model::account::Backend::Gmail => {
             return Arc::new(postio_gmail::GmailBackend::with_token_source(key, tokens));
         }
+        postio_model::account::Backend::Maildir { root } => {
+            // Deliberately unchecked: a maildir account has no incoming
+            // server to fall back to, so a tree that has moved must not be a
+            // failure to *build* the backend — it is a failure to connect,
+            // which is where the seam already puts the directory's name in
+            // front of the person who moved it.
+            return Arc::new(postio_account::maildir::MaildirBackend::at(root));
+        }
         postio_model::account::Backend::Imap => {}
     }
     Arc::new(ImapBackend::over(Arc::new(

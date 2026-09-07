@@ -156,10 +156,11 @@ pub fn install(
                     })
                 }
                 // A Gmail-REST repair re-proves through OAuth like any
-                // other Gmail account; there is no JMAP offer to park.
-                postio_model::account::Backend::Imap | postio_model::account::Backend::Gmail => {
-                    None
-                }
+                // other Gmail account; there is no JMAP offer to park. A
+                // maildir has no server to prove anything against at all.
+                postio_model::account::Backend::Imap
+                | postio_model::account::Backend::Gmail
+                | postio_model::account::Backend::Maildir { .. } => None,
             },
         )));
 

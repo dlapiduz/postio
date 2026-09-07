@@ -1106,6 +1106,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gethostname"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
+dependencies = [
+ "rustix",
+ "windows-link",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1739,6 +1749,18 @@ dependencies = [
  "serde_json",
  "thiserror",
  "url",
+]
+
+[[package]]
+name = "io-maildir"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d790ef6241fdaefdf2c18035d7e38ceae51a04f0314067e9c65bc934f2a34bb7"
+dependencies = [
+ "gethostname",
+ "log",
+ "mail-parser",
+ "thiserror",
 ]
 
 [[package]]
@@ -2643,6 +2665,7 @@ dependencies = [
  "domain",
  "io-http",
  "io-imap",
+ "io-maildir",
  "io-oauth",
  "io-pim-discovery",
  "io-sasl",

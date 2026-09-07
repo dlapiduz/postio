@@ -1,0 +1,12 @@
+-- Where a backend lives, whatever kind it is (#1278).
+--
+-- The column was `jmap_session_url`, named for the only backend that had
+-- anywhere to point at. A maildir account is nothing but a place -- the tree
+-- on disk *is* the account -- so it needs the same column, and a maildir root
+-- stored in a field called `jmap_session_url` would be a lie every future
+-- reader has to work around.
+--
+-- One column, read against `backend_kind`: a JMAP session URL, a maildir
+-- root, and NULL for the backends that have neither. Existing rows keep their
+-- value under the new name; nothing is rewritten.
+ALTER TABLE accounts RENAME COLUMN jmap_session_url TO backend_location;
