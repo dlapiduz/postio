@@ -180,6 +180,9 @@ public struct SettingsPaneView: View {
         case "ui": appearance
         case "compose": composing
         case "accounts": accountsPane
+        case "sync": syncing
+        case "keys": keyboard
+        case "": configFile
         default: unbuilt
         }
     }
@@ -457,6 +460,182 @@ public struct SettingsPaneView: View {
         } else {
             unreadable
         }
+    }
+
+    // -- Keyboard (#1156) ---------------------------------------------------
+
+    /// Every command and the key in force for it, grouped as the menus are.
+    ///
+    /// Read-only for now, and honestly so: rebinding is `[keys]`, the pane
+    /// says where, and the Config file pane is one click away. A picker that
+    /// *looked* editable and wrote nothing would be worse than a table that
+    /// admits what it is — canvas 3d's rule that a state names its reason.
+    ///
+    /// The bindings come from the session rather than from `defaultBinding`,
+    /// so a rebound key shows the key the user actually has. With no session
+    /// the defaults stand in, because settings are a file and being unable to
+    /// read mail is not being unable to read your own keyboard.
+    @ViewBuilder private var keyboard: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PostioTokens.space6) {
+                ForEach(MenuPlan.build(bindings: bindingsInForce), id: \.title) { menu in
+                    VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                        Text(menu.title.uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .kerning(0.6)
+                            .foregroundStyle(.secondary)
+                        ForEach(menu.items, id: \.command) { item in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(item.title)
+                                Spacer(minLength: PostioTokens.space4)
+                                Text(item.shortcut ?? "—")
+                                    .font(.system(.callout, design: .monospaced))
+                                    .foregroundStyle(item.shortcut == nil ? .tertiary : .secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+            }
+            .padding(.trailing, PostioTokens.space4)
+        }
+    }
+
+    /// What each command is bound to now.
+    private func bindingsInForce(_ command: String) -> [String] {
+        session?.bindings(for: command) ?? []
+    }
+
+    // -- Sync & storage (#1156) ---------------------------------------------
+
+    @ViewBuilder private var syncing: some View {
+        if let current = store.syncing {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 32) {
+                    field("CHECK FOR MAIL") {
+                        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                            Picker("", selection: syncBinding(current, \.checkForMail)) {
+                                Text("Push").tag(CheckForMailFfi.idle)
+                                Text("Poll").tag(CheckForMailFfi.poll)
+                                Text("Manual").tag(CheckForMailFfi.manual)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            // What the choice costs, in the unit being chosen
+                            // between — the sentence is the boundary's, so
+                            // GTK says the same one.
+                            Text(
+                                current.checkForMail == .poll
+                                    ? "Every \(settingsHumanizeInterval(seconds: current.pollIntervalSecs))"
+                                    : "Folders without push still poll every "
+                                        + settingsHumanizeInterval(seconds: current.pollIntervalSecs)
+                            )
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    field("POLL EVERY") {
+                        Picker("", selection: syncBinding(current, \.pollIntervalSecs)) {
+                            Text("1 min").tag(UInt64(60))
+                            Text("5 min").tag(UInt64(300))
+                            Text("15 min").tag(UInt64(900))
+                            Text("1 hour").tag(UInt64(3600))
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                HStack(alignment: .top, spacing: 32) {
+                    field("DOWNLOAD BODIES") {
+                        Picker("", selection: syncBinding(current, \.bodyFetch)) {
+                            Text("When opened").tag(BodyFetchFfi.lazy)
+                            Text("Ahead of time").tag(BodyFetchFfi.eager)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    field("DOWNLOAD ATTACHMENTS") {
+                        Picker("", selection: syncBinding(current, \.attachmentFetch)) {
+                            Text("When opened").tag(AttachmentFetchFfi.onOpen)
+                            Text("Ahead of time").tag(AttachmentFetchFfi.eager)
+                            Text("Never").tag(AttachmentFetchFfi.never)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                field("ON STARTUP") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Sync as soon as Postio opens", isOn: syncBinding(current, \.syncOnStartup))
+                        Toggle("Notify me about new mail", isOn: syncBinding(current, \.notify))
+                    }
+                    .toggleStyle(.checkbox)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    private func syncBinding<T>(
+        _ current: SyncingFfi,
+        _ field: WritableKeyPath<SyncingFfi, T>
+    ) -> Binding<T> {
+        Binding(
+            get: { current[keyPath: field] },
+            set: { value in store.applySyncing { $0[keyPath: field] = value } }
+        )
+    }
+
+    // -- Config file: the whole thing, as text (#1156) ----------------------
+
+    /// The raw editor, and the escape hatch every unbuilt pane depends on.
+    ///
+    /// Canvas 3f: *"Settings is still the config file — no second store, no
+    /// OK/Cancel"*. So there is no Save here either. What there is instead is
+    /// the footer, which already says whether the file parses and where it
+    /// stopped — the only thing that could tell you a keystroke went wrong.
+    ///
+    /// Monospaced and not proportional, because it is TOML and alignment
+    /// carries meaning in it. `autocorrection` and the smart-quote
+    /// substitutions are off for the reason every code editor turns them
+    /// off: a curly quote in a TOML string is a parse error somebody did not
+    /// type.
+    @ViewBuilder private var configFile: some View {
+        TextEditor(text: configBinding)
+            .font(.system(.body, design: .monospaced))
+            .autocorrectionDisabled()
+            .textEditorStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: PostioTokens.radiusMd)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel("The configuration file")
+    }
+
+    /// Writes on every keystroke, like every other control in this window.
+    ///
+    /// Invalid TOML is written too: this is a text editor over a file
+    /// somebody is part-way through fixing, and refusing to save until it
+    /// parses would make it useless for its one job. The footer says what is
+    /// wrong, and a running Postio keeps the last good configuration.
+    private var configBinding: Binding<String> {
+        Binding(
+            get: { store.text },
+            set: { store.write(text: $0) }
+        )
     }
 
     // -- Composing (#1288) --------------------------------------------------

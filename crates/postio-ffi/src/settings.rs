@@ -19,6 +19,7 @@
 
 use postio_config::Config;
 use postio_config::compose::{ComposeConfig, SignaturePlacement, patch_compose};
+use postio_config::sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 use postio_config::ui::{Density, Theme, UiConfig, patch_ui};
 use postio_config::validate;
 use postio_ui::settings::Section;
@@ -204,6 +205,61 @@ pub fn settings_handoff_label(configured: String) -> String {
     postio_ui::handoff::button_label(&configured)
 }
 
+/// How Postio learns about new mail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CheckForMailFfi {
+    /// The server pushes — `IDLE`, where it is offered.
+    Idle,
+    /// Ask on a timer, for folders and servers without it.
+    Poll,
+    /// Only when asked.
+    Manual,
+}
+
+/// When message bodies are downloaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum BodyFetchFfi {
+    /// On opening the message.
+    Lazy,
+    /// With the headers, ahead of being asked.
+    Eager,
+}
+
+/// When attachment payloads are downloaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AttachmentFetchFfi {
+    /// When the message is opened.
+    OnOpen,
+    /// With the message.
+    Eager,
+    /// Never, until asked for one by name.
+    Never,
+}
+
+/// The `[sync]` table's typed settings — the Sync & storage pane's model.
+///
+/// Deliberately not every key: `SyncConfig::extra` stays on the Rust side,
+/// for the reason this module's own doc gives.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SyncingFfi {
+    /// How Postio learns about new mail.
+    pub check_for_mail: CheckForMailFfi,
+    /// Polling interval for folders without `IDLE`, in seconds.
+    pub poll_interval_secs: u64,
+    /// Maximum simultaneous connections per account.
+    pub max_connections: u8,
+    /// Start a sync as soon as the application opens.
+    pub sync_on_startup: bool,
+    /// When bodies are downloaded.
+    pub body_fetch: BodyFetchFfi,
+    /// When attachment payloads are downloaded.
+    pub attachment_fetch: AttachmentFetchFfi,
+    /// How many messages the first sync reaches back for, newest first.
+    pub initial_sync_messages: u32,
+    /// Master switch for desktop notifications on new mail.
+    pub notify: bool,
+}
+
 /// Every settings section, in canvas 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
@@ -319,6 +375,43 @@ pub fn settings_patch_composing(
     // platform will find, and the difference is invisible in a text field.
     compose.editor = composing.editor.trim().to_owned();
     patch_compose(&text, &compose).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// The Sync & storage pane's values, or `None` when the file will not parse.
+#[uniffi::export]
+pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
+    let sync = Config::from_toml_str(&text).ok()?.sync;
+    Some(SyncingFfi {
+        check_for_mail: sync.check_for_mail.into(),
+        poll_interval_secs: sync.poll_interval_secs,
+        max_connections: sync.max_connections,
+        sync_on_startup: sync.sync_on_startup,
+        body_fetch: sync.body_fetch.into(),
+        attachment_fetch: sync.attachment_fetch.into(),
+        initial_sync_messages: sync.initial_sync_messages,
+        notify: sync.notify,
+    })
+}
+
+/// Write `syncing` into `text`'s `[sync]` table, leaving the rest verbatim.
+#[uniffi::export]
+pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<String, SettingsError> {
+    let mut sync: SyncConfig = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .sync;
+    sync.check_for_mail = syncing.check_for_mail.into();
+    sync.poll_interval_secs = syncing.poll_interval_secs;
+    sync.max_connections = syncing.max_connections;
+    sync.sync_on_startup = syncing.sync_on_startup;
+    sync.body_fetch = syncing.body_fetch.into();
+    sync.attachment_fetch = syncing.attachment_fetch.into();
+    sync.initial_sync_messages = syncing.initial_sync_messages;
+    sync.notify = syncing.notify;
+    patch_sync(&text, &sync).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })
 }
@@ -514,6 +607,64 @@ impl From<SignaturePlacementFfi> for SignaturePlacement {
         match placement {
             SignaturePlacementFfi::AboveQuote => SignaturePlacement::AboveQuote,
             SignaturePlacementFfi::BelowQuote => SignaturePlacement::BelowQuote,
+        }
+    }
+}
+
+impl From<CheckForMail> for CheckForMailFfi {
+    fn from(value: CheckForMail) -> Self {
+        match value {
+            CheckForMail::Idle => CheckForMailFfi::Idle,
+            CheckForMail::Poll => CheckForMailFfi::Poll,
+            CheckForMail::Manual => CheckForMailFfi::Manual,
+        }
+    }
+}
+
+impl From<CheckForMailFfi> for CheckForMail {
+    fn from(value: CheckForMailFfi) -> Self {
+        match value {
+            CheckForMailFfi::Idle => CheckForMail::Idle,
+            CheckForMailFfi::Poll => CheckForMail::Poll,
+            CheckForMailFfi::Manual => CheckForMail::Manual,
+        }
+    }
+}
+
+impl From<BodyFetch> for BodyFetchFfi {
+    fn from(value: BodyFetch) -> Self {
+        match value {
+            BodyFetch::Lazy => BodyFetchFfi::Lazy,
+            BodyFetch::Eager => BodyFetchFfi::Eager,
+        }
+    }
+}
+
+impl From<BodyFetchFfi> for BodyFetch {
+    fn from(value: BodyFetchFfi) -> Self {
+        match value {
+            BodyFetchFfi::Lazy => BodyFetch::Lazy,
+            BodyFetchFfi::Eager => BodyFetch::Eager,
+        }
+    }
+}
+
+impl From<AttachmentFetch> for AttachmentFetchFfi {
+    fn from(value: AttachmentFetch) -> Self {
+        match value {
+            AttachmentFetch::OnOpen => AttachmentFetchFfi::OnOpen,
+            AttachmentFetch::Eager => AttachmentFetchFfi::Eager,
+            AttachmentFetch::Never => AttachmentFetchFfi::Never,
+        }
+    }
+}
+
+impl From<AttachmentFetchFfi> for AttachmentFetch {
+    fn from(value: AttachmentFetchFfi) -> Self {
+        match value {
+            AttachmentFetchFfi::OnOpen => AttachmentFetch::OnOpen,
+            AttachmentFetchFfi::Eager => AttachmentFetch::Eager,
+            AttachmentFetchFfi::Never => AttachmentFetch::Never,
         }
     }
 }

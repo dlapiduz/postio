@@ -70,6 +70,12 @@ public final class SettingsStore {
         settingsComposing(text: text)
     }
 
+    /// The Sync & storage pane's values, or `nil` when the file will not
+    /// parse. Disabled for the same reason as `appearance`.
+    public var syncing: SyncingFfi? {
+        settingsSyncing(text: text)
+    }
+
     /// The sections under one heading, in nav order.
     public func sections(in group: GroupFfi) -> [SettingsSectionFfi] {
         sections.filter { $0.group == group }
@@ -137,6 +143,37 @@ public final class SettingsStore {
         guard var next = composing else { return }
         change(&next)
         write { try settingsPatchComposing(text: $0, composing: next) }
+    }
+
+    /// Write the file as text — the Config file pane's edit (#1156).
+    ///
+    /// The only writer here that is not a `patch_*`, and legitimately so:
+    /// this pane *is* the file, so there is nothing to preserve around the
+    /// edit. Everything else goes through the boundary's patchers, which is
+    /// what stops a form reordering keys and dropping comments (ADR 0031).
+    ///
+    /// Deliberately saves invalid TOML too. It is a text editor over a file
+    /// somebody is part-way through fixing, and refusing to write until it
+    /// parses would make the pane useless for the one job it has. The footer
+    /// says what is wrong; `[logging]` and the file watcher decide what a
+    /// running Postio does about it.
+    public func write(text edited: String) {
+        text = edited
+        status = settingsStatus(text: edited)
+        do {
+            try settingsSave(path: path, text: edited)
+            failure = nil
+        } catch {
+            failure = "\(error)"
+        }
+    }
+
+    /// Apply one change to `[sync]` and save. See `apply`.
+    public func applySyncing(_ change: (inout SyncingFfi) -> Void) {
+        reload()
+        guard var next = syncing else { return }
+        change(&next)
+        write { try settingsPatchSyncing(text: $0, syncing: next) }
     }
 
     /// Save whatever `patch` makes of the file, and describe what happened.
