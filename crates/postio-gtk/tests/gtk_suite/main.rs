@@ -373,6 +373,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::one_thread_offers_one_reply_however_long_it_is as fn(),
     ),
     (
+        "gtk_conversation::moving_to_another_thread_does_not_build_every_reader_cold",
+        gtk_conversation::moving_to_another_thread_does_not_build_every_reader_cold as fn(),
+    ),
+    (
         "gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand",
         gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
     ),

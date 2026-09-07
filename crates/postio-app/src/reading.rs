@@ -441,6 +441,30 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // window has the blob source and the allow-list path, and only this
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
+    // The same two steps the factory below does, handed over separately so
+    // the pane can warm a reader before it knows which message it is for
+    // (#947). Building and hiding the duplicated parts depends on nothing;
+    // only `fill_reader` needs a message.
+    window.conversation().set_reader_warmer(
+        {
+            let window = glib::object::ObjectExt::downgrade(window);
+            move || {
+                let window = window.upgrade()?;
+                let reader = window.new_reader();
+                reader.header().set_identity_visible(false);
+                reader.set_actions_visible(false);
+                reader.widget().set_visible(false);
+                Some(reader)
+            }
+        },
+        {
+            let parts = Rc::clone(&parts);
+            move |reader: &postio_gtk::reader::Reader, message| {
+                parts.fill_reader(reader, message);
+            }
+        },
+    );
+
     window.conversation().set_reader_factory({
         // Weak, for the reason `install_run` states in `search.rs`: the
         // conversation pane is a child the window owns, and a strong clone
