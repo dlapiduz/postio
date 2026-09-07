@@ -104,17 +104,20 @@ import Testing
         #expect(model.estimate.contains("month"))
     }
 
-    @Test func aRouteThatIsNotBuiltSaysSoRatherThanClosing() {
-        // A sheet that closed as though an account had been added would leave
-        // somebody waiting for mail that is never coming.
+    @Test func anOauthRouteIsFinishedBySigningIn_notByStartSync() {
+        // `finish` is the password path. An OAuth route has to *wait* on
+        // somebody in another application, so pressing on without signing in
+        // says where the sign-in is rather than closing over an account that
+        // was never added.
         let model = AddAccountModel()
         model.address = unknown
         model.next()
         model.route = .gmail
+        model.clientId = "the-users-own-client"
         model.next()
 
         #expect(model.finish(through: nil) == false)
-        #expect(model.problem?.contains("not built here yet") == true)
+        #expect(model.problem?.contains("browser") == true)
     }
 
     @Test func aLocalStoreSaysTheSameThing() {
@@ -126,5 +129,48 @@ import Testing
 
         #expect(model.finish(through: nil) == false)
         #expect(model.problem?.contains("not built here yet") == true)
+    }
+
+    // -- signing in through the browser (#1276) ---------------------------
+
+    @Test func anOauthRouteWaitsForTheClientIdThatPostioDoesNotShip() {
+        // Postio registers nothing: a client id inside an open-source
+        // application is one every user of it shares, and a provider that
+        // notices revokes it for all of them at once (ADR 0006 Q1).
+        let model = AddAccountModel()
+        model.address = unknown
+        model.next()
+        model.route = .gmail
+
+        #expect(!model.canContinue, "there is nothing to sign in with yet")
+
+        model.clientId = "the-users-own-client"
+        #expect(model.canContinue)
+    }
+
+    @Test func aClientIdOfNothingButSpacesIsNotAClientId() {
+        let model = AddAccountModel()
+        model.address = unknown
+        model.next()
+        model.route = .gmail
+        model.clientId = "   "
+
+        #expect(!model.canContinue)
+    }
+
+    @Test func nothingIsSigningInBeforeAnybodyPressesSignIn() {
+        let model = AddAccountModel()
+        #expect(!model.signingIn)
+        #expect(model.signInMessage.isEmpty)
+    }
+
+    @Test func cancellingASignInStopsWaitingEvenWithNoSession() {
+        // Closing the sheet always means this, and it must not depend on
+        // there being a live flow to cancel.
+        let model = AddAccountModel()
+        model.cancelSignIn(through: nil)
+
+        #expect(!model.signingIn)
+        #expect(model.signInMessage.isEmpty)
     }
 }

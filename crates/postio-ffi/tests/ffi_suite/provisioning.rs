@@ -177,3 +177,101 @@ fn the_hint_is_a_record_the_sheet_can_draw_without_asking_again() {
     assert!(hint.smtp_port > 0);
     assert!(!hint.provider.is_empty());
 }
+
+// -- signing in through the browser (#1276) ----------------------------------
+
+#[test]
+fn signing_in_without_a_client_id_says_why_rather_than_failing_obscurely() {
+    // ADR 0006 Q1: Postio ships no client id, and the reason is worth saying
+    // out loud — a credential inside an open-source application is one every
+    // user of it shares, and a provider that notices revokes it for all of
+    // them at once.
+    let (session, _) = a_session();
+
+    let complaint = session
+        .sign_in_with_browser("mara@example.com".to_owned(), "  ".to_owned(), None)
+        .expect("a refusal");
+
+    assert!(complaint.contains("client id"), "{complaint}");
+    assert!(
+        complaint.contains("shares") || complaint.contains("ships none"),
+        "and says why: {complaint}"
+    );
+}
+
+#[test]
+fn a_provider_with_no_browser_sign_in_says_so_and_names_the_way_in() {
+    // A dead end that suggests nothing is a dead end. IMAP with a password
+    // is the route that works, and the message says so.
+    let (session, _) = a_session();
+
+    let complaint = session
+        .sign_in_with_browser(
+            "ada@ostwald.invalid".to_owned(),
+            "the-users-own-client".to_owned(),
+            None,
+        )
+        .expect("a refusal");
+
+    assert!(complaint.contains("IMAP"), "{complaint}");
+}
+
+#[test]
+fn nothing_is_in_flight_before_a_sign_in_starts() {
+    let (session, _) = a_session();
+    let progress = session.sign_in_progress();
+
+    assert!(!progress.waiting);
+    assert_eq!(progress.port, 0);
+    assert!(progress.message.is_empty(), "and it says nothing at all");
+}
+
+#[test]
+fn cancelling_when_nothing_is_signing_in_is_harmless() {
+    // Closing the sheet always means this, whether a flow was running or not.
+    let (session, _) = a_session();
+    session.cancel_sign_in();
+    assert!(!session.sign_in_progress().waiting);
+}
+
+#[test]
+fn the_scopes_are_stated_in_plain_words_and_so_is_what_is_not_asked_for() {
+    // A provider's consent screen lists what an application *may* do. Only
+    // the application can say what it deliberately left out, and that is the
+    // difference between asking permission and asking forgiveness.
+    let scopes = postio_ffi::sign_in_scopes("someone@example.com".to_owned());
+
+    assert!(scopes.asked_for.to_lowercase().contains("mail"));
+    for absent in ["contacts", "calendar", "files"] {
+        assert!(
+            scopes.not_asked_for.to_lowercase().contains(absent),
+            "{absent} is not named: {}",
+            scopes.not_asked_for
+        );
+    }
+}
+
+#[test]
+fn a_provider_that_offers_a_browser_sign_in_reports_the_scopes_its_row_asks_for() {
+    // From the table, not from a list in Swift: what Postio requests is a
+    // property of the provider row, and a second list would be a second
+    // answer to what was consented to. The provider is found in the table
+    // rather than named, for the reason `an_address_at_a_known_provider`
+    // gives.
+    let Some((domain, expected)) = postio_account::discovery::presets()
+        .iter()
+        .find_map(|preset| {
+            let offer = preset.oauth()?;
+            let domain = preset.domains().first()?.clone();
+            (!offer.scopes.is_empty()).then(|| (domain, offer.scopes.clone()))
+        })
+    else {
+        // No preset offers one: the assertion below would be vacuous, and
+        // saying so is better than a test that passes by having nothing to
+        // check.
+        panic!("the preset table ships no provider with OAuth scopes");
+    };
+
+    let scopes = postio_ffi::sign_in_scopes(format!("someone@{domain}"));
+    assert_eq!(scopes.requested, expected);
+}

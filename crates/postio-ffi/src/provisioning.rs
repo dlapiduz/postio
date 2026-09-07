@@ -114,3 +114,58 @@ pub fn provider_hint(address: String) -> ProviderHintFfi {
         requires_app_password: preset.requires_app_password(),
     }
 }
+
+/// What a sign-in is doing, for the sheet to draw while somebody is away in
+/// their browser.
+///
+/// The port matters more than it looks. A person who has just been sent to
+/// Safari is being asked to trust that the thing waiting for them is Postio;
+/// naming the loopback port it is listening on is the only evidence a mail
+/// client can offer, and it costs nothing to say.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SignInProgressFfi {
+    /// Whether a flow is running at all.
+    pub waiting: bool,
+    /// The loopback port the answer comes back on, once it is listening.
+    pub port: u16,
+    /// What is happening, in a sentence.
+    pub message: String,
+}
+
+/// The scopes a sign-in will ask for, and — as plainly — the ones it will
+/// not.
+///
+/// "State the scopes requested in plain words, and state what is not
+/// requested (contacts, calendar, files)." A consent screen lists what an
+/// application *can* do; only the application can say what it deliberately
+/// left out, and saying so is the difference between asking permission and
+/// asking forgiveness.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ScopesFfi {
+    /// The scopes, as the provider names them.
+    pub requested: Vec<String>,
+    /// What Postio asks for, in words.
+    pub asked_for: String,
+    /// What it does not ask for, in the same breath.
+    pub not_asked_for: String,
+}
+
+/// What signing in to `address` would request.
+#[uniffi::export]
+pub fn sign_in_scopes(address: String) -> ScopesFfi {
+    let domain = address
+        .rsplit_once('@')
+        .map(|(_, domain)| domain.to_ascii_lowercase())
+        .unwrap_or_default();
+    let requested = postio_account::discovery::preset_for_domain(&domain)
+        .and_then(|preset| preset.oauth().map(|oauth| oauth.scopes.clone()))
+        .unwrap_or_default();
+    ScopesFfi {
+        requested,
+        asked_for: "Postio asks for your mail: reading it, and sending as you.".to_owned(),
+        // Named rather than implied. A provider's consent screen says what
+        // an application may do; only Postio can say what it chose not to.
+        not_asked_for: "It does not ask for your contacts, your calendar, or your files."
+            .to_owned(),
+    }
+}

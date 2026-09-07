@@ -38,6 +38,14 @@ public final class AddAccountModel: Identifiable {
 
     /// Step 2.
     public var password = ""
+    /// The OAuth client id, which is the user's own — Postio ships none.
+    public var clientId = ""
+    /// A client secret, for the providers whose token endpoint insists on
+    /// one even for a public PKCE client.
+    public var clientSecret = ""
+    /// Whether a browser sign-in is running, and what it is doing.
+    public private(set) var signingIn = false
+    public private(set) var signInMessage = ""
     public var imapHost = ""
     public var imapPort = 993
     public var smtpHost = ""
@@ -77,9 +85,10 @@ public final class AddAccountModel: Identifiable {
         case .credentials:
             switch route {
             case .imap: !password.isEmpty && !imapHost.isEmpty && !smtpHost.isEmpty
-            // The sign-in happens in the browser, so there is nothing to fill
-            // in here and nothing to check.
-            case .outlook, .gmail, .localStore: true
+            // Nothing is typed into Postio except the client id, which is
+            // the user's own because Postio ships none.
+            case .outlook, .gmail: !clientId.trimmingCharacters(in: .whitespaces).isEmpty
+            case .localStore: true
             }
         case .store: !storePath.isEmpty
         }
@@ -139,20 +148,58 @@ public final class AddAccountModel: Identifiable {
             }
             return true
         case .outlook, .gmail:
-            // Said rather than faked. Consent has to happen in the system
-            // browser and the token has to reach the Keychain (ADR 0006 Q3),
-            // and neither is wired here yet — a sheet that closed as though
-            // an account had been added would leave somebody waiting for mail
-            // that is never coming (#1276).
-            problem =
-                "Signing in through the browser is not built here yet. "
-                + "Choose IMAP / SMTP to add this account with a password."
+            // Handled by `signIn`, which cannot be synchronous: it waits on
+            // somebody in another application.
+            problem = "Signing in happens in your browser — press Sign in."
             return false
         case .localStore:
             problem =
                 "Opening a store that already exists is not built here yet (#1278)."
             return false
         }
+    }
+
+    /// Sign in through the browser, and add the account if it works.
+    ///
+    /// Off the main actor, because the flow blocks until the person comes
+    /// back from Safari. The sheet stays up and says where the answer will
+    /// arrive; `cancel` is what closing it means.
+    public func signIn(through session: PostioSession?) async -> Bool {
+        guard let session else { return false }
+        signingIn = true
+        problem = nil
+        let address = self.address
+        let clientId = self.clientId
+        let secret = clientSecret.isEmpty ? nil : clientSecret
+
+        // Poll the boundary for the port while the flow runs. A person who
+        // has just been sent to Safari is being asked to trust that the thing
+        // waiting for them is Postio, and the port is the only evidence a
+        // mail client can offer.
+        let watching = Task { @MainActor in
+            while signingIn {
+                signInMessage = session.signInProgress.message
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
+        let complaint = await Task.detached { [session] in
+            session.signInWithBrowser(
+                address: address, clientId: clientId, clientSecret: secret)
+        }.value
+
+        signingIn = false
+        watching.cancel()
+        signInMessage = ""
+        problem = complaint
+        return complaint == nil
+    }
+
+    /// Stop waiting. The sheet closing means this, and so does Cancel.
+    public func cancelSignIn(through session: PostioSession?) {
+        session?.cancelSignIn()
+        signingIn = false
+        signInMessage = ""
     }
 
     /// What the preset table says about the address typed so far.

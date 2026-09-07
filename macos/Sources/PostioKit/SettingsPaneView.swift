@@ -34,6 +34,8 @@ public struct SettingsPaneView: View {
     @State private var selected: Int64?
     /// The add-account sheet, while it is up.
     @State private var adding: AddAccountModel?
+    /// The account being signed in again, if one is.
+    @State private var reconnecting: Int64?
 
     public init(
         store: SettingsStore,
@@ -214,8 +216,25 @@ public struct SettingsPaneView: View {
             .padding(.vertical, 8)
         }
         .sheet(item: $adding) { model in
-            AddAccountSheet(session: session, model: model) { adding = nil }
+            AddAccountSheet(session: session, model: model) {
+                adding = nil
+                reconnecting = nil
+            }
         }
+    }
+
+    /// Sign in to `account` again, in the browser.
+    ///
+    /// The sheet, pre-filled and opened at the step that asks: an expired
+    /// token needs consent, and consent is the one thing this application
+    /// never collects itself. Reusing the sheet rather than growing a second
+    /// path is the point — there is one place a browser sign-in happens.
+    private func reconnect(_ account: AccountFfi) {
+        let model = AddAccountModel()
+        model.address = account.address
+        model.next()
+        reconnecting = account.id
+        adding = model
     }
 
     /// One account, and its form when it is the selected one.
@@ -252,13 +271,17 @@ public struct SettingsPaneView: View {
                     }
                     Spacer(minLength: 0)
                     if AccountRow.needsAttention(account) {
-                        // Inline, beside the account it is about: a token that
-                        // expired is a thing to fix here rather than a banner
-                        // somewhere else (#1276).
-                        Button("Reconnect") {}
-                            .controlSize(.small)
-                            .disabled(true)
-                            .help("Signing in again is not built here yet")
+                        // Inline, beside the account it is about: a token
+                        // that expired is a thing to fix here rather than a
+                        // banner somewhere else. It is the *same* sign-in the
+                        // sheet runs — the account is already configured, so
+                        // what it needs is consent again, not another row.
+                        Button(reconnecting == account.id ? "Signing in…" : "Reconnect") {
+                            reconnect(account)
+                        }
+                        .controlSize(.small)
+                        .disabled(reconnecting != nil)
+                        .help("Sign in to this account again in your browser")
                     }
                 }
                 .contentShape(Rectangle())
