@@ -237,6 +237,21 @@ jobs:
           echo "tooling self-tests: $answer"
           printf '%s\n' "$files" | sed 's/^/  changed: /'
 
+      # `test-issue-land-no-tests.py` asserts that the landing gate gives the
+      # same answer under both test runners, so it needs the one that is not
+      # already here. `prereq.py` turns a missing prerequisite into a failure
+      # under CI rather than a skip, so this is what stops that self-test
+      # standing down on a runner where it is supposed to run. Cached and
+      # keyed on the script, as the Tests job does it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
       - name: Prove the tooling still holds itself up
         if: steps.tooling.outputs.run == 'yes'
         run: |
@@ -695,6 +710,21 @@ jobs:
             ~/.cargo/git/db
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # `test-issue-land-no-tests.py` asserts that the landing gate gives the
+      # same answer under both test runners, so it needs the one that is not
+      # already here. `prereq.py` turns a missing prerequisite into a failure
+      # under CI rather than a skip, so this is what stops that self-test
+      # standing down on a runner where it is supposed to run. Cached and
+      # keyed on the script, as the Tests job does it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
 
       # `CI` is what `scripts/lib/prereq.py` reads to decide that a missing
       # prerequisite is a broken runner rather than somebody's laptop. Set
