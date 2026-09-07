@@ -306,6 +306,17 @@ mod tests {
 /// [`reader_for`]: ConversationView::reader_for
 pub type ReaderFactory = Box<dyn Fn(MessageId) -> Option<crate::reader::Reader>>;
 
+/// Builds a reader that is not aimed at anything yet.
+///
+/// The half of [`ReaderFactory`] that has nothing to do with which message is
+/// being opened: construct the widget, hide the parts the entry above it
+/// already draws. Separated from [`ReaderFiller`] so a warm spare can exist
+/// without belonging to a message (#947).
+pub type ReaderPreparer = Box<dyn Fn() -> Option<crate::reader::Reader>>;
+
+/// Aims a prepared reader at a message and starts its read.
+pub type ReaderFiller = Box<dyn Fn(&crate::reader::Reader, MessageId)>;
+
 /// The three verbs a single message in a stack offers.
 ///
 /// Reply is the primary: it is what the pane is for. Archive and delete are
@@ -652,6 +663,9 @@ mod imp {
         /// column are showing, and the one a per-message verb aims at.
         pub(super) focused: Cell<Option<MessageId>>,
         pub(super) factory: RefCell<Option<ReaderFactory>>,
+        /// The two halves of the factory, for the spare. See [`ReaderPreparer`].
+        pub(super) preparer: RefCell<Option<ReaderPreparer>>,
+        pub(super) filler: RefCell<Option<ReaderFiller>>,
         /// A reader built and started before anything asks for one.
         ///
         /// A `WebView` spawns its web process on the first *load*, not when
@@ -665,13 +679,23 @@ mod imp {
         /// resident web process, and one is enough to cover the gap between
         /// two keystrokes.
         ///
-        /// Held **with the message it was built for**. The factory binds a
-        /// reader to a message -- `fill_reader` starts the read for it -- so
-        /// a spare is not interchangeable, and the pane warms the one that is
-        /// about to be wanted: the next message down the stack, which is the
-        /// gesture this is for. Expanding anything else falls back to
-        /// building one, exactly as before.
-        pub(super) spare: RefCell<Option<(MessageId, crate::reader::Reader)>>,
+        /// Held **without a message**, which is the whole of #947.
+        ///
+        /// #1291 bound the spare to the message it was built for, because the
+        /// factory both builds a reader and starts the read for one. That
+        /// covers walking down an open thread and nothing else: the list
+        /// cursor moving to the next row opens a different conversation, and
+        /// a spare bound to a message in the thread just left cannot answer
+        /// for any message in the new one -- so it was dropped and every
+        /// reader built cold, which is the flash the report is about.
+        ///
+        /// Splitting the factory into [`ReaderPreparer`] and [`ReaderFiller`]
+        /// is what makes a spare interchangeable: it is warmed with no
+        /// message, and aimed at one at the moment it is taken. One spare,
+        /// not a pool -- the cost is a resident web process, and the first
+        /// message a conversation expands is the focused one, which is the
+        /// one being looked at.
+        pub(super) spare: RefCell<Option<crate::reader::Reader>>,
         pub(super) on_reply: RefCell<Vec<ReplyHandler>>,
         pub(super) on_forward: RefCell<Vec<MessageHandler>>,
         pub(super) on_focus: RefCell<Vec<MessageHandler>>,
@@ -741,6 +765,8 @@ mod imp {
                     "conversation-footer",
                 ),
                 scroller: gtk::ScrolledWindow::default(),
+                preparer: RefCell::new(None),
+                filler: RefCell::new(None),
                 spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 entries: RefCell::new(Vec::new()),
@@ -855,6 +881,28 @@ impl ConversationView {
         *self.imp().factory.borrow_mut() = Some(Box::new(factory));
     }
 
+    /// The factory again, split in two, so a spare can be warmed for nobody.
+    ///
+    /// `prepare` builds a reader with everything that does not depend on
+    /// which message it will show; `fill` aims one at a message and starts
+    /// the read. The pane warms with the first and hands over with the
+    /// second, which is what lets one spare serve whatever is asked for next
+    /// — including a message in a different conversation (#947).
+    ///
+    /// Optional: a pane with only [`set_reader_factory`] behaves as it did
+    /// before, building every reader when it is asked for.
+    ///
+    /// [`set_reader_factory`]: Self::set_reader_factory
+    pub fn set_reader_warmer(
+        &self,
+        prepare: impl Fn() -> Option<crate::reader::Reader> + 'static,
+        fill: impl Fn(&crate::reader::Reader, MessageId) + 'static,
+    ) {
+        let imp = self.imp();
+        *imp.preparer.borrow_mut() = Some(Box::new(prepare));
+        *imp.filler.borrow_mut() = Some(Box::new(fill));
+    }
+
     /// Put a conversation in the pane, oldest first.
     ///
     /// Focus lands on the first unread — see [`opening_focus`] — and
@@ -883,6 +931,11 @@ impl ConversationView {
             Some(focus) => expanded_on_open(&messages, focus, EAGER_EXPANSION_CAP),
             None => Vec::new(),
         };
+
+        // Warm one before anything asks: the next thing this pane is asked
+        // for is either a message further down this conversation or the whole
+        // of another one, and both take the spare (#947).
+        self.warm_a_spare();
 
         for (index, row) in messages.iter().enumerate() {
             // Numbered from one. Nothing draws the number since #1003 took
@@ -1174,7 +1227,7 @@ impl ConversationView {
         // expands several messages before focus exists, and "the next one"
         // has no answer until it does. One warm per navigation, which is the
         // gesture -- read this one, move down.
-        self.warm_the_next();
+        self.warm_a_spare();
         for entry in self.imp().entries.borrow().iter() {
             entry.header.set_selected(entry.message == message);
         }
@@ -1275,15 +1328,20 @@ impl ConversationView {
         }
         entry.expanded.set(true);
         entry.actions.set_visible(true);
-        // The spare, if it was built for *this* message, and that is the
-        // whole of the pre-warm: its web process has already started, so the
-        // body paints rather than flashing black while one boots (#1216).
-        let taken = match imp.spare.borrow_mut().take() {
-            Some((warmed, reader)) if warmed == message => Some(reader),
-            // Built for a different message: it cannot be used, and holding
-            // it would keep a process for a body nobody asked for.
-            Some(_) | None => None,
-        };
+        // The spare, whatever message it is now wanted for: its web process
+        // has already started, so the body paints rather than flashing black
+        // while one boots (#1216), and it is not bound to a message, so it
+        // survives the list cursor moving to another thread (#947).
+        let taken = imp.spare.borrow_mut().take().and_then(|reader| {
+            let filler = imp.filler.borrow();
+            // Without a filler there is nothing to aim it at, so it is not a
+            // reader anybody can use. Dropping it is right: the factory below
+            // builds a filled one.
+            filler.as_ref().map(|fill| {
+                fill(&reader, message);
+                reader
+            })
+        });
         if let Some(reader) = taken.or_else(|| {
             imp.factory
                 .borrow()
@@ -1353,47 +1411,34 @@ impl ConversationView {
     /// the old way, so this is an optimisation for the common path and never
     /// a correctness question.
     ///
+    /// Warm a spare reader, aimed at nothing.
+    ///
     /// On an idle callback rather than inline: the caller has just expanded a
-    /// message, and starting a second web process there would spend on this
-    /// keystroke exactly what the spare exists to save.
-    fn warm_the_next(&self) {
-        let Some(next) = self.next_unexpanded() else {
-            return;
-        };
-        if matches!(*self.imp().spare.borrow(), Some((held, _)) if held == next) {
+    /// message or opened a conversation, and starting a web process there
+    /// would spend on this keystroke exactly what the spare exists to save.
+    ///
+    /// Aimed at nothing, so it is still useful after the list cursor moves to
+    /// another thread — which is the gesture #1291's message-bound spare
+    /// could not cover and #947 reported as a black flash.
+    fn warm_a_spare(&self) {
+        if self.imp().spare.borrow().is_some() {
             return;
         }
         let pane = self.clone();
         glib::idle_add_local_once(move || {
             let imp = pane.imp();
-            if matches!(*imp.spare.borrow(), Some((held, _)) if held == next) {
+            if imp.spare.borrow().is_some() {
                 return;
             }
-            let built = imp
-                .factory
-                .borrow()
-                .as_ref()
-                .and_then(|factory| factory(next));
+            let built = imp.preparer.borrow().as_ref().and_then(|prepare| prepare());
             if let Some(reader) = built {
+                // The load is what starts the web process; building the
+                // widget does not. An empty document is enough, and is the
+                // whole of the warm.
                 reader.warm();
-                *imp.spare.borrow_mut() = Some((next, reader));
+                *imp.spare.borrow_mut() = Some(reader);
             }
         });
-    }
-
-    /// The first message after the focused one that has no body yet.
-    fn next_unexpanded(&self) -> Option<MessageId> {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let focused = imp.focused.get();
-        let from = focused
-            .and_then(|id| entries.iter().position(|entry| entry.message == id))
-            .map_or(0, |index| index + 1);
-        entries
-            .iter()
-            .skip(from)
-            .find(|entry| !entry.expanded.get())
-            .map(|entry| entry.message)
     }
 
     /// How many message bodies are holding a live `WebKitWebView`.

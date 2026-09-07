@@ -114,19 +114,18 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     );
     assert_eq!(
         built.borrow().len(),
-        EAGER_EXPANSION_CAP + 1,
-        "opening a conversation must not build a reader per message. The cap, \
-         plus exactly one: focus warms a reader for the message below it, so \
-         moving down does not wait for a web process to start and flash black \
-         while it does (#1216). One spare, and only after focus lands -- \
-         during the expansions themselves there is no `next message` to \
-         answer for: {:?}",
+        EAGER_EXPANSION_CAP,
+        "opening a conversation must not build a reader per message: the cap \
+         is what bounds how many bodies get a live `WebKitWebView` at once. \
+         Exactly the cap, with no spare among them -- this pane has only a \
+         factory, and #947 moved the warm onto `set_reader_warmer`, which is \
+         a channel a pane without one never uses: {:?}",
         built.borrow()
     );
     assert!(
         !built.borrow().contains(&MessageId::new(1)),
-        "the spare is for the message *after* the focused one, not the last \
-         collapsed one above it: {:?}",
+        "the expansions start at the focused message and run down, so the \
+         read messages above it are not built: {:?}",
         built.borrow()
     );
 
@@ -933,4 +932,103 @@ pub fn a_long_thread_keeps_a_bounded_number_of_bodies() {
     );
 
     window.set_visible(false);
+}
+
+/// Moving to another thread must not start from cold (#947, #749).
+///
+/// #1291 warms the message *below* the focused one, which covers walking down
+/// a thread. The gesture the report is actually about is the other one: the
+/// list cursor moving from one row to the next, where every row is a
+/// different conversation. `open` clears the pane and asks the factory for a
+/// reader per expanded message, and the spare — bound to a `MessageId` from
+/// the conversation being left — cannot answer for any of them, so every one
+/// of them is built cold.
+///
+/// A `WebView` starts its web process on the first *load*, not when it is
+/// built, and it composites black until that process has painted. So a cold
+/// reader is the black flash, and opening a new conversation makes
+/// `EAGER_EXPANSION_CAP` of them at once.
+///
+/// This asserts the property rather than the count: whatever the pane does to
+/// fix it, at least one reader in the second conversation must come from a
+/// process that was already running.
+pub fn moving_to_another_thread_does_not_build_every_reader_cold() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+
+    // Every reader this factory hands out, and whether its web process had
+    // already been started when it did.
+    let built: Rc<RefCell<Vec<(MessageId, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let warmed: Rc<RefCell<Vec<MessageId>>> = Rc::new(RefCell::new(Vec::new()));
+    let counter = Rc::clone(&built);
+    pane.set_reader_factory(move |message| {
+        counter.borrow_mut().push((message, false));
+        Some(stub_reader())
+    });
+    // The warmer: `prepare` builds with no message, `fill` records which
+    // message a *warm* reader was finally aimed at. A reader that arrives
+    // through here did not start a web process on this keystroke.
+    let prepared = Rc::clone(&warmed);
+    let filled = Rc::clone(&warmed);
+    pane.set_reader_warmer(
+        move || {
+            let _ = &prepared;
+            Some(stub_reader())
+        },
+        move |_reader, message| filled.borrow_mut().push(message),
+    );
+
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // A thread, opened and read down: this is what leaves a warm spare.
+    let first: Vec<Row> = (1..=6).map(|id| message(id, id < 5)).collect();
+    pane.open(first);
+    crate::pump();
+    pane.focus_message(MessageId::new(5));
+    crate::pump();
+    built.borrow_mut().clear();
+
+    // Now the list cursor moves to the next row, which is another thread.
+    let second: Vec<Row> = (11..=16).map(|id| message(id, id < 15)).collect();
+    pane.open(second);
+    crate::pump();
+
+    let cold = built.borrow().len();
+    let warm = warmed.borrow().len();
+    let expanded = pane.expanded_count();
+    eprintln!("second open: expanded {expanded}, {cold} cold, {warm} warm");
+    assert!(
+        cold < expanded,
+        "opening the next thread expanded {expanded} messages and built all \
+         {cold} of their readers from cold. Each starts a web process and \
+         composites black until it paints, which is the flash the report is \
+         about — and the warm spare cannot help, because it is bound to a \
+         message in the thread just left: {:?}",
+        built.borrow()
+    );
+
+    // And the warm one is the message being *looked at*. A conversation
+    // expands the focused message first and the rest below it, so the spare
+    // landing anywhere else would be warming something off screen while the
+    // one in front of the reader still flashed.
+    assert_eq!(
+        warmed.borrow().as_slice(),
+        [MessageId::new(15)],
+        "the spare went to {:?}, not to the focused message the pane opened \
+         on",
+        warmed.borrow()
+    );
+
+    window.close();
 }
