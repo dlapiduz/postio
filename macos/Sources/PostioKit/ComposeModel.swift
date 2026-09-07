@@ -26,6 +26,18 @@ public final class ComposeModel: Identifiable {
     public var subject: String
     public var body: String
 
+    /// The body as marked-up text, when this draft is rich (#1271).
+    ///
+    /// Held beside `body` rather than instead of it, because the switch does
+    /// not throw the other one away: a draft can be plain and still be
+    /// holding the marks it had a moment ago, and turning Rich back on
+    /// should cost nothing.
+    ///
+    /// What the editing surface reports on every keystroke, and what the
+    /// boundary narrows to the dialect on the way into the store -- so this
+    /// is a working copy and never the record (ADR 0004 Q3).
+    public var bodyHtml: String?
+
     /// Whether this is being written as rich text.
     ///
     /// The switch is on the document, not on the window: turning it off does
@@ -45,6 +57,7 @@ public final class ComposeModel: Identifiable {
         cc = draft.cc
         subject = draft.subject
         body = draft.body
+        bodyHtml = draft.bodyHtml
         rich = draft.rich
     }
 
@@ -75,9 +88,87 @@ public final class ComposeModel: Identifiable {
 
     /// Whether this draft will actually leave as rich mail.
     ///
-    /// Not the switch: the switch is a control, and this is a claim about
-    /// what goes on the wire. Until #1271 there is no rich document to send.
-    public var sendsRich: Bool { false }
+    /// It *is* the switch now (#1271). It was hardcoded `false` while the
+    /// body was a text field, because the footer is a claim about what goes
+    /// on the wire and there was no rich document to put there. There is
+    /// one, so the claim can follow the control again.
+    public var sendsRich: Bool { rich }
+
+    /// Whether the format bar's marks do anything.
+    ///
+    /// The marks were drawn permanently disabled, which made the whole bar
+    /// decoration. What decides now is the switch -- and being handed off to
+    /// another editor, which is the one case where nothing in this window
+    /// may write to the body at all.
+    public var marksApply: Bool { rich && !isHandedOff }
+
+    /// The marks in force where the caret sits, as registry command ids.
+    ///
+    /// Reported by the editing bridge on selection changes and edits, so a
+    /// toolbar toggle can reflect the document rather than guess at it. The
+    /// ids are the registry's, which is what lets the bar be built from
+    /// `ComposeFormat.marks` and still light up correctly.
+    public var caretMarks: Set<String> = []
+
+    /// Whether the caret is inside `command`'s mark.
+    public func isMarkActive(_ command: String) -> Bool { caretMarks.contains(command) }
+
+    /// One press of a format button, waiting for the surface to apply it.
+    ///
+    /// The button lives in SwiftUI and the document lives in an
+    /// `NSViewRepresentable`, so the press has to be left somewhere the
+    /// surface will see on its next update rather than called straight
+    /// through.
+    public struct MarkRequest: Equatable, Sendable {
+        /// The registry command — `bold`, `quote_block`.
+        public let command: String
+        /// Which press this is.
+        ///
+        /// Bold is a toggle, so pressing it twice has to reach the document
+        /// twice. A request keyed only on the command would look unchanged
+        /// the second time and the second press would be swallowed.
+        public let serial: Int
+        /// For `insert_link`: where it points. `nil` for every other mark.
+        public let href: String?
+    }
+
+    /// The most recent press, or `nil` before there has been one.
+    public private(set) var markRequest: MarkRequest?
+    private var marksAsked = 0
+
+    /// Ask the surface to apply `command` to the selection.
+    ///
+    /// Ignored on a plain draft: the bar is disabled there, but the keyboard
+    /// reaches this too, and `⌘B` over a document that cannot carry marks
+    /// has nothing to apply to.
+    public func applyMark(_ command: String, href: String? = nil) {
+        guard marksApply else { return }
+        marksAsked += 1
+        markRequest = MarkRequest(command: command, serial: marksAsked, href: href)
+    }
+
+    /// Say why a link was refused, or clear the last complaint.
+    ///
+    /// A refused scheme is something to say rather than a link that is
+    /// created, looks right, and vanishes at the next parse.
+    public func refuseLink(_ href: String) {
+        status = "A message can only link to http, https or mailto — not \(href)."
+    }
+
+    /// Take what a paste became, and say what it cost.
+    ///
+    /// The sentence is `postio_body::Lost::summary`'s, arriving through the
+    /// boundary, so both composers say the same thing about the same paste.
+    /// `nil` says nothing at all, which is the right answer when nothing was
+    /// lost: a composer that announced every paste would train people to
+    /// ignore the one that mattered.
+    public func tookPaste(_ pasted: PastedFfi) {
+        // Only the sentence. The paste is inserted *at the caret* by the
+        // surface, and the bridge reports the resulting document back on the
+        // `input` event it raises -- so writing the body here would replace
+        // everything already typed with whatever was on the clipboard.
+        status = pasted.dropped
+    }
 
 
     /// The draft as the store should have it.
@@ -87,6 +178,7 @@ public final class ComposeModel: Identifiable {
         edited.cc = cc
         edited.subject = subject
         edited.body = body
+        edited.bodyHtml = bodyHtml
         edited.rich = rich
         return edited
     }
