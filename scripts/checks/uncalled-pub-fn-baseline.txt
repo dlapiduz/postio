@@ -39,6 +39,7 @@ failing_tls                       # crates/postio-account/src/imap/transport.rs:
 forgive_set_aside                 # crates/postio-sync/src/backfill.rs:678
 fts_match                         # crates/postio-search/src/query.rs:417
 get_all                           # crates/postio-model/src/headers.rs:52
+handler_fn                        # crates/postio-core/src/bridge.rs:144 -- the closure form of `CommandHandler`. `postio-ffi` used it for the no-op bus that dropped every verb, and now builds a real one; the remaining caller is `postio-app/examples/shot.rs`, which this check does not scan
 handles_ext                       # crates/postio-core/src/dispatch.rs:373
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435

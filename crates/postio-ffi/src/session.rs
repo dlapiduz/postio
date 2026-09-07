@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel, handler_fn};
+use postio_core::bridge::{Bridge, CommandSender, EventStream, event_channel};
 use postio_session::Wiring;
 
 use crate::event::UiEvent;
@@ -87,6 +87,56 @@ pub struct SessionOptions {
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
     #[cfg(feature = "testing")]
     config: ConfigSource,
+}
+
+/// The command bus, handed over once the store behind it is open.
+///
+/// `Bridge::new` is called before the database exists — `open` asks the
+/// keyring first and only then the store, deliberately, so that a refused key
+/// leaves no half-made store behind — and the real bus needs a `Database`.
+/// Rather than reorder that, the bridge is given this: a handler that holds
+/// the real one once there is one to hold.
+///
+/// The alternative it replaces was `handler_fn(|_, _| async {})`, which
+/// received every command and dropped it.
+#[derive(Clone, Default)]
+struct DeferredBus(Arc<Mutex<Option<Arc<postio_core::dispatch::Dispatcher>>>>);
+
+impl DeferredBus {
+    /// Build the real bus over `database` and hand it over.
+    fn arm(&self, database: &postio_storage::Database) {
+        let actions = postio_session::actions::Actions::new(
+            database.clone(),
+            postio_core::state::SharedState::default(),
+        );
+        let bus =
+            postio_session::actions::wire(postio_core::dispatch::Dispatcher::builder(), actions)
+                .build();
+        *self.0.lock().expect("deferred bus lock") = Some(Arc::new(bus));
+    }
+}
+
+impl postio_core::bridge::CommandHandler for DeferredBus {
+    fn handle(
+        &self,
+        command: postio_core::Command,
+        events: postio_core::bridge::EventSink,
+    ) -> postio_core::bridge::HandlerFuture {
+        let bus = self.0.lock().expect("deferred bus lock").clone();
+        Box::pin(async move {
+            match bus {
+                Some(bus) => bus.handle(command, events).await,
+                // Only possible between `Bridge::new` and the store opening,
+                // which is microseconds and has no frontend attached yet. Said
+                // out loud rather than dropped, because dropping commands
+                // silently is the bug this type exists to end.
+                None => tracing::error!(
+                    ?command,
+                    "a command arrived before the store was open and was not run"
+                ),
+            }
+        })
+    }
 }
 
 impl SessionOptions {
@@ -1201,15 +1251,30 @@ impl Session {
         // below build the same configuration from it.
         let source = config_source(&options);
 
+        // The bus a session builds when it was given none — which is every
+        // shipped Postio, because `openAt` supplies none.
+        //
+        // It used to be `handler_fn(|_, _| async {})`: every command received
+        // and dropped. Only the verbs `handle_locally` intercepts — the
+        // cursor and the selection — did anything at all, so moving through
+        // the list worked and *archive, flag, delete, mark read and undo did
+        // nothing*, silently. It survived because every test that invokes a
+        // real verb hands the session a bus of its own, so the one the
+        // application actually runs on was never exercised.
+        //
+        // The real bus needs `Actions`, which needs the database, which is
+        // opened further down — so the handler is deferred rather than the
+        // store hoisted: `open` is delicate about its order (the keyring
+        // before the store, deliberately) and this changes none of it.
+        let deferred = DeferredBus::default();
         let (runtime, commands, owned_bridge) = match options.bridge {
             Some((runtime, commands)) => (runtime, commands, None),
             None => {
-                let (bridge, _replies) =
-                    Bridge::new(handler_fn(|_, _| async {})).map_err(|error| {
-                        SessionError::RuntimeUnavailable {
-                            message: error.to_string(),
-                        }
-                    })?;
+                let (bridge, _replies) = Bridge::new(deferred.clone()).map_err(|error| {
+                    SessionError::RuntimeUnavailable {
+                        message: error.to_string(),
+                    }
+                })?;
                 (bridge.handle(), bridge.commands(), Some(bridge))
             }
         };
@@ -1261,6 +1326,7 @@ impl Session {
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
             let sync_config = config.sync;
+            deferred.arm(&database);
             let mut wiring = Wiring::new(database, blobs, runtime, sink, commands)
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config));
@@ -1343,6 +1409,7 @@ impl Session {
         let sync_config = config.sync;
         let ui_config = config.ui;
 
+        deferred.arm(&database);
         let wiring = Wiring::new(database, blobs, runtime, sink, commands)
             .with_secrets(secrets)
             .with_backfill(postio_session::backfill_policy(&sync_config))

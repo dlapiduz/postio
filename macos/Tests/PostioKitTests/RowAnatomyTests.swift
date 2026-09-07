@@ -286,3 +286,79 @@ import Testing
         #expect(RowPresentation(row: row).sender == "Pinepoint Radon")
     }
 }
+
+/// The selected row is Postio's, not AppKit's (user report: "selecting a
+/// message looks off").
+///
+/// The design system says *"airy rows, a 3px steel edge when selected"*, and
+/// GTK has drawn that since it had rows. macOS drew `NSTableView`'s
+/// system-blue fill, because `generate_swift` emitted no selection colour at
+/// all — the row-state tokens are *derived* from `:root` rather than declared
+/// in it, so the emitter's loop never saw them and there was nothing to draw
+/// with.
+@MainActor
+@Suite struct SelectedRowTests {
+    @Test func theSelectionTokensReachedSwift() {
+        // The gap itself. Before this they did not exist on this platform,
+        // and no amount of correct drawing code could have helped.
+        #expect(PostioTokens.colorSelectedBg.alphaComponent > 0)
+        #expect(PostioTokens.colorSelectedStrongBg.alphaComponent > 0)
+    }
+
+    @Test func theSelectedTintIsNotTheSystemHighlight() {
+        // The point of the report: what was drawn was macOS's blue, which is
+        // not the canvas's steel and never will be.
+        let ours = PostioTokens.colorSelectedBg.usingColorSpace(.sRGB)
+        let system = NSColor.selectedContentBackgroundColor.usingColorSpace(.sRGB)
+
+        #expect(ours != system)
+    }
+
+    @Test func theEdgeIsTheThreePixelsTheCanvasNames() {
+        #expect(MessageRowView.edge == 3)
+    }
+
+    @Test func aRowDrawsItsOwnSelectionRatherThanInheritingOne() {
+        // `drawSelection` is overridden, so AppKit's fill never runs. Asserted
+        // by drawing into a bitmap and finding the accent edge down the
+        // leading side — the thing a person actually sees.
+        let view = MessageRowView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        view.selectionHighlightStyle = .regular
+        view.isSelected = true
+
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        view.drawSelection(in: view.bounds)
+        image.unlockFocus()
+
+        let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+        let edge = bitmap.colorAt(x: 1, y: 20)!.usingColorSpace(.sRGB)!
+        let body = bitmap.colorAt(x: 100, y: 20)!.usingColorSpace(.sRGB)!
+
+        // Two things, and neither pins an exact pixel: the edge composites
+        // over the tint beneath it, and an assertion on the resulting value
+        // would break the next time either colour is retuned — which is
+        // precisely what the canvas is *for*.
+        //
+        // What must be true is that there is an edge at all, and that it is
+        // the accent rather than the system's. Distance is measured against
+        // both candidates and the nearer one has to be ours.
+        func distance(_ a: NSColor, _ b: NSColor) -> CGFloat {
+            let dr = a.redComponent - b.redComponent
+            let dg = a.greenComponent - b.greenComponent
+            let db = a.blueComponent - b.blueComponent
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+        let accent = PostioTokens.colorAccent.usingColorSpace(.sRGB)!
+        let system = NSColor.selectedContentBackgroundColor.usingColorSpace(.sRGB)!
+
+        #expect(
+            distance(edge, body) > 0.1,
+            "there is no edge: the leading pixels match the row's fill"
+        )
+        #expect(
+            distance(edge, accent) < distance(edge, system),
+            "the edge is nearer the system highlight than the accent: \(edge)"
+        )
+    }
+}

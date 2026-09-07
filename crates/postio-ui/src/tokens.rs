@@ -466,6 +466,62 @@ pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenErro
         // is worse than none, and the ones that matter are drawn by hand.
     }
 
+    // The row states, which are *derived* rather than declared in `:root` —
+    // so the loop above never sees them and macOS had no selection colour at
+    // all. It fell back to `NSTableView`'s system blue, which is not what the
+    // canvas draws and is the whole of "selecting a message looks off".
+    //
+    // Emitted as dynamic colours because the values differ per theme and a
+    // Swift `static let` cannot: the CSS side gets a light block and a dark
+    // block, and this is the same pair behind one name. Same derivations,
+    // from the same `:root`, so retuning the canvas still moves both
+    // frontends at once.
+    for (swift, doc, light, dark) in [
+        (
+            "colorSelectedBg",
+            "the selected row's tint",
+            tokens.tint("color-accent", 12.0)?,
+            // The literal, not `var(--…)`: `colour` parses values, and a CSS
+            // reference is not one. The CSS emitter can pass the reference
+            // through because a browser resolves it; nothing here does.
+            tokens
+                .get("color-accent-900")
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        (
+            "colorSelectedStrongBg",
+            "the selected row's tint, one step stronger",
+            tokens.tint("color-accent", 14.0)?,
+            tokens
+                .get("color-accent-900")
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+        (
+            "colorHoverBg",
+            "the row under the pointer",
+            tokens.tint("color-text", 4.0)?,
+            tokens.tint("color-neutral-100", 6.0)?,
+        ),
+    ] {
+        let Some(light) = colour(&light) else {
+            continue;
+        };
+        let Some(dark) = colour(&dark) else { continue };
+        writeln!(
+            out,
+            "    /// {doc} — light and dark, from the design system's two blocks."
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    public static let {swift} = NSColor(name: nil) {{ appearance in\n             \x20       appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua\n             \x20           ? NSColor(srgbRed: {:.4}, green: {:.4}, blue: {:.4}, alpha: {:.4})\n             \x20           : NSColor(srgbRed: {:.4}, green: {:.4}, blue: {:.4}, alpha: {:.4})\n             \x20   }}",
+            dark.0, dark.1, dark.2, dark.3, light.0, light.1, light.2, light.3
+        )
+        .unwrap();
+    }
+
     writeln!(out, "}}").unwrap();
     Ok(out)
 }

@@ -198,6 +198,16 @@ mod through_the_boundary {
         )
     }
 
+    /// Whether the store has this message marked read.
+    fn is_seen(database: &postio_storage::Database, message: i64) -> bool {
+        MessageRepository::new(&database.connection().expect("a connection"))
+            .get(postio_model::ids::MessageId::new(message))
+            .expect("a read")
+            .expect("the message is still there")
+            .flags
+            .contains(&Flag::Seen)
+    }
+
     fn is_flagged(database: &postio_storage::Database, message: i64) -> bool {
         let connection = database.connection().expect("a connection");
         MessageRepository::new(&connection)
@@ -269,5 +279,64 @@ mod through_the_boundary {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         done()
+    }
+    // --- the bus a session builds for itself (user report) ----------------------
+
+    /// A session opened the way the application opens it: no bus supplied.
+    ///
+    /// **This is the shape every real Postio runs in**, and until now no test
+    /// used it for a verb. Every case above hands the session a bus built with
+    /// `actions::wire`, so all of them exercised a bus the shipped application
+    /// never has.
+    #[test]
+    fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
+        // The report was "emails are not marked read in the UI when open for the
+        // dwell time". The dwell was innocent: it armed, it fired, and it sent
+        // `MarkReadOnDwell` into a bus whose handler was `|_, _| async {}` —
+        // received and dropped. So was every other verb that is not cursor
+        // movement or selection: archive, flag, delete, undo, mark read.
+        let database = test_support::memory();
+        let (mailbox, message) = {
+            let connection = database.connection().expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection);
+            let mut message = Message::new(account.id, inbox, Utc::now());
+            let id = MessageRepository::new(&connection)
+                .create(&mut message)
+                .expect("a message")
+                .get();
+            (inbox, id)
+        };
+
+        // No `on_bridge`. `SessionOptions::at_default_path` — what `openAt` uses,
+        // and what Swift calls — supplies none either, so this is that path.
+        let session = Session::open(SessionOptions::in_memory_with(database.clone()))
+            .expect("a session over the seeded store");
+        session.open_scope(ScopeFfi::Mailbox {
+            mailbox: mailbox.into(),
+        });
+        // Draw the row first: a session that has only opened a scope holds no
+        // rows, and a cursor pointing at a row nobody holds resolves to
+        // nothing at all.
+        session.row_at(0);
+        session.settle_for_test();
+        let row = session.row_at(0).expect("the first row is resident now");
+
+        // The reported verb, and it carries its own target: the dwell names
+        // the message it timed, so this tests the *bus* rather than the aim.
+        // (Verbs whose default target is `Selection` need the boundary to
+        // mirror its selection into the `SharedState` the actions read, which
+        // it does not yet — a separate gap, filed rather than folded in here.)
+        session.set_cursor(Some(row.id));
+        session.mark_read_on_dwell(row.id);
+        session.settle_for_test();
+
+        let read = settle_until(|| is_seen(&database, message));
+        assert!(
+            read,
+            "the verb reached a bus that dropped it: a session that builds its \
+             own bus has to build a working one, because that is the only kind \
+             the application ever has"
+        );
+        session.shutdown();
     }
 }
