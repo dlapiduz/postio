@@ -52,3 +52,16 @@ impl AccountFfi {
         }
     }
 }
+
+/// What a connection test found.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ConnectionReportFfi {
+    /// Whether the account could sign in.
+    pub reachable: bool,
+    /// What happened, in words somebody can act on. The wording is
+    /// `postio_session::checkup`'s, so both frontends explain a rejected
+    /// password the same way — including the part the error cannot know,
+    /// which is that a provider refusing an ordinary account password says
+    /// only "rejected".
+    pub message: String,
+}

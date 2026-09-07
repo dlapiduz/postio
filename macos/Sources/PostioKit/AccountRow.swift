@@ -41,4 +41,13 @@ public enum AccountRow {
     /// does it, which is what changed with #1279.
     public static let emptyMessage =
         "No accounts yet. Add one with the + button below."
+
+    /// Whether a removal is safe to offer for this account.
+    ///
+    /// Always, deliberately: the *confirmation* is what makes it safe, not a
+    /// disabled button. What must never happen is a removal that leaves the
+    /// credential behind, and that is `postio_session::checkup`'s job.
+    public static func canRemove(_ account: AccountFfi) -> Bool {
+        account.id > 0
+    }
 }

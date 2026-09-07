@@ -36,6 +36,8 @@ public struct SettingsPaneView: View {
     @State private var adding: AddAccountModel?
     /// The account being signed in again, if one is.
     @State private var reconnecting: Int64?
+    /// Test, re-index and remove, and what the last one said.
+    @State private var actions = AccountActions()
 
     public init(
         store: SettingsStore,
@@ -202,18 +204,36 @@ public struct SettingsPaneView: View {
                 .help("Add an account")
                 .accessibilityLabel("Add an account")
                 Button {
-                    // Removing an account takes its mail with it, so it is a
-                    // confirmed action rather than a button (#1277).
+                    if let account = accounts.first(where: { $0.id == selected }) {
+                        actions.askToRemove(account)
+                    }
                 } label: {
                     Image(systemName: "minus")
                 }
-                .disabled(true)
-                .help("Removing an account is not built yet")
+                .disabled(selected == nil || actions.isBusy)
+                .help("Remove the selected account")
                 .accessibilityLabel("Remove the selected account")
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+        }
+        // Removing takes the account's mail with it, so it is asked about
+        // and the question names what goes.
+        .alert(
+            "Remove this account?",
+            isPresented: Binding(
+                get: { actions.confirmingRemoval != nil },
+                set: { if !$0 { actions.cancelRemoval() } }
+            ),
+            presenting: actions.confirmingRemoval
+        ) { _ in
+            Button("Remove", role: .destructive) {
+                Task { await actions.confirmRemoval(through: session) }
+            }
+            Button("Cancel", role: .cancel) { actions.cancelRemoval() }
+        } message: { account in
+            Text(actions.removalWarning(for: account))
         }
         .sheet(item: $adding) { model in
             AddAccountSheet(session: session, model: model) {
@@ -308,18 +328,24 @@ public struct SettingsPaneView: View {
                     .textSelection(.enabled)
             }
             HStack(spacing: 8) {
-                Button("Test connection") {}
-                    .disabled(true)
-                Button("Re-index store") {}
-                    .disabled(true)
-                Button("Remove account…") {}
-                    .disabled(true)
+                Button(actions.running == .testing ? "Testing…" : "Test connection") {
+                    Task { await actions.test(account, through: session) }
+                }
+                Button(actions.running == .reindexing ? "Re-indexing…" : "Re-index store") {
+                    Task { await actions.reindex(account, through: session) }
+                }
+                Button("Remove account…") { actions.askToRemove(account) }
             }
-            // Said once, here, rather than three tooltips: these are the
-            // account actions the boundary has no path for yet (#1277).
-            Text("Testing, re-indexing and removing are not built here yet.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            .disabled(actions.isBusy)
+            if let outcome = actions.outcome {
+                // What happened, where it was asked for. A connection test
+                // whose answer appears somewhere else is a test nobody reads.
+                Label(outcome, systemImage: actions.failed ? "xmark.circle" : "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(actions.failed ? Color.primary : Color.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.leading, 42)
         .padding(.bottom, 14)
