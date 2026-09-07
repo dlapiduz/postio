@@ -22,8 +22,19 @@ public final class AddAccountModel: Identifiable {
     }
 
     /// How a store is laid out on disk.
+    ///
+    /// One case, and the type stays because the *question* is real: a local
+    /// store has a format, `LocalStore` states it rather than guessing, and a
+    /// second case is a `MailBackend` away (#1296).
+    ///
+    /// The canvas drew a segmented control of three — maildir, mbox, notmuch
+    /// — and for a while so did this, refusing two of them by name on the way
+    /// out. A picker that offers what the application cannot do is worse than
+    /// no picker: it reads as a choice, and finding out it is not costs a
+    /// whole flow. Postio opens maildir stores; that is a fact to state, not
+    /// an option to offer.
     public enum Format: String, CaseIterable, Identifiable {
-        case maildir, mbox, notmuch
+        case maildir
         public var id: String { rawValue }
     }
 
@@ -165,14 +176,6 @@ public final class AddAccountModel: Identifiable {
             problem = "Signing in happens in your browser — press Sign in."
             return false
         case .localStore:
-            // The picker offers three formats because the canvas does. Only
-            // one of them opens today, and saying which beats an account
-            // that turns out to be empty.
-            guard format == .maildir else {
-                problem =
-                    "Postio opens maildir stores. \(format.rawValue) is not built yet."
-                return false
-            }
             guard let session else { return false }
             if let complaint = session.addLocalAccount(address: address, path: storePath) {
                 problem = complaint

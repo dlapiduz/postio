@@ -258,13 +258,12 @@ public struct AddAccountSheet: View {
                 }
             }
             labelled("Format") {
-                Picker("", selection: $model.format) {
-                    ForEach(AddAccountModel.Format.allCases) { format in
-                        Text(format.rawValue).tag(format)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
+                // Stated, not offered. Postio opens maildir stores; a
+                // segmented control listing two more it cannot open reads as
+                // a choice until you make it (#1296).
+                Text("Maildir")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             labelled("Sync window") {
                 VStack(alignment: .leading, spacing: PostioTokens.space2) {

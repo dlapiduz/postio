@@ -120,20 +120,12 @@ import Testing
         #expect(model.problem?.contains("browser") == true)
     }
 
-    @Test func aLocalStoreOffersThreeFormatsAndOpensTheOneItCan() {
-        // The picker draws what the canvas draws. Refusing the two that are
-        // not built, by name, is what stops the sheet writing an account
-        // that then turns out to have no mail in it (#1278).
-        let model = AddAccountModel()
-        model.address = unknown
-        model.next()
-        model.route = .localStore
-        model.next()
-        model.format = .mbox
-
-        #expect(model.finish(through: nil) == false)
-        #expect(model.problem?.contains("maildir") == true)
-        #expect(model.problem?.contains("mbox") == true)
+    @Test func theOnlyFormatOfferedIsTheOnePostioOpens() {
+        // The canvas drew three and the sheet offered three, refusing two of
+        // them by name on the way out. A picker that offers what the
+        // application cannot do reads as a choice until you make it, which
+        // costs a whole flow to find out (#1296).
+        #expect(AddAccountModel.Format.allCases == [.maildir])
     }
 
     @Test func nothingIsSaidAboutAStorePathOnARouteThatHasNoStore() {
