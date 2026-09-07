@@ -159,14 +159,71 @@ import Testing
         #expect(!model.isHandedOff)
     }
 
-    @Test func handingOffWithNoSessionDoesNothingAndOpensNothing() {
+    @Test func handingOffWithNoSessionDoesNothingAndOpensNothing() async {
         // The window cannot outlive its session, but the model can be asked.
         var opened: [URL] = []
         let model = ComposeModel(id: 1, draft: draft())
 
-        model.handOff(through: nil) { opened.append($0); return true }
+        await model.handOff(through: nil) { opened.append($0); return nil }
 
         #expect(opened.isEmpty)
+        #expect(!model.isHandedOff)
+    }
+
+    // -- which editor a draft goes to (#1288) -----------------------------
+
+    @Test func nothingIsChosenUntilSomebodyChoosesIt() {
+        // Empty is the shipped state, and it means "whatever this Mac opens
+        // a text file with" rather than a named application that may not be
+        // installed.
+        let model = ComposeModel(id: 1, draft: draft())
+
+        #expect(model.editor.isEmpty)
+        #expect(settingsHandoffLabel(configured: model.editor) == "Edit elsewhere")
+    }
+
+    @Test func theButtonNamesTheEditorOnceOneIsChosen() {
+        // `Open in $EDITOR` is canvas 26's label; an application launched
+        // from Finder has no `$EDITOR`, so the button names the setting.
+        let model = ComposeModel(id: 1, draft: draft())
+        model.editor = "Some Editor"
+
+        #expect(settingsHandoffLabel(configured: model.editor) == "Open in Some Editor")
+    }
+
+    @Test func anEditorThatIsNotAnApplicationIsNotOpenedAndSaysWhy() {
+        // A name no application answers to is a command, and a command needs
+        // a terminal. Nothing on this Mac is called this.
+        #expect(!ComposeHandoff.isApplication("postio-no-such-editor-1288"))
+
+        let target = settingsHandoffTarget(
+            configured: "postio-no-such-editor-1288",
+            isApplication: ComposeHandoff.isApplication("postio-no-such-editor-1288")
+        )
+        guard case .needsTerminal(_, let advice) = target else {
+            Issue.record("expected a terminal program, got \(target)")
+            return
+        }
+        #expect(advice.contains("terminal"))
+    }
+
+    @Test func anApplicationEveryMacHasIsFound() {
+        // The other half, and the reason the case above means anything: a
+        // lookup that never finds anything would make every editor look like
+        // a terminal program. TextEdit ships with macOS, by name and by
+        // bundle identifier both.
+        #expect(ComposeHandoff.isApplication("TextEdit"))
+        #expect(ComposeHandoff.isApplication("com.apple.TextEdit"))
+        #expect(ComposeHandoff.isApplication("  TextEdit  "), "what somebody typed is trimmed")
+    }
+
+    @Test func aDraftIsHandedBackWhenTheEditorCouldNotTakeIt() async {
+        // The window must never be left read-only waiting for an editor that
+        // never opened.
+        let model = ComposeModel(id: 1, draft: draft())
+
+        await model.handOff(through: nil) { _ in "it would not open" }
+
         #expect(!model.isHandedOff)
     }
 

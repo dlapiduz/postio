@@ -9,7 +9,8 @@
 
 use postio_ffi::{
     AppearanceFfi, DensityFfi, GroupFfi, ThemeFfi, row_metrics, settings_appearance,
-    settings_group_label, settings_humanize_interval, settings_load, settings_patch_appearance,
+    settings_composing, settings_group_label, settings_handoff_label, settings_handoff_target,
+    settings_humanize_interval, settings_load, settings_patch_appearance, settings_patch_composing,
     settings_path, settings_save, settings_sections, settings_status,
 };
 
@@ -333,4 +334,110 @@ fn a_rows_actions_are_registry_commands_the_keyboard_also_runs() {
         assert!(!action.title.is_empty());
     }
     session.shutdown();
+}
+
+// --- the Composing pane, and which editor a draft goes to (#1288) ----------
+
+/// A file with a `[compose]` table and things around it worth preserving.
+const COMPOSING: &str = "\
+# hand-written, and it should stay that way
+[sync]
+idle = true
+
+[compose]
+signature_on_reply = \"below_quote\"
+editor = \"Some Editor\"
+a_key_this_build_does_not_know = true
+
+[ui]
+density = \"compact\"
+";
+
+#[test]
+fn the_composing_pane_reads_the_compose_table() {
+    let composing = settings_composing(COMPOSING.to_owned()).expect("the sample parses");
+
+    assert_eq!(
+        composing.signature_on_reply,
+        postio_ffi::SignaturePlacementFfi::BelowQuote
+    );
+    assert_eq!(
+        composing.signature_on_forward,
+        postio_ffi::SignaturePlacementFfi::AboveQuote,
+        "a key that is not in the file is its default, not an error"
+    );
+    assert_eq!(composing.editor, "Some Editor");
+}
+
+#[test]
+fn choosing_an_editor_leaves_every_other_section_and_the_unknown_key_alone() {
+    // The clause this whole module is about, applied to the pane #1288 adds:
+    // a form that wrote the file itself would reorder it and drop both the
+    // comment and the key it does not understand.
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = "Another Editor".to_owned();
+
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    assert!(written.contains("editor = \"Another Editor\""));
+    assert!(
+        written.contains("# hand-written, and it should stay that way"),
+        "the comment survived: {written}"
+    );
+    assert!(
+        written.contains("a_key_this_build_does_not_know = true"),
+        "a key this build does not know survived: {written}"
+    );
+    assert!(written.contains("density = \"compact\""), "{written}");
+}
+
+#[test]
+fn an_editor_typed_with_a_space_on_the_end_is_stored_without_one() {
+    // The difference is invisible in a text field and fatal to the lookup:
+    // no platform finds an application called "Some Editor ".
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = "  Some Editor  ".to_owned();
+
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    assert!(written.contains("editor = \"Some Editor\""), "{written}");
+}
+
+#[test]
+fn clearing_the_editor_hands_the_choice_back_to_the_platform() {
+    let mut composing = settings_composing(COMPOSING.to_owned()).expect("parses");
+    composing.editor = String::new();
+    let written = settings_patch_composing(COMPOSING.to_owned(), composing).expect("patch");
+
+    let read_back = settings_composing(written).expect("parses");
+    assert_eq!(read_back.editor, "");
+    assert_eq!(
+        settings_handoff_target(read_back.editor, false),
+        postio_ffi::HandoffTargetFfi::PlatformDefault
+    );
+}
+
+#[test]
+fn an_editor_that_is_not_an_application_says_it_needs_a_terminal() {
+    // The case the setting exists for, and the one that would otherwise be a
+    // button doing nothing: somebody types the name of the editor they use.
+    let target = settings_handoff_target("vim".to_owned(), false);
+
+    let postio_ffi::HandoffTargetFfi::NeedsTerminal { name, advice } = target else {
+        panic!("expected a terminal program, got {target:?}");
+    };
+    assert_eq!(name, "vim");
+    assert!(advice.contains("vim"), "{advice}");
+    assert!(advice.contains("terminal"), "{advice}");
+}
+
+#[test]
+fn the_button_names_the_editor_when_there_is_one_to_name() {
+    // `Open in $EDITOR` is canvas 26's label and it names an environment
+    // variable an application launched from Finder does not have (#1288).
+    assert_eq!(
+        settings_handoff_label("Some Editor".to_owned()),
+        "Open in Some Editor"
+    );
+    assert_eq!(settings_handoff_label(String::new()), "Edit elsewhere");
 }

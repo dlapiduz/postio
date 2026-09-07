@@ -49,6 +49,7 @@ wrote it.
 |---|---|---|---|
 | `signature_on_reply` | string | `"above_quote"` | Where the signature goes on a reply: `above_quote` or `below_quote`. |
 | `signature_on_forward` | string | `"above_quote"` | Where the signature goes on a forward. |
+| `editor` | string | `""` | Which editor the compose window's hand-off opens the draft in: an application by name (`"BBEdit"`), a bundle identifier (`"com.apple.TextEdit"`), or a path. Empty means whatever the desktop already opens a text file with. A program that needs a terminal -- `vim`, `nano` -- cannot be opened by either frontend, and Postio says so rather than appearing to do nothing. |
 
 ## `[logging]`
 

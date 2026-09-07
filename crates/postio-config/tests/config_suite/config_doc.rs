@@ -153,6 +153,17 @@ const ENTRIES: &[Entry] = &[
         default: "\"above_quote\"",
         description: "Where the signature goes on a forward.",
     },
+    Entry {
+        path: "compose.editor",
+        kind: "string",
+        default: "\"\"",
+        description: "Which editor the compose window's hand-off opens the draft in: an \
+                      application by name (`\"BBEdit\"`), a bundle identifier \
+                      (`\"com.apple.TextEdit\"`), or a path. Empty means whatever the \
+                      desktop already opens a text file with. A program that needs a \
+                      terminal -- `vim`, `nano` -- cannot be opened by either frontend, \
+                      and Postio says so rather than appearing to do nothing.",
+    },
     // ── [logging] ─────────────────────────────────────────────────────
     Entry {
         path: "logging.level",

@@ -274,31 +274,56 @@ public final class ComposeModel: Identifiable {
     /// draft, and two writers would each silently undo the other.
     public var isHandedOff: Bool { handedOffTo != nil }
 
+    /// Which editor the hand-off will use — `[compose] editor` (#1288).
+    ///
+    /// Empty means the platform's own default. Held here rather than read on
+    /// every render because the button is labelled from it; refreshed when
+    /// the window appears, which is when it can have changed.
+    public var editor = ""
+
+    /// Re-read the configured editor. The compose window does this on appear.
+    public func refreshEditor() {
+        editor = ComposeHandoff.configuredEditor()
+    }
+
     /// Hand the draft to another editor.
     ///
     /// The draft is saved first — an editor opened on a body Postio has not
     /// written down is one crash away from having been the only copy — and
     /// the window goes read-only until it comes back.
     ///
-    /// It opens in whatever this Mac opens a text file with. **Not
+    /// It opens in the editor named by `[compose] editor`, or — with nothing
+    /// chosen — in whatever this Mac opens a text file with. **Not
     /// `$EDITOR`**: an application launched from Finder has no shell
     /// environment, so `$EDITOR` is usually simply absent, and a button that
     /// silently did nothing for most people would be worse than one that is
     /// honest about which editor it means (#1288).
-    public func handOff(through session: PostioSession?, open: (URL) -> Bool) {
+    ///
+    /// `open` answers `nil` when the draft went somewhere and a sentence when
+    /// it did not — including the case worth having a setting for at all, an
+    /// editor that wants a terminal. A refusal takes the draft straight back,
+    /// so the window is never left read-only waiting for an editor that never
+    /// opened.
+    public func handOff(
+        through session: PostioSession?,
+        open: (URL) async -> String?
+    ) async {
         guard let session, !isHandedOff else { return }
+        let path: String
         do {
-            let path = try session.beginHandoff(of: edited)
-            draft = session.saveDraft(edited) ?? draft
-            handedOffTo = path
-            if !open(URL(fileURLWithPath: path)) {
-                status = "Nothing on this Mac opened that file, so the draft is still here."
-                takeBack(through: session)
-            } else {
-                status = "Editing elsewhere. This window is read-only until you come back."
-            }
+            path = try session.beginHandoff(of: edited)
         } catch {
             status = error.localizedDescription
+            return
+        }
+        draft = session.saveDraft(edited) ?? draft
+        handedOffTo = path
+
+        if let complaint = await open(URL(fileURLWithPath: path)) {
+            status = complaint
+            takeBack(through: session)
+        } else {
+            status = "Editing elsewhere. This window is read-only until you come back."
         }
     }
 

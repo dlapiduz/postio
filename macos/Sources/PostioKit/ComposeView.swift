@@ -96,7 +96,13 @@ public struct ComposeView: View {
                 .help(tooltip("Send this message", "send"))
             }
         }
-        .onAppear { focus = model.to.isEmpty ? .to : .body }
+        .onAppear {
+            focus = model.to.isEmpty ? .to : .body
+            // Which editor the hand-off names, read now rather than when the
+            // model was built: this window may have been open since before
+            // the setting was chosen (#1288).
+            model.refreshEditor()
+        }
         // Coming back to this window is what a person means by "I am done
         // over there".
         .onReceive(
@@ -304,11 +310,19 @@ public struct ComposeView: View {
             // Named for what it does. `$EDITOR` is a shell variable an
             // application launched from Finder does not have (#1288), and a
             // button promising one would be promising the wrong thing.
-            Button(model.isHandedOff ? "Take it back" : "Edit elsewhere") {
+            Button(
+                model.isHandedOff
+                    ? "Take it back"
+                    : settingsHandoffLabel(configured: model.editor)
+            ) {
                 if model.isHandedOff {
                     model.takeBack(through: session)
                 } else {
-                    model.handOff(through: session) { NSWorkspace.shared.open($0) }
+                    Task {
+                        await model.handOff(through: session) { file in
+                            await ComposeHandoff.open(file, using: model.editor)
+                        }
+                    }
                 }
             }
             .buttonStyle(.link)

@@ -18,6 +18,7 @@
 //! because Swift never holds it.
 
 use postio_config::Config;
+use postio_config::compose::{ComposeConfig, SignaturePlacement, patch_compose};
 use postio_config::ui::{Density, Theme, UiConfig, patch_ui};
 use postio_config::validate;
 use postio_ui::settings::Section;
@@ -138,6 +139,71 @@ pub struct AppearanceFfi {
     pub sender_avatars: bool,
 }
 
+/// Where a signature sits relative to quoted text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SignaturePlacementFfi {
+    /// Under what was written and above the quote.
+    AboveQuote,
+    /// Under everything, the quote included.
+    BelowQuote,
+}
+
+/// The `[compose]` table's typed settings — the Composing pane's model.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ComposingFfi {
+    /// Where the signature goes on a reply.
+    pub signature_on_reply: SignaturePlacementFfi,
+    /// Where the signature goes on a forward.
+    pub signature_on_forward: SignaturePlacementFfi,
+    /// Which editor `⌃⌘E` hands the draft to. Empty means the platform's own
+    /// idea of what opens a text file (#1288).
+    pub editor: String,
+}
+
+/// What the hand-off should do with the configured editor.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum HandoffTargetFfi {
+    /// Nothing is chosen: open it the way this platform opens a text file.
+    PlatformDefault,
+    /// Open it with this application.
+    Application {
+        /// The application's name, as the platform knows it.
+        name: String,
+    },
+    /// A program that wants a terminal, which no frontend here can give it.
+    NeedsTerminal {
+        /// The program, and the `advice` that names it.
+        name: String,
+        /// What to tell the person who chose it.
+        advice: String,
+    },
+}
+
+/// What to do about the configured editor.
+///
+/// `is_application` is the frontend's answer to the one question only the
+/// platform can settle — whether an application by that name exists here.
+/// Everything that follows from it is decided in `postio_ui::handoff`, once,
+/// so both frontends behave the same way about a name that is not one.
+#[uniffi::export]
+pub fn settings_handoff_target(configured: String, is_application: bool) -> HandoffTargetFfi {
+    match postio_ui::handoff::target(&configured, is_application) {
+        postio_ui::handoff::Target::PlatformDefault => HandoffTargetFfi::PlatformDefault,
+        postio_ui::handoff::Target::Application(name) => HandoffTargetFfi::Application { name },
+        postio_ui::handoff::Target::NeedsTerminal(name) => HandoffTargetFfi::NeedsTerminal {
+            advice: postio_ui::handoff::terminal_advice(&name),
+            name,
+        },
+    }
+}
+
+/// What the hand-off button should say: `Open in BBEdit`, or `Edit elsewhere`
+/// when nothing is chosen.
+#[uniffi::export]
+pub fn settings_handoff_label(configured: String) -> String {
+    postio_ui::handoff::button_label(&configured)
+}
+
 /// Every settings section, in canvas 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
@@ -216,6 +282,43 @@ pub fn settings_patch_appearance(
     ui.show_key_hints = appearance.show_key_hints;
     ui.sender_avatars = appearance.sender_avatars;
     patch_ui(&text, &ui).map_err(|err| SettingsError::Invalid {
+        message: err.to_string(),
+    })
+}
+
+/// The Composing pane's values, or `None` when the file will not parse.
+///
+/// `None` rather than defaults, for the reason
+/// [`settings_appearance`] gives: a form full of plausible settings that are
+/// not the user's invites saving it over the file they were fixing.
+#[uniffi::export]
+pub fn settings_composing(text: String) -> Option<ComposingFfi> {
+    let compose = Config::from_toml_str(&text).ok()?.compose;
+    Some(ComposingFfi {
+        signature_on_reply: compose.signature_on_reply.into(),
+        signature_on_forward: compose.signature_on_forward.into(),
+        editor: compose.editor,
+    })
+}
+
+/// Write `composing` into `text`'s `[compose]` table, leaving the rest
+/// verbatim.
+#[uniffi::export]
+pub fn settings_patch_composing(
+    text: String,
+    composing: ComposingFfi,
+) -> Result<String, SettingsError> {
+    let mut compose: ComposeConfig = Config::from_toml_str(&text)
+        .map_err(|err| SettingsError::Invalid {
+            message: err.to_string(),
+        })?
+        .compose;
+    compose.signature_on_reply = composing.signature_on_reply.into();
+    compose.signature_on_forward = composing.signature_on_forward.into();
+    // Trimmed on the way in: a name with a space on the end is not one the
+    // platform will find, and the difference is invisible in a text field.
+    compose.editor = composing.editor.trim().to_owned();
+    patch_compose(&text, &compose).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })
 }
@@ -395,4 +498,22 @@ pub fn row_actions() -> Vec<RowActionFfi> {
             title: action.title().to_string(),
         })
         .collect()
+}
+
+impl From<SignaturePlacement> for SignaturePlacementFfi {
+    fn from(placement: SignaturePlacement) -> Self {
+        match placement {
+            SignaturePlacement::AboveQuote => SignaturePlacementFfi::AboveQuote,
+            SignaturePlacement::BelowQuote => SignaturePlacementFfi::BelowQuote,
+        }
+    }
+}
+
+impl From<SignaturePlacementFfi> for SignaturePlacement {
+    fn from(placement: SignaturePlacementFfi) -> Self {
+        match placement {
+            SignaturePlacementFfi::AboveQuote => SignaturePlacement::AboveQuote,
+            SignaturePlacementFfi::BelowQuote => SignaturePlacement::BelowQuote,
+        }
+    }
 }

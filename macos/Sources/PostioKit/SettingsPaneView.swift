@@ -178,6 +178,7 @@ public struct SettingsPaneView: View {
     @ViewBuilder private var pane: some View {
         switch store.selected {
         case "ui": appearance
+        case "compose": composing
         case "accounts": accountsPane
         default: unbuilt
         }
@@ -453,6 +454,73 @@ public struct SettingsPaneView: View {
         }
     }
 
+    // -- Composing (#1288) --------------------------------------------------
+
+    @ViewBuilder private var composing: some View {
+        if let current = store.composing {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 32) {
+                    field("SIGNATURE ON A REPLY") {
+                        Picker("", selection: composeBinding(current, \.signatureOnReply)) {
+                            Text("Above the quote").tag(SignaturePlacementFfi.aboveQuote)
+                            Text("Below it").tag(SignaturePlacementFfi.belowQuote)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    field("SIGNATURE ON A FORWARD") {
+                        Picker("", selection: composeBinding(current, \.signatureOnForward)) {
+                            Text("Above the quote").tag(SignaturePlacementFfi.aboveQuote)
+                            Text("Below it").tag(SignaturePlacementFfi.belowQuote)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                field("EDIT ELSEWHERE") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // A text field rather than a picker: the list of
+                        // applications that can edit text is open, which is
+                        // exactly the case ADR 0029 reserves a free field for.
+                        TextField("", text: editorBinding(current))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                        Text(editorAdvice(current.editor))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            unreadable
+        }
+    }
+
+    /// What to say under the editor field: which application will open the
+    /// draft, or why the one named cannot.
+    ///
+    /// The judgement is the boundary's, not this view's — `postio_ui::handoff`
+    /// decides, so GTK says the same thing about the same name.
+    private func editorAdvice(_ configured: String) -> String {
+        switch settingsHandoffTarget(
+            configured: configured,
+            isApplication: ComposeHandoff.isApplication(configured)
+        ) {
+        case .platformDefault:
+            "Empty: the draft opens in whatever this Mac opens a text file with."
+        case .application(let name):
+            "Drafts open in \(name)."
+        case .needsTerminal(_, let advice):
+            advice
+        }
+    }
+
     private func field<Content: View>(
         _ kicker: String,
         @ViewBuilder _ content: () -> Content
@@ -519,6 +587,26 @@ public struct SettingsPaneView: View {
             // One field, applied to whatever the file says at the moment of
             // the click -- never to the copy this view was drawn from.
             set: { value in store.apply { $0[keyPath: field] = value } }
+        )
+    }
+
+    /// The same binding, over the `[compose]` table.
+    private func composeBinding<T>(
+        _ current: ComposingFfi,
+        _ field: WritableKeyPath<ComposingFfi, T>
+    ) -> Binding<T> {
+        Binding(
+            get: { current[keyPath: field] },
+            set: { value in store.applyComposing { $0[keyPath: field] = value } }
+        )
+    }
+
+    /// The editor field, which writes on every keystroke like every other
+    /// control here — there is no Save in this window (canvas 3f).
+    private func editorBinding(_ current: ComposingFfi) -> Binding<String> {
+        Binding(
+            get: { current.editor },
+            set: { value in store.applyComposing { $0.editor = value } }
         )
     }
 }

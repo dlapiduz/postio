@@ -63,6 +63,13 @@ public final class SettingsStore {
         settingsAppearance(text: text)
     }
 
+    /// The Composing pane's values, or `nil` when the file will not parse.
+    ///
+    /// Disabled for the same reason as `appearance`, and it is the same file.
+    public var composing: ComposingFfi? {
+        settingsComposing(text: text)
+    }
+
     /// The sections under one heading, in nav order.
     public func sections(in group: GroupFfi) -> [SettingsSectionFfi] {
         sections.filter { $0.group == group }
@@ -117,13 +124,31 @@ public final class SettingsStore {
         reload()
         guard var next = appearance else { return }
         change(&next)
+        write { try settingsPatchAppearance(text: $0, appearance: next) }
+    }
+
+    /// Apply one change to `[compose]` and save.
+    ///
+    /// The same bargain `apply` makes, over the other table this window
+    /// writes: read the file, change one field, write the result. See
+    /// `apply` for why nothing this window remembers may be written back.
+    public func applyComposing(_ change: (inout ComposingFfi) -> Void) {
+        reload()
+        guard var next = composing else { return }
+        change(&next)
+        write { try settingsPatchComposing(text: $0, composing: next) }
+    }
+
+    /// Save whatever `patch` makes of the file, and describe what happened.
+    private func write(_ patch: (String) throws -> String) {
         do {
-            let patched = try settingsPatchAppearance(text: text, appearance: next)
-            try settingsSave(path: path, text: patched)
+            try settingsSave(path: path, text: patch(text))
             failure = nil
         } catch {
             failure = "\(error)"
         }
+        // Reading it back is the same argument once more: the footer
+        // describes the file as it is, not as this believes it left it.
         reload()
     }
 

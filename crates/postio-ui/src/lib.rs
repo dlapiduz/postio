@@ -17,6 +17,7 @@ pub mod compose;
 pub mod conversation;
 pub mod dwell;
 pub mod format;
+pub mod handoff;
 pub mod keymap;
 pub mod list;
 pub mod palette;
