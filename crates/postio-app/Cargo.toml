@@ -14,12 +14,12 @@ name = "postio"
 path = "src/main.rs"
 
 [dependencies]
-adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = "2.5.0"
 # Queue rows are stamped with when the user performed the action, so the
 # drainer replays them in the order they happened.
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-test-support.workspace = true
 postio-core.workspace = true

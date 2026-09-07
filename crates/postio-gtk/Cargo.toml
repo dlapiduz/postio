@@ -9,14 +9,14 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-adw = { version = "0.8", package = "libadwaita", features = ["v1_7"] }
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
 async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-gio = "0.21.5"
-glib = { version = "0.21.5", features = ["v2_72"] }
-gtk = { version = "0.10.3", package = "gtk4", features = ["v4_20"] }
-pango = { version = "0.21.5", features = ["v1_56"] }
-pangocairo = "0.21.5"
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.22.9", features = ["v1_56"] }
+pangocairo = "0.22.9"
 postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
@@ -25,17 +25,17 @@ postio-ui.workspace = true
 postio-search.workspace = true
 thiserror = "2.0.20"
 tracing = "0.1.44"
-webkit6 = { version = "0.5", features = ["v2_50", "gtk_v4_18"] }
+webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
 
 [dev-dependencies]
 postio-test-support.workspace = true
-gtk4-sys = "0.10.3"
+gtk4-sys = "0.11.4"
 postio-config.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
 tempfile = "3.27.0"
 
 [build-dependencies]
-glib-build-tools = "0.21.0"
+glib-build-tools = "0.22.8"
 postio-ui.workspace = true
 
 # The consolidated GTK suite: a custom harness, because GTK initializes on

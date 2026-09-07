@@ -163,7 +163,7 @@ fn handle_decide_policy(
     if kind != webkit6::PolicyDecisionType::NavigationAction {
         return false;
     }
-    let Some(mut action) = decision
+    let Some(action) = decision
         .downcast_ref::<webkit6::NavigationPolicyDecision>()
         .and_then(|decision| decision.navigation_action())
     else {
