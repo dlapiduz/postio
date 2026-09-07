@@ -180,6 +180,74 @@ pub fn marking_a_message_read_does_not_rebuild_the_list() {
     );
 }
 
+/// Filling a folder must announce structure, not content.
+///
+/// Opening a folder tells the model two structural things: the previous scope
+/// is gone, and the new one is this long. Everything after that is a page of
+/// rows landing on positions that already exist and are showing placeholders.
+///
+/// Announcing those as `items_changed(start, 50, 50)` costs a widget per row
+/// in range -- measured exactly, on a list whose viewport holds ten: an insert
+/// of 799 built 205 widgets, and then every page delivery that landed inside
+/// those 205 rebuilt 50 more. Half the widgets a folder switch built were
+/// rebuilding rows that had just been built (#1216).
+///
+/// So the placeholders are the rows: `item` hands out one object per position
+/// and keeps handing out that same object, a page delivery fills it in, and it
+/// says so for itself. Counted, not timed. Skips without a display.
+pub fn filling_a_folder_announces_structure_and_not_every_page() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let store = Mailbox120::new();
+    let window = Window::default();
+    window.set_default_size(1280, 800);
+    window.present();
+    pump();
+
+    let emissions = postio_gtk::list::emissions();
+    let feeds = window.install_feeds(
+        AccountId::new(ACCOUNT),
+        "ada@example.com",
+        store.clone(),
+        store.clone(),
+    );
+    pump();
+
+    let list = window.list();
+    pump_until(|| list.model().n_items() == TOTAL);
+    for _ in 0..8 {
+        pump();
+    }
+
+    assert_eq!(list.model().n_items(), TOTAL, "the folder as it stands");
+    assert!(
+        list.model()
+            .item(0)
+            .and_downcast::<postio_gtk::list::MessageRow>()
+            .is_some_and(|row| row.is_loaded()),
+        "the rows never arrived, so the count below proves nothing"
+    );
+    assert!(
+        !seen_at(&list, 0),
+        "the rows arrived but carry the wrong contents"
+    );
+
+    // Two: the scope changed, and it is this long. A page landing on
+    // positions that already exist is not a third.
+    let structural = postio_gtk::list::emissions() - emissions;
+    assert!(
+        structural <= 2,
+        "filling a folder took {structural} `items_changed`; a page of rows          landing on positions that already exist is not a structural change,          and each one costs a widget per row in range"
+    );
+    let _ = feeds;
+}
+
 /// Pump until `done`, the same local helper `gtk_list_reload` keeps.
 fn pump_until(done: impl Fn() -> bool) {
     let deadline =

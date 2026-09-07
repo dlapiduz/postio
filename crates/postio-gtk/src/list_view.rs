@@ -170,7 +170,7 @@ mod imp {
         /// the wait has to be droppable rather than merely self-cancelling.
         /// Holding the handler here also means a second seek replaces the
         /// first instead of stacking another listener on the model.
-        pub(super) pending_seek: RefCell<Option<glib::SignalHandlerId>>,
+        pub(super) pending_seek: RefCell<Vec<glib::SignalHandlerId>>,
         /// Subscribers to "the cursor rested here long enough to have been
         /// read". See [`DWELL_TO_READ`].
         pub(super) dwelled: RefCell<Vec<DwellHandler>>,
@@ -230,7 +230,7 @@ mod imp {
                 reported_at: Cell::new(0),
                 landed: Cell::new(false),
                 pending_select: Cell::new(false),
-                pending_seek: RefCell::new(None),
+                pending_seek: RefCell::new(Vec::new()),
                 dwelled: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(DWELL_TO_READ),
@@ -878,10 +878,14 @@ impl MessageListView {
         }
         self.imp().pending_select.set(true);
         let _ = self.model().item(0);
-        let id = self.imp().model.connect_items_changed(glib::clone!(
+        // Connected to both, because the page this is waiting for arrives as
+        // `filled` -- rows that already existed now have contents -- while the
+        // count arriving, or the order moving, is still `items_changed`
+        // (#1216).
+        let landed = glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            move |model, _, _, _| {
+            move |model: &MessageList| {
                 if let Some(position) = model.position_of(message) {
                     // Given up first: `place_cursor` reports, and this
                     // landing is the one that was being waited for.
@@ -899,8 +903,17 @@ impl MessageListView {
                     pane.report_cursor();
                 }
             }
-        ));
-        *self.imp().pending_seek.borrow_mut() = Some(id);
+        );
+        let on_change = landed.clone();
+        let ids = vec![
+            self.imp()
+                .model
+                .connect_items_changed(move |model, _, _, _| {
+                    on_change(model);
+                }),
+            self.imp().model.connect_filled(landed),
+        ];
+        *self.imp().pending_seek.borrow_mut() = ids;
     }
 
     /// Stop waiting for a seek's page, and stop suppressing the reading pane.
@@ -911,7 +924,7 @@ impl MessageListView {
     /// a second call from disconnecting a handler that is already gone.
     fn abandon_seek(&self) {
         let imp = self.imp();
-        if let Some(id) = imp.pending_seek.borrow_mut().take() {
+        for id in imp.pending_seek.borrow_mut().drain(..) {
             imp.model.disconnect(id);
         }
         imp.pending_select.set(false);
@@ -1395,6 +1408,15 @@ impl MessageListView {
                 }
                 pane.report_cursor()
             }
+        ));
+        // The other half of the same job. A page landing under a cursor that
+        // has not moved gives the row it is on a message for the first time,
+        // and the reading pane has to be told -- #70's Cause B, which used to
+        // ride on the `items_changed` a delivery no longer emits (#1216).
+        imp.model.connect_filled(glib::clone!(
+            #[weak(rename_to = pane)]
+            self,
+            move |_| pane.report_cursor()
         ));
 
         let scroller = gtk::ScrolledWindow::new();
