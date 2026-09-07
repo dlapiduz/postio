@@ -551,6 +551,12 @@ fn the_reader_renders_and_hardens_the_corpus() {
     );
 
     window.destroy();
+    // Run in sequence inside this one `#[test]`, not as tests of their own.
+    // libtest would put all three on a thread pool, GTK tolerates one thread,
+    // and the losers would return through the `no display` guard above and be
+    // reported as passing (#355, `check-one-gtk-test-per-binary`).
+    rendering_the_next_message_keeps_the_web_process();
+    each_reader_costs_a_web_process_of_its_own();
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.
@@ -620,7 +626,6 @@ fn descends_from(pid: i32, ancestor: i32) -> bool {
 /// message loads through `load_html` against the same `postio-reader:///`
 /// base, so there is no cross-site navigation to swap on. This asks whether
 /// WebKit replaces the process regardless.
-#[test]
 fn rendering_the_next_message_keeps_the_web_process() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -689,7 +694,6 @@ fn rendering_the_next_message_keeps_the_web_process() {
 /// Recorded rather than fixed. Sharing one context needs the `postio-reader:`
 /// scheme handler to route by URI instead of closing over one message's
 /// blobs, which is a change to how parts are addressed, not a tuning knob.
-#[test]
 fn each_reader_costs_a_web_process_of_its_own() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
