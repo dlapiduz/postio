@@ -45,6 +45,7 @@ pub mod attaching;
 pub mod checkup;
 pub mod egress;
 pub mod engine;
+pub mod handoff;
 pub mod logging;
 pub mod paths;
 pub mod provision;

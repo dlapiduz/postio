@@ -43,6 +43,9 @@ public struct ComposeView: View {
             TextEditor(text: Bindable(model).body)
                 .font(.system(.body, design: model.rich ? .default : .monospaced))
                 .focused($focus, equals: .body)
+                // Another editor holds it: two writers would each silently
+                // undo the other.
+                .disabled(model.isHandedOff)
                 .padding(PostioTokens.space3)
                 .accessibilityLabel("Message body")
             if let status = model.status {
@@ -77,6 +80,13 @@ public struct ComposeView: View {
             }
         }
         .onAppear { focus = model.to.isEmpty ? .to : .body }
+        // Coming back to this window is what a person means by "I am done
+        // over there".
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            if model.isHandedOff { model.takeBack(through: session) }
+        }
         // Autosave, because unsaved words are the thing a compose window must
         // never lose. On a pause rather than a keystroke: a save is one row,
         // but it is also one write lock, and typing is not the time to take
@@ -238,9 +248,18 @@ public struct ComposeView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            Button("Open in $EDITOR") { openInEditor() }
-                .buttonStyle(.link)
-                .help(tooltip("Edit this draft in your own editor", "detach_composer"))
+            // Named for what it does. `$EDITOR` is a shell variable an
+            // application launched from Finder does not have (#1288), and a
+            // button promising one would be promising the wrong thing.
+            Button(model.isHandedOff ? "Take it back" : "Edit elsewhere") {
+                if model.isHandedOff {
+                    model.takeBack(through: session)
+                } else {
+                    model.handOff(through: session) { NSWorkspace.shared.open($0) }
+                }
+            }
+            .buttonStyle(.link)
+            .help(tooltip("Edit this draft in your text editor", "detach_composer"))
         }
         .padding(.horizontal, PostioTokens.space4)
         .padding(.vertical, PostioTokens.space2)
@@ -260,11 +279,6 @@ public struct ComposeView: View {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         model.attach(panel.urls, through: session)
-    }
-
-    private func openInEditor() {
-        model.save(through: session)
-        model.handOff()
     }
 
     private func scheduleSave() {

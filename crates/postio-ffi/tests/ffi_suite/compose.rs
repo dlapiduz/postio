@@ -311,3 +311,63 @@ fn taking_an_attachment_off_leaves_the_rest_alone() {
     assert_eq!(left.attachments.len(), 1);
     assert_eq!(left.attachments[0].filename, "two.txt");
 }
+
+// -- handing a draft to another editor (#1270) -------------------------------
+
+#[test]
+fn handing_a_draft_out_saves_it_first_and_writes_what_was_typed() {
+    // An editor opened on a body Postio has not written down is one crash
+    // away from having been the only copy.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.body = "The gate closes at six.".to_owned();
+    draft.to = "bo@example.com".to_owned();
+
+    let path = session.begin_handoff(draft.clone()).expect("it hands out");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the file is there"),
+        "The gate closes at six."
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn what_the_other_editor_wrote_comes_back_onto_the_draft() {
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.body = "before".to_owned();
+    let path = session.begin_handoff(draft.clone()).expect("it hands out");
+
+    std::fs::write(&path, "after, edited elsewhere").expect("the editor saves");
+    // The draft has an id now; the frontend holds the saved one.
+    let saved = session.save_draft(draft).expect("saved");
+    let back = session
+        .end_handoff(saved, path.clone())
+        .expect("it comes back");
+
+    assert_eq!(back.body, "after, edited elsewhere");
+    assert!(
+        !std::path::Path::new(&path).exists(),
+        "and the file is taken away: a draft's text must not be left on disk"
+    );
+}
+
+#[test]
+fn an_empty_edit_is_refused_and_the_draft_keeps_its_words() {
+    // The truncate-and-write window: believing it would throw away
+    // everything the user had written.
+    let (session, _, _) = a_message_to_answer();
+    let mut draft = session.new_draft().expect("a draft");
+    draft.body = "everything they wrote".to_owned();
+    let saved = session.save_draft(draft).expect("saved");
+    let path = session.begin_handoff(saved.clone()).expect("it hands out");
+
+    std::fs::write(&path, "\n\n").expect("a save caught mid-write");
+    let refusal = session
+        .end_handoff(saved.clone(), path.clone())
+        .expect_err("nothing is taken back");
+
+    assert!(format!("{refusal}").contains("empty"), "{refusal}");
+    std::fs::remove_file(&path).ok();
+}

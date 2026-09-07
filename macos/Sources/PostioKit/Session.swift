@@ -495,6 +495,20 @@ public final class PostioSession {
         )
     }
 
+    /// Write the draft where another editor can open it, and answer where.
+    ///
+    /// The file is the user's alone — a private directory, mode 0600 — for
+    /// the reason the shared code records: a draft is mail that has not been
+    /// sent, which is often the most private mail there is.
+    public func beginHandoff(of draft: DraftFfi) throws -> String {
+        try inner.beginHandoff(draft: draft)
+    }
+
+    /// Take back what the other editor wrote.
+    public func endHandoff(of draft: DraftFfi, at path: String) throws -> DraftFfi {
+        try inner.endHandoff(draft: draft, path: path)
+    }
+
     /// Take an attachment off a draft.
     public func detach(_ attachment: Int64, from draft: DraftFfi) throws -> DraftFfi {
         try inner.detachFromDraft(draft: draft, attachment: attachment)

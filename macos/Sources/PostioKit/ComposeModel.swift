@@ -153,12 +153,57 @@ public final class ComposeModel: Identifiable {
     /// subject somebody was halfway through is a save nobody would forgive.
     private func syncFromDraft() {}
 
-    /// Handing the draft to `$EDITOR`, which this build cannot do yet.
+    /// Where this draft is while another editor has it, or `nil`.
+    public private(set) var handedOffTo: String?
+
+    /// Whether the window should be read-only: another editor holds the
+    /// draft, and two writers would each silently undo the other.
+    public var isHandedOff: Bool { handedOffTo != nil }
+
+    /// Hand the draft to another editor.
     ///
-    /// Same rule as `attach`: the draft is saved first, so nothing typed is
-    /// at risk, and then the composer says what it cannot do (#1270).
-    public func handOff() {
-        status = "Editing in $EDITOR is not built yet. The draft is saved."
+    /// The draft is saved first — an editor opened on a body Postio has not
+    /// written down is one crash away from having been the only copy — and
+    /// the window goes read-only until it comes back.
+    ///
+    /// It opens in whatever this Mac opens a text file with. **Not
+    /// `$EDITOR`**: an application launched from Finder has no shell
+    /// environment, so `$EDITOR` is usually simply absent, and a button that
+    /// silently did nothing for most people would be worse than one that is
+    /// honest about which editor it means (#1288).
+    public func handOff(through session: PostioSession?, open: (URL) -> Bool) {
+        guard let session, !isHandedOff else { return }
+        do {
+            let path = try session.beginHandoff(of: edited)
+            draft = session.saveDraft(edited) ?? draft
+            handedOffTo = path
+            if !open(URL(fileURLWithPath: path)) {
+                status = "Nothing on this Mac opened that file, so the draft is still here."
+                takeBack(through: session)
+            } else {
+                status = "Editing elsewhere. This window is read-only until you come back."
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    /// Take the draft back from the other editor.
+    ///
+    /// Called when the window returns to the front, which is the moment a
+    /// person means by "I am done there".
+    public func takeBack(through session: PostioSession?) {
+        guard let session, let path = handedOffTo else { return }
+        do {
+            draft = try session.endHandoff(of: edited, at: path)
+            body = draft.body
+            handedOffTo = nil
+            status = nil
+        } catch {
+            // Left out there on purpose: the file is still the newer copy,
+            // and a failed read that dropped the hand-off would strand it.
+            status = error.localizedDescription
+        }
     }
 
     /// Queue it for sending. `true` when the window may close.

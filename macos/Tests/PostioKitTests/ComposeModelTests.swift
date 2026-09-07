@@ -145,11 +145,29 @@ import Testing
         #expect(MimeType.of(URL(fileURLWithPath: "/tmp/notes.txt")) == "text/plain")
     }
 
-    @Test func handingOffToAnEditorSavesFirstAndThenSaysItCannot() {
+    @Test func nothingIsHandedOffToBeginWith() {
         let model = ComposeModel(id: 1, draft: draft())
-        model.handOff()
+        #expect(!model.isHandedOff)
+    }
 
-        #expect(model.status?.contains("$EDITOR") == true)
-        #expect(model.status?.contains("saved") == true)
+    @Test func handingOffWithNoSessionDoesNothingAndOpensNothing() {
+        // The window cannot outlive its session, but the model can be asked.
+        var opened: [URL] = []
+        let model = ComposeModel(id: 1, draft: draft())
+
+        model.handOff(through: nil) { opened.append($0); return true }
+
+        #expect(opened.isEmpty)
+        #expect(!model.isHandedOff)
+    }
+
+    @Test func takingItBackWithNothingOutIsHarmless() {
+        // The window becoming active is what triggers this, and it becomes
+        // active all the time.
+        let model = ComposeModel(id: 1, draft: draft())
+        model.takeBack(through: nil)
+
+        #expect(!model.isHandedOff)
+        #expect(model.status == nil)
     }
 }

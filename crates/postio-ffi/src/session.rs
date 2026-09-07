@@ -594,6 +594,26 @@ impl Session {
         self.attach_to_draft(draft, path, mime_type)
     }
 
+    /// Write the draft where another editor can open it, and answer where.
+    ///
+    /// The file is the user's alone — a private directory, mode 0600 — for
+    /// the reason `postio_session::handoff` records: a draft is mail that has
+    /// not been sent, which is often the most private mail there is.
+    #[uniffi::method(name = "beginHandoff")]
+    pub fn begin_handoff_ffi(&self, draft: crate::DraftFfi) -> Result<String, crate::ComposeError> {
+        self.begin_handoff(draft)
+    }
+
+    /// Take back what the other editor wrote, and answer the draft.
+    #[uniffi::method(name = "endHandoff")]
+    pub fn end_handoff_ffi(
+        &self,
+        draft: crate::DraftFfi,
+        path: String,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        self.end_handoff(draft, path)
+    }
+
     /// Take an attachment off a draft again.
     #[uniffi::method(name = "detachFromDraft")]
     pub fn detach_from_draft_ffi(
@@ -1859,6 +1879,68 @@ impl Session {
                 })?;
         draft.attachments.retain(|held| held.id.get() != attachment);
         self.write_draft(&database, draft, &edited)
+    }
+
+    /// Hand a draft out. See [`begin_handoff_ffi`](Self::begin_handoff_ffi).
+    ///
+    /// The draft is saved first: an editor that is opened on a body Postio
+    /// has not written down is one crash away from having been the only copy.
+    pub fn begin_handoff(&self, edited: crate::DraftFfi) -> Result<String, crate::ComposeError> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Err(crate::ComposeError::Refused {
+                message: "There is no store open.".to_owned(),
+            });
+        };
+        let draft =
+            self.rehydrate(&database, &edited)
+                .ok_or_else(|| crate::ComposeError::Refused {
+                    message: "This draft is no longer in the store.".to_owned(),
+                })?;
+        let saved = self.write_draft(&database, draft, &edited)?;
+
+        postio_session::handoff::begin(&self.handoff_dir(), saved.id, &saved.body)
+            .map(|out| out.path.display().to_string())
+            .map_err(|message| crate::ComposeError::Refused { message })
+    }
+
+    /// Take it back. See [`end_handoff_ffi`](Self::end_handoff_ffi).
+    pub fn end_handoff(
+        &self,
+        edited: crate::DraftFfi,
+        path: String,
+    ) -> Result<crate::DraftFfi, crate::ComposeError> {
+        let out = postio_session::handoff::Handoff {
+            path: std::path::PathBuf::from(path),
+        };
+        let body = postio_session::handoff::read_back(&out)
+            .map_err(|message| crate::ComposeError::Refused { message })?;
+        postio_session::handoff::finish(&out);
+
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Err(crate::ComposeError::Refused {
+                message: "There is no store open.".to_owned(),
+            });
+        };
+        let mut draft =
+            self.rehydrate(&database, &edited)
+                .ok_or_else(|| crate::ComposeError::Refused {
+                    message: "This draft is no longer in the store.".to_owned(),
+                })?;
+        draft.body = postio_model::message::MessageBody {
+            text: Some(body),
+            html: draft.body.html.clone(),
+        };
+        self.write_draft(&database, draft, &edited)
+    }
+
+    /// Where a handed-off draft is written: beside the store, not in the
+    /// shared temp directory, which is world-readable on every Unix.
+    fn handoff_dir(&self) -> std::path::PathBuf {
+        self.store_at
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|dir| dir.join("drafts-out"))
+            .unwrap_or_else(|| std::env::temp_dir().join("postio-drafts-out"))
     }
 
     /// Save `draft` and answer it as the frontend should now hold it.
