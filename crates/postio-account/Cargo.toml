@@ -122,7 +122,7 @@ tempfile = "3.27.0"
 # drives against the in-process server directly. Same exact pin as above, so
 # cargo resolves one copy and the types match.
 io-imap = { version = "=0.6.0", default-features = false, features = ["client"] }
-postio-account = { path = ".", features = ["test-corpus", "test-server"] }
+postio-account = { path = ".", features = ["maildir", "test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).

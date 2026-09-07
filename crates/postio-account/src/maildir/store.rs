@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use io_maildir::client::MaildirClient;
 use io_maildir::flag::{MaildirFlag, MaildirFlags};
-use io_maildir::maildir::Maildir;
+use io_maildir::maildir::{Maildir, MaildirSubdir};
 use postio_model::Flag;
 
 use super::UidList;
@@ -193,6 +193,82 @@ impl LocalStore {
         })
     }
 
+    /// Replaces the flags on one message, and reports what they are now.
+    ///
+    /// A maildir keeps flags in the filename, so this is a rename. Letters
+    /// Postio has no name for — `P`, another client's keywords — are left
+    /// where they are: this replaces the five it understands, not the file's
+    /// whole info section, because dropping a keyword Postio cannot read
+    /// would be losing another client's data on a plain "mark as read".
+    pub fn set_flags(&self, folder: &Folder, id: &str, flags: &[Flag]) -> Result<(), BackendError> {
+        let client = self.client();
+        let maildir = self.maildir(folder);
+        let wanted = maildir_flags(flags);
+        let unwanted = maildir_flags(&removable(flags));
+        client
+            .add_flags(maildir.clone(), id, wanted)
+            .map_err(|error| unreadable("setting a message's flags", error))?;
+        client
+            .remove_flags(maildir, id, unwanted)
+            .map_err(|error| unreadable("clearing a message's flags", error))
+    }
+
+    /// The flags on one message, read back off its filename.
+    pub fn flags(&self, folder: &Folder, id: &str) -> Result<Vec<Flag>, BackendError> {
+        let (_path, _subdir, flags) = self
+            .client()
+            .locate(self.maildir(folder), id)
+            .map_err(|error| unreadable("finding a message in the maildir", error))?;
+        Ok(flags_of(&flags))
+    }
+
+    /// Moves one message into another folder.
+    pub fn move_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
+        self.client()
+            .r#move(id, self.maildir(folder), self.maildir(target), None)
+            .map_err(|error| unreadable("moving a message between folders", error))
+    }
+
+    /// Copies one message into another folder, leaving the original alone.
+    pub fn copy_to(&self, folder: &Folder, id: &str, target: &Folder) -> Result<(), BackendError> {
+        self.client()
+            .copy(id, self.maildir(folder), self.maildir(target), None)
+            .map_err(|error| unreadable("copying a message between folders", error))
+    }
+
+    /// Removes one message's file for good.
+    pub fn delete(&self, folder: &Folder, id: &str) -> Result<(), BackendError> {
+        self.client()
+            .delete_entry(self.maildir(folder), id)
+            .map_err(|error| unreadable("deleting a message", error))
+    }
+
+    /// Writes a new message into a folder, and says what it was called.
+    ///
+    /// It lands in `cur` when it is already read and in `new` otherwise —
+    /// which is what makes a message Postio stored look, to every other
+    /// client sharing this tree, exactly like one delivered there.
+    pub fn store(
+        &self,
+        folder: &Folder,
+        bytes: Vec<u8>,
+        flags: &[Flag],
+    ) -> Result<String, BackendError> {
+        let subdir = if flags.contains(&Flag::Seen) {
+            MaildirSubdir::Cur
+        } else {
+            MaildirSubdir::New
+        };
+        self.client()
+            .store(self.maildir(folder), subdir, maildir_flags(flags), bytes)
+            .map(|(id, _path)| id)
+            .map_err(|error| unreadable("writing a message into the maildir", error))
+    }
+
+    fn maildir(&self, folder: &Folder) -> Maildir {
+        Maildir::from_path(folder.directory.display().to_string().as_str())
+    }
+
     fn client(&self) -> MaildirClient {
         let mut client = MaildirClient::new(self.root.display().to_string().as_str());
         client.store.maildirpp = self.maildirpp;
@@ -240,6 +316,39 @@ fn flags_of(flags: &MaildirFlags) -> Vec<Flag> {
     .into_iter()
     .filter(|(maildir, _)| flags.contains(maildir))
     .map(|(_, postio)| postio)
+    .collect()
+}
+
+/// Postio's flags as maildir's, for a rename.
+fn maildir_flags(flags: &[Flag]) -> MaildirFlags {
+    let mut out = MaildirFlags::default();
+    for flag in flags {
+        let letter = match flag {
+            Flag::Seen => MaildirFlag::Seen,
+            Flag::Answered => MaildirFlag::Replied,
+            Flag::Flagged => MaildirFlag::Flagged,
+            Flag::Draft => MaildirFlag::Draft,
+            Flag::Deleted => MaildirFlag::Trashed,
+            // `\\Recent` is a per-session server signal with nowhere to live
+            // in a filename, and a keyword is not one of the five.
+            _ => continue,
+        };
+        out.extend(MaildirFlags::from_iter([letter]));
+    }
+    out
+}
+
+/// The five Postio knows about, minus the ones being kept.
+fn removable(kept: &[Flag]) -> Vec<Flag> {
+    [
+        Flag::Seen,
+        Flag::Answered,
+        Flag::Flagged,
+        Flag::Draft,
+        Flag::Deleted,
+    ]
+    .into_iter()
+    .filter(|flag| !kept.contains(flag))
     .collect()
 }
 

@@ -190,8 +190,12 @@ impl UidList {
 /// is read, `F` when it is flagged. Everything before the colon is the
 /// delivery identity and does not move.
 fn strip_flags(name: &str) -> String {
-    match name.split_once(':') {
-        Some((identity, _)) => identity.to_owned(),
+    // `:2,` exactly, and the *last* one — the same split io-maildir makes to
+    // get an entry's id. Every mutation is keyed on that id, so a looser
+    // split here (on the first colon, say) would give two messages whose
+    // names differ only after a colon one number, and act on the wrong file.
+    match name.rsplit_once(":2,") {
+        Some((identity, _flags)) => identity.to_owned(),
         None => name.to_owned(),
     }
 }
@@ -199,6 +203,21 @@ fn strip_flags(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_deliveries_a_colon_apart_are_two_messages() {
+        // A maildir name may carry a colon before the `:2,` — mbsync writes
+        // `,U=<uid>` infixes, and some hosts spell the separator oddly.
+        // Splitting on the first colon would fold these into one message and
+        // show the mailbox short by one.
+        let mut list = UidList::new(7);
+
+        let first = list.uid_for("1770000000.M1,U=12:2,S");
+        let second = list.uid_for("1770000000.M1,U=34:2,S");
+
+        assert_ne!(first, second);
+        assert_eq!(list.len(), 2);
+    }
 
     /// Two deliveries, as a maildir names them: an identity, then flags.
     const FIRST: &str = "1770000000.M1P1.host,S=42:2,S";

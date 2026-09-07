@@ -14,8 +14,10 @@
 //! What a maildir does not have is the numbers that seam is written in terms
 //! of. [`uidlist`] invents them and writes them down.
 
+pub mod backend;
 pub mod store;
 pub mod uidlist;
 
+pub use backend::MaildirBackend;
 pub use store::{Entry, Folder, LocalStore, Snapshot};
 pub use uidlist::UidList;
