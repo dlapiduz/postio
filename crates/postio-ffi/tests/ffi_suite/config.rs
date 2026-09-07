@@ -150,3 +150,52 @@ fn every_command_with_a_default_key_reports_it() {
     );
     session.shutdown();
 }
+
+// --- the starter file, on this platform too (#1156) -------------------------
+
+#[test]
+fn starting_the_log_seeds_a_config_file_when_there_is_none() {
+    // `postio-app` has seeded one since it had a settings surface; macOS
+    // never did, so the Config file pane opened on a blank buffer — which is
+    // precisely what `docs/config.md` promises does not happen. Found by
+    // clicking on it.
+    //
+    // Asserted against the seeder rather than `start_logging`, which installs
+    // a process-global subscriber and cannot run twice in one binary. What is
+    // under test is that a fresh installation ends up with a file: the call
+    // site is one line, and its absence was the bug.
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("config.toml");
+
+    let wrote = postio_config::Config::seed_if_missing(&path).expect("seed");
+
+    assert!(wrote, "a missing file is written");
+    assert!(path.exists());
+    let text = std::fs::read_to_string(&path).expect("read it back");
+    assert!(
+        !text.trim().is_empty(),
+        "a starter file that is empty documents nothing, which is the whole \
+         point of writing one"
+    );
+    assert!(
+        postio_ffi::settings_status(text).valid,
+        "the file Postio writes has to parse"
+    );
+}
+
+#[test]
+fn seeding_never_touches_a_file_that_is_already_there() {
+    // Including one that does not parse: somebody part-way through fixing
+    // their config must not have it replaced with defaults.
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("config.toml");
+    std::fs::write(&path, "this is not = = valid toml").expect("write");
+
+    let wrote = postio_config::Config::seed_if_missing(&path).expect("seed");
+
+    assert!(!wrote);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read"),
+        "this is not = = valid toml"
+    );
+}
