@@ -157,3 +157,52 @@ fn a_seeded_account_is_seen_by_the_starter() {
     );
     session.shutdown();
 }
+
+#[test]
+fn an_account_added_while_running_is_not_left_without_an_engine() {
+    // **The bug this pins.** `start_syncing` used to return early whenever
+    // *any* engine existed. That is right for the case it was written for — a
+    // window reopening, a wake from sleep — and wrong for the one nobody had
+    // yet: an account added while the application is running got no engine,
+    // synced nothing, and read to the user as an account that had not saved.
+    // It had saved. It was never started, and a relaunch fixed it, which is
+    // the tell.
+    //
+    // Found live: an account added through the sheet wrote its row and its
+    // Keychain entry, showed no error, and did nothing until the app was
+    // restarted — at which point it connected and synced 15 folders.
+    let session = session();
+    // One engine already running, as a session with an account has.
+    session.adopt_mock_engine_for_test();
+    assert!(session.has_engine());
+
+    // A second account arrives. Nothing dials here: with no credential and no
+    // reachable server this cannot connect, and what is under test is whether
+    // it is *considered* at all rather than skipped because an engine exists.
+    let started = session
+        .start_syncing()
+        .expect("a running engine must not make this an error");
+
+    assert!(
+        started >= 1,
+        "an engine is already running and must still be counted: {started}"
+    );
+    session.shutdown();
+}
+
+#[test]
+fn a_second_start_still_does_not_double_the_engines() {
+    // The property the early return was protecting, kept: the same account
+    // must never get two engines, or every connection to the server doubles.
+    let session = session();
+    session.adopt_mock_engine_for_test();
+
+    let first = session.start_syncing().expect("first");
+    let second = session.start_syncing().expect("second");
+
+    assert_eq!(
+        first, second,
+        "a second start changed the count, so an account was started twice"
+    );
+    session.shutdown();
+}

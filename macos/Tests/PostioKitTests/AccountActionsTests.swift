@@ -109,3 +109,31 @@ import Testing
         #expect(actions.progressLabel == nil)
     }
 }
+
+/// Telling the application an account arrived (#1298).
+///
+/// The sheet writes the row through the boundary and that is all it can do:
+/// the engines were started when the session opened, so a new account has
+/// none, syncs nothing, and reads to the user as one that did not save. It
+/// did save — a relaunch made it appear and sync fifteen folders, which is
+/// exactly the tell.
+@MainActor
+@Suite struct AccountAddedTests {
+    @Test func addingAnAccountTellsWhoeverIsListening() {
+        let actions = AccountActions()
+        var told = 0
+        actions.accountAdded = { told += 1 }
+
+        actions.added()
+
+        #expect(told == 1)
+    }
+
+    @Test func nobodyListeningIsHarmless() {
+        // The settings window can be built without an application behind it —
+        // settings are a file, and being unable to read mail is not being
+        // unable to configure it.
+        let actions = AccountActions()
+        actions.added()
+    }
+}

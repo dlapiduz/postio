@@ -48,6 +48,30 @@ import Testing
         #expect(titles.contains("Message"), "the registry's menus reach the bar: \(titles)")
     }
 
+    @Test func theMountedEditMenuCanActuallyPaste() throws {
+        // **The assertion that was missing.** `appendStandardEditing` can be
+        // perfect and still never be called; what a user needs is a ⌘V on the
+        // bar that is really on screen. Before the fix this menu existed,
+        // held Postio's own commands, and had no Paste in it — so ⌘V did
+        // nothing in every text field in the application, and every test
+        // passed.
+        try #require(
+            windowServerVerdict(isCI: isCI, hasWindowServer: hasWindowServer) != .fail,
+            "CI must have a window server; a skip here is indistinguishable from a pass"
+        )
+        try #require(hasWindowServer, "no window server: skipping, and saying so")
+
+        install()
+
+        let edit = NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Edit" }
+        let paste = try #require(
+            edit?.items.first { $0.title == "Paste" },
+            "the Edit menu on screen has no Paste, so ⌘V reaches no text field"
+        )
+        #expect(paste.keyEquivalent == "v")
+        #expect(paste.keyEquivalentModifierMask == .command)
+    }
+
     @Test func aBarSwiftUiEditedInPlaceComesBack() async throws {
         try #require(
             windowServerVerdict(isCI: isCI, hasWindowServer: hasWindowServer) != .fail,
@@ -81,5 +105,73 @@ import Testing
 
     private var isCI: Bool {
         ProcessInfo.processInfo.environment["CI"] != nil
+    }
+}
+
+/// The editing items that make ⌘V work at all.
+///
+/// Replacing SwiftUI's menu bar (#1262, #1298) took its Edit menu with it, and
+/// it every standard editing key equivalent — ⌘V, ⌘C, ⌘X, ⌘A, ⌘Z — across the
+/// whole application. It is invisible from the code: a text field looks
+/// perfectly focused and simply never receives the paste, because on this
+/// platform ⌘V reaches a responder *through a menu item* and nowhere else.
+///
+/// Found by a password that could not be pasted into the add-account sheet,
+/// after the key monitor had been cleared of it by a live probe: the monitor
+/// passed ⌘V through correctly and there was nothing underneath to catch it.
+@MainActor
+@Suite struct StandardEditingItemsTests {
+    private func editMenu() -> NSMenu {
+        let menu = NSMenu()
+        MenuBar.appendStandardEditing(to: menu)
+        return menu
+    }
+
+    @Test func pasteCarriesCommandV() {
+        // The one this exists for.
+        let paste = editMenu().items.first { $0.title == "Paste" }
+
+        #expect(paste?.keyEquivalent == "v")
+        #expect(paste?.keyEquivalentModifierMask == .command)
+        #expect(paste?.action == #selector(NSText.paste(_:)))
+    }
+
+    @Test func everyStandardEditingItemIsThereWithItsUsualKey() {
+        let items = editMenu().items.filter { !$0.isSeparatorItem }
+        let byTitle = Dictionary(uniqueKeysWithValues: items.map { ($0.title, $0) })
+
+        #expect(byTitle["Cut"]?.keyEquivalent == "x")
+        #expect(byTitle["Copy"]?.keyEquivalent == "c")
+        #expect(byTitle["Select All"]?.keyEquivalent == "a")
+        #expect(byTitle["Undo"]?.keyEquivalent == "z")
+        #expect(byTitle["Redo"]?.keyEquivalent == "z")
+        #expect(
+            byTitle["Redo"]?.keyEquivalentModifierMask == [.command, .shift],
+            "Redo is shift-command-Z; plain command-Z is Undo"
+        )
+    }
+
+    @Test func theSelectorsGoDownTheResponderChain() {
+        // `target == nil` is what makes an item enable itself only when
+        // something focused can perform it. An item wired to a fixed target
+        // would be live with no text field in front and paste into nothing.
+        for item in editMenu().items where !item.isSeparatorItem {
+            #expect(item.target == nil, "\(item.title) is aimed at a fixed target")
+        }
+    }
+
+    @Test func noneOfThemCollidesWithAPostioBinding() {
+        // Postio's modified defaults are `ctrl+…`, which is ⌃ on this platform
+        // and not ⌘, so these five chords are unclaimed. If a future binding
+        // takes one, the monitor still wins — it runs before menu key
+        // equivalents — but the menu would then draw a key that never fires,
+        // which is the lie this catches.
+        let taken = Set(
+            PostioRegistry.commands.flatMap { [$0.defaultBinding] + $0.alternateBindings }
+        )
+        for item in editMenu().items where !item.isSeparatorItem {
+            let chord = "cmd+\(item.keyEquivalent)"
+            #expect(!taken.contains(chord), "\(item.title) collides with \(chord)")
+        }
     }
 }

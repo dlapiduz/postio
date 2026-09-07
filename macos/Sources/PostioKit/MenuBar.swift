@@ -85,6 +85,24 @@ public enum MenuBar {
         for menu in planned where menu.section != .app {
             let item = NSMenuItem()
             let submenu = NSMenu(title: menu.title)
+            // Edit gets AppKit's own editing items first. **This is what makes
+            // paste work at all**: ⌘V reaches a text field only because a menu
+            // item carries it as a key equivalent and sends `paste:` down the
+            // responder chain. Replacing SwiftUI's bar (#1262) took its Edit
+            // menu with it, and with it ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z everywhere in
+            // the application (#1298) -- found by a password that could not be pasted
+            // into the add-account sheet.
+            //
+            // No conflict with the registry: Postio's modified defaults are
+            // `ctrl+…`, which on this platform is ⌃ and not ⌘, so every one of
+            // these chords is unclaimed. And `KeyMonitor` is a local event
+            // monitor, which runs before menu key equivalents are considered
+            // -- so a future ⌘-binding of Postio's own would still win, and
+            // these stay the fallback rather than becoming a race.
+            if menu.section == .edit {
+                appendStandardEditing(to: submenu)
+                if !menu.items.isEmpty { submenu.addItem(.separator()) }
+            }
             for planned in menu.items {
                 submenu.addItem(menuItem(for: planned, target: target))
             }
@@ -204,6 +222,29 @@ public enum MenuBar {
     /// Where macOS puts them, and the only place `⌘,` is discoverable here.
     /// Until this existed the menu was About/Hide/Quit and Settings fell back
     /// to Edit, so the shortcut was announced nowhere once the mail loaded.
+    /// AppKit's editing items, with the key equivalents that make them work.
+    ///
+    /// The selectors are sent down the responder chain, so each item enables
+    /// itself only when something focused can perform it -- which is why
+    /// `Paste` is grey with no text field in front and live with one, without
+    /// this file knowing anything about which surfaces take text.
+    ///
+    /// `undo:` and `redo:` have no formal declaration to take a `#selector`
+    /// of; they are `NSResponder`'s by convention, and the string is the
+    /// spelling every application on this platform uses.
+    static func appendStandardEditing(to menu: NSMenu) {
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = menu.addItem(
+            withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    }
+
     private static func applicationMenu(items: [MenuPlan.Item], target: CommandTarget) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(

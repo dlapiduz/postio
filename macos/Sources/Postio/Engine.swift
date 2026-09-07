@@ -117,6 +117,15 @@ final class Engine {
                 // Engines run on their own runtime; the list repaints from
                 // events rather than from anything awaited here.
             }
+            // An account added while this is running writes its row and gets
+            // no engine, because the engines were started just above. Saying
+            // so here is what makes it sync without a relaunch (#1298).
+            settingsActions.accountAdded = { [weak self] in
+                guard let self, let session = self.session else { return }
+                self.accounts = session.accounts()
+                _ = try? session.startSyncing()
+                self.mailboxes = session.mailboxes
+            }
             notifications.start()
             notifications.open = { [weak self] mailbox, message in
                 self?.requested = (mailbox, message)

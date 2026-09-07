@@ -251,7 +251,12 @@ public struct SettingsPaneView: View {
             Text(actions.removalWarning(for: account))
         }
         .sheet(item: $adding) { model in
-            AddAccountSheet(session: session, model: model) {
+            AddAccountSheet(session: session, model: model) { added in
+                // Only when the sheet actually wrote one: cancelling must not
+                // announce an account that is not there. Without this the row
+                // exists and nothing syncs it until the next launch, which
+                // reads as an account that did not save (#1298).
+                if added { actions.added() }
                 adding = nil
                 reconnecting = nil
             }

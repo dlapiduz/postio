@@ -449,7 +449,7 @@ pub struct Session {
     /// Retained rather than leaked, for the reason `postio-app` records: the
     /// store is SQLCipher, and dropping an engine at process exit is exactly
     /// when libcrypto goes away underneath a thread still encrypting a page.
-    engines: Mutex<Vec<postio_runtime::Engine>>,
+    engines: Mutex<Vec<(postio_model::ids::AccountId, postio_runtime::Engine)>>,
     /// `[keys]` as this installation has it.
     ///
     /// Read once at open. A menu accelerator has to reflect what the user
@@ -3525,13 +3525,6 @@ impl Session {
     /// session already holds, and the connection attempt happens there. The
     /// UI never awaits the network.
     pub fn start_syncing(&self) -> Result<u32, SessionError> {
-        // Idempotent. An application lifecycle calls this twice more often
-        // than once — a window reopening, a wake from sleep — and a second
-        // set of engines would double every connection to the server.
-        if self.has_engine() {
-            return Ok(self.engines.lock().expect("engines lock").len() as u32);
-        }
-
         let guard = self.wiring.lock().expect("wiring lock");
         let Some(wiring) = guard.as_ref() else {
             return Err(SessionError::StoreUnavailable {
@@ -3552,8 +3545,28 @@ impl Session {
                         message: error.to_string(),
                     })?
             };
+        // Idempotent per account, not per session. It used to return early
+        // whenever *any* engine existed — which is right for the reason that
+        // guard was written (a window reopening, a wake from sleep, and a
+        // second set of engines doubling every connection) and wrong for the
+        // case nobody had yet: an account added while the application is
+        // running gets no engine, syncs nothing, and looks to the user as
+        // though it was never saved at all. It was saved; it was never
+        // started. Filtering by account keeps both properties.
+        let running: std::collections::HashSet<postio_model::ids::AccountId> = self
+            .engines
+            .lock()
+            .expect("engines lock")
+            .iter()
+            .map(|(account, _)| *account)
+            .collect();
+        let already = running.len() as u32;
+        let accounts: Vec<_> = accounts
+            .into_iter()
+            .filter(|account| !running.contains(&account.id))
+            .collect();
         if accounts.is_empty() {
-            return Ok(0);
+            return Ok(already);
         }
 
         let started = postio_session::engine::start_all(
@@ -3572,15 +3585,18 @@ impl Session {
         })?;
 
         let count = started.len() as u32;
-        for (_, engine) in started {
+        for (account, engine) in started {
             // The slot is what `Refresh` reads, and it is pressed long after
             // the bus was built. An engine that ran but never reached it
             // would sync happily and leave the refresh command inert.
             wiring.engine.fill(engine.clone());
             postio_runtime::retain(engine.clone());
-            self.engines.lock().expect("engines lock").push(engine);
+            self.engines
+                .lock()
+                .expect("engines lock")
+                .push((account, engine));
         }
-        Ok(count)
+        Ok(already + count)
     }
 
     /// Adopt an engine over `MockBackend`, so adoption is testable.
@@ -3613,7 +3629,14 @@ impl Session {
         };
         if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
             wiring.engine.fill(engine.clone());
-            self.engines.lock().expect("engines lock").push(engine);
+            // Account 1, matching the `parts.account` above: the engines list
+            // is keyed by account now, so that `start_syncing` can tell an
+            // account that is already running from one that has just been
+            // added.
+            self.engines
+                .lock()
+                .expect("engines lock")
+                .push((postio_model::ids::AccountId::new(1), engine));
         }
     }
 
@@ -3661,7 +3684,7 @@ impl Session {
             return;
         };
         let engines = self.engines.lock().expect("engines lock").clone();
-        for engine in engines {
+        for (_, engine) in engines {
             let engine = engine.clone();
             runtime.spawn(async move {
                 let _ = engine.sync(mailbox).await;

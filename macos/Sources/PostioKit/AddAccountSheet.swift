@@ -12,14 +12,17 @@ import SwiftUI
 public struct AddAccountSheet: View {
     private let session: PostioSession?
     @Bindable private var model: AddAccountModel
-    private let done: () -> Void
+    /// Called when the sheet is finished with, saying whether an account was
+    /// actually added — Cancel and a successful add both close it, and the
+    /// difference decides whether anything needs starting (#1298).
+    private let done: (Bool) -> Void
 
     @FocusState private var focusedAddress: Bool
 
     public init(
         session: PostioSession?,
         model: AddAccountModel,
-        done: @escaping () -> Void
+        done: @escaping (Bool) -> Void
     ) {
         self.session = session
         self.model = model
@@ -291,14 +294,14 @@ public struct AddAccountSheet: View {
             Spacer()
             Button("Cancel", role: .cancel) {
                 model.cancelSignIn(through: session)
-                done()
+                done(false)
             }
             .keyboardShortcut(.cancelAction)
             Button(continueTitle) {
                 if signsInHere {
-                    Task { if await model.signIn(through: session) { done() } }
+                    Task { if await model.signIn(through: session) { done(true) } }
                 } else if model.step == .store {
-                    if model.finish(through: session) { done() }
+                    if model.finish(through: session) { done(true) }
                 } else {
                     model.next()
                 }
