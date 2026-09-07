@@ -1,0 +1,156 @@
+# ADR 0032 — Proposed: the conversation is one document, not one WebView per message
+
+- **Status:** **Proposed** (2026-09-06) — written to be argued with, not to be implemented from
+- **Date:** 2026-09-06
+- **Raised by:** the maintainer, reporting a black flicker when moving between messages, and asking directly: *"Why do we need a view per message in the conversation view? Isn't there a way to render all messages in the single view? Maybe with html?"*
+- **Issue:** [#1216](https://github.com/dlapiduz/postio/issues/1216)
+- **Revisits:** ADR 0015 Q4 (the conversation pane stacks every message of a thread)
+- **Touches:** ADR 0003 (script off in the reader), ADR 0023 (fonts served over a custom scheme), `PRODUCT.md` §20 (accessibility)
+- **Proposal:** render a whole conversation as **one document in one `WebView`**, with per-message chrome expressed in HTML, replacing the current one-`WebView`-per-expanded-message.
+
+---
+
+## The observation this starts from
+
+A black flicker moving from one message to the next, and — watched live — a
+WebKit web process spawning and dying about once a second while doing it.
+
+Those are one thing. A process that has just started is still relocating its
+libraries; the profile of such a burst is `do_lookup_x`,
+`_dl_relocate_object_no_relro` and little else. A process with nothing drawn
+yet composites black.
+
+Two tests in `gtk_reader.rs` pin the mechanism:
+
+* `rendering_the_next_message_keeps_the_web_process` — rendering a *second*
+  message into the *same* reader reuses the process. `render` is not the cause.
+* `each_reader_costs_a_web_process_of_its_own` — one reader is one process,
+  two readers are two.
+
+The conversation pane builds a `Reader` per expanded message. It is already
+careful about it — `EAGER_EXPANSION_CAP` opens at most three, and `collapse`
+keeps the widget so reopening is cheap — but the *first* expansion of each
+message still makes one, **and nothing ever releases them**. Scrolling a
+thirty-message thread ends with thirty processes.
+
+The module doc predicted exactly this cost and bounded the wrong end of it:
+
+> Where focus opens and how much expands are the two decisions with real
+> consequences — one for whether the pane lands where you stopped reading, the
+> other for whether a thirty-message conversation instantiates thirty
+> `WebKitWebView`s.
+
+Three at open. Unbounded on scroll.
+
+## What was ruled out first, by measurement
+
+**Sharing a `WebContext` does not share a process.** Three `WebView`s built on
+one context produced three web processes. WebKitGTK runs a web process per
+*view*, not per context, so the obvious fix — one context, scheme handlers
+routed by URI — buys nothing at all. Worth recording because it is the first
+thing anyone will reach for.
+
+## Why one document is possible here, and would not be in most mail clients
+
+The objection to putting several senders' HTML in one document is that they
+contaminate each other: one message's CSS restyles the next, one unclosed
+element swallows the rest. **In Postio they cannot.** `postio-body`'s
+sanitizer already removes `<style>` tag-and-contents and strips every inline
+`style` attribute — *"so postio CSS always wins"* — and parses to a tree rather
+than passing text through. Every message is already rendered under Postio's own
+stylesheet and nothing else.
+
+That is the precondition, and it is already met. It was met for reasons that
+had nothing to do with this.
+
+Expansion needs no script either, which matters because the reader runs with
+JavaScript off by construction (ADR 0003). `<details>` and `<summary>` are a
+disclosure widget in HTML itself.
+
+## What it would cost
+
+**The chrome is GTK, and this is the whole of the difficulty.** Each message
+carries a `ThreadRowView` header, an `ActionBar`, a remote-image banner, an
+unsubscribe banner and a decode notice. They are GTK widgets *interleaved
+between* rendered bodies, and a `WebView` cannot contain GTK widgets. One
+document means moving all of it into HTML:
+
+* **Accessibility.** Each body is `AccessibleRole::Article` today and Orca
+  reads the GTK widget tree. `PRODUCT.md` §20 asks for a screen-reader smoke
+  test before a screen is called done; this would move that surface into a
+  document and make the HTML's own semantics the accessibility story.
+* **The design system.** `ActionBar`, `NoticeBar` and the row widgets are real
+  widgets, themed from the token layer. In HTML they would be re-implemented
+  against the same tokens, in a second place.
+* **Buttons without script.** Reply, archive, unsubscribe and "show images"
+  are `connect_clicked` today. In a document with JavaScript off they become
+  links navigated through a custom scheme and intercepted in
+  `decide_policy` — which is a mechanism the reader already has, and which is
+  also how a mistake becomes a navigation rather than a no-op.
+* **`cid:` routing.** `postio-cid:` resolves against *whichever message is
+  currently open*. With every message in one document that handle is
+  ambiguous, so URIs must carry a per-message token and the handler must route
+  on it. Mandatory here, where it was merely optional for the shared-context
+  idea.
+* **Remote images are a per-sender decision.** The banner allows images for
+  *this sender*; a document-level network policy cannot express that, so the
+  distinction has to move into how each message's images are addressed.
+
+## What it would buy
+
+* **One view, one process, forever** — independent of thread length. A
+  200-message thread costs what a 2-message thread costs.
+* **The flicker goes**, because nothing starts a process when focus moves.
+* **Scrolling is the document's**, not a stack of widgets each with its own
+  scroller.
+* **Expansion becomes state in the document** rather than widget lifecycle,
+  which is where the `expanded`/`shown` bookkeeping and its `collapse`-keeps-
+  the-widget subtlety currently lives.
+
+## The alternatives, and why they are worse or smaller
+
+1. **Window the views.** Keep three or four `Reader`s and recycle them as the
+   conversation scrolls, exactly as the message list is windowed over paged
+   SQLite (`CLAUDE.md`: *never load a whole mailbox into memory*). Bounds the
+   cost permanently, keeps every widget, keeps accessibility, and needs no
+   scheme changes. **Strictly smaller than this proposal and strictly less
+   good**: recycling still tears down and rebuilds a view when you scroll far
+   enough, so the flicker returns at the edges rather than going away.
+2. **One message at a time.** A single `Reader`, re-rendered as focus moves —
+   which the tests show reuses its process. Simplest by far, and it reverses
+   ADR 0015 Q4: the conversation stops being a stack and becomes a reading
+   pane with navigation.
+3. **Pre-warm a spare view.** Hides the latency without removing it. Process
+   count unchanged; adds a warming state machine to hide a cost rather than
+   fix it.
+4. **Do nothing.** The cost is bounded by thread length and released when the
+   thread changes. It is a flicker and some memory, not lost mail.
+
+## What would have to be true to accept this
+
+- A screen-reader pass over an HTML conversation is at least as good as the
+  widget tree it replaces. **This is the one that should decide it**, and it is
+  not a matter of opinion — it is testable with Orca before anything is built.
+- The action verbs work through `decide_policy` navigation as reliably as
+  `connect_clicked`, including the ones that are destructive.
+- Per-sender image policy survives the move to one document.
+- The token layer can dress HTML chrome without a second implementation
+  drifting from the first.
+
+## Open questions
+
+- Does the stacked conversation earn its cost in daily use at all? If one
+  message at a time is what actually gets used, alternative 2 is the answer and
+  this proposal is a lot of work for a surface nobody wanted.
+- Is a 200-message thread a real case, or is thread length bounded in practice
+  by how mail is actually used?
+- Does WebKit's own memory for one large document beat N small processes? Not
+  measured. It is the obvious rebuttal to "one view is cheaper" and nothing
+  here has tested it.
+
+## Status
+
+Proposed, and deliberately not started. It revisits an accepted ADR, moves a
+surface out of the widget layer, and trades accessibility guarantees for
+performance — none of which should be decided by whoever happened to be
+profiling that week.
