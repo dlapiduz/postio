@@ -44,6 +44,19 @@ use gtk::{gdk, glib, graphene, gsk, pango};
 use postio_config::Density;
 use postio_core::Keymap;
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many row widgets this process has built.
+///
+/// A list is windowed over paged SQLite precisely so that opening a folder
+/// costs a screenful, and this is the number that says whether it did.
+/// Counted rather than timed, for the reason [`crate::list::emissions`] gives.
+pub fn rows_built() -> u64 {
+    ROWS_BUILT.load(Ordering::Relaxed)
+}
+
+static ROWS_BUILT: AtomicU64 = AtomicU64::new(0);
+
 // The people in a conversation, short and newest-biased. The rule lives in
 // `postio-ui`: the list row and the conversation header both draw this line,
 // and two surfaces shortening the same names two ways is what moving it
@@ -447,10 +460,12 @@ mod imp {
 
     impl Default for MessageRowView {
         fn default() -> Self {
+            super::ROWS_BUILT.fetch_add(1, super::Ordering::Relaxed);
             MessageRowView {
                 row: RefCell::new(None),
                 density: Cell::new(Density::default()),
                 keymap: RefCell::new(Cow::Borrowed(Keymap::defaults())),
+
                 first: Cell::new(false),
                 selected: Cell::new(false),
                 cursor: Cell::new(false),

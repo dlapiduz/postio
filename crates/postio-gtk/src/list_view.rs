@@ -27,6 +27,7 @@
 //! part-way through its own item bookkeeping at the time.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -1167,6 +1168,12 @@ impl MessageListView {
         let offers = imp.show_actions.clone();
         let hints = imp.show_hints.clone();
         let keymap = imp.keymap.clone();
+        // The `changed` connection each binding holds, keyed by the
+        // `GtkListItem` that holds it. Shared between bind and unbind because
+        // that is the pair that owns it; a `GtkListItem` outlives any one row.
+        let watched: Rc<RefCell<HashMap<usize, (MessageRow, glib::SignalHandlerId)>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let unwatched = watched.clone();
         factory.connect_bind(move |_, item| {
             let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
                 return;
@@ -1189,6 +1196,32 @@ impl MessageListView {
             let selected = view.row().is_some_and(|row| chosen.contains(row.id));
             view.set_selected(selected);
             announce(item, &view, selected);
+
+            // A row whose contents are replaced in place -- a flag, read
+            // state, a label -- says so for itself, because saying it through
+            // the model means telling `GtkListView` that a page of positions
+            // answers with different rows now, and it rebuilds every widget in
+            // range for one flag (#1216). The connection belongs to this
+            // binding and is dropped on unbind: a `GtkListItem` is recycled
+            // across many messages.
+            if let Some(row) = item.item().and_downcast::<MessageRow>() {
+                let chosen = chosen.clone();
+                let handler = row.connect_changed(glib::clone!(
+                    #[weak]
+                    view,
+                    #[weak]
+                    item,
+                    move |row| {
+                        view.set_row(row.row());
+                        let selected = view.row().is_some_and(|row| chosen.contains(row.id));
+                        view.set_selected(selected);
+                        announce(&item, &view, selected);
+                    }
+                ));
+                watched
+                    .borrow_mut()
+                    .insert(item.as_ptr() as usize, (row, handler));
+            }
         });
         factory.connect_unbind(move |_, item| {
             if let Some(view) = item
@@ -1199,6 +1232,11 @@ impl MessageListView {
                 view.set_row(None);
                 if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
                     item.set_accessible_label("");
+                    if let Some((row, handler)) =
+                        unwatched.borrow_mut().remove(&(item.as_ptr() as usize))
+                    {
+                        row.disconnect(handler);
+                    }
                 }
             }
         });

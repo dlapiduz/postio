@@ -115,6 +115,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
         bridge.commands(),
     );
     let window = Window::default();
+    window.set_default_size(1280, 800);
     window.present();
     let _ = feed_the_window(&window, &wiring);
     let list = window.list();
@@ -264,6 +265,9 @@ pub fn switching_surfaces_stays_within_a_blink() {
         // Split, because `Feed::open` spawns the page fetch rather than
         // running it: if the cost is in `act` it is synchronous widget work,
         // and if it is in the pump it is the store answering.
+        let widgets_before = postio_gtk::row::rows_built();
+        let fetches_before = postio_gtk::feed::fetches();
+        let emissions_before = postio_gtk::list::emissions();
         let started = Instant::now();
         window.act(postio_core::Command::NextFolder);
         let acted = started.elapsed();
@@ -271,6 +275,19 @@ pub fn switching_surfaces_stays_within_a_blink() {
         settle_tight(|| window.list().model().n_items() > 0);
         let settled = started.elapsed();
         eprintln!("  next folder, round {round}: act {acted:>10.2?}  settle {settled:>10.2?}");
+        eprintln!(
+            "      built {} row widgets, {} page fetches; window {}x{}, list {}x{}",
+            postio_gtk::row::rows_built() - widgets_before,
+            postio_gtk::feed::fetches() - fetches_before,
+            window.width(),
+            window.height(),
+            window.list().width(),
+            window.list().height()
+        );
+        eprintln!(
+            "      {} items_changed",
+            postio_gtk::list::emissions() - emissions_before
+        );
         eprintln!(
             "      landed on {:?}, list holds {}",
             window.sidebar().selected(),

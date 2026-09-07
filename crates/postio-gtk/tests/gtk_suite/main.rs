@@ -81,6 +81,7 @@ mod gtk_identity;
 mod gtk_keymap_lazy;
 mod gtk_layout_intent;
 mod gtk_list_focus_return;
+mod gtk_list_mark_read;
 mod gtk_list_recycling;
 mod gtk_list_reload;
 mod gtk_list_select_message;
@@ -498,6 +499,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_row::building_rows_does_not_resolve_a_keymap",
         gtk_row::building_rows_does_not_resolve_a_keymap as fn(),
+    ),
+    (
+        "gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list",
+        gtk_list_mark_read::marking_a_message_read_does_not_rebuild_the_list as fn(),
     ),
     (
         "gtk_saved_searches_live::pinned_filters_reach_the_sidebar_and_ctrl_s_adds_one",
