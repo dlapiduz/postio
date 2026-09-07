@@ -44,15 +44,9 @@ pub type ConfigChange = ConfigChanged;
 
 /// How many keymaps this process has resolved from the registry.
 ///
-/// A diagnostic, not a knob. Resolution is quadratic in the number of
-/// commands, so the interesting question about any surface is not how long it
-/// took but how many times it asked — a count that is the same on every
-/// machine, which a duration is not. See [`Keymap::defaults`] and #1216.
-pub fn resolutions() -> u64 {
-    RESOLUTIONS.load(Ordering::Relaxed)
-}
-
-static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
+/// Read through [`crate::test_support::keymap_resolutions`], which is where the
+/// reason for counting rather than timing is written down.
+pub(crate) static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// The bindings in force: the registry's defaults with `[keys]` applied.
 ///

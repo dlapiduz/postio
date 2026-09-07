@@ -154,7 +154,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
     // roughly ten times under it, the second it appeared to take was the
     // measurement, not the app.
     fn settle_tight(done: impl Fn() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
         while Instant::now() < deadline {
             while gtk::glib::MainContext::default().iteration(false) {}
             if done() {

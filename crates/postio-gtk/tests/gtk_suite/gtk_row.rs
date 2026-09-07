@@ -747,14 +747,14 @@ pub fn building_rows_does_not_resolve_a_keymap() {
     // One up front, so a lazily-built cache is already warm and the count
     // below is measuring rows rather than the first of anything.
     let _ = MessageRowView::new();
-    let before = postio_core::config::resolutions();
+    let before = postio_core::test_support::keymap_resolutions();
     let rows: Vec<_> = (0..200).map(|_| MessageRowView::new()).collect();
     assert_eq!(rows.len(), 200);
     assert_eq!(
-        postio_core::config::resolutions(),
+        postio_core::test_support::keymap_resolutions(),
         before,
         "building 200 rows resolved {} keymaps",
-        postio_core::config::resolutions() - before
+        postio_core::test_support::keymap_resolutions() - before
     );
 
     // The hints still have to be right, or the cheap answer is the wrong one.

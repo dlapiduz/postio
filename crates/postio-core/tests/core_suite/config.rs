@@ -478,9 +478,9 @@ fn asking_for_the_defaults_repeatedly_resolves_nothing() {
     // The pointer check above is satisfied by any cache; this is the one that
     // fails if `defaults` starts resolving behind it.
     let _ = Keymap::defaults();
-    let before = postio_core::config::resolutions();
+    let before = postio_core::test_support::keymap_resolutions();
     for _ in 0..200 {
         let _ = Keymap::defaults();
     }
-    assert_eq!(postio_core::config::resolutions(), before);
+    assert_eq!(postio_core::test_support::keymap_resolutions(), before);
 }

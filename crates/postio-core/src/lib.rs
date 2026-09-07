@@ -62,6 +62,7 @@ pub mod menu;
 pub mod perf_budget;
 pub mod registry;
 pub mod state;
+pub mod test_support;
 pub mod undo;
 
 pub use action::{ActionId, ExtId};
