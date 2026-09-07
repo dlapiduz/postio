@@ -713,6 +713,22 @@ impl Session {
         self.allow_domain(domain);
     }
 
+    /// Every remote-image grant, addresses first, each already sorted.
+    ///
+    /// The Privacy pane's whole model. A grant the user cannot see is one
+    /// they cannot take back, and "images blocked until allowed per sender"
+    /// only means something if *allowed* is reviewable.
+    #[uniffi::method(name = "remoteImageGrants")]
+    pub fn remote_image_grants_ffi(&self) -> Vec<crate::GrantFfi> {
+        self.remote_image_grants()
+    }
+
+    /// Take a grant back. Images from it are blocked again at once.
+    #[uniffi::method(name = "revokeRemoteImages")]
+    pub fn revoke_remote_images_ffi(&self, subject: String) {
+        self.revoke_remote_images(subject);
+    }
+
     /// Add an account that signs in with a password. `None` when it was
     /// added, a sentence when it was not.
     #[uniffi::method(name = "addImapAccount")]
@@ -1470,6 +1486,31 @@ impl Session {
     /// that revokes a grant.
     fn allow_list(&self) -> postio_ui::allowlist::AllowList {
         postio_ui::allowlist::AllowList::load_from(&self.allow_list_path())
+    }
+
+    /// Every grant. See
+    /// [`remote_image_grants_ffi`](Self::remote_image_grants_ffi).
+    pub fn remote_image_grants(&self) -> Vec<crate::GrantFfi> {
+        let list = postio_ui::allowlist::AllowList::load_from(&self.allow_list_path());
+        let addresses = list.addresses().map(|subject| crate::GrantFfi {
+            subject: subject.to_owned(),
+            whole_domain: false,
+        });
+        let domains = list.domains().map(|subject| crate::GrantFfi {
+            subject: subject.to_owned(),
+            whole_domain: true,
+        });
+        addresses.chain(domains).collect()
+    }
+
+    /// Take one back. See
+    /// [`revoke_remote_images_ffi`](Self::revoke_remote_images_ffi).
+    ///
+    /// One entry point for both kinds: `revoke` removes whichever list holds
+    /// it, so the pane does not have to say which it was — and a caller that
+    /// guessed wrong would leave a grant in place while reporting it gone.
+    pub fn revoke_remote_images(&self, subject: String) {
+        self.amend_allow_list(|list| list.revoke(&subject));
     }
 
     /// Read, change, write. Best-effort: a grant that could not be written

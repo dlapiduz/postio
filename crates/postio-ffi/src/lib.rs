@@ -67,7 +67,8 @@ pub use provisioning::{
     ProviderHintFfi, RouteFfi, ScopesFfi, SignInProgressFfi, provider_hint, sign_in_scopes,
 };
 pub use reader::{
-    InlinePart, ReaderActionFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,
+    GrantFfi, InlinePart, ReaderActionFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi,
+    middle_truncate,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use search::{ChipFfi, MatchRangeFfi, OutcomeFfi, SnippetFfi, query_chips};

@@ -31,6 +31,22 @@ pub struct InlinePart {
     pub mime_type: String,
 }
 
+/// One standing permission to load remote images (#1156, Privacy pane).
+///
+/// A grant the user cannot see is one they cannot take back, and `PRODUCT.md`
+/// promises images are blocked *until allowed per sender* — which only means
+/// something if what has been allowed is reviewable.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GrantFfi {
+    /// The address or the domain, as the list stores it.
+    pub subject: String,
+    /// Whether this covers every address at a domain rather than one sender.
+    ///
+    /// Worth showing plainly: the two are very different amounts of trust,
+    /// and a list that drew them alike would understate one of them.
+    pub whole_domain: bool,
+}
+
 /// What the reader is holding back, and about whom.
 ///
 /// Drawn as one row that never wraps (canvas screen 26): an icon, the count,

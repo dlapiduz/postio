@@ -364,3 +364,63 @@ fn the_reading_pane_offers_the_same_four_verbs_the_keyboard_does() {
     );
     session.shutdown();
 }
+
+// --- the grants, as the Privacy pane reads them (#1156) ---------------------
+
+/// A session with nothing in it, for the grant tests.
+///
+/// `in_memory` gives each session an allow-list file of its own under the
+/// temp directory — checked rather than assumed, because a shared path once
+/// made one test's grant true for the next, and because the equivalent
+/// mistake with the keyring reached the developer's real login keychain.
+fn a_session() -> std::sync::Arc<Session> {
+    Session::open(SessionOptions::in_memory()).expect("an in-memory session")
+}
+
+#[test]
+fn a_grant_can_be_seen_and_taken_back() {
+    // "Blocked until allowed per sender" is only a promise if *allowed* is
+    // reviewable: a permission nobody can see is one nobody can withdraw.
+    let session = a_session();
+    assert!(
+        session.remote_image_grants().is_empty(),
+        "nothing is allowed until somebody allows it"
+    );
+
+    session.allow_sender("ada@example.com".to_owned());
+    session.allow_domain("example.net".to_owned());
+
+    let grants = session.remote_image_grants();
+    assert_eq!(grants.len(), 2);
+    let sender = grants
+        .iter()
+        .find(|grant| grant.subject == "ada@example.com")
+        .expect("the address grant");
+    assert!(!sender.whole_domain);
+    let domain = grants
+        .iter()
+        .find(|grant| grant.subject == "example.net")
+        .expect("the domain grant");
+    assert!(
+        domain.whole_domain,
+        "a domain grant covers everyone at it, and the pane has to say so"
+    );
+
+    session.revoke_remote_images("ada@example.com".to_owned());
+
+    let left = session.remote_image_grants();
+    assert_eq!(left.len(), 1, "only the one that was named went");
+    assert_eq!(left[0].subject, "example.net");
+}
+
+#[test]
+fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
+    // One entry point for both kinds. A caller that had to guess which list
+    // held a subject would leave a grant in place while reporting it gone.
+    let session = a_session();
+    session.allow_domain("example.org".to_owned());
+
+    session.revoke_remote_images("example.org".to_owned());
+
+    assert!(session.remote_image_grants().is_empty());
+}

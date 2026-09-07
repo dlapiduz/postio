@@ -48,6 +48,8 @@ public struct SettingsPaneView: View {
     private let actions: AccountActions
     /// What the display-name field currently holds.
     @State private var renamedTo = ""
+    /// The remote-image grants, read when the Privacy pane appears.
+    @State private var grants: [GrantFfi] = []
 
     public init(
         store: SettingsStore,
@@ -182,6 +184,7 @@ public struct SettingsPaneView: View {
         case "accounts": accountsPane
         case "sync": syncing
         case "keys": keyboard
+        case "privacy": privacy
         case "": configFile
         default: unbuilt
         }
@@ -461,6 +464,76 @@ public struct SettingsPaneView: View {
             unreadable
         }
     }
+
+    // -- Privacy (#1156) ----------------------------------------------------
+
+    /// What Postio will not do without being asked, and what it has been
+    /// asked.
+    ///
+    /// The promises are stated rather than configurable, because they are not
+    /// settings: remote images blocked, read receipts never sent
+    /// automatically, no telemetry, JavaScript and network off in the reader.
+    /// A switch for any of them would be a switch for turning the product's
+    /// own claims off.
+    ///
+    /// What *is* here is the list of grants, because a permission the user
+    /// cannot see is one they cannot withdraw.
+    @ViewBuilder private var privacy: some View {
+        VStack(alignment: .leading, spacing: PostioTokens.space6) {
+            field("POSTIO WILL NOT") {
+                VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                    ForEach(Self.promises, id: \.self) { promise in
+                        Label(promise, systemImage: "checkmark.shield")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Divider()
+            field("REMOTE IMAGES ALLOWED FROM") {
+                if grants.isEmpty {
+                    Text("Nothing yet. Images stay blocked until you allow a sender.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(grants, id: \.subject) { grant in
+                            HStack {
+                                Text(grant.subject)
+                                if grant.wholeDomain {
+                                    // Two very different amounts of trust; a
+                                    // list that drew them alike would
+                                    // understate one of them.
+                                    Text("everyone at this domain")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: PostioTokens.space4)
+                                Button("Revoke") {
+                                    session?.revokeRemoteImages(grant.subject)
+                                    grants = session?.remoteImageGrants() ?? []
+                                }
+                                .buttonStyle(.link)
+                            }
+                            .padding(.vertical, 4)
+                            .accessibilityElement(children: .combine)
+                            if grant.subject != grants.last?.subject { Divider() }
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .onAppear { grants = session?.remoteImageGrants() ?? [] }
+    }
+
+    /// The promises, as `docs/PRODUCT.md` states them.
+    private static let promises = [
+        "Load remote images until you allow the sender",
+        "Send a read receipt automatically",
+        "Run JavaScript or reach the network in the reading pane",
+        "Fetch anything speculatively, or send any telemetry",
+    ]
 
     // -- Keyboard (#1156) ---------------------------------------------------
 

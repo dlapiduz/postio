@@ -425,6 +425,19 @@ public final class PostioSession {
     /// Always allow every address at this domain.
     public func allowDomain(_ domain: String) { inner.allowDomain(domain: domain) }
 
+    /// Every standing permission to load remote images.
+    ///
+    /// The Privacy pane's model. Blocked-until-allowed only means something
+    /// if what has been allowed can be looked at and taken back.
+    public func remoteImageGrants() -> [GrantFfi] {
+        inner.remoteImageGrants()
+    }
+
+    /// Take one back; images from it are blocked again at once.
+    public func revokeRemoteImages(_ subject: String) {
+        inner.revokeRemoteImages(subject: subject)
+    }
+
     /// Add an account that signs in with a password.
     ///
     /// `nil` when it was added; a sentence when it was not. The password goes
