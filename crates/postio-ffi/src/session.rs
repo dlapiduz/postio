@@ -655,6 +655,25 @@ impl Session {
         self.cancel_sign_in();
     }
 
+    /// Open a session against `account`'s server and close it again — what
+    /// sync does, and then stops. Blocks; run it off the main actor.
+    #[uniffi::method(name = "testConnection")]
+    pub fn test_connection_ffi(&self, account: i64) -> crate::ConnectionReportFfi {
+        self.test_connection(account)
+    }
+
+    /// Rebuild `account`'s search index from the mail already in the store.
+    #[uniffi::method(name = "reindexAccount")]
+    pub fn reindex_account_ffi(&self, account: i64) -> Option<String> {
+        self.reindex_account(account)
+    }
+
+    /// Take an account away — its row, and its credentials.
+    #[uniffi::method(name = "removeAccount")]
+    pub fn remove_account_ffi(&self, account: i64) -> Option<String> {
+        self.remove_account(account)
+    }
+
     /// How many rows the current scope has — a table's `numberOfRows`.
     #[uniffi::method(name = "rowCount")]
     pub fn row_count_ffi(&self) -> u32 {
@@ -1431,6 +1450,85 @@ impl Session {
     fn secret_store(&self) -> Option<Arc<dyn postio_account::secret::SecretStore>> {
         let guard = self.wiring.lock().expect("wiring lock");
         Some(guard.as_ref()?.secrets.clone())
+    }
+
+    /// Test a connection. See [`test_connection_ffi`](Self::test_connection_ffi).
+    pub fn test_connection(&self, account: i64) -> crate::ConnectionReportFfi {
+        let refusal = |message: &str| crate::ConnectionReportFfi {
+            reachable: false,
+            message: message.to_owned(),
+        };
+        let Some((database, _)) = self.store_and_blobs() else {
+            return refusal("There is no store open.");
+        };
+        let Some(secrets) = self.secret_store() else {
+            return refusal("There is no keyring to read the credential from.");
+        };
+        let Ok(connection) = database.connection() else {
+            return refusal("Postio could not open its local store.");
+        };
+        let found = postio_storage::repository::AccountRepository::new(&connection)
+            .get(postio_model::ids::AccountId::new(account));
+        let Ok(Some(found)) = found else {
+            return refusal("That account is not in the store.");
+        };
+        drop(connection);
+
+        // Its own runtime, alive for exactly this call: the session's belongs
+        // to the engines, and this waits on a server.
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return refusal("Postio could not start the connection test.");
+        };
+        let report = runtime.block_on(postio_session::checkup::test_connection(&found, secrets));
+        crate::ConnectionReportFfi {
+            reachable: report.reachable,
+            message: report.message,
+        }
+    }
+
+    /// Re-index an account. See [`reindex_account_ffi`](Self::reindex_account_ffi).
+    ///
+    /// Synchronous and bounded by the mail already on this machine: nothing
+    /// here reaches a server. The progress the shared function reports is
+    /// dropped for now — a window that draws it is #1284.
+    pub fn reindex_account(&self, account: i64) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        match postio_session::reindex_account(
+            &database,
+            postio_model::ids::AccountId::new(account),
+            |_, _| {},
+        ) {
+            Ok(_) => None,
+            Err(error) => Some(format!("The index could not be rebuilt: {error}")),
+        }
+    }
+
+    /// Remove an account. See [`remove_account_ffi`](Self::remove_account_ffi).
+    pub fn remove_account(&self, account: i64) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no store open.".to_owned());
+        };
+        let Some(secrets) = self.secret_store() else {
+            return Some("There is no keyring to take the credential out of.".to_owned());
+        };
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return Some("Postio could not start the removal.".to_owned());
+        };
+        runtime
+            .block_on(postio_session::checkup::remove_account(
+                &database,
+                secrets,
+                postio_model::ids::AccountId::new(account),
+            ))
+            .err()
     }
 
     /// Sign in through the browser. See

@@ -388,6 +388,28 @@ public final class PostioSession {
         )
     }
 
+    /// Open a session against this account's server and close it again.
+    ///
+    /// **Blocks**, so it belongs on a detached task. It is the same path sync
+    /// takes — same credential, same settings — which is what makes a test
+    /// that passes a statement about sync rather than about the button.
+    public func testConnection(_ account: Int64) -> ConnectionReportFfi {
+        inner.testConnection(account: account)
+    }
+
+    /// Rebuild this account's search index from the mail already here.
+    /// Blocks, and reaches no server.
+    public func reindexAccount(_ account: Int64) -> String? {
+        inner.reindexAccount(account: account)
+    }
+
+    /// Take an account away — its row, and its credentials. A mail client
+    /// that forgets an account and keeps its password is worse than one that
+    /// does not forget it.
+    public func removeAccount(_ account: Int64) -> String? {
+        inner.removeAccount(account: account)
+    }
+
     /// Sign in to `address` through the system browser and add the account.
     ///
     /// **Blocks until the flow is over** — it is waiting on a person in
