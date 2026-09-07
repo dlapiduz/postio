@@ -90,6 +90,22 @@ fn item(model: &MessageList, position: u32) -> Option<MessageRow> {
     model.item(position).and_then(|o| o.downcast().ok())
 }
 
+/// How many times `row` announced that its contents changed.
+///
+/// The other half of `watch`. Since #1216 the two say different things: the
+/// model announces *structure* — positions appearing, vanishing or coming to
+/// hold different messages — and a row announces its own *contents*. A page
+/// landing on positions that already exist is the second, and saying it as
+/// the first costs `GtkListView` a rebuilt widget per row in range.
+fn announcements(row: &MessageRow) -> Rc<std::cell::Cell<u32>> {
+    let count = Rc::new(std::cell::Cell::new(0));
+    row.connect_changed({
+        let count = count.clone();
+        move |_| count.set(count.get() + 1)
+    });
+    count
+}
+
 /// Every `items_changed` the model emitted, as `(position, removed, added)`.
 fn watch(model: &MessageList) -> Rc<RefCell<Vec<(u32, u32, u32)>>> {
     let log = Rc::new(RefCell::new(Vec::new()));
@@ -136,15 +152,32 @@ pub fn a_row_that_is_not_here_yet_is_a_placeholder_and_a_request() {
     );
 
     let log = watch(&model);
+    let announced = announcements(&first);
     model.deliver(0, page_rows(0, HUGE));
 
-    let first = item(&model, 0).expect("position 0 is in range");
-    assert!(first.is_loaded());
+    // The placeholder handed out above *is* the row: a position answers with
+    // one object for as long as it means the same thing, and a delivery fills
+    // that object in rather than replacing it.
+    assert!(
+        first.is_loaded(),
+        "the object the view is holding is not the one the page filled in"
+    );
     assert_eq!(first.row().unwrap().subject.as_deref(), Some("message 0"));
     assert_eq!(
+        item(&model, 0).as_ref(),
+        Some(&first),
+        "position 0 started answering with a different object"
+    );
+    assert_eq!(
+        announced.get(),
+        1,
+        "and it has to say so, or nothing redraws"
+    );
+    assert_eq!(
         *log.borrow(),
-        [(0, PAGE_SIZE, PAGE_SIZE)],
-        "the positions did not move; what they answer with changed"
+        [],
+        "the positions did not move, so the model has nothing structural to \
+         say -- saying it anyway costs a rebuilt widget per row in range"
     );
 }
 
@@ -261,15 +294,23 @@ pub fn a_flag_change_touches_one_row_and_nothing_else() {
     let before = item(&model, 7).unwrap();
 
     let log = watch(&model);
+    let announced = announcements(&before);
     let mut changed = row(7);
     changed.seen = true;
     changed.flagged = true;
     assert!(model.update_row(changed), "row 7 is resident");
 
     assert_eq!(
+        announced.get(),
+        1,
+        "one row changed, so one row announced it"
+    );
+    assert_eq!(
         *log.borrow(),
-        [(7, 1, 1)],
-        "one row changed, so one row is announced — not a reload"
+        [],
+        "a flag is not a structural change — not a reload, and not a \
+         one-row replacement either, which `GtkListView` answers by \
+         rebuilding that row's widget"
     );
     let after = item(&model, 7).unwrap();
     assert_eq!(before, after, "and it is the same object it always was");
