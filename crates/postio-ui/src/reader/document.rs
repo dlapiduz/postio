@@ -696,6 +696,22 @@ fn escape_into(out: &mut String, text: &str) {
 /// first, text as a fallback — is what makes ordinary mail look like the
 /// sender wrote it.
 pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering) -> Rendered {
+    body_html_in(body, remote, rendering, None)
+}
+
+/// [`body_html`], naming the message the body belongs to.
+///
+/// `scope` reaches [`sanitize::sanitize_body_in`], so every `cid:` reference
+/// in the result names its own message. Required for ADR 0032's conversation
+/// document, where one document holds a whole thread and an unscoped
+/// reference would resolve against whichever message the handler happened to
+/// have. `None` is the single-message reader and is exactly [`body_html`].
+pub fn body_html_in(
+    body: &MessageBody,
+    remote: RemoteImages,
+    rendering: Rendering,
+    scope: Option<&str>,
+) -> Rendered {
     let html = body.html.as_deref().filter(|html| !html.trim().is_empty());
     let text = body.text.as_deref().filter(|text| !text.trim().is_empty());
 
@@ -719,7 +735,7 @@ pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering)
             // markup that has already been made safe, and running it on raw
             // sender HTML would be relying on it for a promise it does not
             // make.
-            let sanitized = sanitize::sanitize_body(html, remote);
+            let sanitized = sanitize::sanitize_body_in(html, remote, scope);
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
@@ -735,7 +751,7 @@ pub fn body_html(body: &MessageBody, remote: RemoteImages, rendering: Rendering)
     }
 
     if let Some(html) = html {
-        let sanitized = sanitize::sanitize_body(html, remote);
+        let sanitized = sanitize::sanitize_body_in(html, remote, scope);
         return Rendered {
             html: quote::fold_html_quotes(&sanitized.html),
             held_back: HeldBack {
