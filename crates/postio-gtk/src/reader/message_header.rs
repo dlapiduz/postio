@@ -11,7 +11,7 @@
 use adw::prelude::*;
 use chrono::{DateTime, Local, Utc};
 use postio_model::address::EmailAddress;
-use postio_ui::reader::header::{absolute_date, address_list, subject_text};
+use postio_ui::reader::header::MessageHeader as HeaderLines;
 
 /// Above the remote-image banner and the body: who this is from, who it was
 /// addressed to, what it is about, and when it arrived.
@@ -162,6 +162,13 @@ impl MessageHeader {
     }
 
     /// Fills in every field from a message's envelope.
+    ///
+    /// Every string here comes from [`HeaderLines`], including the `To:`
+    /// label and the `Cc (n)` disclosure title. Those two read like
+    /// formatting a widget may as well do itself, which is exactly why they
+    /// are not: the macOS header has to write the same two, and a label
+    /// composed in each frontend is how the two come to disagree (#1259,
+    /// #1285).
     pub fn set_message(
         &self,
         from: &[EmailAddress],
@@ -170,25 +177,31 @@ impl MessageHeader {
         subject: Option<&str>,
         date: DateTime<Utc>,
     ) {
-        self.subject.set_label(&subject_text(subject));
-        self.sender.set_label(&address_list(from));
-        self.date.set_label(&absolute_date(date, Local::now()));
+        let lines = HeaderLines::of(from, to, cc, subject, date, Local::now());
 
-        if to.is_empty() {
-            self.to.set_visible(false);
-        } else {
-            self.to.set_visible(true);
-            self.to.set_label(&format!("To: {}", address_list(to)));
+        self.subject.set_label(&lines.subject);
+        self.sender.set_label(&lines.from);
+        self.date.set_label(&lines.date);
+
+        match lines.to_line() {
+            Some(line) => {
+                self.to.set_visible(true);
+                self.to.set_label(&line);
+            }
+            None => self.to.set_visible(false),
         }
 
-        if cc.is_empty() {
-            self.cc_toggle.set_visible(false);
-            self.cc_toggle.set_active(false);
-            self.cc_revealer.set_reveal_child(false);
-        } else {
-            self.cc_toggle.set_visible(true);
-            self.cc_toggle.set_label(&format!("Cc ({})", cc.len()));
-            self.cc_label.set_label(&address_list(cc));
+        match (lines.cc_toggle_label(), lines.cc.as_deref()) {
+            (Some(label), Some(addresses)) => {
+                self.cc_toggle.set_visible(true);
+                self.cc_toggle.set_label(&label);
+                self.cc_label.set_label(addresses);
+            }
+            _ => {
+                self.cc_toggle.set_visible(false);
+                self.cc_toggle.set_active(false);
+                self.cc_revealer.set_reveal_child(false);
+            }
         }
     }
 
