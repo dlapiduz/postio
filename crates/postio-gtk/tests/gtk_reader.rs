@@ -560,6 +560,84 @@ fn the_reader_renders_and_hardens_the_corpus() {
          proved nothing — the listener was never reachable"
     );
 
+    // ── the same proof for a beacon carried in a *style* ──────────────────
+    //
+    // #1325 admitted the sender's inline styling, and with it a second route
+    // to the network that no `<img>` appears in: `background-image: url(…)`.
+    // Spec FR-022 is explicit that the rule covers every way a message can
+    // name a resource, "including from within its styling", so the isolation
+    // proof has to cover it too.
+    //
+    // Two mechanisms should refuse this — `sanitize::contain_declarations`
+    // drops a remote `url()` while images are blocked, and the CSP's
+    // `img-src` refuses the fetch if the sanitizer ever missed one. Defence
+    // in depth is only defence if something checks both layers are there.
+    //
+    // Run against a listener of its own, so a stray connection from the phase
+    // above cannot be read as this one passing.
+    let styled_listener = TcpListener::bind("127.0.0.1:0").expect("a local listener should bind");
+    styled_listener.set_nonblocking(true).unwrap();
+    let styled_port = styled_listener.local_addr().unwrap().port();
+    let (styled_tx, styled_rx) = mpsc::channel();
+    let styled_stop = Arc::new(AtomicBool::new(false));
+    let styled_stopping = Arc::clone(&styled_stop);
+    let styled_accepting = std::thread::spawn(move || {
+        while !styled_stopping.load(Ordering::Relaxed) {
+            if let Ok((stream, _addr)) = styled_listener.accept() {
+                let _ = (&stream).write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: 0\r\n\r\n",
+                );
+                let _ = styled_tx.send(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+
+    let styled_beacon = MessageBody {
+        text: None,
+        html: Some(format!(
+            r#"<html><body><div style="background-image:url(http://127.0.0.1:{styled_port}/styled.gif);width:20px;height:20px">.</div></body></html>"#
+        )),
+    };
+    // A sender of its own: the one above has just been granted consent, and
+    // reusing it would test the allowed path while claiming to test the
+    // blocked one.
+    let styled_sender = "styled-tracker@example.org";
+    let finished = track_load_finished(&reader);
+    reader.render(&styled_beacon, Some(styled_sender));
+    wait_for(&finished, Duration::from_secs(5));
+    pump_for(Duration::from_millis(900));
+
+    assert!(
+        styled_rx.try_recv().is_err(),
+        "a remote URL named by the sender's *style* reached the network. The \
+         message never contained an <img>, which is exactly why FR-022 is \
+         written about every way a resource can be named"
+    );
+    assert!(
+        reader.banner_visible(),
+        "a style-borne remote reference must be held back visibly, like any \
+         other — a user cannot consent to what they cannot see"
+    );
+
+    // And it arrives on consent, for the reason the image phase runs twice:
+    // otherwise an unreachable listener would pass the assertion above.
+    let finished = track_load_finished(&reader);
+    reader.click_always_allow();
+    wait_for(&finished, Duration::from_secs(5));
+    let styled_arrived = wait_for_connection(&styled_rx, Duration::from_secs(3));
+
+    styled_stop.store(true, Ordering::Relaxed);
+    let _ = styled_accepting.join();
+
+    assert!(
+        styled_arrived,
+        "the styled beacon never arrived even after consent, so the blocked \
+         case proved nothing — either the listener was unreachable, or the \
+         sanitizer is dropping the declaration even when the user has allowed \
+         the sender, which would make consent a lie in the other direction"
+    );
+
     window.destroy();
     // Run in sequence inside this one `#[test]`, not as tests of their own.
     // libtest would put all three on a thread pool, GTK tolerates one thread,
