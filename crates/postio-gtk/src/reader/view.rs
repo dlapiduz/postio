@@ -675,29 +675,8 @@ impl Reader {
         );
     }
 
-    /// Draw a whole conversation into this one view (ADR 0032, #1316).
-    ///
-    /// The experiment behind #1316: one thread is one document is one view is
-    /// one web process, whatever the thread's length. The stacked pane builds
-    /// a `Reader` per expanded message and WebKitGTK runs a process per
-    /// *view*, so a thirty-message thread ends with thirty of them and moving
-    /// between them composites black while a new one starts.
-    ///
-    /// # Remote images stay blocked here, deliberately
-    ///
-    /// The allow list is a decision about *a sender*, and a document has one
-    /// Content-Security-Policy for all of it. Allowing one sender's images in
-    /// a thread would allow every sender's in that thread, which is not what
-    /// anybody agreed to. Expressing a per-sender policy inside one document
-    /// is real work (ADR 0032 says so) and it is not what this experiment is
-    /// measuring, so the whole document is `Blocked` and says so.
-    pub fn render_thread(&self, messages: &[ThreadMessage]) {
-        self.paints.set(self.paints.get() + 1);
-        self.absent.set(None);
-        self.decode_notice.set_visible(false);
-        self.set_unsubscribe(None);
-        self.banner.set_visible(false);
-
+    /// The document a thread composes to, without handing it over.
+    fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
         // Rendered first, and held, because `Entry` borrows the markup.
         // Reader view is decided per message, from the message, exactly as
         // `render` decides it for one: bulk mail opens reduced, correspondence
@@ -734,11 +713,46 @@ impl Reader {
             })
             .collect();
 
-        let document = postio_ui::reader::thread::conversation_document(
+        postio_ui::reader::thread::conversation_document(
             &entries,
             RemoteImages::Blocked,
             postio_ui::reader::document::Sheet::Theme,
-        );
+        )
+    }
+
+    /// Whether [`render_thread`](Self::render_thread) would change anything.
+    ///
+    /// Composing a document is cheap; handing it to WebKit is not — it is a
+    /// full teardown and reload, and the scroll position goes with it. So a
+    /// caller that cannot easily tell whether its redraw is needed can ask.
+    pub fn would_render_thread(&self, messages: &[ThreadMessage]) -> bool {
+        self.compose_thread(messages) != *self.document.borrow()
+    }
+
+    /// Draw a whole conversation into this one view (ADR 0032, #1316).
+    ///
+    /// The experiment behind #1316: one thread is one document is one view is
+    /// one web process, whatever the thread's length. The stacked pane builds
+    /// a `Reader` per expanded message and WebKitGTK runs a process per
+    /// *view*, so a thirty-message thread ends with thirty of them and moving
+    /// between them composites black while a new one starts.
+    ///
+    /// # Remote images stay blocked here, deliberately
+    ///
+    /// The allow list is a decision about *a sender*, and a document has one
+    /// Content-Security-Policy for all of it. Allowing one sender's images in
+    /// a thread would allow every sender's in that thread, which is not what
+    /// anybody agreed to. Expressing a per-sender policy inside one document
+    /// is real work (ADR 0032 says so) and it is not what this experiment is
+    /// measuring, so the whole document is `Blocked` and says so.
+    pub fn render_thread(&self, messages: &[ThreadMessage]) {
+        self.paints.set(self.paints.get() + 1);
+        self.absent.set(None);
+        self.decode_notice.set_visible(false);
+        self.set_unsubscribe(None);
+        self.banner.set_visible(false);
+
+        let document = self.compose_thread(messages);
         load_document(&self.canvas(), &document);
     }
 

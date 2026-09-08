@@ -76,13 +76,18 @@ fn threaded_message(
     id
 }
 
-/// The four bodies, so the wait and the assertions cannot drift apart.
-const BODIES: [&str; 4] = [
-    "the first one",
-    "the second one",
-    "the third one",
-    "the last one",
-];
+/// How many messages the thread under test holds.
+///
+/// Twelve rather than four, because the claim being tested is about *scale*:
+/// bodies arriving must not cost a document each. At four, "coalesced" and
+/// "did not" are two apart and the assertion turns on timing; at twelve the
+/// difference is unmistakable however loaded the machine.
+const MESSAGES: usize = 12;
+
+/// The body of message `index`, so the wait and the assertions cannot drift.
+fn body_of(index: usize) -> String {
+    format!("the body of message {index}")
+}
 
 pub fn a_thread_opens_as_one_document_holding_every_message() {
     let state_dir = tempfile::tempdir().expect("a state directory");
@@ -120,7 +125,7 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
             .create(&mut thread)
             .expect("create the thread")
     };
-    for (index, body) in BODIES.iter().enumerate() {
+    for index in 0..MESSAGES {
         threaded_message(
             &database,
             account.id,
@@ -128,7 +133,7 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
             thread,
             index as i64,
             &format!("message {index}"),
-            body,
+            &body_of(index),
         );
     }
 
@@ -166,8 +171,8 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
             .conversation()
             .thread_document()
             .is_some_and(|document| {
-                document.matches("<details").count() == 4
-                    && BODIES.iter().all(|body| document.contains(body))
+                document.matches("<details").count() == MESSAGES
+                    && (0..MESSAGES).all(|index| document.contains(&body_of(index)))
             })
     });
     let document = window
@@ -176,22 +181,38 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
         .expect("the pane composed a document");
     assert!(
         filled,
-        "the thread opened but the document holds {} of 4 messages. Every \
-         layer under this one passes; that is the shape of bug #327 is about \
-         -- check what is between them.",
+        "the thread opened but the document holds {} of {MESSAGES} messages. \
+         Every layer under this one passes; that is the shape of bug #327 is \
+         about -- check what is between them.",
         document.matches("<details").count()
     );
 
-    for body in BODIES {
+    for index in 0..MESSAGES {
+        let body = body_of(index);
         assert!(
-            document.contains(body),
+            document.contains(&body),
             "the document is missing {body:?}, so a message drew without its body"
         );
     }
     assert_eq!(
         document.matches("<!DOCTYPE html>").count(),
         1,
-        "four messages should be one document, not four"
+        "{MESSAGES} messages should be one document, not {MESSAGES}"
+    );
+
+    // Every load is a full teardown and reload -- JavaScript is off, so there
+    // is no incremental path -- and the bodies of a thread arrive one at a
+    // time. Rendering on arrival cost one load per message, which is the
+    // "first time is slower, going back is instant" the maintainer noticed:
+    // going back costs nothing because `<details>` toggles in a DOM that is
+    // already parsed, while arriving cost the whole document again.
+    let renders = window.conversation().thread_renders();
+    assert!(
+        renders <= 4,
+        "a {MESSAGES}-message thread cost {renders} documents. Bodies arriving \
+         one at a time have to coalesce, or a thread costs a full teardown and \
+         reload per message on the way to showing it -- which is what made the \
+         first open of a thread slower than every return to it"
     );
 
     let _ = wired;
