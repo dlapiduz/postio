@@ -2,11 +2,13 @@
 //!
 //! Marketing and transactional HTML renders as a wall of blue underlined
 //! links against a dark theme, because the sender laid it out for a white
-//! page in nested tables with their own colours, fonts and widths. Postio's
-//! sanitizer already drops `<style>` and the `style` attribute
-//! ([`crate::sanitize`]) — what survives is still a *layout*: tables that
-//! were columns, spacer images that were gutters, and thirty links where a
-//! person needed one.
+//! page in nested tables with their own colours, fonts and widths. Ordinary
+//! correspondence now keeps that styling ([`crate::sanitize`], spec FR-019),
+//! which is what makes a newsletter arrive in the three columns it was
+//! written in — and which is exactly why bulk mail still needs somewhere to
+//! opt out to. What reader view answers is not "the styling is gone" but
+//! "this *layout* is not one you want": tables that were columns, spacer
+//! images that were gutters, and thirty links where a person needed one.
 //!
 //! Reader view goes further and reduces the markup to the handful of tags
 //! that carry meaning rather than arrangement. The sender's original stays
@@ -56,11 +58,16 @@ const KEPT_VOID: [&str; 1] = ["br"];
 
 /// The attributes that survive on a kept tag.
 ///
-/// `href` and nothing else. Not `style` (the sanitizer drops it already, and
-/// this is defence in depth), not `width`, not `bgcolor`, not `class` — a
-/// sender's class names mean nothing here and a sender's `class="dark"`
-/// meeting Postio's own stylesheet is exactly the collision reader view
-/// exists to end.
+/// `href` and nothing else. Not `style`, not `width`, not `bgcolor`, not
+/// `class` — a sender's class names mean nothing here and a sender's
+/// `class="dark"` meeting Postio's own stylesheet is exactly the collision
+/// reader view exists to end.
+///
+/// Dropping `style` here **is the control, not a backstop.** It used to be
+/// defence in depth, because [`crate::sanitize`] stripped every `style`
+/// attribute before this ran. It no longer does (spec FR-019), so this list
+/// is now the only thing standing between a sender's palette and reader
+/// view — which is the whole of what reader view promises.
 const KEPT_ATTRIBUTES: [&str; 1] = ["href"];
 
 /// What reduction produced.
@@ -239,14 +246,19 @@ fn escape_into(text: &str, out: &mut String) {
 /// * **many links** — a reply has a few, a campaign has dozens.
 ///
 /// **Not styling**, though that was the obvious third one and this function
-/// counted it first. It cannot work: [`crate::sanitize`] removes `<style>`
-/// tag-and-contents and `style` is not in ammonia's attribute allow-list, so
-/// by the time reader view sees the markup every style signal is already
-/// zero. Counting it made the heuristic *look* careful — three signals,
-/// two required — while quietly needing both of the other two, so the
-/// corpus's own newsletter (3 tables, 13 cells, 2 links) was not recognised
-/// as bulk. A signal that is always absent is worse than no signal, because
-/// it raises the bar for everything else.
+/// counted it first. Counting it made the heuristic *look* careful — three
+/// signals, two required — while quietly needing both of the other two, so
+/// the corpus's own newsletter (3 tables, 13 cells, 2 links) was not
+/// recognised as bulk. A signal that is always absent is worse than no
+/// signal, because it raises the bar for everything else.
+///
+/// The reason it was always absent has since gone: [`crate::sanitize`] used
+/// to strip every `style` attribute, and now keeps the ones a sender may set
+/// (spec FR-019). So a styling signal *could* be counted here today. It still
+/// is not, because nothing has shown it separates bulk from correspondence
+/// better than the two above — inline styling is how ordinary mail from a
+/// rich-text composer looks too. Reviving it is a measurement, not an
+/// oversight to correct on sight.
 ///
 /// Deliberately not "does it have a `List-Unsubscribe` header" either: that
 /// is a better signal and it is not available here, since this module only
@@ -556,9 +568,10 @@ mod tests {
 
     #[test]
     fn sender_styling_does_not_survive_even_one_attribute() {
-        // Defence in depth: the sanitizer drops `style` before this runs, and
-        // a sender's `bgcolor` on a kept tag would still be a sender deciding
-        // what colour Postio's reader is.
+        // Not defence in depth any more: the sanitizer keeps a sender's
+        // `style` now (spec FR-019), so this is the assertion that reader
+        // view still means what it says. A sender's `bgcolor` on a kept tag
+        // would likewise be a sender deciding what colour Postio's reader is.
         let html = r##"<p style="color:#f0f" bgcolor="#000" width="600" class="hero">text</p>"##;
         let reduced = reduce(html);
         assert!(reduced.html.contains("text"));
