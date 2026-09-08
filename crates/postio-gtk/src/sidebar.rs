@@ -172,20 +172,14 @@ impl SyncStatus {
         }
     }
 
+    /// The word the footer leads with.
+    ///
+    /// `postio_ui::sidebar::state_word`'s, not this widget's: two footers
+    /// saying different things about the same store is the drift ADR 0019 Q6
+    /// is about, and this one was visible — one frontend said `idle · imap`
+    /// while the other said `idle · synced 40s` (#1266).
     fn state_word(&self) -> String {
-        match self.state {
-            ConnectionState::Offline => "offline".to_string(),
-            ConnectionState::Connecting => "connecting".to_string(),
-            ConnectionState::Failing { .. } => "error".to_string(),
-            ConnectionState::Online if self.syncing().is_some() => "syncing".to_string(),
-            // The list is complete and the mail itself is not. Its own word,
-            // because "syncing" already means the list and "idle" was the
-            // lie issue #74 was filed about. It matches what the reading
-            // pane says about a message it has no body for, which is the
-            // same fact seen from the other end.
-            ConnectionState::Online if self.filling().is_some() => "downloading".to_string(),
-            ConnectionState::Online => "idle".to_string(),
-        }
+        postio_ui::sidebar::state_word(self.state, self.progress, self.backfill).to_owned()
     }
 
     /// How many messages the pass that is running has fetched, if one is.
@@ -201,12 +195,7 @@ impl SyncStatus {
     /// clears it on any connection change and when `done` reaches `total` —
     /// so its presence is the answer to "is anything happening".
     fn syncing(&self) -> Option<u32> {
-        match self.progress {
-            // A pass with nothing to reach never started.
-            Some((_, 0)) => None,
-            Some((done, total)) if done < total => Some(done),
-            _ => None,
-        }
+        postio_ui::sidebar::pass_progress(self.progress)
     }
 
     /// How much mail the backfill has settled, if a backfill is running.
@@ -215,12 +204,7 @@ impl SyncStatus {
     /// to the ordinary idle line rather than sticking at `2000 of 2000` —
     /// the same trap `syncing` fell into and the same answer.
     fn filling(&self) -> Option<(u32, u32)> {
-        match self.backfill {
-            // A queue with nothing in it is not a backfill in progress.
-            Some((_, 0)) => None,
-            Some((done, total)) if done < total => Some((done, total)),
-            _ => None,
-        }
+        postio_ui::sidebar::backfill_running(self.backfill)
     }
 
     /// `890 MB of 1.4 GB`, when there is a measured size worth claiming.

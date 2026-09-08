@@ -12,6 +12,7 @@
 //! had already fixed on the other platform. Nothing here touches a toolkit:
 //! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
+use postio_core::event::ConnectionState;
 use postio_model::{Mailbox, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
@@ -215,6 +216,70 @@ pub enum Activity {
 /// all: "synced 40s ago" during a sync is a report on the previous pass being
 /// read as a report on this one, which is the shape of the bug that made the
 /// GTK footer say "0% synced" and "never synced" at once.
+/// The word the footer leads with, from everything that could be happening.
+///
+/// One rule, because two footers saying different things about the same store
+/// is the drift ADR 0019 Q6 is about — and this one was visible: one frontend
+/// said `idle · imap` while the other said `idle · synced 40s` (#1266).
+///
+/// The order is deliberate and each step earns its place:
+///
+/// * a connection problem outranks everything, because nothing else on the
+///   line is true while there is no session;
+/// * a **pass in flight** is `syncing` — the list itself is arriving;
+/// * a **backfill** is `downloading`, and it has its own word for the reason
+///   #74 was filed: the list is complete and the mail is not, and `idle`
+///   there was the lie. It matches what the reading pane says about a
+///   message whose body has not arrived, which is the same fact from the
+///   other end.
+pub fn state_word(
+    state: ConnectionState,
+    progress: Option<(u32, u32)>,
+    backfill: Option<(u32, u32)>,
+) -> &'static str {
+    match state {
+        ConnectionState::Offline => "offline",
+        ConnectionState::Connecting => "connecting",
+        ConnectionState::Failing { .. } => "error",
+        ConnectionState::Online if pass_progress(progress).is_some() => "syncing",
+        ConnectionState::Online if backfill_running(backfill).is_some() => "downloading",
+        ConnectionState::Online => "idle",
+    }
+}
+
+/// How far the pass in flight has got, if one is running.
+///
+/// `Some` exactly while a pass is in flight, which is what makes it the
+/// answer to "is anything happening". A pass with nothing to reach never
+/// started, and one that has reached its total has finished — neither is
+/// running, and reporting either would leave the footer stuck at a number
+/// that has stopped moving.
+pub fn pass_progress(progress: Option<(u32, u32)>) -> Option<u32> {
+    match progress {
+        Some((_, 0)) => None,
+        Some((done, total)) if done < total => Some(done),
+        _ => None,
+    }
+}
+
+/// How much mail the backfill has settled, if a backfill is running.
+///
+/// The same rule as [`pass_progress`] and for the same reason: a finished
+/// backfill falls back to the idle line rather than sticking at
+/// `2000 of 2000`.
+///
+/// Named `_running` rather than `_progress` on purpose: `postio-runtime`
+/// already has a `backfill_progress`, and `check-uncalled-pub-fn` matches on
+/// the bare name — a second one would have marked that one "called" and
+/// quietly retired a real entry from the debt list.
+pub fn backfill_running(backfill: Option<(u32, u32)>) -> Option<(u32, u32)> {
+    match backfill {
+        Some((_, 0)) => None,
+        Some((done, total)) if done < total => Some((done, total)),
+        _ => None,
+    }
+}
+
 pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String {
     match activity {
         // Nothing can be happening, so nothing else on the line is worth
@@ -314,5 +379,72 @@ mod status_tests {
     #[test]
     fn a_sync_that_has_only_just_happened_still_reads_as_seconds() {
         assert_eq!(status(Activity::Idle, Some(0), true), "idle · synced 0s");
+    }
+}
+
+#[cfg(test)]
+mod footer_word_tests {
+    use super::*;
+    use postio_core::event::FailureReason;
+
+    #[test]
+    fn a_connection_problem_outranks_whatever_else_is_running() {
+        // Nothing else on the line is true while there is no session, so a
+        // pass "in flight" against a dead connection must not read as work
+        // getting done.
+        for state in [
+            ConnectionState::Offline,
+            ConnectionState::Connecting,
+            ConnectionState::Failing {
+                reason: FailureReason::Auth,
+            },
+        ] {
+            let word = state_word(state, Some((3, 100)), Some((1, 50)));
+            assert_ne!(word, "syncing", "{state:?} reported as syncing");
+            assert_ne!(word, "downloading", "{state:?} reported as downloading");
+        }
+    }
+
+    #[test]
+    fn a_pass_in_flight_is_syncing_and_a_backfill_is_downloading() {
+        // Two different facts and they get two different words: the list is
+        // arriving, against the list being complete and the mail not.
+        assert_eq!(
+            state_word(ConnectionState::Online, Some((3, 100)), None),
+            "syncing"
+        );
+        assert_eq!(
+            state_word(ConnectionState::Online, None, Some((10, 200))),
+            "downloading"
+        );
+        assert_eq!(state_word(ConnectionState::Online, None, None), "idle");
+    }
+
+    #[test]
+    fn a_finished_pass_stops_claiming_to_be_running() {
+        // The trap this rule exists for: a footer stuck at `2000 of 2000`
+        // says work is happening when it has stopped.
+        assert_eq!(pass_progress(Some((100, 100))), None);
+        assert_eq!(backfill_running(Some((2000, 2000))), None);
+        assert_eq!(
+            state_word(
+                ConnectionState::Online,
+                Some((100, 100)),
+                Some((2000, 2000))
+            ),
+            "idle"
+        );
+    }
+
+    #[test]
+    fn a_pass_with_nothing_to_reach_never_started() {
+        assert_eq!(pass_progress(Some((0, 0))), None);
+        assert_eq!(backfill_running(Some((0, 0))), None);
+    }
+
+    #[test]
+    fn a_pass_still_short_of_its_total_is_running() {
+        assert_eq!(pass_progress(Some((3, 100))), Some(3));
+        assert_eq!(backfill_running(Some((10, 200))), Some((10, 200)));
     }
 }
