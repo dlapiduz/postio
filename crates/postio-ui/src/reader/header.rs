@@ -34,9 +34,12 @@ pub struct MessageHeader {
     pub subject: String,
     /// Who it is from, as `Name <address>` joined by commas.
     pub from: String,
-    /// The `To:` line, or `None` when the message names no recipient the
-    /// store kept.
+    /// Every recipient, joined — the full list, which stays reachable even
+    /// when [`Self::to_line`] shortens what it draws.
     pub to: Option<String>,
+    /// The recipients as they are drawn: the first few, then how many are
+    /// left. See [`recipient_line`].
+    pub to_short: Option<String>,
     /// The `Cc` addresses, joined; `None` when there are none, which is what
     /// lets a toolkit spend no space at all on the common case.
     pub cc: Option<String>,
@@ -60,21 +63,61 @@ impl MessageHeader {
             subject: subject_text(subject),
             from: address_list(from),
             to: (!to.is_empty()).then(|| address_list(to)),
+            to_short: (!to.is_empty()).then(|| recipient_line(to)),
             cc: (!cc.is_empty()).then(|| address_list(cc)),
             cc_count: cc.len(),
             date: absolute_date(date, now),
         }
     }
 
-    /// The `To:` line as a header writes it, label included.
+    /// The `To:` line as a header writes it, label included and shortened.
+    ///
+    /// [`Self::to`] keeps the full list. That split is the whole of spec
+    /// Story 1 scenario 3: what is *drawn* shortens and says how many it hid,
+    /// and what is *kept* is everything, so a disclosure or a tooltip can
+    /// still answer "who exactly".
     pub fn to_line(&self) -> Option<String> {
-        self.to.as_ref().map(|to| format!("To: {to}"))
+        self.to_short.as_ref().map(|to| format!("To: {to}"))
     }
 
     /// What the `Cc` disclosure is called while it is offered — `Cc (2)`.
     pub fn cc_toggle_label(&self) -> Option<String> {
         (self.cc_count > 0).then(|| format!("Cc ({})", self.cc_count))
     }
+}
+
+/// How many recipients a header names before it starts counting the rest.
+///
+/// Three, matching [`crate::conversation::participants`]'s own limit, because
+/// the two lines sit one above the other in the same pane and a reader should
+/// not have to learn two different shapes of "there are more of these".
+pub const RECIPIENTS_SHOWN: usize = 3;
+
+/// The recipients as a header draws them: the first few, then how many are
+/// left.
+///
+/// **The count is the information.** "Ada, Bob and 197 others" says at a
+/// glance that this is a broadcast and that reply-all would be a mistake; an
+/// ellipsis says nothing and reads as a rendering bug. Reply-all to two
+/// hundred people is a mistake made because the header did not say so.
+///
+/// Unlike [`crate::conversation::participants`], this keeps the *first* names
+/// and counts the rest rather than keeping both ends. Recipient order carries
+/// no meaning worth preserving — nobody is the "most recent" recipient — so
+/// there is no far end worth saving, and a plain count is easier to read than
+/// an elision.
+///
+/// A list that fits is returned untouched: no "and 0 others".
+pub fn recipient_line(addresses: &[EmailAddress]) -> String {
+    if addresses.len() <= RECIPIENTS_SHOWN {
+        return address_list(addresses);
+    }
+    let hidden = addresses.len() - RECIPIENTS_SHOWN;
+    format!(
+        "{} and {hidden} {}",
+        address_list(&addresses[..RECIPIENTS_SHOWN]),
+        if hidden == 1 { "other" } else { "others" }
+    )
 }
 
 /// `"Name <address>"` when a display name is present, the bare address
@@ -198,6 +241,68 @@ pub fn actions(keymap: &Keymap) -> Vec<(ReaderAction, Option<String>)> {
 
 #[cfg(test)]
 mod tests {
+    fn many(count: usize) -> Vec<EmailAddress> {
+        (0..count)
+            .map(|n| EmailAddress::new(Some(&format!("Person {n}")), &format!("p{n}@example.com")))
+            .collect()
+    }
+
+    #[test]
+    fn a_recipient_list_that_fits_is_not_touched() {
+        let line = recipient_line(&many(RECIPIENTS_SHOWN));
+        assert!(
+            !line.contains("other"),
+            "a list that fits must not be described as shortened: {line}"
+        );
+        assert!(line.contains("Person 0"), "{line}");
+        assert!(
+            line.contains(&format!("Person {}", RECIPIENTS_SHOWN - 1)),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_long_recipient_list_says_how_many_it_hid() {
+        // The count is the information. "Ada, Bob and 197 others" says this is
+        // a broadcast; an ellipsis says nothing and reads as a rendering bug.
+        let line = recipient_line(&many(200));
+        assert!(
+            line.contains(&format!("{} others", 200 - RECIPIENTS_SHOWN)),
+            "the hidden count is the whole point: {line}"
+        );
+    }
+
+    #[test]
+    fn one_hidden_recipient_is_one_other_not_one_others() {
+        let line = recipient_line(&many(RECIPIENTS_SHOWN + 1));
+        assert!(line.contains("1 other"), "{line}");
+        assert!(!line.contains("1 others"), "{line}");
+    }
+
+    #[test]
+    fn the_full_recipient_list_stays_reachable() {
+        // Shortening the line must not lose the addresses: reply-all to two
+        // hundred people is a mistake made because the header did not say who
+        // was on it.
+        let header = MessageHeader::of(
+            &many(1),
+            &many(200),
+            &[],
+            Some("Subject"),
+            Utc.with_ymd_and_hms(2026, 8, 12, 14, 32, 0).unwrap(),
+            Local::now(),
+        );
+        let full = header.to.as_deref().expect("a To line");
+        assert!(full.contains("p199@example.com"), "the last recipient went");
+        assert!(
+            header
+                .to_line()
+                .expect("a rendered To line")
+                .contains("others"),
+            "what is drawn is the shortened form"
+        );
+    }
+
     use chrono::TimeZone;
 
     use super::*;
