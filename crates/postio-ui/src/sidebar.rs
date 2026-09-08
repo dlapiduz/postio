@@ -280,6 +280,18 @@ pub fn backfill_running(backfill: Option<(u32, u32)>) -> Option<(u32, u32)> {
     }
 }
 
+/// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
+///
+/// `since` is how many seconds ago the last pass *completed*, or `None` for a
+/// store that has never finished one — or, today, for one whose passes were
+/// never recorded. `has_mail` is what tells those two apart.
+///
+/// Two facts, and the order matters. The state comes first because it is what
+/// a glance is for — is anything wrong — and the time second because it is
+/// what answers the follow-up. While a pass is running there is no time at
+/// all: "synced 40s ago" during a sync is a report on the previous pass being
+/// read as a report on this one, which is the shape of the bug that made the
+/// GTK footer say "0% synced" and "never synced" at once.
 pub fn status(activity: Activity, since: Option<u64>, has_mail: bool) -> String {
     match activity {
         // Nothing can be happening, so nothing else on the line is worth
