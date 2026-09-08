@@ -187,6 +187,17 @@ impl MessageHeader {
             Some(line) => {
                 self.to.set_visible(true);
                 self.to.set_label(&line);
+                // What is drawn shortens and says how many it hid; the full
+                // list stays reachable here, because "who exactly is on this"
+                // is what decides whether reply-all is a mistake (#1332).
+                // Only when they differ: a tooltip repeating the label is
+                // noise.
+                self.to.set_tooltip_text(
+                    lines
+                        .to
+                        .as_deref()
+                        .filter(|full| Some(*full) != lines.to_short.as_deref()),
+                );
             }
             None => self.to.set_visible(false),
         }
