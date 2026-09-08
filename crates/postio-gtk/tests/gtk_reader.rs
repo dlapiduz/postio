@@ -567,6 +567,170 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // reported as passing (#355, `check-one-gtk-test-per-binary`).
     rendering_the_next_message_keeps_the_web_process();
     each_reader_costs_a_web_process_of_its_own();
+    sender_script_is_refused_even_with_javascript_enabled();
+}
+
+/// **The proof #1323 exists for.** With JavaScript enabled at the engine
+/// level, script that arrives *in a message* still does not run.
+///
+/// The reader turns JavaScript off wholesale today, and that is the strongest
+/// possible answer. It is also the one thing standing between the conversation
+/// pane and a rail that marks what you are actually reading: once a whole
+/// conversation is one document, message positions live in coordinates only
+/// the engine has, and with script off nothing can ask it.
+/// `document::scroll_markers` solved the other direction without script —
+/// anchors at `top: Nvh` moved by fragment navigation — and there is no
+/// fragment trick for document → application.
+///
+/// So the question is whether WebKit's two switches really separate *whose*
+/// script runs, rather than merely how much. `enable_javascript_markup(false)`
+/// claims to ignore script arriving in the document while leaving the
+/// application's own injections working. If that claim holds, the guarantee a
+/// user cares about — a message cannot run code — survives turning JavaScript
+/// on for Postio's own observer. If it does not, the rail marks by navigation
+/// instead and the spec is amended; the sanitizer is never the thing that
+/// gives way.
+///
+/// `document.title` is the channel, because it is observable from the
+/// application **without** script: `WebView::title()` reads it directly. A
+/// document that changed its own title would prove its script ran even in a
+/// view where nothing could be evaluated to ask.
+fn sender_script_is_refused_even_with_javascript_enabled() {
+    // No `Content-Security-Policy` in this document, deliberately. The
+    // reader's real documents carry `script-src 'none'` and that is a second,
+    // independent refusal -- which is exactly why it cannot be in here. With
+    // both present, a passing assertion would not say *which* one refused the
+    // script, and the whole question is whether the engine setting does.
+    //
+    // Three ways a message can carry code: a script element, an
+    // event-handler attribute on an element guaranteed to fire it, and a
+    // handler on the body. Each writes a distinct title, so a failure names
+    // which one got through rather than only that one did.
+    let hostile = "<!DOCTYPE html><html><head><title>quiet</title></head>\
+        <body onload=\"document.title='body onload ran'\">\
+        <script>document.title = 'script element ran';</script>\
+        <img src=\"postio-cid:nothing-resolves-this\" \
+             onerror=\"document.title='onerror ran'\">\
+        </body></html>";
+
+    // The control, and the reason this spike is worth anything. Run the same
+    // document with markup script *allowed*: if the title does not change
+    // there either, then something else in this harness is refusing it and
+    // the real assertion below would be passing for a reason that has nothing
+    // to do with the switch under test.
+    let (permitted, _) = load_and_read_title(true, hostile);
+    assert_ne!(
+        permitted, "quiet",
+        "the control did not run the message's script even with markup \
+         enabled, so this spike cannot tell the switch apart from whatever \
+         else refused it -- fix the fixture before trusting the result"
+    );
+
+    let (refused, injected) = load_and_read_title(false, hostile);
+
+    assert_eq!(
+        refused, "quiet",
+        "script that arrived in the message ran ({permitted:?} got through \
+         with markup enabled, and enable_javascript_markup(false) did not \
+         stop it). The switch does not separate the sender's script from the \
+         application's, so the rail must mark by navigation and spec.md's \
+         FR-034/FR-035 need amending -- do not weaken postio-body's sanitizer \
+         to get around this"
+    );
+    assert_eq!(
+        injected, "the application still speaks",
+        "the application's own script did not run, so there is nothing to be \
+         gained by enabling JavaScript at all"
+    );
+}
+
+/// Load `document` with JavaScript on and markup script `markup`, and report
+/// the title afterwards plus what an injected script sees.
+///
+/// `document.title` is the channel because it is observable from the
+/// application **without** script: `WebView::title()` reads it directly, so a
+/// document that changed its own title is caught even in a view where nothing
+/// could be evaluated to ask.
+fn load_and_read_title(markup: bool, document: &str) -> (String, String) {
+    let settings = webkit6::Settings::new();
+    settings.set_enable_javascript(true);
+    settings.set_enable_javascript_markup(markup);
+
+    let (title, injected, weak) = {
+        // Its own ephemeral session and context, dropped with the view, for
+        // `computed`'s reason: the default `WebContext` is process-global and
+        // its WebProcess outlives every scope here.
+        let network_session = webkit6::NetworkSession::new_ephemeral();
+        let context = webkit6::WebContext::new();
+        let view = webkit6::WebView::builder()
+            .settings(&settings)
+            .web_context(&context)
+            .network_session(&network_session)
+            .build();
+        let window = gtk::Window::new();
+        window.set_child(Some(&view));
+        window.present();
+
+        let loaded = Rc::new(RefCell::new(false));
+        let flag = Rc::clone(&loaded);
+        view.connect_load_changed(move |_, event| {
+            if event == webkit6::LoadEvent::Finished {
+                *flag.borrow_mut() = true;
+            }
+        });
+        view.load_html(document, None);
+        wait_for(&loaded, Duration::from_secs(5));
+
+        // The broken image has to actually fail before `onerror` has had its
+        // chance; a title read too early would pass for the wrong reason.
+        pump_for(Duration::from_millis(300));
+
+        let title = view.title().map(|t| t.to_string()).unwrap_or_default();
+
+        // The other half of the claim, and the reason enabling this is worth
+        // anything: Postio's own script still runs. `script-src 'none'`
+        // governs what the *page* may load and execute; it has never governed
+        // the host application's injections, which is why `computed` above
+        // has been evaluating JavaScript against reader documents that carry
+        // that very directive all along.
+        let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let slot = Rc::clone(&answer);
+        view.evaluate_javascript(
+            "document.title = 'the application still speaks'; document.title",
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                *slot.borrow_mut() = Some(
+                    outcome
+                        .map(|value| value.to_str().to_string())
+                        .unwrap_or_default(),
+                );
+            },
+        );
+        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+        while answer.borrow().is_none() && Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let injected = answer.borrow_mut().take().unwrap_or_default();
+
+        let weak = view.downgrade();
+        window.set_child(None::<&gtk::Widget>);
+        window.destroy();
+        (title, injected, weak)
+    };
+    // #794: a view still alive at `exit()` kills the binary after every test
+    // has been reported as passing. Same discipline as `computed`.
+    for _ in 0..200 {
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert!(
+        weak.upgrade().is_none(),
+        "the spike's WebView outlived its window, so its WebProcess is still \
+         attached at exit -- #794 all over again"
+    );
+    (title, injected)
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.
