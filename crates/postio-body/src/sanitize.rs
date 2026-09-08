@@ -93,6 +93,54 @@ impl Sanitized {
     }
 }
 
+/// Why a declaration a sender wrote does not reach the screen.
+///
+/// Spec FR-019b permits exactly these two reasons and no others. The point is
+/// not the enum, it is that the set is *enumerable*: a property is refused by
+/// appearing in [`REFUSED`] with a reason beside it, never by a judgement made
+/// somewhere on the render path where no test can find it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// It would let the message act on something outside its own box —
+    /// the container `crate::sanitize` puts every sender's content in.
+    Containment,
+    /// It would let the message reach the network or report on the reader.
+    Privacy,
+}
+
+/// Every CSS property a sender may not set, with the reason it may not.
+///
+/// Matched on the property name only. A refusal drops that one declaration
+/// and leaves the rest of the sender's rule alone: refusing `position` is not
+/// licence to discard the `color` written beside it.
+pub const REFUSED: &[(&str, Refusal)] = &[
+    // Both position against something outside the message: the viewport, or
+    // an ancestor the message does not own. Either one lifts content out of
+    // the box `contain_body` draws around it (#323), which is the edge a
+    // reader uses to tell Postio's words from a sender's.
+    ("position", Refusal::Containment),
+    // Stacking order is how a message would draw *over* the application's own
+    // chrome rather than beside it.
+    ("z-index", Refusal::Containment),
+];
+
+/// Not here on purpose: `top`, `right`, `bottom`, `left` and `inset`.
+///
+/// They were in the first draft of this table and should not have been. They
+/// offset an element against its containing block, and with `position`
+/// refused every element stays `static`, where an offset does nothing at all.
+/// Refusing them buys no containment and costs fidelity — a sender's
+/// `top: 0` inside their own relatively-positioned card is ordinary layout.
+/// Refuse what grants the power, not what depends on it.
+///
+/// Units that answer to the window rather than to the message's own box.
+/// A refusal by *value* rather than by property, because `width` is
+/// unremarkable until it is `100vw` — at which point a message is deciding
+/// how wide the reading pane is.
+pub const REFUSED_UNITS: &[&str] = &[
+    "vw", "vh", "vmin", "vmax", "svw", "svh", "lvw", "lvh", "dvw", "dvh",
+];
+
 /// Sanitize one HTML body for the reading pane.
 ///
 /// `cid:` references become [`CID_SCHEME`] URIs; `postio_gtk::reader::scheme` resolves
@@ -134,6 +182,12 @@ pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
         // listed here — it is added anyway, for the reader it is documenting
         // intent to.
         .add_url_schemes(["cid", CID_SCHEME])
+        // The sender's own styling, admitted on every element (spec FR-019).
+        // An inline declaration needs no scoping of its own: it applies to
+        // the element it sits on, which is already inside the container
+        // `contain_body` draws around this message. What it still needs is
+        // the refusals below, which is what `contain_declarations` is for.
+        .add_generic_attributes(["style"])
         .attribute_filter(move |element, attribute, value| {
             rewrite_attribute(
                 element, attribute, value, remote, &counter, &trackers, &beacons,
@@ -157,6 +211,10 @@ fn rewrite_attribute<'u>(
     tracker_count: &AtomicU32,
     beacons: &HashSet<String>,
 ) -> Option<Cow<'u, str>> {
+    if attribute == "style" {
+        let kept = contain_declarations(value, remote, blocked_count);
+        return (!kept.is_empty()).then_some(Cow::Owned(kept));
+    }
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
     }
@@ -176,6 +234,102 @@ fn rewrite_attribute<'u>(
         return None;
     }
     Some(Cow::Borrowed(value))
+}
+
+/// Keep the declarations a sender may set, drop the ones they may not.
+///
+/// Whole declarations, one at a time. Refusing `position` is not licence to
+/// discard the `color` written beside it — a message that loses its palette
+/// because it also tried to pin itself is a message rendered wrongly, and the
+/// user cannot tell that from a sender who never set a colour.
+fn contain_declarations(value: &str, remote: RemoteImages, blocked_count: &AtomicU32) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    for declaration in split_declarations(value) {
+        let Some((property, declared)) = declaration.split_once(':') else {
+            // Not a declaration at all. Dropped rather than guessed at.
+            continue;
+        };
+        let property = property.trim().to_ascii_lowercase();
+        let declared = declared.trim();
+
+        if REFUSED.iter().any(|(refused, _)| *refused == property) {
+            continue;
+        }
+        if uses_viewport_units(declared) {
+            continue;
+        }
+        if let Some(url) = css_url(declared)
+            && is_remote(&url)
+            && remote == RemoteImages::Blocked
+        {
+            // Counted with the images, because that is what it is: the panel
+            // says "6 remote images blocked" and a background is one of them.
+            blocked_count.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        kept.push(declaration.trim());
+    }
+    kept.join("; ")
+}
+
+/// Split on `;`, except inside `url(...)` or a quoted string.
+///
+/// A naive `split(';')` is wrong on the one value that matters most here:
+/// `url(data:image/png;base64,...)` carries a semicolon of its own, and
+/// cutting there turns an inline image into two fragments of nonsense.
+fn split_declarations(value: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut start = 0usize;
+    for (at, character) in value.char_indices() {
+        match character {
+            '\'' | '"' if quote == Some(character) => quote = None,
+            '\'' | '"' if quote.is_none() => quote = Some(character),
+            '(' if quote.is_none() => depth += 1,
+            ')' if quote.is_none() => depth = depth.saturating_sub(1),
+            ';' if quote.is_none() && depth == 0 => {
+                out.push(&value[start..at]);
+                start = at + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(&value[start..]);
+    out.into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect()
+}
+
+/// Whether a value sizes itself against the window rather than its own box.
+///
+/// Matched as a unit suffix on a number, so a `font-family: "Vivaldi"` is not
+/// mistaken for one on the strength of containing `vi`.
+fn uses_viewport_units(value: &str) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    let bytes = lowered.as_bytes();
+    REFUSED_UNITS.iter().any(|unit| {
+        lowered.match_indices(unit).any(|(at, _)| {
+            let before = at > 0 && bytes[at - 1].is_ascii_digit();
+            let after = bytes
+                .get(at + unit.len())
+                .is_none_or(|next| !next.is_ascii_alphanumeric());
+            before && after
+        })
+    })
+}
+
+/// The URL a value references, if it references one.
+fn css_url(value: &str) -> Option<String> {
+    let start = value.to_ascii_lowercase().find("url(")? + 4;
+    let rest = &value[start..];
+    let end = rest.find(')')?;
+    Some(
+        rest[..end]
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"')
+            .to_string(),
+    )
 }
 
 /// The remote `src` values in `html` whose `<img>` declares beacon dimensions.
@@ -510,9 +664,106 @@ mod tests {
     }
 
     #[test]
-    fn an_inline_style_attribute_is_stripped_so_postio_css_always_wins() {
+    fn an_inline_style_survives_so_the_senders_layout_does() {
+        // Was `an_inline_style_attribute_is_stripped_so_postio_css_always_wins`.
+        // Postio's CSS no longer always wins: a message renders as its sender
+        // built it (spec FR-019, FR-019a), and a newsletter that arrives as
+        // one column when it was written as three is the thing that decision
+        // exists to fix.
         let out = sanitize_body(r#"<p style="color:red">hi</p>"#, RemoteImages::Blocked);
-        assert!(!out.html.contains("style"), "{}", out.html);
+        assert!(out.html.contains("color"), "{}", out.html);
+    }
+
+    #[test]
+    fn layout_colour_and_spacing_all_survive() {
+        // FR-019a's floor, in one message: structural layout, colour,
+        // typographic emphasis and spacing.
+        let out = sanitize_body(
+            r#"<div style="display:flex;gap:12px;width:60%"><p style="color:#c00;font-weight:700;margin:8px">hi</p></div>"#,
+            RemoteImages::Blocked,
+        );
+        for surviving in ["display", "gap", "width", "color", "font-weight", "margin"] {
+            assert!(
+                out.html.contains(surviving),
+                "{surviving} did not survive: {}",
+                out.html
+            );
+        }
+    }
+
+    #[test]
+    fn a_message_cannot_pin_itself_over_the_application() {
+        // `fixed` and `sticky` both position against something outside the
+        // message's own box, which is how a message escapes the container
+        // `contain_body` puts it in (#323).
+        for escape in ["position:fixed", "position: sticky"] {
+            let out = sanitize_body(
+                &format!(r#"<p style="{escape};top:0">hi</p>"#),
+                RemoteImages::Blocked,
+            );
+            assert!(
+                !out.html.contains("position"),
+                "{escape} survived: {}",
+                out.html
+            );
+            // The rest of the declaration is untouched -- refusing a property
+            // is not licence to drop the ones beside it.
+            assert!(out.html.contains("top"), "{}", out.html);
+        }
+    }
+
+    #[test]
+    fn a_message_cannot_lift_itself_above_the_chrome() {
+        let out = sanitize_body(
+            r#"<p style="z-index:99999;color:red">hi</p>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(!out.html.contains("z-index"), "{}", out.html);
+        assert!(out.html.contains("color"), "{}", out.html);
+    }
+
+    #[test]
+    fn a_message_cannot_size_itself_against_the_window() {
+        // Viewport units answer to the window, not to the message's box, so
+        // `100vw` is a message deciding how wide the pane is.
+        let out = sanitize_body(
+            r#"<p style="width:100vw;height:100vh;padding:4px">hi</p>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(!out.html.contains("100vw"), "{}", out.html);
+        assert!(!out.html.contains("100vh"), "{}", out.html);
+        assert!(out.html.contains("padding"), "{}", out.html);
+    }
+
+    #[test]
+    fn a_remote_url_in_a_style_is_held_back_like_a_remote_img() {
+        let out = sanitize_body(
+            r#"<p style="background-image:url(https://tracker.example.org/o.gif);color:red">hi</p>"#,
+            RemoteImages::Blocked,
+        );
+        assert!(
+            !out.html.contains("tracker.example.org"),
+            "a style reached the network: {}",
+            out.html
+        );
+        assert!(out.html.contains("color"), "{}", out.html);
+    }
+
+    #[test]
+    fn every_refused_property_states_a_reason() {
+        // FR-019b: a property may be refused for containment or for privacy,
+        // and for nothing else. "Dropped because it was easier" is what this
+        // test exists to make impossible to add quietly.
+        assert!(
+            !REFUSED.is_empty(),
+            "the refused set is the whole of the containment story"
+        );
+        for (property, reason) in REFUSED {
+            assert!(
+                matches!(reason, Refusal::Containment | Refusal::Privacy),
+                "{property} is refused for no stated reason"
+            );
+        }
     }
 
     #[test]
