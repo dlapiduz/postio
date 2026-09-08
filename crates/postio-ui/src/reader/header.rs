@@ -215,10 +215,74 @@ impl ReaderAction {
         }
     }
 
+    /// What this verb acts on when the pane is showing a conversation.
+    ///
+    /// Archive is the odd one out and that is not an inconsistency to smooth
+    /// over: "archive this thread" is what a person means by it, while
+    /// replying to a thread means replying to where it got to. It is also
+    /// exactly why the bar cannot be described in one sentence, and therefore
+    /// why [`Self::describe`] exists.
+    pub const fn scope(self) -> ActionScope {
+        match self {
+            ReaderAction::Reply | ReaderAction::ReplyAll | ReaderAction::Forward => {
+                ActionScope::LatestMessage
+            }
+            ReaderAction::Archive => ActionScope::WholeConversation,
+        }
+    }
+
+    /// What this verb will do, in words, for a conversation of `messages`.
+    ///
+    /// The tooltip and the accessible name, and not the bare verb (spec
+    /// FR-008a). A user reading the third message of six who presses the
+    /// bar's Reply gets a reply to the sixth — that is the decision, and the
+    /// only thing that makes it safe is that the interface said so before
+    /// they pressed it.
+    ///
+    /// A one-message conversation gets the bare verb back. With nothing else
+    /// in the thread, "the latest message" and "the whole conversation" are
+    /// the same thing, and naming either would imply there are others.
+    pub fn describe(self, messages: usize) -> String {
+        let title = self.title();
+        if messages <= 1 {
+            return title.to_owned();
+        }
+        match self.scope() {
+            // The preposition belongs to the verb, not to the scope.
+            // "Forward to the latest message" reads as forwarding *to* a
+            // recipient, which is a different action entirely — and a tooltip
+            // whose job is to remove ambiguity must not introduce one.
+            ActionScope::LatestMessage => match self {
+                ReaderAction::Forward => format!("{title} the latest message"),
+                _ => format!("{title} to the latest message"),
+            },
+            // "All 2 messages" is not a thing anyone says.
+            ActionScope::WholeConversation if messages == 2 => {
+                format!("{title} both messages")
+            }
+            ActionScope::WholeConversation => format!("{title} all {messages} messages"),
+        }
+    }
+
     /// Whether it gets the primary treatment. Exactly one does.
     pub const fn primary(self) -> bool {
         matches!(self, ReaderAction::Reply)
     }
+}
+
+/// What one of the conversation bar's verbs acts on.
+///
+/// The bar is **fixed**: it does not retarget as the reader scrolls or
+/// focuses an older message (spec FR-010). Acting on a particular message is
+/// done through that message's own actions, which is a different surface.
+/// A bar whose meaning changed with the scroll position would be a bar you
+/// could not learn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionScope {
+    /// The most recent message in the conversation.
+    LatestMessage,
+    /// Every message in it.
+    WholeConversation,
 }
 
 /// The four verbs with the key each currently carries, in canvas order.
@@ -241,6 +305,70 @@ pub fn actions(keymap: &Keymap) -> Vec<(ReaderAction, Option<String>)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_three_composing_verbs_act_on_the_latest_message() {
+        for verb in [
+            ReaderAction::Reply,
+            ReaderAction::ReplyAll,
+            ReaderAction::Forward,
+        ] {
+            assert_eq!(verb.scope(), ActionScope::LatestMessage, "{verb:?}");
+        }
+    }
+
+    #[test]
+    fn archive_acts_on_the_whole_conversation() {
+        // The odd one out, deliberately: "archive this thread" is what a
+        // person means. It is also why the bar cannot be described in one
+        // sentence, and therefore why it must be described at all.
+        assert_eq!(
+            ReaderAction::Archive.scope(),
+            ActionScope::WholeConversation
+        );
+    }
+
+    #[test]
+    fn an_action_says_what_it_will_act_on_rather_than_naming_the_verb() {
+        // A user reading the third message of six who presses the bar's Reply
+        // gets a reply to the sixth. That is the decision; the only thing
+        // that makes it safe is that the interface said so first.
+        assert_eq!(
+            ReaderAction::Reply.describe(6),
+            "Reply to the latest message"
+        );
+        assert_eq!(ReaderAction::Archive.describe(6), "Archive all 6 messages");
+    }
+
+    #[test]
+    fn forward_does_not_read_as_forwarding_to_someone() {
+        // "Forward to the latest message" names a different action: in a mail
+        // client, forwarding *to* something is addressing it. The preposition
+        // belongs to the verb, not to the scope.
+        assert_eq!(
+            ReaderAction::Forward.describe(6),
+            "Forward the latest message"
+        );
+        assert_eq!(
+            ReaderAction::ReplyAll.describe(6),
+            "Reply all to the latest message"
+        );
+    }
+
+    #[test]
+    fn a_two_message_thread_says_both_rather_than_all_two() {
+        // "All 2 messages" is not a thing anyone says.
+        assert_eq!(ReaderAction::Archive.describe(2), "Archive both messages");
+    }
+
+    #[test]
+    fn a_lone_message_is_not_described_as_a_conversation() {
+        // Nothing to scope: with one message, "the latest message" and "the
+        // whole conversation" are the same thing, and saying either would
+        // imply others exist.
+        assert_eq!(ReaderAction::Reply.describe(1), "Reply");
+        assert_eq!(ReaderAction::Archive.describe(1), "Archive");
+    }
+
     fn many(count: usize) -> Vec<EmailAddress> {
         (0..count)
             .map(|n| EmailAddress::new(Some(&format!("Person {n}")), format!("p{n}@example.com")))
