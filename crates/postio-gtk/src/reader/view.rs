@@ -186,6 +186,32 @@ impl Drop for DarkNotify {
 /// What [`Reader::connect_parts_requested`] holds.
 type PartsRequestedHandler = Box<dyn Fn()>;
 
+/// One message's place in a conversation rendered into a single view.
+///
+/// See [`Reader::render_thread`] and ADR 0032.
+pub struct ThreadMessage {
+    /// What this message's `cid:` references are stamped with, and what the
+    /// scheme handler routes on. The message id in decimal: unreserved
+    /// characters only, since it goes into a URI unescaped.
+    pub scope: String,
+    /// Who it is from, as a person reads it.
+    pub sender: String,
+    /// Their address, shown beside the name on an open message (canvas 17).
+    pub address: String,
+    /// When, already formatted.
+    pub when: String,
+    /// The one line a collapsed message shows.
+    pub preview: String,
+    /// Whether it starts open.
+    pub expanded: bool,
+    /// Whether this is the newest message in the thread — canvas 17's badge.
+    pub latest: bool,
+    /// The message body, unsanitised — [`Reader::render_thread`] sanitises it
+    /// under [`scope`](Self::scope), which is the only way the reference
+    /// stamping can be guaranteed.
+    pub body: MessageBody,
+}
+
 impl Reader {
     /// Build a reader that resolves inline (`cid:`) images through `source`.
     ///
@@ -647,6 +673,73 @@ impl Reader {
             remote,
             &self.rendered,
         );
+    }
+
+    /// Draw a whole conversation into this one view (ADR 0032, #1316).
+    ///
+    /// The experiment behind #1316: one thread is one document is one view is
+    /// one web process, whatever the thread's length. The stacked pane builds
+    /// a `Reader` per expanded message and WebKitGTK runs a process per
+    /// *view*, so a thirty-message thread ends with thirty of them and moving
+    /// between them composites black while a new one starts.
+    ///
+    /// # Remote images stay blocked here, deliberately
+    ///
+    /// The allow list is a decision about *a sender*, and a document has one
+    /// Content-Security-Policy for all of it. Allowing one sender's images in
+    /// a thread would allow every sender's in that thread, which is not what
+    /// anybody agreed to. Expressing a per-sender policy inside one document
+    /// is real work (ADR 0032 says so) and it is not what this experiment is
+    /// measuring, so the whole document is `Blocked` and says so.
+    pub fn render_thread(&self, messages: &[ThreadMessage]) {
+        self.paints.set(self.paints.get() + 1);
+        self.absent.set(None);
+        self.decode_notice.set_visible(false);
+        self.set_unsubscribe(None);
+        self.banner.set_visible(false);
+
+        // Rendered first, and held, because `Entry` borrows the markup.
+        // Reader view is decided per message, from the message, exactly as
+        // `render` decides it for one: bulk mail opens reduced, correspondence
+        // never does. A thread can hold both.
+        let rendered: Vec<postio_ui::reader::document::Rendered> = messages
+            .iter()
+            .map(|message| {
+                let rendering = if postio_ui::reader::document::suits_reader_view(&message.body) {
+                    Rendering::Reader
+                } else {
+                    Rendering::Original
+                };
+                postio_ui::reader::document::body_html_in(
+                    &message.body,
+                    RemoteImages::Blocked,
+                    rendering,
+                    Some(&message.scope),
+                )
+            })
+            .collect();
+        let entries: Vec<postio_ui::reader::thread::Entry<'_>> = messages
+            .iter()
+            .zip(&rendered)
+            .map(|(message, rendered)| postio_ui::reader::thread::Entry {
+                scope: &message.scope,
+                sender: &message.sender,
+                address: &message.address,
+                when: &message.when,
+                preview: &message.preview,
+                expanded: message.expanded,
+                latest: message.latest,
+                blocked: rendered.held_back.remote_images,
+                body: &rendered.html,
+            })
+            .collect();
+
+        let document = postio_ui::reader::thread::conversation_document(
+            &entries,
+            RemoteImages::Blocked,
+            postio_ui::reader::document::Sheet::Theme,
+        );
+        load_document(&self.canvas(), &document);
     }
 
     /// Draw the sender's own markup for whatever is on screen — `C-o`.
