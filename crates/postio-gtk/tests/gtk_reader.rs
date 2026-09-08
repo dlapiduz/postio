@@ -569,6 +569,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     each_reader_costs_a_web_process_of_its_own();
     sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
+    a_senders_width_cannot_make_the_pane_scroll_sideways();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -806,6 +807,148 @@ fn the_counters_see_what_the_reader_actually_does() {
          released, so `surfaces_held` cannot answer the question it exists for: \
          whether a conversation lets go of what it opened"
     );
+}
+
+/// A sender may be as wide as they like inside their own box, and not one
+/// pixel wider outside it (#1334).
+///
+/// #1325 admitted the sender's inline styling, `width` included -- that is
+/// what makes a newsletter arrive in the columns it was written in. What must
+/// not follow is the *pane* scrolling sideways, which is spec FR-024 and
+/// FR-049: content that cannot fit scrolls within its own block, never
+/// widening the message or the pane.
+///
+/// `reader.css`'s `.postio-body { overflow-x: auto }` is what holds that line,
+/// and it is far more exposed than it was: before #1325 a sender reached it
+/// only through a table's `width` attribute, and `max-width: 100%` on `table`
+/// answered most of it. An inline style beats a stylesheet rule, so that
+/// answer is gone and the container is the whole of it.
+///
+/// Asked of the engine rather than of the stylesheet. Asserting that a rule
+/// exists proves the file says something; only a laid-out document says
+/// whether the page ended up wider than the window, which is what a person
+/// actually experiences.
+fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
+    // Both routes a width can take in, because they are sanitized differently:
+    // an inline declaration (#1325) and a table's own attribute (which ammonia
+    // has always allowed as a generic layout attribute).
+    for (name, body) in [
+        (
+            "an inline style",
+            r#"<div style="width:4000px">a very wide banner</div>"#,
+        ),
+        (
+            "a table attribute",
+            r#"<table width="4000"><tr><td>a very wide layout table</td></tr></table>"#,
+        ),
+    ] {
+        let document = document::document_for(
+            body,
+            postio_body::RemoteImages::Blocked,
+            document::Sheet::Theme,
+        );
+
+        // `scrollWidth` is what the document *would* need; `clientWidth` is
+        // what the window gives it. The pane scrolls sideways exactly when the
+        // first exceeds the second.
+        let overflowing = measure(
+            &document,
+            "document.documentElement.scrollWidth > document.documentElement.clientWidth",
+        );
+        assert_eq!(
+            overflowing, "false",
+            "{name}: a {} px declaration made the whole pane scroll sideways, \
+             so `.postio-body`'s overflow-x is no longer containing what #1325 \
+             admitted",
+            4000
+        );
+
+        // And it is contained rather than clipped: the content is still there
+        // to scroll to inside its own box. A container that simply hid the
+        // overflow would pass the assertion above and lose the message.
+        let reachable = measure(
+            &document,
+            "(() => { const b = document.querySelector('.postio-body'); \
+              return b.scrollWidth > b.clientWidth ? 'scrollable' : 'fits'; })()",
+        );
+        assert_eq!(
+            reachable, "scrollable",
+            "{name}: four thousand pixels of content in a six hundred pixel \
+             window is not reachable by scrolling its own box, so it is being \
+             clipped away instead of contained -- which passes the assertion \
+             above while losing the message"
+        );
+    }
+}
+
+/// Evaluate `expression` against `document` and return it as a string.
+///
+/// [`computed`]'s twin, for questions that are not a computed style. Same
+/// lifecycle discipline, and the same reason for it (#794).
+fn measure(document: &str, expression: &str) -> String {
+    let settings = webkit6::Settings::new();
+    settings.set_enable_javascript(true);
+
+    let (value, weak) = {
+        let network_session = webkit6::NetworkSession::new_ephemeral();
+        let context = webkit6::WebContext::new();
+        let view = webkit6::WebView::builder()
+            .settings(&settings)
+            .web_context(&context)
+            .network_session(&network_session)
+            .build();
+        let window = gtk::Window::new();
+        window.set_default_size(600, 500);
+        window.set_child(Some(&view));
+        window.present();
+
+        let loaded = Rc::new(RefCell::new(false));
+        let flag = Rc::clone(&loaded);
+        view.connect_load_changed(move |_, event| {
+            if event == webkit6::LoadEvent::Finished {
+                *flag.borrow_mut() = true;
+            }
+        });
+        view.load_html(document, None);
+        wait_for(&loaded, Duration::from_secs(5));
+        // Layout has to have happened before a width means anything.
+        pump_for(Duration::from_millis(200));
+
+        let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let slot = Rc::clone(&answer);
+        view.evaluate_javascript(
+            expression,
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            move |outcome| {
+                *slot.borrow_mut() = Some(
+                    outcome
+                        .map(|value| value.to_str().to_string())
+                        .unwrap_or_default(),
+                );
+            },
+        );
+        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+        while answer.borrow().is_none() && Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let value = answer.borrow_mut().take().unwrap_or_default();
+
+        let weak = view.downgrade();
+        window.set_child(None::<&gtk::Widget>);
+        window.destroy();
+        (value, weak)
+    };
+    for _ in 0..200 {
+        while glib::MainContext::default().iteration(false) {}
+    }
+    assert!(
+        weak.upgrade().is_none(),
+        "the measuring WebView outlived its window -- #794 all over again"
+    );
+    value
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.
