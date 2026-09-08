@@ -126,6 +126,21 @@ pub fn opening_focus(messages: &[Row]) -> Option<usize> {
         .or(Some(messages.len() - 1))
 }
 
+/// How long a one-document pane gathers body arrivals before it redraws.
+///
+/// Every redraw is a full document teardown and reload, and the bodies of a
+/// thread arrive one per turn of the main loop, so rendering on arrival costs
+/// one load per message (#1316). This is the window they coalesce in.
+const REDRAW_COALESCE: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// How long a redraw will wait for the bodies that have not arrived.
+///
+/// The pane draws as soon as every message it is showing has a body, and this
+/// is the longest it will hold out for the ones that have not — a thread with
+/// a body that is not on this machine has to draw, showing the rest, rather
+/// than waiting for something that is not coming.
+const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Which messages are expanded when the conversation opens.
 ///
 /// Read messages are collapsed: they are one line, and collapsing them is
@@ -712,6 +727,12 @@ mod imp {
         /// document, so without this a ten-message thread would hand WebKit
         /// ten documents on the way to the one it wants.
         pub(super) redraw_queued: Cell<bool>,
+        /// When the pane stops waiting for bodies that have not arrived and
+        /// draws what it has. See [`REDRAW_DEADLINE`].
+        pub(super) redraw_deadline: Cell<Option<std::time::Instant>>,
+        /// How many documents this pane has actually handed over. See
+        /// [`super::ConversationView::thread_renders`].
+        pub(super) thread_renders: Cell<u32>,
         /// Told when a thread opens in one-document mode, so whoever owns the
         /// store fetches every body rather than waiting for an expansion that
         /// never comes.
@@ -787,6 +808,8 @@ mod imp {
                 thread_rows: RefCell::new(Vec::new()),
                 thread_bodies: RefCell::new(std::collections::HashMap::new()),
                 redraw_queued: Cell::new(false),
+                redraw_deadline: Cell::new(None),
+                thread_renders: Cell::new(0),
                 on_thread_opened: RefCell::new(Vec::new()),
             }
         }
@@ -933,16 +956,57 @@ impl ConversationView {
         self.queue_document_redraw();
     }
 
+    /// Whether every message the pane is showing now has a body.
+    fn thread_is_whole(&self) -> bool {
+        let imp = self.imp();
+        let rows = imp.thread_rows.borrow();
+        let bodies = imp.thread_bodies.borrow();
+        !rows.is_empty() && rows.iter().all(|row| bodies.contains_key(&row.id))
+    }
+
     fn queue_document_redraw(&self) {
         let imp = self.imp();
+        // Everything is here: draw it now rather than waiting out a timer for
+        // arrivals that cannot come.
+        if self.thread_is_whole() {
+            imp.redraw_deadline.set(None);
+            imp.redraw_queued.set(false);
+            self.redraw_document();
+            return;
+        }
         if imp.redraw_queued.replace(true) {
             return;
         }
-        glib::idle_add_local_once({
+        if imp.redraw_deadline.get().is_none() {
+            imp.redraw_deadline
+                .set(Some(std::time::Instant::now() + REDRAW_DEADLINE));
+        }
+        // A short delay, not an idle turn. Every render is a full document
+        // teardown and reload -- JavaScript is off, so there is no
+        // incremental path -- and the bodies of a thread arrive one per main
+        // loop turn, so an idle callback coalesced nothing: a four-message
+        // thread cost four loads and a thirty-message one would cost thirty.
+        //
+        // Long enough to gather a burst of arrivals, short enough not to be
+        // felt: what a person waits for is the first paint, and the store
+        // reads this is coalescing are already slower than this.
+        glib::timeout_add_local_once(REDRAW_COALESCE, {
             let pane = self.clone();
             move || {
-                pane.imp().redraw_queued.set(false);
-                pane.redraw_document();
+                let imp = pane.imp();
+                imp.redraw_queued.set(false);
+                let overdue = imp
+                    .redraw_deadline
+                    .get()
+                    .is_none_or(|deadline| std::time::Instant::now() >= deadline);
+                if pane.thread_is_whole() || overdue {
+                    imp.redraw_deadline.set(None);
+                    pane.redraw_document();
+                } else {
+                    // Still filling, and there is time left: wait for the rest
+                    // rather than spending a whole document on a partial one.
+                    pane.queue_document_redraw();
+                }
             }
         });
     }
@@ -988,7 +1052,29 @@ impl ConversationView {
             })
             .collect();
         drop(bodies);
-        reader.render_thread(&messages);
+        // A load that changes nothing is still a full teardown and reload,
+        // and the reader's scroll position goes with it. Several things queue
+        // a redraw -- a body arriving, a thread reopening, a timer armed
+        // before either -- and they overlap, so the guard belongs here rather
+        // than at each of them. This is #749's fourth cause, in a new pane.
+        if reader.would_render_thread(&messages) {
+            imp.thread_renders.set(imp.thread_renders.get() + 1);
+            reader.render_thread(&messages);
+        }
+    }
+
+    /// How many conversation documents this pane has handed to WebKit.
+    ///
+    /// Every one is a full teardown and reload — JavaScript is off, so there
+    /// is no incremental path, and the scroll position goes with it. A thread
+    /// fill should cost a small number of these, not one per message.
+    ///
+    /// Counted here rather than read off `Reader::loads`, which counts every
+    /// load that reader ever did — including the ones that were not this
+    /// pane's, and which made this number look four when the pane had drawn
+    /// twice.
+    pub fn thread_renders(&self) -> u32 {
+        self.imp().thread_renders.get()
     }
 
     /// The document the one-document pane last handed to WebKit.
