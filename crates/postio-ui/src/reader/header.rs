@@ -243,7 +243,7 @@ pub fn actions(keymap: &Keymap) -> Vec<(ReaderAction, Option<String>)> {
 mod tests {
     fn many(count: usize) -> Vec<EmailAddress> {
         (0..count)
-            .map(|n| EmailAddress::new(Some(&format!("Person {n}")), &format!("p{n}@example.com")))
+            .map(|n| EmailAddress::new(Some(&format!("Person {n}")), format!("p{n}@example.com")))
             .collect()
     }
 
