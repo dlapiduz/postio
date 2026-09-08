@@ -1,0 +1,20 @@
+-- How many lines the message's plain-text body has (#1329).
+--
+-- The conversation pane's rail lists every message in a thread and shows a
+-- length only on the ones long enough for it to matter, so you can see the
+-- essay before you scroll into it. This is that number.
+--
+-- **Counted, not measured.** It comes from the stored plain text when the body
+-- is written, never from laid-out output: a rendered height is not available
+-- until the engine has done the work the rail exists to let you skip, and it
+-- answers differently at every window width.
+--
+-- NULL means "no body here to count", which is a different fact from zero and
+-- one the rail distinguishes: a message whose body has not been fetched shows
+-- no length at all, rather than being described as empty. That is the same
+-- distinction `body_text` itself makes, and for the same reason.
+--
+-- Existing rows are NULL and are filled the next time each body is written.
+-- Nothing needs migrating: a body that is never rewritten is one the rail
+-- shows without a length, which is exactly what it does for a short message.
+ALTER TABLE messages ADD COLUMN body_line_count INTEGER;

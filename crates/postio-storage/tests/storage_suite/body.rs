@@ -450,3 +450,73 @@ fn a_body_on_a_row_that_does_not_exist_is_an_error() {
             .is_err()
     );
 }
+
+#[test]
+fn a_bodys_line_count_is_stored_with_it() {
+    // The rail shows a length only on messages long enough for it to matter,
+    // so it can be read before the body is prepared for display (#1329). That
+    // is only possible if the number is stored when the body is written.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let id = a_message(&connection, inbox, account.id);
+    let messages = MessageRepository::new(&connection);
+
+    let count = || -> Option<i64> {
+        connection
+            .query_row(
+                "SELECT body_line_count FROM messages WHERE id = ?1",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .expect("the row")
+    };
+
+    assert_eq!(
+        count(),
+        None,
+        "no body has been downloaded, and no body is a different fact from an \
+         empty one -- the rail shows no length rather than calling it zero"
+    );
+
+    let body = StoredBody {
+        text: Some("one\ntwo\nthree".to_owned()),
+        html: Some("<p>markup is not what is counted</p>".to_owned()),
+        ..StoredBody::default()
+    };
+    messages.set_body(id, &body, BodyState::Full).expect("set");
+
+    assert_eq!(
+        count(),
+        Some(3),
+        "counted from the plain text, which is what a person reads -- markup \
+         would count a one-line message as however many tags it happens to have"
+    );
+}
+
+#[test]
+fn a_body_with_no_text_at_all_has_no_line_count() {
+    // An HTML-only message. There is no plain text to count, and inventing a
+    // number from the markup would be measuring the wrong thing.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let id = a_message(&connection, inbox, account.id);
+
+    let body = StoredBody {
+        html: Some("<p>hello</p>".to_owned()),
+        ..StoredBody::default()
+    };
+    MessageRepository::new(&connection)
+        .set_body(id, &body, BodyState::Full)
+        .expect("set");
+
+    let stored: Option<i64> = connection
+        .query_row(
+            "SELECT body_line_count FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert_eq!(stored, None);
+}
