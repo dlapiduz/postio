@@ -733,6 +733,16 @@ mod imp {
         /// How many documents this pane has actually handed over. See
         /// [`super::ConversationView::thread_renders`].
         pub(super) thread_renders: Cell<u32>,
+        /// Which thread the pane is holding, so reopening the same one keeps
+        /// what it has instead of refetching and re-deciding it.
+        pub(super) thread_id: Cell<Option<postio_model::ids::ThreadId>>,
+        /// Whether each message is drawn open.
+        ///
+        /// Decided once per message and then kept, because expansion is the
+        /// reader's state and not a function of the model. Recomputing it on
+        /// every redraw meant a message folded shut under the person reading
+        /// it the moment resting on it marked it read (#1316).
+        pub(super) expanded_in_document: RefCell<std::collections::HashMap<MessageId, bool>>,
         /// Told when a thread opens in one-document mode, so whoever owns the
         /// store fetches every body rather than waiting for an expansion that
         /// never comes.
@@ -810,6 +820,8 @@ mod imp {
                 redraw_queued: Cell::new(false),
                 redraw_deadline: Cell::new(None),
                 thread_renders: Cell::new(0),
+                thread_id: Cell::new(None),
+                expanded_in_document: RefCell::new(std::collections::HashMap::new()),
                 on_thread_opened: RefCell::new(Vec::new()),
             }
         }
@@ -1026,6 +1038,24 @@ impl ConversationView {
         let bodies = imp.thread_bodies.borrow();
         let focused = imp.focused.get();
         let newest = rows.last().map(|row| row.id);
+        // Decided once per message, then kept. Unread messages and the one
+        // focus is on open, the same question `expanded_on_open` answers for
+        // the stack -- except that here it costs nothing but height, so there
+        // is no cap. A message already decided keeps its answer, whatever the
+        // model has done since.
+        let expanded: std::collections::HashSet<MessageId> = {
+            let mut decided = imp.expanded_in_document.borrow_mut();
+            for row in rows.iter() {
+                decided.entry(row.id).or_insert_with(|| {
+                    !row.seen || focused == Some(row.id) || newest == Some(row.id)
+                });
+            }
+            decided
+                .iter()
+                .filter(|(_, open)| **open)
+                .map(|(id, _)| *id)
+                .collect()
+        };
         let now = chrono::Local::now();
         let messages: Vec<crate::reader::view::ThreadMessage> = rows
             .iter()
@@ -1040,12 +1070,7 @@ impl ConversationView {
                     address: from.map(|from| from.address.clone()).unwrap_or_default(),
                     when: postio_ui::row::timestamp(row.received_at, now),
                     preview: row.preview.clone().unwrap_or_default(),
-                    // Unread messages and the one focus is on open, the same
-                    // question `expanded_on_open` answers for the stack --
-                    // except that here it costs nothing but height, so there
-                    // is no cap to apply.
-                    expanded: bodies.contains_key(&row.id)
-                        && (!row.seen || focused == Some(row.id) || newest == Some(row.id)),
+                    expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
                     body: bodies.get(&row.id).cloned().unwrap_or_default(),
                 }
@@ -1093,8 +1118,18 @@ impl ConversationView {
     /// Open `messages` as one document rather than as a stack.
     fn open_as_document(&self, messages: Vec<Row>) {
         let imp = self.imp();
+        // A thread opens twice: once with the row the list had, and again
+        // with the whole conversation once it is read. Those are the same
+        // thread, and so is a re-read after a flag changed -- clearing on
+        // each of them would refetch every body and decide every expansion
+        // again, which is what folded a message shut under the reader.
+        let opening = messages.first().and_then(|row| row.thread);
+        if imp.thread_id.get() != opening {
+            imp.thread_id.set(opening);
+            imp.thread_bodies.borrow_mut().clear();
+            imp.expanded_in_document.borrow_mut().clear();
+        }
         imp.thread_rows.replace(messages.clone());
-        imp.thread_bodies.borrow_mut().clear();
 
         if imp.document_reader.borrow().is_none() {
             // Through the same factory the stack uses, so this reader is
