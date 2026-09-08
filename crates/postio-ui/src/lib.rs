@@ -24,4 +24,5 @@ pub mod search;
 pub mod selection;
 pub mod settings;
 pub mod sidebar;
+pub mod test_support;
 pub mod tokens;

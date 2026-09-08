@@ -568,6 +568,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     rendering_the_next_message_keeps_the_web_process();
     each_reader_costs_a_web_process_of_its_own();
     sender_script_is_refused_even_with_javascript_enabled();
+    the_counters_see_what_the_reader_actually_does();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -731,6 +732,80 @@ fn load_and_read_title(markup: bool, document: &str) -> (String, String) {
          attached at exit -- #794 all over again"
     );
     (title, injected)
+}
+
+/// The instrument, against the real reader (#1328).
+///
+/// `postio_ui::test_support` is only worth having if its numbers move when
+/// the reader moves, and stay put when it does not. Asserted here rather than
+/// in `postio-ui`'s own tests because that crate cannot build a `Reader`, and
+/// an instrument proven only against itself is the shape of #327: written,
+/// tested, wired to nothing.
+fn the_counters_see_what_the_reader_actually_does() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let surfaces_before = postio_ui::test_support::surfaces_created();
+    let held_before = postio_ui::test_support::surfaces_held();
+    let renders_before = postio_ui::test_support::renders_issued();
+
+    {
+        let window = gtk::Window::new();
+        window.set_default_size(600, 500);
+        let reader = Reader::with_allowlist(
+            Rc::new(NoBlobs),
+            RemoteImageAllowList::default(),
+            scratch_path("counted-reader"),
+        );
+        window.set_child(Some(&reader.widget()));
+        window.present();
+        pump();
+
+        assert_eq!(
+            postio_ui::test_support::surfaces_created() - surfaces_before,
+            1,
+            "one Reader is one rendering surface -- and one web process, which \
+             is the cost ADR 0032 measured at thirty for a thirty-message thread"
+        );
+
+        for fixture in ["multipart-alternative", "html-newsletter"] {
+            let parsed = postio_model::mime::parse(test_corpus::load(fixture).bytes());
+            let finished = track_load_finished(&reader);
+            reader.render(&parsed.body, None);
+            wait_for(&finished, Duration::from_secs(5));
+            pump();
+        }
+
+        assert!(
+            postio_ui::test_support::renders_issued() - renders_before >= 2,
+            "two messages rendered and the counter did not see them, so every \
+             cost-of-moving assertion built on it would pass without measuring"
+        );
+        assert_eq!(
+            postio_ui::test_support::surfaces_created() - surfaces_before,
+            1,
+            "rendering a second message into the same reader must not build a \
+             second surface -- that is the whole of FR-057"
+        );
+
+        window.set_child(None::<&gtk::Widget>);
+        window.destroy();
+    }
+
+    // GTK finalizes on the main loop, not at the closing brace.
+    for _ in 0..200 {
+        while glib::MainContext::default().iteration(false) {}
+    }
+
+    assert_eq!(
+        postio_ui::test_support::surfaces_held() - held_before,
+        0,
+        "the reader went out of scope and its surface was never reported \
+         released, so `surfaces_held` cannot answer the question it exists for: \
+         whether a conversation lets go of what it opened"
+    );
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.
