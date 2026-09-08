@@ -782,11 +782,16 @@ pub fn contain_body(content: &str) -> String {
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
 pub fn document_for(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
-    wrap_document(
+    let document = wrap_document(
         &format!("{}{}", contain_body(content), scroll_markers()),
         remote,
         sheet,
-    )
+    );
+    // Counted here rather than at a frontend's load, because "did this
+    // document carry bulk" is answered where the document is built and is the
+    // same answer for every frontend. See `crate::reader::cost`.
+    crate::reader::cost::note_document(document.len());
+    document
 }
 
 /// What the sanitizer already enforces at the DOM level, restated as policy

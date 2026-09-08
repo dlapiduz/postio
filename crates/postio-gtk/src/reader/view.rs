@@ -175,6 +175,19 @@ struct DarkNotify {
     handler: Option<glib::SignalHandlerId>,
 }
 
+impl Drop for Reader {
+    /// Balances [`cost::note_surface_created`] so that `surfaces_held` means
+    /// what it says.
+    ///
+    /// Dropping the `Reader` is what lets its `WebView` go, and the web
+    /// process with it. A conversation that keeps every surface it ever
+    /// opened is the defect ADR 0032 describes, and it is invisible to any
+    /// count that only watches creations.
+    fn drop(&mut self) {
+        postio_ui::reader::cost::note_surface_released();
+    }
+}
+
 impl Drop for DarkNotify {
     fn drop(&mut self) {
         if let Some(handler) = self.handler.take() {
@@ -209,6 +222,12 @@ impl Reader {
         allowlist: RemoteImageAllowList,
         allowlist_path: std::path::PathBuf,
     ) -> Self {
+        // One `Reader` is one `WebView` is one web process -- measured, in
+        // `gtk_reader.rs`'s `each_reader_costs_a_web_process_of_its_own`. That
+        // is the cost ADR 0032 put at thirty processes for a thirty-message
+        // thread, so it is counted from the moment one is built.
+        postio_ui::reader::cost::note_surface_created();
+
         let network_session = webkit6::NetworkSession::new_ephemeral();
         network_session.set_persistent_credential_storage_enabled(false);
 
@@ -1045,6 +1064,11 @@ struct Canvas<'a> {
 /// judgement belongs where message identity exists, in `postio_app::reading`.
 fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.loads.set(canvas.loads.get() + 1);
+    // The single choke point every render passes through, which is what makes
+    // it the honest place to count from: a second path to the engine would
+    // have to avoid this function to avoid the counter. `canvas.loads` beside
+    // it is per-canvas and cannot be read from another crate's suite.
+    postio_ui::reader::cost::note_render();
     canvas.document.replace(document.to_owned());
     canvas.view.load_html(document, Some(DOCUMENT_BASE_URI));
     // `load_html` always starts a document at the top, whatever `page` said
