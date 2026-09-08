@@ -144,13 +144,71 @@ document means moving all of it into HTML:
   this proposal is a lot of work for a surface nobody wanted.
 - Is a 200-message thread a real case, or is thread length bounded in practice
   by how mail is actually used?
-- Does WebKit's own memory for one large document beat N small processes? Not
-  measured. It is the obvious rebuttal to "one view is cheaper" and nothing
-  here has tested it.
+- ~~Does WebKit's own memory for one large document beat N small processes? Not
+  measured.~~ **Measured — see below.**
+
+## What the experiment measured (2026-09-08, #1316)
+
+Built behind `POSTIO_ONE_DOCUMENT`, on a feature branch, next to the stacked
+pane rather than instead of it. The numbers, on this workstation:
+
+| messages | web processes | document handed | resident |
+|---|---|---|---|
+| 1 | 1 | 607 µs | +4 MiB |
+| 50 | 1 | 7.2 ms | +5 MiB |
+| 200 | 1 | 25.6 ms | +5 MiB |
+
+**One process and flat memory, whatever the thread's length.** That settles the
+open question above, and settles it in this proposal's favour: the obvious
+rebuttal does not hold. `gtk_reader::a_whole_thread_costs_one_web_process` pins
+it — two messages and thirty cost the same, and the view adds exactly one
+process.
+
+The cost it *does* have, which the proposal did not predict: handing the
+document over is linear in thread length and crosses the 16 ms interaction
+budget somewhere past a hundred messages. Not what the stacked pane was failing
+at, and worth knowing before anyone calls this free.
+
+The maintainer's own reading of it, trying it on real mail: *"outside of
+stylistic issues it seems to perform much better."*
+
+### Three things the building of it found
+
+**Every render is a full teardown and reload.** JavaScript is off (ADR 0003),
+so there is no incremental path: a changed document is a new document. Bodies
+arrive one per turn of the main loop, so rendering on arrival cost one document
+per message — the first open of a thread was visibly slower than every return
+to it. The pane draws when the thread is whole, holds out 400 ms for bodies
+that have not come, and refuses a document identical to the one loaded.
+
+**Expansion is the reader's state, not a function of the model.** Recomputing
+it on each redraw from `seen` and focus meant a message folded shut under the
+person reading it the moment resting on it marked it read. Decided once per
+message and then kept.
+
+**And with JavaScript off, the application cannot see a `<details>` toggle.**
+This is the constraint the proposal did not state and the one that most shapes
+what is still open: expansion the *user* performs is invisible to Postio, so
+any reload loses it. It does not arise while nothing reloads — which is why
+the coalescing above matters for more than speed.
+
+### A hole it found in code that already ships
+
+A sender writing `src="postio-cid:..."` directly passed through the sanitiser
+untouched: only `cid:` is rewritten, and the scheme is in `add_url_schemes`.
+Harmless while one document is one message, because it reaches that message's
+own parts. Under one document it reaches *another message's*. Dropped now, in
+both modes. Worth landing whether or not this proposal is ever accepted.
 
 ## Status
 
-Proposed, and deliberately not started. It revisits an accepted ADR, moves a
+Still **Proposed**, and now built enough to be judged rather than argued
+about. What has not happened is the thing this ADR says should decide it — a
+screen-reader pass over an HTML conversation, against the widget tree it would
+replace. There is now something to run Orca against; that is the next step, and
+it may end this proposal.
+
+Originally: proposed, and deliberately not started. It revisits an accepted ADR, moves a
 surface out of the widget layer, and trades accessibility guarantees for
 performance — none of which should be decided by whoever happened to be
 profiling that week.

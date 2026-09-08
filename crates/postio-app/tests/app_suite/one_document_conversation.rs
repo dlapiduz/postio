@@ -30,15 +30,22 @@ use postio_storage::repository::{MessageRepository, StoredBody, ThreadRepository
 use postio_storage::{BlobStore, Database, test_support};
 
 /// A message in `thread`, `minutes` after the epoch of this test, with a body.
-fn threaded_message(
-    database: &Database,
+/// Where a seeded message goes: the account, mailbox and thread it joins.
+struct Seat {
     account: AccountId,
     mailbox: MailboxId,
     thread: ThreadId,
+}
+
+fn threaded_message(
+    database: &Database,
+    seat: &Seat,
     minutes: i64,
     subject: &str,
     body: &str,
+    seen: bool,
 ) -> MessageId {
+    let (account, mailbox, thread) = (seat.account, seat.mailbox, seat.thread);
     let connection = database.connection().expect("a connection");
     let mut message = postio_model::Message::new(
         account,
@@ -51,6 +58,9 @@ fn threaded_message(
         "ada@example.com",
     )];
     message.sync.body_state = postio_model::BodyState::Full;
+    if seen {
+        message.flags.insert(postio_model::Flag::Seen);
+    }
     let id = MessageRepository::new(&connection)
         .create(&mut message)
         .expect("create the message");
@@ -76,6 +86,9 @@ fn threaded_message(
     id
 }
 
+/// The one message seeded unread, and so drawn open.
+const UNREAD: usize = 3;
+
 /// How many messages the thread under test holds.
 ///
 /// Twelve rather than four, because the claim being tested is about *scale*:
@@ -87,6 +100,24 @@ const MESSAGES: usize = 12;
 /// The body of message `index`, so the wait and the assertions cannot drift.
 fn body_of(index: usize) -> String {
     format!("the body of message {index}")
+}
+
+/// Which messages the document currently draws open, by scope.
+fn open_messages(window: &Window) -> Vec<String> {
+    let document = window.conversation().thread_document().unwrap_or_default();
+    let mut open = Vec::new();
+    for piece in document
+        .split("<details class=\"postio-message\" id=\"m-")
+        .skip(1)
+    {
+        let Some((scope, rest)) = piece.split_once('"') else {
+            continue;
+        };
+        if rest.starts_with(" open>") {
+            open.push(scope.to_string());
+        }
+    }
+    open
 }
 
 pub fn a_thread_opens_as_one_document_holding_every_message() {
@@ -125,20 +156,29 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
             .create(&mut thread)
             .expect("create the thread")
     };
+    // All read but one in the middle, so "open" means something specific:
+    // the unread one, and the newest. `UNREAD` is the message this test then
+    // marks read, which is what resting on it does.
+    let seat = Seat {
+        account: account.id,
+        mailbox: inbox,
+        thread,
+    };
+    let mut ids = Vec::new();
     for index in 0..MESSAGES {
-        threaded_message(
+        ids.push(threaded_message(
             &database,
-            account.id,
-            inbox,
-            thread,
+            &seat,
             index as i64,
             &format!("message {index}"),
             &body_of(index),
-        );
+            index != UNREAD,
+        ));
     }
 
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
+    let database_handle = database.clone();
     let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
     let window = Window::default();
@@ -213,6 +253,61 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
          one at a time have to coalesce, or a thread costs a full teardown and \
          reload per message on the way to showing it -- which is what made the \
          first open of a thread slower than every return to it"
+    );
+
+    // ── reopening the thread must not move what is open ────────────────
+    //
+    // A redraw recomputes the document, and everything about which messages
+    // are open used to be recomputed with it -- from `seen` and from where
+    // focus is. Both move on their own: resting on a message marks it read,
+    // which made it collapse under the reader; and the pane reopens whenever
+    // the thread is re-read. Expansion is the reader's state, not a function
+    // of the model, and a reload cannot be allowed to take it.
+    let open_before = open_messages(&window);
+    assert!(
+        !open_before.is_empty(),
+        "nothing was open after the thread filled, so this proves nothing"
+    );
+    let renders_before = window.conversation().thread_renders();
+
+    // Resting on a message marks it read. The store says so, the thread is
+    // re-read, and the pane redraws -- and the message the reader is looking
+    // at must not fold shut underneath them because of it.
+    {
+        let connection = database_handle.connection().expect("a connection");
+        let mut flags = postio_model::FlagSet::default();
+        flags.insert(postio_model::Flag::Seen);
+        MessageRepository::new(&connection)
+            .set_flags(
+                ids[UNREAD],
+                &flags,
+                postio_storage::repository::FlagSource::Local,
+            )
+            .expect("mark it read");
+    }
+
+    window.open_conversation(&cursor);
+    assert!(
+        settle_until(|| window
+            .conversation()
+            .thread_document()
+            .is_some_and(|document| {
+                document.matches("<details").count() == MESSAGES
+                    && (0..MESSAGES).all(|index| document.contains(&body_of(index)))
+            })),
+        "reopening the thread never refilled it"
+    );
+
+    assert_eq!(
+        open_messages(&window),
+        open_before,
+        "reopening the thread changed which messages are open"
+    );
+    let refill = window.conversation().thread_renders() - renders_before;
+    assert!(
+        refill <= 2,
+        "reopening the same thread cost {refill} documents; the bodies were \
+         already in hand and nothing about the thread changed"
     );
 
     let _ = wired;
