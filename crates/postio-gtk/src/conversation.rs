@@ -1331,7 +1331,29 @@ mod imp {
             // 30), so the bar is the header's and the pane only wires it.
             self.header.actions().connect_command({
                 let view = view.clone();
-                move |command| view.emit_command(command)
+                move |command| {
+                    // FR-008: the conversation bar's reply, reply-all and
+                    // forward act on the **most recent message**, and archive
+                    // on the whole conversation. Passing the command straight
+                    // through let the application resolve it against whatever
+                    // was focused, so the bar answered the focused message --
+                    // while the header beside it said `latest · all 6`, which
+                    // FR-008a requires precisely because the scoping is not
+                    // self-evident. The interface was telling the truth and
+                    // the button was not (#1394).
+                    let kind = match command.id() {
+                        postio_core::CommandId::Reply => Some(ReplyKind::Reply),
+                        postio_core::CommandId::ReplyAll => Some(ReplyKind::ReplyAll),
+                        postio_core::CommandId::Forward => Some(ReplyKind::Forward),
+                        _ => None,
+                    };
+                    match kind.zip(view.latest_message()) {
+                        Some((kind, latest)) => view.emit_action(latest, kind),
+                        // Archive and the rest are conversation-level already,
+                        // and the application scopes them to the thread.
+                        None => view.emit_command(command),
+                    }
+                }
             });
             self.root.set_parent(&*view);
         }
@@ -2298,6 +2320,16 @@ impl ConversationView {
             .borrow()
             .iter()
             .position(|row| row.id == focused)
+    }
+
+    /// The most recent message of the conversation on screen.
+    ///
+    /// The thread is held oldest first in both panes, so this is the last of
+    /// whichever list the pane keeps.
+    fn latest_message(&self) -> Option<MessageId> {
+        self.message_count()
+            .checked_sub(1)
+            .and_then(|last| self.message_at(last))
     }
 
     /// The message at `index`, in whichever pane is drawing.
