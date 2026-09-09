@@ -198,10 +198,7 @@ fn settle(how_long: Duration) {
 fn main() {
     let mut args = std::env::args().skip(1);
     let arrangement = args.next().unwrap_or_else(|| "document".to_owned());
-    let count: usize = args
-        .next()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(10);
+    let count: usize = args.next().and_then(|n| n.parse().ok()).unwrap_or(10);
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("no display: run under scripts/test-headless.sh or a session");
@@ -295,5 +292,8 @@ fn main() {
         ui.saturating_sub(resident_before) / 1024
     );
     println!("web pss           {} MiB", web / 1024);
-    println!("total             {} MiB (ui rss + web pss)", (ui + web) / 1024);
+    println!(
+        "total             {} MiB (ui rss + web pss)",
+        (ui + web) / 1024
+    );
 }
