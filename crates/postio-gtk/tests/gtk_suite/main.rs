@@ -1068,6 +1068,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::opening_a_conversation_narrow_keeps_the_header_short as fn(),
     ),
     (
+        "gtk_rail::a_conversation_opens_on_its_most_recent_message",
+        gtk_rail::a_conversation_opens_on_its_most_recent_message as fn(),
+    ),
+    (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
         gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one as fn(),
     ),

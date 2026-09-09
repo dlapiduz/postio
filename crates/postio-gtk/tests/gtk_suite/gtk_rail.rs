@@ -491,3 +491,65 @@ pub fn opening_a_conversation_narrow_keeps_the_header_short() {
 
     window.close();
 }
+
+pub fn a_conversation_opens_on_its_most_recent_message() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+
+    // FR-015, and the maintainer's own words when the spec was clarified:
+    // the pane opens on the last message of the thread, *whether or not*
+    // earlier ones are unread. Landing on the oldest means the message you
+    // were notified about is below eleven others.
+    for one_document in [false, true] {
+        pane.set_one_document(one_document);
+        let mut messages: Vec<ListRow> = (1..=6).map(message).collect();
+        // Two unread ones early in the thread, because "whether or not
+        // earlier messages are unread" is the half of FR-015 that a
+        // first-unread rule would satisfy the assertion by accident.
+        messages[1].seen = false;
+        messages[2].seen = false;
+        pane.open(messages);
+        crate::pump();
+
+        let which = if one_document {
+            "one document"
+        } else {
+            "stacked"
+        };
+        assert_eq!(
+            pane.focused_index(),
+            Some(5),
+            "the {which} pane must open on the most recent message, not on \
+             the first unread and not on the oldest"
+        );
+        assert_eq!(
+            pane.rail().marked_position(),
+            Some(6),
+            "and the rail must agree with it, or the two say different \
+             things about where you are in the {which} pane"
+        );
+    }
+
+    // FR-015's second half: reopening does not restore where you stopped.
+    // Moved with the keyboard rather than by reopening, because `J` is the
+    // gesture the requirement is about -- and in the stacked pane, which is
+    // where focus can currently be moved at all (see #1386).
+    pane.set_one_document(false);
+    pane.open((1..=6).map(message).collect());
+    crate::pump();
+    assert!(pane.focus_previous(), "K moves back from the newest");
+    assert_eq!(pane.focused_index(), Some(4));
+
+    pane.open((1..=6).map(message).collect());
+    crate::pump();
+    assert_eq!(
+        pane.focused_index(),
+        Some(5),
+        "reopening a conversation lands on the most recent message again -- \
+         the pane does not restore where the reader stopped"
+    );
+
+    window.close();
+}

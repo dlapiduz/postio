@@ -109,22 +109,37 @@ pub fn people(rows: &[Row]) -> usize {
 
 /// Which message the pane opens on.
 ///
-/// **The first unread**, not the newest. A conversation you open is one you
-/// are part way through, and landing at the end means scrolling back past
-/// everything you have already read. When every message has been read there
-/// is no first unread and the newest is what you came back for.
+/// **The most recent, always** — spec FR-015, *"whether or not earlier
+/// messages are unread"*, and the maintainer's own words when the spec was
+/// clarified: the focus is on the last message when the thread opens.
+///
+/// # What this supersedes, and the argument it overrides
+///
+/// This used to be *the first unread*, from ADR 0015, and the reasoning was
+/// good: a conversation you open is one you are part way through, and landing
+/// at the end means scrolling back past everything you have already read. The
+/// case it was strongest on is a wholly unread thread, where the old rule
+/// opened at the beginning because reading from the end backwards is not how
+/// anyone reads.
+///
+/// FR-015 overrides it deliberately. Two things changed underneath it. The
+/// pane now shows every message's body rather than collapsing the read ones
+/// (FR-013), so "landing at the end" no longer means scrolling past collapsed
+/// headers to find anything — the thread is one document and the newest is
+/// where a reply is aimed. And the rail (#1374) makes the position of the
+/// mark a thing you can see and move, so opening somewhere and walking back
+/// is a gesture rather than a hunt.
+///
+/// The overridden argument is recorded rather than deleted because the
+/// wholly-unread case is where it still bites, and whoever revisits this
+/// should be arguing with a rule rather than rediscovering one. ADR 0015 is
+/// amended to match.
 ///
 /// `None` only for an empty conversation, which the pane does not draw.
 ///
 /// `messages` is oldest first, which is the order the pane stacks them in.
 pub fn opening_focus(messages: &[Row]) -> Option<usize> {
-    if messages.is_empty() {
-        return None;
-    }
-    messages
-        .iter()
-        .position(|message| !message.seen)
-        .or(Some(messages.len() - 1))
+    messages.len().checked_sub(1)
 }
 
 /// How long a one-document pane gathers body arrivals before it redraws.
@@ -145,22 +160,38 @@ const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(40
 /// Which messages are expanded when the conversation opens.
 ///
 /// Read messages are collapsed: they are one line, and collapsing them is
-/// what makes a long conversation readable at all. From the focused message
-/// onwards the unread ones expand, because that is the part being read — up
-/// to `cap`, after which the rest stay one keystroke away rather than costing
-/// a web view each.
+/// what makes a long conversation readable at all. The focused message and
+/// the unread ones nearest it expand, because that is the part being read —
+/// up to `cap`, after which the rest stay one keystroke away rather than
+/// costing a web view each.
 ///
 /// The focused message always expands, even when it has been read: focus
 /// means "this is the one you are looking at", and looking at a one-line
 /// header is not reading.
+///
+/// # Backwards, since FR-015
+///
+/// This used to walk *forwards* from the focus, which was right while the
+/// pane opened on the first unread: the focus was the start of the run being
+/// read and everything after it was the rest of that run. FR-015 moved the
+/// opening focus to the newest message (#1385), and forwards from the last
+/// message is nothing at all — a six-message thread opened with one body and
+/// five collapsed headers.
+///
+/// So it walks back from the focus instead. The intent is unchanged: the
+/// message you landed on, and the ones a reader would want with it. Under the
+/// old rule those were ahead of you; under the new one they are behind.
 pub fn expanded_on_open(messages: &[Row], focus: usize, cap: usize) -> Vec<bool> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
     let mut expanded = vec![false; messages.len()];
     let mut spent = 0;
-    for (index, message) in messages.iter().enumerate().skip(focus) {
+    for index in (0..=focus.min(messages.len() - 1)).rev() {
         if spent >= cap {
             break;
         }
-        if index == focus || !message.seen {
+        if index == focus || !messages[index].seen {
             expanded[index] = true;
             spent += 1;
         }
@@ -196,39 +227,48 @@ mod tests {
     // -- where the pane opens ---------------------------------------------
 
     #[test]
-    fn a_conversation_opens_on_its_first_unread_message() {
-        // The whole point of the rule: two read, then the one you stopped at.
+    fn a_conversation_opens_on_its_most_recent_message() {
+        // FR-015. Two read, then two unread: the old rule landed on index 2
+        // and this one lands at the end regardless.
         let messages = [
             message(1, true),
             message(2, true),
             message(3, false),
             message(4, false),
         ];
-        assert_eq!(opening_focus(&messages), Some(2));
+        assert_eq!(opening_focus(&messages), Some(3));
     }
 
     #[test]
     fn a_conversation_read_all_the_way_through_opens_on_its_newest() {
-        // There is no first unread, and the end is what you came back for.
         let messages = [message(1, true), message(2, true), message(3, true)];
         assert_eq!(opening_focus(&messages), Some(2));
     }
 
     #[test]
-    fn a_wholly_unread_conversation_opens_at_the_beginning() {
-        // Not at the newest: this is a conversation you have never read, and
-        // reading it from the end backwards is not how anyone reads.
+    fn a_wholly_unread_conversation_still_opens_at_the_end() {
+        // The case the superseded rule was strongest on: it opened at the
+        // beginning, because reading a thread from the end backwards is not
+        // how anyone reads. FR-015 overrides that on purpose -- see
+        // `opening_focus` for the argument, which is recorded rather than
+        // deleted.
         let messages = [message(1, false), message(2, false), message(3, false)];
-        assert_eq!(opening_focus(&messages), Some(0));
+        assert_eq!(opening_focus(&messages), Some(2));
     }
 
     #[test]
-    fn an_unread_message_older_than_a_read_one_still_wins() {
-        // Read state is not monotonic: someone can mark a later message
-        // unread, or read out of order. "First unread" means first, not
-        // "first after the last read one".
-        let messages = [message(1, true), message(2, false), message(3, true)];
-        assert_eq!(opening_focus(&messages), Some(1));
+    fn read_state_does_not_move_the_opening_focus_at_all() {
+        // The old rule read every message's `seen` flag and could land
+        // anywhere. This one reads none of them, so a message marked unread
+        // out of order cannot move where the pane opens.
+        let unread_early = [message(1, true), message(2, false), message(3, true)];
+        let all_read = [message(1, true), message(2, true), message(3, true)];
+        assert_eq!(opening_focus(&unread_early), opening_focus(&all_read));
+    }
+
+    #[test]
+    fn an_empty_conversation_has_nowhere_to_open() {
+        assert_eq!(opening_focus(&[]), None);
     }
 
     #[test]
@@ -239,9 +279,13 @@ mod tests {
     // -- what opens expanded ----------------------------------------------
 
     #[test]
-    fn everything_before_the_focus_stays_collapsed() {
+    fn everything_after_the_focus_stays_collapsed() {
         // Read messages are one line. That is what makes a long conversation
         // readable rather than a wall.
+        //
+        // *After*, not before: the walk reversed with FR-015 (#1385). The
+        // focus is now the newest message rather than the start of the unread
+        // run, so the messages worth opening with it are the ones behind it.
         let messages = [
             message(1, true),
             message(2, true),
@@ -249,7 +293,12 @@ mod tests {
             message(4, false),
         ];
         let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
-        assert_eq!(expanded, vec![false, false, true, true]);
+        assert_eq!(
+            expanded,
+            vec![false, false, true, false],
+            "the focus opens, the read ones behind it stay shut, and the \
+             unread one *after* it is not part of what was landed on"
+        );
     }
 
     #[test]
@@ -257,7 +306,8 @@ mod tests {
         // The cost question. Thirty unread messages is thirty web views, and
         // the cap is what stops the pane from opening one per message.
         let messages: Vec<Row> = (0..30).map(|id| message(id, false)).collect();
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
+        // At the newest, which is where the pane now opens (FR-015).
+        let expanded = expanded_on_open(&messages, 29, EAGER_EXPANSION_CAP);
 
         assert_eq!(
             expanded.iter().filter(|open| **open).count(),
@@ -265,9 +315,10 @@ mod tests {
             "opening a conversation must not cost a web view per message"
         );
         assert!(
-            expanded[..EAGER_EXPANSION_CAP].iter().all(|open| *open),
-            "the ones that do expand are the ones being read, from the focus \
-             forward"
+            expanded[30 - EAGER_EXPANSION_CAP..]
+                .iter()
+                .all(|open| *open),
+            "the ones that do expand are the focus and the ones behind it"
         );
     }
 
@@ -282,11 +333,13 @@ mod tests {
     }
 
     #[test]
-    fn a_read_message_after_the_focus_stays_collapsed() {
-        // Only the focus is expanded unconditionally; past it, unread is what
-        // earns a web view.
+    fn a_read_message_behind_the_focus_stays_collapsed() {
+        // Only the focus is expanded unconditionally; behind it, unread is
+        // what earns a web view. A read message in the middle of the run does
+        // not stop the walk -- it is skipped, and the unread one past it
+        // still opens.
         let messages = [message(1, false), message(2, true), message(3, false)];
-        let expanded = expanded_on_open(&messages, 0, EAGER_EXPANSION_CAP);
+        let expanded = expanded_on_open(&messages, 2, EAGER_EXPANSION_CAP);
         assert_eq!(expanded, vec![true, false, true]);
     }
 
@@ -1572,7 +1625,17 @@ impl ConversationView {
             for divider in imp.dividers.borrow_mut().drain(..) {
                 imp.stack.remove(&divider);
             }
-            imp.focused.set(messages.first().map(|row| row.id));
+            // FR-015: the most recent, through the same rule the stacked
+            // pane uses. This said `messages.first()` -- the *oldest* -- so
+            // the two panes gave opposite answers to one requirement.
+            imp.focused
+                .set(opening_focus(&messages).map(|index| messages[index].id));
+            // The stacked pane marks the rail from `focus_message`, which
+            // this path never calls -- it sets the focus itself and hands the
+            // whole thread to one document. Without this the rail marked
+            // nothing in the pane the rail was designed for.
+            imp.thread_rows.replace(messages.clone());
+            imp.rail.set_marked(self.focused_index());
             imp.header.set_conversation(&messages, chrono::Local::now());
             imp.header.actions().set_visible(true);
             // Always, whatever the length -- unlike the stacked pane below.
@@ -1971,7 +2034,7 @@ impl ConversationView {
     pub fn set_window_width(&self, width: i32) {
         let imp = self.imp();
         imp.rail_width.set(Some(width));
-        let messages = imp.entries.borrow().len();
+        let messages = self.message_count();
         self.apply_rail_ladder(width, messages);
     }
 
@@ -2041,7 +2104,7 @@ impl ConversationView {
         let imp = self.imp();
         imp.rail_hidden.set(!imp.rail_hidden.get());
         let width = self.window_width();
-        let messages = imp.entries.borrow().len();
+        let messages = self.message_count();
         self.apply_rail_ladder(width, messages);
     }
 
@@ -2109,14 +2172,36 @@ impl ConversationView {
         }
     }
 
-    /// Where the focused message sits in the stack.
+    /// Where the focused message sits in the conversation.
+    ///
+    /// Both panes, which is not the same list: the stacked pane keeps an
+    /// `Entry` per message and the one-document pane keeps `thread_rows` and
+    /// no entries at all. Reading only `entries` answered `None` for every
+    /// message of a one-document conversation -- and every caller treats
+    /// `None` as "nothing is focused", so the rail marked nothing and `J`
+    /// started from the beginning.
     pub fn focused_index(&self) -> Option<usize> {
         let focused = self.focused()?;
-        self.imp()
-            .entries
+        let imp = self.imp();
+        let entries = imp.entries.borrow();
+        if !entries.is_empty() {
+            return entries.iter().position(|entry| entry.message == focused);
+        }
+        imp.thread_rows
             .borrow()
             .iter()
-            .position(|entry| entry.message == focused)
+            .position(|row| row.id == focused)
+    }
+
+    /// How many messages the conversation has, in whichever pane is drawing.
+    fn message_count(&self) -> usize {
+        let imp = self.imp();
+        let entries = imp.entries.borrow().len();
+        if entries > 0 {
+            entries
+        } else {
+            imp.thread_rows.borrow().len()
+        }
     }
 
     /// One step through the stack, in draw order.
@@ -2280,18 +2365,39 @@ impl ConversationView {
         });
     }
 
-    /// The first message after the focused one that has no body yet.
+    /// The nearest message to the focused one that has no body yet.
+    ///
+    /// **Behind first, then ahead.** This looked only ahead, which was right
+    /// while the pane opened on the first unread and the gesture was "read
+    /// this one, move down". FR-015 opens it on the *newest* (#1385), where
+    /// there is nothing ahead at all — so the spare was never warmed on open
+    /// and #1216's black flash came back for the first `K`, which is now the
+    /// only way to go.
+    ///
+    /// Ahead is still checked, for the top of a thread and for a reader who
+    /// has walked back and is coming down again.
     fn next_unexpanded(&self) -> Option<MessageId> {
         let imp = self.imp();
         let entries = imp.entries.borrow();
         let focused = imp.focused.get();
-        let from = focused
-            .and_then(|id| entries.iter().position(|entry| entry.message == id))
-            .map_or(0, |index| index + 1);
+        let at = focused.and_then(|id| entries.iter().position(|entry| entry.message == id));
+        let Some(at) = at else {
+            return entries
+                .iter()
+                .find(|entry| !entry.expanded.get())
+                .map(|entry| entry.message);
+        };
         entries
             .iter()
-            .skip(from)
+            .take(at)
+            .rev()
             .find(|entry| !entry.expanded.get())
+            .or_else(|| {
+                entries
+                    .iter()
+                    .skip(at + 1)
+                    .find(|entry| !entry.expanded.get())
+            })
             .map(|entry| entry.message)
     }
 

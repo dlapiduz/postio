@@ -82,7 +82,8 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
     window.present();
     while gtk::glib::MainContext::default().iteration(false) {}
 
-    // Two read, then four unread: opening lands on the third.
+    // Two read, then four unread. Opening used to land on the third -- the
+    // first unread -- and now lands on the last, whatever the read state.
     let messages: Vec<Row> = (0..6).map(|id| message(id, id < 2)).collect();
     pane.open(messages.clone());
     while gtk::glib::MainContext::default().iteration(false) {}
@@ -94,11 +95,15 @@ pub fn the_conversation_pane_stacks_a_thread_and_acts_per_message() {
         "the pane holds the whole conversation, not a window over it"
     );
 
-    // ── focus opens on the first unread, and is drawn ───────────────────
+    // ── focus opens on the most recent message, and is drawn ────────────
+    // FR-015, which supersedes ADR 0015's first-unread rule (#1385). This
+    // asserted `MessageId(2)` -- where reading stopped -- and the argument
+    // for that is recorded in `opening_focus` rather than deleted.
     assert_eq!(
         pane.focused(),
-        Some(MessageId::new(2)),
-        "the pane opens where reading stopped, not at the end"
+        Some(MessageId::new(5)),
+        "the pane opens on the newest message, whether or not earlier ones \
+         are unread"
     );
     assert!(
         pane.is_focus_drawn(),
