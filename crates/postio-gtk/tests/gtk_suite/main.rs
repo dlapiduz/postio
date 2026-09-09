@@ -552,6 +552,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time as fn(),
     ),
     (
+        "gtk_reader_pane_owner::a_page_key_with_no_conversation_open_builds_no_pane",
+        gtk_reader_pane_owner::a_page_key_with_no_conversation_open_builds_no_pane as fn(),
+    ),
+    (
         "gtk_reader_pane_owner::a_second_attach_leaves_two_children_in_the_pane",
         gtk_reader_pane_owner::a_second_attach_leaves_two_children_in_the_pane as fn(),
     ),
