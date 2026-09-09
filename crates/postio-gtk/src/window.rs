@@ -1900,14 +1900,32 @@ impl Window {
             breakpoint.connect_apply(glib::clone!(
                 #[weak(rename_to = window)]
                 self,
-                move |_| window.conversation().set_window_width(below)
+                move |_| window.tell_the_rail_the_width(below)
             ));
             breakpoint.connect_unapply(glib::clone!(
                 #[weak(rename_to = window)]
                 self,
-                move |_| window.conversation().set_window_width(at_or_above)
+                move |_| window.tell_the_rail_the_width(at_or_above)
             ));
             self.add_breakpoint(breakpoint);
+        }
+    }
+
+    /// Pass a width to the conversation pane **if there is one**.
+    ///
+    /// Never through `conversation()`, which builds the pane on first call and
+    /// appends it to the reading slot. A breakpoint applies while the window
+    /// is being presented, so asking that way built a conversation pane in
+    /// every window at startup -- before any conversation was opened, and
+    /// eventually a warm `WebView` with it. `gtk_reader_pane_owner` caught it
+    /// by counting the slot's children.
+    ///
+    /// Nothing is lost by staying quiet: a pane that does not exist has no
+    /// rail to place, and `ConversationView::open` reads the window's width
+    /// itself when it has not been told one.
+    fn tell_the_rail_the_width(&self, width: i32) {
+        if let Some(pane) = self.imp().conversation.get() {
+            pane.set_window_width(width);
         }
     }
 
