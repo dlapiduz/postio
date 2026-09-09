@@ -188,7 +188,23 @@ if [ -n "$RESUME" ]; then
     git -C "$REPO_ROOT" fetch --quiet origin "$RESUME_BRANCH" "$BASE"
     git -C "$REPO_ROOT" branch --quiet -D "$RESUME_BRANCH" 2>/dev/null || true
     git -C "$REPO_ROOT" worktree add --quiet --track -b "$RESUME_BRANCH" "$RESUME_TREE" "origin/$RESUME_BRANCH"
-    printf '%s\n' "$BASE" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
+    # The base comes from the open PR, not from `$BASE`.
+    #
+    # `--base` is a *claim*-time argument and nobody passes it to `--resume`;
+    # they should not have to, since the branch already exists and its PR
+    # already targets something. Taking the default recorded `main` on a
+    # branch claimed with `--base feature/x`, and `issue-land.sh` then refused
+    # to merge -- rightly, because a worktree and a PR that disagree about
+    # where work goes is not a thing to guess about. But the disagreement was
+    # this script's own doing, and the landing that hit it had already run
+    # every gate and pushed (#1401).
+    #
+    # The PR is the unambiguous answer: it is what the work will merge into.
+    # Without one -- a branch pushed and never opened -- `$BASE` is all there
+    # is, and is what was recorded before.
+    RESUME_BASE="$(gh pr list --head "$RESUME_BRANCH" --state open \
+                   --json baseRefName --jq '.[0].baseRefName // empty' 2>/dev/null || true)"
+    printf '%s\n' "${RESUME_BASE:-$BASE}" > "$(git -C "$RESUME_TREE" rev-parse --git-dir)/postio-base"
     mkdir -p "$RESUME_TREE/target/tmp"
     [ -x "$REPO_ROOT/scripts/install-shims.sh" ] && "$REPO_ROOT/scripts/install-shims.sh"
     gh issue edit "$RESUME" --add-assignee @me --add-label in-progress >/dev/null 2>&1 || true
@@ -198,6 +214,7 @@ if [ -n "$RESUME" ]; then
     echo
     echo "  tree:   $RESUME_TREE"
     echo "  branch: $RESUME_BRANCH, tracking origin -- a push updates the PR"
+    echo "  base:   ${RESUME_BASE:-$BASE}${RESUME_BASE:+ (from the PR)}"
     echo
     echo "Fix it there, then scripts/issue-land.sh --detach lands onto the same PR."
     exit 0
