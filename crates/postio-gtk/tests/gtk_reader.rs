@@ -653,6 +653,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     an_allowed_senders_images_survive_the_thread_document();
     the_show_verb_actually_grants_consent();
     a_messages_own_verb_names_that_message();
+    the_shipped_reader_refuses_a_senders_script();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1393,6 +1394,100 @@ fn a_messages_own_verb_names_that_message() {
         vec!["Reply:3".to_owned(), "Forward:9".to_owned()],
         "the verbs reported {named:?}: a message's own action must name that \
          message and its own verb, or it is the header's bar with extra steps"
+    );
+}
+
+/// The reader **as shipped** runs Postio's script and refuses the sender's
+/// (#1367).
+///
+/// #1323 proved the mechanism against a view the test assembled. This is the
+/// different and more important claim: that the reader a person actually gets
+/// — `hardened_settings`, the real scheme handlers, the real CSP — draws the
+/// same line. A posture proven only on a stand-in is a posture nobody has
+/// checked.
+///
+/// `document.title` is the channel because `WebView::title` reads it without
+/// script, so a message that rewrote its own title is caught regardless of
+/// what can be evaluated to ask.
+fn the_shipped_reader_refuses_a_senders_script() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("shipped-script-posture"),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    // Every way a message can carry code, in one body. The sanitizer strips
+    // all three long before the engine sees them -- this is the layer *under*
+    // that, which is the one the setting is responsible for.
+    let hostile = MessageBody {
+        text: None,
+        html: Some(
+            r#"<p onclick="document.title='handler ran'">body</p>
+               <script>document.title = 'script element ran';</script>
+               <img src="postio-cid:missing" onerror="document.title='onerror ran'">
+               <a href="javascript:document.title='href ran'">link</a>"#
+                .to_owned(),
+        ),
+    };
+
+    let finished = track_load_finished(&reader);
+    reader.render(&hostile, Some("stranger@example.org"));
+    wait_for(&finished, Duration::from_secs(5));
+    // The broken image has to fail before `onerror` has had its chance.
+    pump_for(Duration::from_millis(300));
+
+    let title = reader
+        .view()
+        .title()
+        .map(|t| t.to_string())
+        .unwrap_or_default();
+    assert!(
+        !title.contains("ran"),
+        "a message ran its own script in the shipped reader: the title says \
+         {title:?}. `enable_javascript_markup(false)` is the setting that has \
+         to refuse this, and enabling JavaScript for the application has to \
+         not have weakened it"
+    );
+
+    // And the half that makes the change worth making at all.
+    let answer: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let slot = Rc::clone(&answer);
+    reader.view().evaluate_javascript(
+        "'the application still speaks'",
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        move |outcome| {
+            *slot.borrow_mut() = Some(
+                outcome
+                    .map(|value| value.to_str().to_string())
+                    .unwrap_or_default(),
+            );
+        },
+    );
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
+    while answer.borrow().is_none() && Instant::now() < deadline {
+        while glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let injected = answer.borrow_mut().take().unwrap_or_default();
+    window.set_visible(false);
+
+    assert_eq!(
+        injected, "the application still speaks",
+        "the application cannot evaluate script in the shipped reader, so the \
+         rail has no way to learn what is on screen and this posture bought \
+         nothing"
     );
 }
 

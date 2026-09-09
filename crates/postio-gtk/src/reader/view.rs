@@ -1398,10 +1398,32 @@ fn render_open(
     }
 }
 
-/// Every scripting-adjacent `WebKitSettings` flag, turned off.
+/// Every scripting-adjacent `WebKitSettings` flag, turned off — and the one
+/// that is deliberately on.
 ///
-/// JavaScript is the headline, but each of these is a surface JavaScript
-/// being off does not automatically close: WebGL and WebRTC run without a
+/// **Script that arrives in a message never runs. Postio's own does.** Those
+/// are two settings, not one: `enable_javascript_markup(false)` is what
+/// refuses a `<script>` element, an event-handler attribute and a
+/// `javascript:` href in the document, while `enable_javascript(true)` is what
+/// lets the application evaluate its own. The guarantee a user cares about is
+/// the first one, and it is unchanged — a message cannot run code, reach the
+/// network, or observe the reader.
+///
+/// Why the second is on at all: the conversation rail marks the message you
+/// are actually reading, and once a whole conversation is one document those
+/// positions live in coordinates only the engine has.
+/// `document::scroll_markers` moves the document *to* a position without
+/// script; nothing without script can ask where the reader stopped. Decided by
+/// the maintainer on 2026-09-08 (research.md R3), proved as a mechanism in
+/// #1323 and against these settings in #1367.
+///
+/// The document's own `Content-Security-Policy` still sends
+/// `script-src 'none'`, so a sender's script is refused twice: once by the
+/// setting and once by the policy. An injected script is exempt from the
+/// page's CSP, which is why the observer works and the message's does not.
+///
+/// The rest of the list stands unchanged. Each is a surface JavaScript being
+/// off does not automatically close: WebGL and WebRTC run without a
 /// `<script>` tag executing, and the storage APIs persist to disk regardless
 /// of whether anything is currently running to read them back.
 ///
@@ -1412,7 +1434,8 @@ fn render_open(
 /// setter to turn off.
 fn hardened_settings() -> webkit6::Settings {
     let settings = webkit6::Settings::new();
-    settings.set_enable_javascript(false);
+    // On for Postio, off for the sender. See this function's doc comment.
+    settings.set_enable_javascript(true);
     settings.set_enable_javascript_markup(false);
     settings.set_javascript_can_open_windows_automatically(false);
     settings.set_javascript_can_access_clipboard(false);
