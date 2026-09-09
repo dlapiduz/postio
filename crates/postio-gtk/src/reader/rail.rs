@@ -59,7 +59,7 @@ pub struct RailColumn {
 
 impl RailColumn {
     /// An empty rail. Nothing is drawn until
-    /// [`set_thread`](Self::set_thread) says what the conversation is.
+    /// [`show_thread`](Self::show_thread) says what the conversation is.
     pub fn new() -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("postio-rail");
@@ -148,7 +148,7 @@ impl RailColumn {
     /// rail is built from the thread model and every message has a row the
     /// moment the conversation is known (FR-040) — not when its body arrives,
     /// which is the wait the rail exists to let you skip.
-    pub fn set_thread(&self, rows: &[Row]) {
+    pub fn show_thread(&self, rows: &[Row]) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }

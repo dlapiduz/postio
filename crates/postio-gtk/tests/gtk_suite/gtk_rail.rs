@@ -87,7 +87,7 @@ pub fn the_rail_lists_a_thread_and_marks_what_is_on_screen() {
         "TV".to_owned(),
         "ME".to_owned(),
     ];
-    rail.set_thread(&rows(&senders, &initials, &lengths));
+    rail.show_thread(&rows(&senders, &initials, &lengths));
     rail.set_marked(Some(2));
 
     let seen = labels(rail.widget());
@@ -141,7 +141,7 @@ pub fn activating_a_row_reports_the_message_it_names() {
         return;
     };
 
-    rail.set_thread(&rows(
+    rail.show_thread(&rows(
         &["Ada".to_owned(), "Grace".to_owned(), "Katherine".to_owned()],
         &["AD".to_owned(), "GR".to_owned(), "KA".to_owned()],
         &[None, None, None],
