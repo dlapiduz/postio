@@ -53,6 +53,13 @@ allow = [
     # and linking is explicitly permitted. Allowed deliberately rather than by
     # omission.
     #
+    # 2026-09-09, #1326: `cssparser` became a *direct* dependency of
+    # `postio-body`, which now parses a sender's `<style>` block rather than
+    # deleting it. No new crate and no new licence -- ammonia already parses
+    # `style` attributes with the same version, and taking that one rather
+    # than a second CSS parser is the point. The reading above is unchanged;
+    # what changed is that the graph would no longer lose it if ammonia did.
+    #
     # 2026-08-27, ADR 0019: eight more arrived at once -- `uniffi` with its
     # `uniffi_bindgen`, `uniffi_core`, `uniffi_macros`, `uniffi_meta`,
     # `uniffi_udl`, `uniffi_pipeline` and `uniffi_internal_macros`
