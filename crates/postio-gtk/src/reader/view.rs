@@ -1294,6 +1294,25 @@ impl Reader {
             .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{next}"));
     }
 
+    /// Scroll a thread document to one of its messages.
+    ///
+    /// A fragment navigation to the `<details id="m-{scope}">` the thread
+    /// document already gives every message, the same mechanism
+    /// [`page_down`](Self::page_down) uses for its `#pos-N` markers — so it
+    /// costs no reload and no script.
+    ///
+    /// A no-op when the pane is not showing a thread, so the caller does not
+    /// have to ask which pane it is talking to.
+    pub fn scroll_to_message(&self, scope: &str) {
+        if self.open.borrow().is_none() {
+            return;
+        }
+        self.view.load_uri(&format!(
+            "{DOCUMENT_BASE_URI}#{}",
+            postio_ui::reader::thread::message_anchor(scope)
+        ));
+    }
+
     /// Scroll the pane up by about a screenful. See [`Reader::page_down`].
     pub fn page_up(&self) {
         if self.open.borrow().is_none() {

@@ -553,3 +553,47 @@ pub fn a_conversation_opens_on_its_most_recent_message() {
 
     window.close();
 }
+
+pub fn the_rail_moves_the_focus_in_the_one_document_pane() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+    pane.set_one_document(true);
+    pane.open((1..=6).map(message).collect());
+    crate::pump();
+
+    assert_eq!(pane.focused_index(), Some(5), "opens on the newest");
+
+    // A rail row is the pointer's way to move, and it did nothing here: the
+    // pane has no `Entry` per message -- the whole thread is one document --
+    // so every route into focus returned early. The rail could be drawn,
+    // marked and clicked in the one pane it was designed for, and clicking
+    // it moved nothing.
+    pane.rail().activate_row(1);
+    crate::pump();
+    assert_eq!(
+        pane.focused_index(),
+        Some(1),
+        "activating a rail row moves the focus"
+    );
+    assert_eq!(
+        pane.rail().marked_position(),
+        Some(2),
+        "and the mark follows it, through the one entry point"
+    );
+
+    // `J` and `K`, which reach the same place.
+    assert!(pane.focus_next(), "J moves down");
+    assert_eq!(pane.focused_index(), Some(2));
+    assert!(pane.focus_previous(), "K moves back");
+    assert_eq!(pane.focused_index(), Some(1));
+
+    // The ends still stop it.
+    pane.rail().activate_row(5);
+    crate::pump();
+    assert!(!pane.focus_next(), "there is nothing past the newest");
+    assert_eq!(pane.focused_index(), Some(5));
+
+    window.close();
+}

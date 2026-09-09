@@ -1072,6 +1072,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::a_conversation_opens_on_its_most_recent_message as fn(),
     ),
     (
+        "gtk_rail::the_rail_moves_the_focus_in_the_one_document_pane",
+        gtk_rail::the_rail_moves_the_focus_in_the_one_document_pane as fn(),
+    ),
+    (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
         gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one as fn(),
     ),

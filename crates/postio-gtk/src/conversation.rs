@@ -1968,6 +1968,19 @@ impl ConversationView {
     /// collapsed header would be a dead end — you went there to read it — so
     /// jumping expands.
     pub fn focus_message(&self, message: MessageId) {
+        // The one-document pane has no entries -- the whole thread is one
+        // `WebView` (ADR 0032) -- so everything below this, which is about
+        // expanding an entry and scrolling to its widget, has nothing to work
+        // on. It used to fall out of the guard beneath and return, which made
+        // the rail's rows, `J` and `K` all inert in the pane the rail exists
+        // for (#1386).
+        //
+        // Here the same gesture is a scroll of the one document to the
+        // message's own anchor.
+        if self.imp().one_document.get() {
+            self.focus_in_document(message);
+            return;
+        }
         if !self
             .imp()
             .entries
@@ -2011,16 +2024,13 @@ impl ConversationView {
     /// is the whole of the brief's *"one entry point"*: two ways in that each
     /// set the value are two ways to disagree.
     pub fn focus_at(&self, index: usize) -> bool {
-        let entries = self.imp().entries.borrow();
-        let mut rail = Rail::at(entries.len(), self.focused_index());
+        let mut rail = Rail::at(self.message_count(), self.focused_index());
         if rail.activate(index) == Effect::Nothing {
             return false;
         }
-        let Some(landing) = rail.marked() else {
+        let Some(message) = rail.marked().and_then(|at| self.message_at(at)) else {
             return false;
         };
-        let message = entries[landing].message;
-        drop(entries);
         self.focus_message(message);
         true
     }
@@ -2139,6 +2149,28 @@ impl ConversationView {
             .unwrap_or(NARROW_BELOW)
     }
 
+    /// Focus a message in the one-document pane.
+    ///
+    /// Sets the focus, marks the rail from it, scrolls the document to the
+    /// message and runs the focus handlers — the same four things the stacked
+    /// arm does, with the scroll being a fragment navigation rather than a
+    /// widget being brought into view.
+    fn focus_in_document(&self, message: MessageId) {
+        let imp = self.imp();
+        if !imp.thread_rows.borrow().iter().any(|row| row.id == message) {
+            return;
+        }
+        imp.focused.set(Some(message));
+        imp.rail.set_marked(self.focused_index());
+        if let Some(reader) = imp.document_reader.borrow().as_ref() {
+            reader.scroll_to_message(&message.get().to_string());
+        }
+        self.start_dwell(message);
+        for handler in imp.on_focus.borrow().iter() {
+            handler(message);
+        }
+    }
+
     /// Move focus to the next message in the stack — `J`.
     ///
     /// Stops at the end rather than wrapping: a conversation has a first and
@@ -2193,6 +2225,16 @@ impl ConversationView {
             .position(|row| row.id == focused)
     }
 
+    /// The message at `index`, in whichever pane is drawing.
+    fn message_at(&self, index: usize) -> Option<MessageId> {
+        let imp = self.imp();
+        let entries = imp.entries.borrow();
+        if !entries.is_empty() {
+            return entries.get(index).map(|entry| entry.message);
+        }
+        imp.thread_rows.borrow().get(index).map(|row| row.id)
+    }
+
     /// How many messages the conversation has, in whichever pane is drawing.
     fn message_count(&self) -> usize {
         let imp = self.imp();
@@ -2218,11 +2260,11 @@ impl ConversationView {
     /// proven without a display while the same rule in `postio-ui` is
     /// arithmetic — so this asks, and `rail::Rail` answers.
     fn step(&self, by: isize) -> bool {
-        let entries = self.imp().entries.borrow();
-        if entries.is_empty() {
+        let count = self.message_count();
+        if count == 0 {
             return false;
         }
-        let mut rail = Rail::at(entries.len(), self.focused_index());
+        let mut rail = Rail::at(count, self.focused_index());
         let effect = if by > 0 {
             rail.next_message()
         } else {
@@ -2231,11 +2273,9 @@ impl ConversationView {
         if effect == Effect::Nothing {
             return false;
         }
-        let Some(landing) = rail.marked() else {
+        let Some(message) = rail.marked().and_then(|at| self.message_at(at)) else {
             return false;
         };
-        let message = entries[landing].message;
-        drop(entries);
         self.focus_message(message);
         true
     }
