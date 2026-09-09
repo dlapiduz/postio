@@ -1084,6 +1084,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::marking_a_message_read_does_not_redraw_the_conversation as fn(),
     ),
     (
+        "gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows",
+        gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows as fn(),
+    ),
+    (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
         gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one as fn(),
     ),
