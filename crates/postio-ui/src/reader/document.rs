@@ -870,6 +870,14 @@ pub fn senders_stylesheet(styles: &str) -> String {
 /// What the sanitizer already enforces at the DOM level, restated as policy
 /// the rendering engine itself refuses to violate — so a sanitizer bug
 /// degrades to broken markup, not a live request.
+///
+/// **`style-src` names no host, and since #1326 that is load-bearing.** While
+/// `<style>` blocks were deleted unread, a sender had no route to a CSS-borne
+/// fetch at all and this was an unexercised second layer. Postio now serves
+/// stylesheets it parsed, `postio_body::styles` drops `@import` and
+/// `@font-face`, and this is what stands behind that if it ever fails to.
+/// `'unsafe-inline'` is Postio's own sheet and a sender's rewritten one; it
+/// permits no *fetch*, which is the whole distinction.
 pub fn content_security_policy(remote: RemoteImages) -> String {
     let cid = sanitize::CID_SCHEME;
     let img_src = match remote {

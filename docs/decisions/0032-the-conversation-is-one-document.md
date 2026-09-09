@@ -54,14 +54,37 @@ thing anyone will reach for.
 
 The objection to putting several senders' HTML in one document is that they
 contaminate each other: one message's CSS restyles the next, one unclosed
-element swallows the rest. **In Postio they cannot.** `postio-body`'s
-sanitizer already removes `<style>` tag-and-contents and strips every inline
-`style` attribute — *"so postio CSS always wins"* — and parses to a tree rather
-than passing text through. Every message is already rendered under Postio's own
-stylesheet and nothing else.
+element swallows the rest. **In Postio they cannot.**
 
-That is the precondition, and it is already met. It was met for reasons that
-had nothing to do with this.
+> **This paragraph's original reason is no longer true.** It read: the
+> sanitizer "already removes `<style>` tag-and-contents and strips every
+> inline `style` attribute — *so postio CSS always wins*", so every message is
+> rendered under Postio's stylesheet and nothing else. #1325 admitted the
+> inline attribute and #1326 admitted the `<style>` block, so a sender's CSS
+> is no longer absent. **The decision stands; its argument had to be
+> rebuilt.** An ADR whose reasoning is false is worse than one that is merely
+> out of date, because the next person reasons from the reasoning.
+>
+> What holds now, in three parts, each with something that fails when it
+> stops holding:
+>
+> * **A `<style>` block's selectors are rewritten** under the message's own
+>   container before the document is composed (`postio_body::styles`,
+>   #1326), so a rule naming `p` — or naming Postio's own chrome — can match
+>   only inside the message it arrived in.
+> * **Inline declarations are contained** by `sanitize::contain_declarations`
+>   and the refusal tables, which drop what escapes a message's own block.
+> * **`contain_body`'s non-visible overflow** is what actually stops a
+>   `transform` painting over a neighbour (#1346). This one is load-bearing
+>   for containment and not only for the visible edge it was added for
+>   (#323): removing or flattening it looks cosmetic and is not.
+>
+> Parsing to a tree rather than passing text through is unchanged, and still
+> answers the unclosed element.
+
+That is the precondition, and it is met — now by construction rather than by
+accident. It was originally met for reasons that had nothing to do with this,
+which is exactly why it needed re-establishing when those reasons went.
 
 Expansion needs no script either, which matters because the reader runs with
 JavaScript off by construction (ADR 0003). `<details>` and `<summary>` are a
@@ -240,11 +263,15 @@ giving each message its own view. That cost is now part of "one document":
   declarations that escape a message's own block (`position`, `z-index`, and
   the viewport units)
 - `contain_body`'s non-visible overflow, which is what actually stops a
-  `transform` painting over a neighbour (#1326 corrected my claim that an
+  `transform` painting over a neighbour (#1346 corrected my claim that an
   inline style "has no selector therefore no reach")
 - `style-src` naming no source to fetch from, so a sender's stylesheet cannot
-  phone home (#1383) — unexercised today because `<style>` elements are
-  dropped whole, and the only thing standing there the day #1326 admits them
+  phone home (#1383). That day has arrived: #1326 admits `<style>` blocks, so
+  this is no longer an unexercised second layer but a live one, behind
+  `postio_body::styles` refusing `@import` and `@font-face` outright
+- selector rewriting itself (#1326), which is the part the widget tree never
+  needed because a message that owns its own view cannot name anything in
+  anyone else's
 
 Originally: proposed, and deliberately not started. It revisits an accepted ADR, moves a
 surface out of the widget layer, and trades accessibility guarantees for
