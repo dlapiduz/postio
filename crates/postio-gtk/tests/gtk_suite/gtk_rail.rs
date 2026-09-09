@@ -707,3 +707,87 @@ pub fn marking_a_message_read_does_not_redraw_the_conversation() {
 
     window.close();
 }
+
+pub fn the_conversation_header_is_pinned_and_stays_two_rows() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+
+    // A subject far longer than any pane, so "it fits" cannot be why the
+    // header stays one line.
+    let mut messages: Vec<ListRow> = (1..=6).map(message).collect();
+    messages[0].subject = Some("Re: ".to_owned() + &"a very long subject ".repeat(40));
+    pane.open(messages);
+    crate::pump();
+
+    let header = pane.header().widget();
+
+    // ── pinned ───────────────────────────────────────────────────────────
+    // Structurally true today -- the header is appended to the pane's root,
+    // not to the scroller -- and that is exactly the kind of truth a refactor
+    // removes without noticing. Moving it inside the scroller is a one-line
+    // change that looks tidier and compiles. Then a long conversation scrolls
+    // and the header goes with it, so the thread stops saying what it is and
+    // the `latest · all 6` line that explains the verbs' scoping (FR-008a)
+    // scrolls away from the verbs.
+    assert!(
+        header
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .is_none(),
+        "the header is inside a scroller, so it scrolls away from the \
+         conversation it names"
+    );
+
+    // ── two rows, whatever the subject ───────────────────────────────────
+    let rows = {
+        let mut count = 0;
+        let mut child = header.first_child();
+        while let Some(row) = child {
+            count += 1;
+            child = row.next_sibling();
+        }
+        count
+    };
+    assert_eq!(
+        rows, 2,
+        "screen 30's header is two rows: the subject and its verbs, then the \
+         conversation's own line"
+    );
+
+    // ── and the subject truncates rather than wrapping ───────────────────
+    // The label, not the height: this display lays nothing out, so a measured
+    // height would be zero and prove nothing (#1307). Ellipsizing is the
+    // property that keeps the header two rows, and it is a DOM-style fact
+    // about the widget rather than about the layout.
+    let subject = find_label(&header, "conversation-subject").expect("the header draws a subject");
+    assert_eq!(
+        subject.ellipsize(),
+        gtk::pango::EllipsizeMode::End,
+        "a subject longer than the pane would wrap the header taller instead \
+         of truncating"
+    );
+    assert!(
+        !subject.wraps(),
+        "a wrapping subject grows the header however it is ellipsized"
+    );
+
+    window.close();
+}
+
+/// The first label carrying `class` anywhere under `root`.
+fn find_label(root: &gtk::Widget, class: &str) -> Option<gtk::Label> {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>()
+            && label.has_css_class(class)
+        {
+            return Some(label.clone());
+        }
+        if let Some(found) = find_label(&widget, class) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
