@@ -396,6 +396,30 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::ToggleRail,
+        title: "Hide or show the conversation rail",
+        // **Not the `\u{21e7}R` screen 28 draws.** `R` is `Refresh`'s alternate on
+        // every message surface, `MESSAGE_SURFACES` includes the conversation,
+        // and taking the retry key away inside a thread to gain a rail toggle
+        // is a bad trade -- so the drawing loses this one string and the
+        // registry keeps its key (#1375, maintainer's call).
+        //
+        // `I` for index, which is what the rail is: a column saying where you
+        // are in the thread. Shifted like `O` beside it, because it acts on
+        // the whole conversation rather than on the focused message, and free
+        // everywhere else in the table.
+        default_binding: "I",
+        alternate_bindings: &[],
+        // Only where there is a rail. On the list it would be a key that does
+        // nothing, and the choice it toggles is the window's rather than the
+        // conversation's (FR-047) only in the sense that it outlives any one
+        // thread -- there is still no rail to speak about outside one.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
         default_binding: "e",

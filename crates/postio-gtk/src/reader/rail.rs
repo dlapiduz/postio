@@ -104,10 +104,18 @@ impl RailColumn {
         length.set_xalign(0.0);
         footer.append(&length);
 
-        let hide = gtk::Button::with_label("hide rail");
+        // Screen 28 draws this as `hide rail \u{21e7}R`. The key printed on it is
+        // the one string of the control the drawing does not get to decide:
+        // `R` is `Refresh`'s alternate on every message surface, so the rail
+        // is `\u{21e7}I` instead (#1375) and the label says what the registry
+        // actually binds. A control advertising a key that does something
+        // else is worse than one advertising none.
+        let hide = gtk::Button::with_label("hide rail \u{21e7}I");
         hide.add_css_class("postio-rail-hide");
         hide.set_halign(gtk::Align::Start);
-        hide.set_tooltip_text(Some("Hide the conversation rail"));
+        hide.set_tooltip_text(Some(
+            "Hide the conversation rail (\u{21e7}I brings it back)",
+        ));
         footer.append(&hide);
 
         root.append(&footer);

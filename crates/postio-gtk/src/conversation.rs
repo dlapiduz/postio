@@ -1090,7 +1090,7 @@ mod imp {
         /// The conversation rail (#1374), or nothing drawn when the ladder
         /// says this window is too narrow for one.
         pub(super) rail: crate::reader::rail::RailColumn,
-        /// Whether `⇧R` has put the rail away. Per window, not per thread
+        /// Whether `⇧I` has put the rail away. Per window, not per thread
         /// (FR-047), which is why it lives on the pane and not beside the
         /// messages.
         pub(super) rail_hidden: Cell<bool>,
@@ -2252,7 +2252,10 @@ impl ConversationView {
         true
     }
 
-    /// `⇧R`: put the rail away, or bring it back.
+    /// `⇧I`: put the rail away, or bring it back.
+    ///
+    /// The key is `⇧I` and not the `⇧R` screen 28 draws, because `R` is
+    /// `Refresh`'s alternate on every message surface (#1375).
     ///
     /// The choice belongs to the window and outlives the conversation open in
     /// it (FR-047), which is why nothing here touches the thread.
@@ -2264,7 +2267,7 @@ impl ConversationView {
         self.apply_rail_ladder(width, messages);
     }
 
-    /// Whether `⇧R` has the rail put away.
+    /// Whether `⇧I` has the rail put away.
     pub fn rail_hidden(&self) -> bool {
         self.imp().rail_hidden.get()
     }

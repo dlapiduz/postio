@@ -1883,7 +1883,7 @@ impl Window {
     ///
     /// Breakpoints report the band; `postio_ui::reader::rail::presentation`
     /// still decides what to draw, because the ladder is not only about width
-    /// -- a single-message thread and a rail put away with `⇧R` have no rail
+    /// -- a single-message thread and a rail put away with `⇧I` have no rail
     /// at any width, and a breakpoint cannot know either. So these hand over a
     /// width and nothing more, and the thresholds stay in one place.
     fn install_rail_breakpoints(&self) {
@@ -1966,6 +1966,14 @@ impl Window {
             // how much of a conversation is open (#1004).
             CommandId::ExpandAll => {
                 self.conversation().expand_all();
+            }
+            // Same reasoning as `ExpandAll`: the rail belongs to the pane, so
+            // this goes straight there rather than out on the bus. Without
+            // this arm the command resolves, the palette lists it, and
+            // pressing the key does nothing at all -- which is #756's shape
+            // and what `gtk_toggle_rail` exists to catch.
+            CommandId::ToggleRail => {
+                self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),

@@ -15,6 +15,7 @@ prev_in_conversation	K
 toggle_fold	space
 view_original	ctrl+o
 expand_all	O
+toggle_rail	I
 reply	e
 reply_all	E
 forward	f
