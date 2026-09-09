@@ -230,6 +230,57 @@ pub fn a_second_attach_leaves_two_children_in_the_pane() {
     window.destroy();
 }
 
+/// A page key in the list does not build a conversation pane (#1402).
+///
+/// `Window::conversation()` builds the pane on first call and appends it to
+/// the reading slot. #1374 already learned this the expensive way: a
+/// breakpoint asked that way built a conversation pane in every window at
+/// startup, and eventually a warm `WebView` with it. #1402 gives
+/// `ScrollReaderDown` the conversation context, so `space` and `Page_Down`
+/// now run an arm that has to reach the conversation's reader when one is up
+/// -- and must stay quiet when one is not.
+///
+/// Counting the slot's children is what noticed last time, so it is what
+/// notices here.
+pub fn a_page_key_with_no_conversation_open_builds_no_pane() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let reader = window.shell().reader();
+    let before = children_of(&reader);
+
+    // Both directions, and both of `space` and the page keys: the arm is
+    // shared and either one calling `conversation()` mounts the pane.
+    for (key, state) in [
+        ("space", gdk::ModifierType::empty()),
+        ("space", gdk::ModifierType::SHIFT_MASK),
+        ("Page_Down", gdk::ModifierType::empty()),
+        ("Page_Up", gdk::ModifierType::empty()),
+    ] {
+        window.handle_key(gdk::Key::from_name(key).unwrap(), state);
+        pump();
+    }
+
+    assert_eq!(
+        children_of(&reader),
+        before,
+        "a page key built a conversation pane in a window that never opened \
+         a conversation -- reach an existing pane through `imp().conversation`, \
+         never through `conversation()`, which mounts one (#1374, #1402)"
+    );
+
+    window.destroy();
+}
+
 fn children_of(widget: &gtk::Box) -> usize {
     let mut count = 0;
     let mut child = widget.first_child();

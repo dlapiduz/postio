@@ -1929,6 +1929,40 @@ impl Window {
         }
     }
 
+    /// Turn the page of whichever reading surface is up, and build neither.
+    ///
+    /// Both `conversation()` and `reader()` construct their surface on first
+    /// call and append it to the reading slot, so asking either one *whether*
+    /// it wants a page key is enough to mount it. In a window that has opened
+    /// nothing, that means a page key builds a `ConversationView` and a
+    /// `Reader` -- and the `Reader` carries a `WebView`, which is a web
+    /// process. #1374 met the same trap through a breakpoint and
+    /// `gtk_reader_pane_owner` counts the slot's children because of it.
+    ///
+    /// So both are reached through `imp()`, and a window with nothing open
+    /// does nothing at all -- which is also the right answer: there is no
+    /// page to turn.
+    ///
+    /// The conversation goes first because when its pane is up it is the one
+    /// on screen; `ConversationView::page` answers `false` when it is mounted
+    /// but not the surface being read, and then the single-message reader
+    /// takes it.
+    fn page_what_is_on_screen(&self, down: bool) {
+        if let Some(pane) = self.imp().conversation.get()
+            && pane.page(down)
+        {
+            return;
+        }
+        let Some(reader) = self.imp().reader.get() else {
+            return;
+        };
+        if down {
+            reader.page_down();
+        } else {
+            reader.page_up();
+        }
+    }
+
     fn handled_here(&self, id: CommandId) -> bool {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
@@ -2111,16 +2145,8 @@ impl Window {
             // `ViewOriginal` reaches it (#1398). `Window::reader()` is the
             // single-message one, and paging it while a conversation is on
             // screen scrolls a view nobody is looking at (#1402).
-            CommandId::ScrollReaderDown => {
-                if !self.conversation().page(true) {
-                    self.reader().page_down();
-                }
-            }
-            CommandId::ScrollReaderUp => {
-                if !self.conversation().page(false) {
-                    self.reader().page_up();
-                }
-            }
+            CommandId::ScrollReaderDown => self.page_what_is_on_screen(true),
+            CommandId::ScrollReaderUp => self.page_what_is_on_screen(false),
             _ => return false,
         }
         true

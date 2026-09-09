@@ -2344,13 +2344,15 @@ impl ConversationView {
     /// is a state nothing else reaches.
     pub fn toggle_fold(&self) {
         // Nothing folds in the one-document pane -- FR-013 (#1389) puts every
-        // body on screen -- so `space` there would be a dead key on the
-        // surface this application is mostly for. It turns the page instead,
-        // which is what `space` means everywhere else in the interface.
-        if self.imp().one_document.get() {
-            self.page(true);
-            return;
-        }
+        // body on screen -- so this returns having done nothing there, which
+        // is honest: there is no fold to toggle.
+        //
+        // It used to turn the page instead, because `space` was still
+        // folding's key and a dead `space` on the main reading surface was
+        // worse than a surprising one. #1402 settled that properly: `space`
+        // is `ScrollReaderDown`'s now and folding moved to `z`, so the key
+        // that pages is the page-turn command rather than this one wearing a
+        // disguise.
         let Some(focused) = self.focused() else {
             return;
         };
