@@ -40,6 +40,16 @@ use super::document::{Sheet, contain_body, scroll_markers, wrap_document};
 /// The conversation chrome, appended only to a conversation document.
 const THREAD_CSS: &str = include_str!("../../data/thread.css");
 
+/// The scheme a `Show` link uses, intercepted by the frontend rather than
+/// followed.
+///
+/// Its own scheme rather than a fragment or a query: the reader hands every
+/// navigation that leaves the pane to the system browser, so a consent verb
+/// has to be distinguishable from a link the sender wrote *before* that
+/// happens. The sanitizer never emits this scheme from a sender's markup, so
+/// a message cannot forge one.
+pub const ALLOW_SCHEME: &str = "postio-allow";
+
 /// One message's place in a conversation document.
 ///
 /// A single message is a thread of one, expanded — the pane renders both
@@ -110,14 +120,28 @@ fn entry_html(entry: &Entry<'_>) -> String {
     } else {
         String::new()
     };
-    // Said per message because the decision it reports is per sender, even
-    // though this document blocks every one of them — see
-    // `Reader::render_thread` for why one document cannot honour a per-sender
-    // allowance.
+    // Per message, because the decision it reports is per sender — and since
+    // #1353 the document honours that: a sender the user has allowed keeps
+    // their images while the rest of the thread does not.
+    //
+    // The link is the consent. A notice that only *reports* a decision the
+    // user cannot make is not a privacy feature, it is a dead end: blocking
+    // without a way to unblock is the feature missing its other half. With
+    // JavaScript off, a verb inside the document is a navigation, which
+    // `postio_gtk::reader::view` intercepts by scheme.
     let blocked = match entry.blocked {
         0 => String::new(),
-        1 => r#"<div class="postio-blocked">1 remote image blocked</div>"#.to_string(),
-        count => format!(r#"<div class="postio-blocked">{count} remote images blocked</div>"#),
+        count => {
+            let what = if count == 1 {
+                "1 remote image blocked".to_owned()
+            } else {
+                format!("{count} remote images blocked")
+            };
+            format!(
+                r#"<div class="postio-blocked">{what} <a class="postio-blocked-show" href="{ALLOW_SCHEME}:{}">Show</a></div>"#,
+                entry.scope
+            )
+        }
     };
     let body = contain_body(entry.body);
     // A normal string, not a raw one: a raw string cannot be line-continued,
@@ -158,6 +182,56 @@ fn escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_blocked_message_offers_a_way_to_show_its_images() {
+        // A notice that only reports a decision the user cannot make is not a
+        // privacy feature. Blocking without a way to unblock is the feature
+        // missing its other half (#1353).
+        let mut entry = entry("1", "Ada", "<p>hi</p>", true);
+        entry.blocked = 6;
+        let document = conversation_document(
+            &[entry],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(document.contains("6 remote images blocked"));
+        assert!(
+            document.contains(&format!("{ALLOW_SCHEME}:")),
+            "the notice reports the block and offers no way to act on it"
+        );
+    }
+
+    #[test]
+    fn the_show_link_names_the_message_it_belongs_to() {
+        // Per sender, not per thread: allowing one correspondent must not
+        // carry the rest with them, so the verb has to say which message it
+        // is speaking for.
+        let mut first = entry("11", "Ada", "<p>one</p>", true);
+        first.blocked = 1;
+        let mut second = entry("22", "Grace", "<p>two</p>", true);
+        second.blocked = 1;
+        let document = conversation_document(
+            &[first, second],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(document.contains(&format!("{ALLOW_SCHEME}:11")));
+        assert!(document.contains(&format!("{ALLOW_SCHEME}:22")));
+    }
+
+    #[test]
+    fn a_message_with_nothing_held_back_offers_nothing() {
+        let document = conversation_document(
+            &[entry("1", "Ada", "<p>hi</p>", true)],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(
+            !document.contains(ALLOW_SCHEME),
+            "a message that had nothing blocked is offering consent for nothing"
+        );
+    }
+
     use super::*;
 
     fn entry<'a>(scope: &'a str, sender: &'a str, body: &'a str, expanded: bool) -> Entry<'a> {

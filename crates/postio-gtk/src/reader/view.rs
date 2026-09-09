@@ -106,6 +106,10 @@ pub struct Reader {
     // which four verbs it carries.
     actions: Rc<ActionBar>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
+    /// The thread currently drawn, so a `Show` verb inside the document can
+    /// find the message its scope names and the sender that message is from.
+    /// Empty whenever a single message is drawn instead.
+    thread: Rc<RefCell<Vec<ThreadMessage>>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
     /// `None` whenever a body is on screen — the two are exclusive, and
@@ -201,7 +205,12 @@ type PartsRequestedHandler = Box<dyn Fn()>;
 
 /// One message's place in a conversation rendered into a single view.
 ///
+/// `Clone` because the reader keeps the thread it drew: the `Show` verb inside
+/// the document has to re-render after granting consent, and it re-renders the
+/// same messages rather than asking the application for them again.
+///
 /// See [`Reader::render_thread`] and ADR 0032.
+#[derive(Clone)]
 pub struct ThreadMessage {
     /// What this message's `cid:` references are stamped with, and what the
     /// scheme handler routes on. The message id in decimal: unreserved
@@ -320,6 +329,7 @@ impl Reader {
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
+            thread: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
@@ -351,6 +361,53 @@ impl Reader {
         {
             let weak = Rc::downgrade(&reader.reader_notice);
             let view = reader.view.clone();
+            {
+                // The `Show` verb inside a blocked-images notice. Intercepted
+                // here because `handle_decide_policy` hands every navigation that
+                // leaves the pane to the system browser, and a consent verb must
+                // be told apart from a link the sender wrote before that happens.
+                let allowlist = Rc::clone(&reader.allowlist);
+                let thread = Rc::clone(&reader.thread);
+                let document = Rc::clone(&reader.document);
+                let page = Rc::clone(&reader.page);
+                let loads = Rc::clone(&reader.loads);
+                let allowlist_path = allowlist_path.clone();
+                view.connect_decide_policy(move |view, decision, kind| {
+                    if let Some(scope) = allow_scope(decision, kind) {
+                        // Whose consent this is. The scope names a message and the
+                        // message names a sender: allowing "this thread" would be
+                        // a different, worse promise than the one the banner makes.
+                        let sender = thread
+                            .borrow()
+                            .iter()
+                            .find(|message| message.scope == scope)
+                            .map(|message| message.address.clone());
+                        if let Some(sender) = sender {
+                            let mut list = allowlist.borrow_mut();
+                            list.allow(&sender);
+                            if let Err(error) = list.save_to(&allowlist_path) {
+                                glib::g_warning!(
+                                    "postio",
+                                    "could not save the remote-image allow list: {error}"
+                                );
+                            }
+                        }
+                        let messages = thread.borrow().clone();
+                        load_document(
+                            &Canvas {
+                                view,
+                                document: &document,
+                                page: &page,
+                                loads: &loads,
+                            },
+                            &compose_thread_document(&messages, &allowlist),
+                        );
+                        decision.ignore();
+                        return true;
+                    }
+                    handle_decide_policy(view, decision, kind)
+                });
+            }
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             // Weakly, and this is the half that is easy to get wrong: the
@@ -696,81 +753,7 @@ impl Reader {
 
     /// The document a thread composes to, without handing it over.
     fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
-        // Rendered first, and held, because `Entry` borrows the markup.
-        // Reader view is decided per message, from the message, exactly as
-        // `render` decides it for one: bulk mail opens reduced, correspondence
-        // never does. A thread can hold both.
-        let rendered: Vec<postio_ui::reader::document::Rendered> = messages
-            .iter()
-            .map(|message| {
-                let rendering = if postio_ui::reader::document::suits_reader_view(&message.body) {
-                    Rendering::Reader
-                } else {
-                    Rendering::Original
-                };
-                // Per **message**, from its own sender. A conversation holds
-                // several and the decision is per sender (`PRODUCT.md` §21),
-                // so one allowed correspondent must not carry the rest of the
-                // thread with them. This asked for `Blocked` unconditionally,
-                // which threw away a decision the user had already made the
-                // moment the message appeared in a conversation (#1353).
-                let remote = if self.allowlist.borrow().is_allowed(&message.address) {
-                    RemoteImages::Allowed
-                } else {
-                    RemoteImages::Blocked
-                };
-                postio_ui::reader::document::body_html_in(
-                    &message.body,
-                    remote,
-                    rendering,
-                    Some(&message.scope),
-                )
-            })
-            .collect();
-        let entries: Vec<postio_ui::reader::thread::Entry<'_>> = messages
-            .iter()
-            .zip(&rendered)
-            .map(|(message, rendered)| postio_ui::reader::thread::Entry {
-                scope: &message.scope,
-                sender: &message.sender,
-                address: &message.address,
-                when: &message.when,
-                preview: &message.preview,
-                expanded: message.expanded,
-                latest: message.latest,
-                blocked: rendered.held_back.remote_images,
-                body: &rendered.html,
-            })
-            .collect();
-
-        // The document's `Content-Security-Policy` is one policy for the whole
-        // page, and there is no per-message form of it -- which is exactly the
-        // limitation ADR 0032 names: "a document-level network policy cannot
-        // express [per-sender], so the distinction has to move into how each
-        // message's images are addressed".
-        //
-        // So it opens only when some message in the thread is from a sender
-        // the user allowed, and the *sanitizer* is what keeps the others out:
-        // a blocked sender's `src` is dropped before the markup is composed,
-        // and the assertion in `gtk_reader` that a stranger's image is absent
-        // is what holds that line.
-        //
-        // Worth saying plainly rather than leaving implied: for such a
-        // document the CSP is no longer a second, independent refusal. It is
-        // still the only refusal for every thread where nobody is allowed,
-        // which is the ordinary case.
-        let anyone_allowed = messages
-            .iter()
-            .any(|message| self.allowlist.borrow().is_allowed(&message.address));
-        postio_ui::reader::thread::conversation_document(
-            &entries,
-            if anyone_allowed {
-                RemoteImages::Allowed
-            } else {
-                RemoteImages::Blocked
-            },
-            postio_ui::reader::document::Sheet::Theme,
-        )
+        compose_thread_document(messages, &self.allowlist)
     }
 
     /// Whether [`render_thread`](Self::render_thread) would change anything.
@@ -799,6 +782,7 @@ impl Reader {
     /// is real work (ADR 0032 says so) and it is not what this experiment is
     /// measuring, so the whole document is `Blocked` and says so.
     pub fn render_thread(&self, messages: &[ThreadMessage]) {
+        self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
         self.absent.set(None);
         self.decode_notice.set_visible(false);
@@ -1217,6 +1201,93 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
     canvas.page.set(0);
 }
 
+/// The whole thread as one document.
+///
+/// A free function over the allow list rather than a method, for the reason
+/// `render_open` is one: the `Show` verb inside the document has to be able
+/// to re-render after granting consent, and a closure that held the whole
+/// `Reader` to do it would hold the widget that owns the closure.
+fn compose_thread_document(
+    messages: &[ThreadMessage],
+    allowlist: &RefCell<RemoteImageAllowList>,
+) -> String {
+    // Rendered first, and held, because `Entry` borrows the markup.
+    // Reader view is decided per message, from the message, exactly as
+    // `render` decides it for one: bulk mail opens reduced, correspondence
+    // never does. A thread can hold both.
+    let rendered: Vec<postio_ui::reader::document::Rendered> = messages
+        .iter()
+        .map(|message| {
+            let rendering = if postio_ui::reader::document::suits_reader_view(&message.body) {
+                Rendering::Reader
+            } else {
+                Rendering::Original
+            };
+            // Per **message**, from its own sender. A conversation holds
+            // several and the decision is per sender (`PRODUCT.md` §21),
+            // so one allowed correspondent must not carry the rest of the
+            // thread with them. This asked for `Blocked` unconditionally,
+            // which threw away a decision the user had already made the
+            // moment the message appeared in a conversation (#1353).
+            let remote = if allowlist.borrow().is_allowed(&message.address) {
+                RemoteImages::Allowed
+            } else {
+                RemoteImages::Blocked
+            };
+            postio_ui::reader::document::body_html_in(
+                &message.body,
+                remote,
+                rendering,
+                Some(&message.scope),
+            )
+        })
+        .collect();
+    let entries: Vec<postio_ui::reader::thread::Entry<'_>> = messages
+        .iter()
+        .zip(&rendered)
+        .map(|(message, rendered)| postio_ui::reader::thread::Entry {
+            scope: &message.scope,
+            sender: &message.sender,
+            address: &message.address,
+            when: &message.when,
+            preview: &message.preview,
+            expanded: message.expanded,
+            latest: message.latest,
+            blocked: rendered.held_back.remote_images,
+            body: &rendered.html,
+        })
+        .collect();
+
+    // The document's `Content-Security-Policy` is one policy for the whole
+    // page, and there is no per-message form of it -- which is exactly the
+    // limitation ADR 0032 names: "a document-level network policy cannot
+    // express [per-sender], so the distinction has to move into how each
+    // message's images are addressed".
+    //
+    // So it opens only when some message in the thread is from a sender
+    // the user allowed, and the *sanitizer* is what keeps the others out:
+    // a blocked sender's `src` is dropped before the markup is composed,
+    // and the assertion in `gtk_reader` that a stranger's image is absent
+    // is what holds that line.
+    //
+    // Worth saying plainly rather than leaving implied: for such a
+    // document the CSP is no longer a second, independent refusal. It is
+    // still the only refusal for every thread where nobody is allowed,
+    // which is the ordinary case.
+    let anyone_allowed = messages
+        .iter()
+        .any(|message| allowlist.borrow().is_allowed(&message.address));
+    postio_ui::reader::thread::conversation_document(
+        &entries,
+        if anyone_allowed {
+            RemoteImages::Allowed
+        } else {
+            RemoteImages::Blocked
+        },
+        postio_ui::reader::document::Sheet::Theme,
+    )
+}
+
 /// Re-render whatever is in `open` at `remote`'s policy, and put the banner
 /// in step with the result.
 ///
@@ -1341,6 +1412,27 @@ fn hardened_settings() -> webkit6::Settings {
 fn leaves_the_pane(kind: webkit6::PolicyDecisionType, navigation: webkit6::NavigationType) -> bool {
     kind != webkit6::PolicyDecisionType::Response
         && navigation == webkit6::NavigationType::LinkClicked
+}
+
+/// The message scope a `Show` link names, if this navigation is one.
+///
+/// Matched on the scheme rather than on the link's text or class: the sender
+/// controls both of those and controls neither the scheme the sanitizer emits
+/// nor the one it refuses to pass through.
+fn allow_scope(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<String> {
+    if kind != webkit6::PolicyDecisionType::NavigationAction {
+        return None;
+    }
+    let uri = decision
+        .downcast_ref::<webkit6::NavigationPolicyDecision>()?
+        .navigation_action()?
+        .request()?
+        .uri()?;
+    uri.strip_prefix(&format!("{}:", postio_ui::reader::thread::ALLOW_SCHEME))
+        .map(str::to_owned)
 }
 
 fn handle_decide_policy(
