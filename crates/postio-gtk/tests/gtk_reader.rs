@@ -646,6 +646,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     rendering_the_next_message_keeps_the_web_process();
     each_reader_costs_a_web_process_of_its_own();
     fifty_conversations_hold_what_one_holds();
+    the_pane_is_painted_before_it_has_a_document();
     sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
@@ -1890,6 +1891,82 @@ fn fifty_conversations_hold_what_one_holds() {
         "fifty conversations hold more surfaces than one. That is the flat \
          line ADR 0032 was accepted on, and a leak of one surface per \
          conversation is fifty web processes by the end of a morning"
+    );
+
+    window.destroy();
+}
+
+/// The pane is painted before it has anything to show (#1414, FR-060).
+///
+/// #749's black flash is a frame of *unpainted view* between one document
+/// going and the next arriving. What prevents it is `paint_ground` on the
+/// `WebView` at construction — before any document exists — so the widget
+/// carries the theme ground from the moment it is built and a load has
+/// nothing black to show through.
+///
+/// # What this cannot see, and does not claim
+///
+/// Not "no frame was black". This suite's display lays nothing out and paints
+/// nothing, so any assertion about what was on screen *during* a load would be
+/// fiction (#1307). The mechanism is a widget property, and that is real: the
+/// view carries the ground before its first render and still carries it after
+/// one, so a load cannot leave it unpainted.
+///
+/// #1343 locked the neighbouring thing — a palette value gdk cannot parse
+/// failing loudly rather than silently — and the ground asserted elsewhere in
+/// this file is the *document's*, inside a page that has already loaded.
+/// Neither covers the widget before there is a page at all, which is the
+/// moment the flash happens.
+fn the_pane_is_painted_before_it_has_a_document() {
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("painted-before-loading"),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let dark = adw::StyleManager::default().is_dark();
+    let expected: gtk::gdk::RGBA = document::reader_ground(dark)
+        .parse()
+        .expect("the generated palette parses -- #1343 is what says so loudly");
+
+    let painted = reader.view().background_color();
+    assert_eq!(
+        painted, expected,
+        "a reader that has never rendered is unpainted, so the first load has \
+         a black frame to show through -- which is #749"
+    );
+
+    // And a load does not clear it: the flash is *between* documents, so the
+    // ground has to survive the one that just went.
+    let finished = track_load_finished(&reader);
+    reader.render(
+        &MessageBody {
+            text: Some("a message".to_owned()),
+            html: None,
+        },
+        None,
+    );
+    wait_for(&finished, Duration::from_secs(5));
+    assert_eq!(
+        reader.view().background_color(),
+        expected,
+        "rendering cleared the widget ground, so the *next* message loads over \
+         an unpainted view"
+    );
+
+    // The palette is two grounds, so this is about the theme rather than about
+    // any colour at all: an assertion that passed for both would not be
+    // asserting the ground.
+    assert_ne!(
+        document::reader_ground(true),
+        document::reader_ground(false),
+        "light and dark share a ground, so the assertions above cannot tell \
+         the palette from a coincidence"
     );
 
     window.destroy();
