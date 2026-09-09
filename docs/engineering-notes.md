@@ -3354,6 +3354,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [Where 475 gigabytes went](notes/2026-09-09-where-475-gigabytes-went.md) — a full disk reports itself as a compile error; cargo never prunes `deps/`; and `git cherry`, not shas, is what tells a landed worktree from a live one (2026-09-09, #1428)
 - 2026-08-25 — [A slow query whose SQL is fast is measuring the machine (#500)](notes/2026-08-25-a-slow-query-whose-sql-is-fast-is-measuring-the-machine.md)
 - 2026-08-28 — [Encrypting the store, and the things it made visible (2026-08-28, #610/#300)](notes/2026-08-28-encrypting-the-store-and-the-things-it-made-visible.md)
 - 2026-08-28 — [Cross-platform dependencies and what a Linux box can prove (2026-08-28, #642)](notes/2026-08-28-cross-platform-dependencies-and-what-a-linux-box-can-prove.md)

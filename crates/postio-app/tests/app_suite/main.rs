@@ -135,6 +135,10 @@ const CASES: &[(&str, fn())] = &[
         composer_warm::the_window_warms_its_editing_surface_without_being_asked as fn(),
     ),
     (
+        "one_document_conversation::an_open_message_says_who_it_went_to",
+        one_document_conversation::an_open_message_says_who_it_went_to as fn(),
+    ),
+    (
         "one_document_conversation::a_conversation_opens_as_one_document_without_being_asked",
         one_document_conversation::a_conversation_opens_as_one_document_without_being_asked as fn(),
     ),

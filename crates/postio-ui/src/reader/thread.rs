@@ -107,6 +107,18 @@ pub struct Entry<'a> {
     /// The message's body: already rendered *and already sanitised under
     /// [`scope`](Self::scope)*.
     pub body: &'a str,
+    /// Who it went to, already drawn by
+    /// [`crate::reader::header::recipient_line`] -- "Ada, Bob and 197
+    /// others".
+    ///
+    /// Per message, not per thread: a conversation's messages go to different
+    /// people, and the one that added two hundred recipients is the one worth
+    /// noticing before reply-all. The stacked pane drew this on every
+    /// expanded entry, and one document has to keep it or the default pane
+    /// says less than the pane it replaced (#1427).
+    ///
+    /// Empty when there are none, and then nothing is drawn.
+    pub recipients: &'a str,
     /// This message's own stylesheets, scoped to it
     /// (`postio_body::sanitize::Sanitized::styles`). Empty for most mail.
     ///
@@ -221,6 +233,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
+    let recipients = recipients_html(entry.recipients);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
     // `the_markup_is_well_formed` caught.
@@ -233,7 +246,23 @@ fn entry_html(entry: &Entry<'_>) -> String {
          {latest}\
          <span class=\"postio-when\">{when}</span>\
          {actions}\
-         </summary>{blocked}{body}</details>"
+         </summary>{recipients}{blocked}{body}</details>"
+    )
+}
+
+/// The `to` line of one message, or nothing when it has no recipients.
+///
+/// Outside the `<summary>` on purpose: the summary is what a *collapsed*
+/// message shows, and it already carries sender, preview, date and the verbs.
+/// Who it went to belongs with the message you have opened, which is where
+/// the stacked pane drew it too.
+fn recipients_html(recipients: &str) -> String {
+    if recipients.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        "<div class=\"postio-message-recipients\">{}</div>",
+        escape(recipients)
     )
 }
 
@@ -325,6 +354,7 @@ mod tests {
             latest: false,
             blocked: 0,
             styles: "",
+            recipients: "",
             body,
         }
     }

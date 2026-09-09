@@ -58,6 +58,7 @@ pub fn one_senders_stylesheet_cannot_restyle_another_message() {
             blocked: 0,
             body,
             styles,
+            recipients: "",
         }
     }
     // Selected through the containers Postio itself writes: ammonia drops a
