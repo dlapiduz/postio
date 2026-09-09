@@ -89,6 +89,8 @@ command_ids! {
     ViewOriginal => "view_original",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
+    /// Put the conversation rail away, or bring it back.
+    ToggleRail => "toggle_rail",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -393,6 +395,16 @@ pub enum Command {
     /// No payload: it means the conversation on screen, which is the only
     /// one there is.
     ExpandAll,
+    /// Put the conversation rail away, or bring it back (#1375).
+    ///
+    /// No payload, and a toggle rather than a hide: the control that hides
+    /// the rail lives *inside* it, so once it is away this is the only route
+    /// back. A one-way `HideRail` would make hiding irreversible for the
+    /// session.
+    ///
+    /// The choice belongs to the window and outlives the conversation open in
+    /// it (FR-047), which is why nothing here names a thread.
+    ToggleRail,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -744,6 +756,7 @@ impl Command {
             Command::ToggleFold => CommandId::ToggleFold,
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ExpandAll => CommandId::ExpandAll,
+            Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -835,6 +848,7 @@ impl Command {
             CommandId::ToggleFold => Command::ToggleFold,
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ExpandAll => Command::ExpandAll,
+            CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },

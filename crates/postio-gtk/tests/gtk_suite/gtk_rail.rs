@@ -295,7 +295,7 @@ pub fn hiding_the_rail_outlasts_the_conversation_and_the_width() {
     assert!(pane.rail().widget().is_visible());
 
     pane.toggle_rail();
-    assert!(pane.rail_hidden(), "shift-R puts the rail away");
+    assert!(pane.rail_hidden(), "shift-I puts the rail away");
     assert!(!pane.rail().widget().is_visible());
 
     // FR-047: the choice belongs to the window. Neither widening it nor
@@ -314,7 +314,7 @@ pub fn hiding_the_rail_outlasts_the_conversation_and_the_width() {
     pane.toggle_rail();
     assert!(
         pane.rail().widget().is_visible(),
-        "and shift-R brings it back"
+        "and shift-I brings it back"
     );
 
     window.close();

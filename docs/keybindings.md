@@ -58,6 +58,7 @@ command from inside a text field.
 | `space` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `O` | Expand all | Conversation |  | `expand_all` |
+| `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` | Forward | List, conversation, reader, composer |  | `forward` |

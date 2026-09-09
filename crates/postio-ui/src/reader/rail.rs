@@ -168,7 +168,7 @@ pub const NARROW_BELOW: i32 = 1240;
 /// Which presentation a window of `width` gets, if any.
 ///
 /// `None` means no rail and no counter at all — a single-message conversation
-/// has nothing to index (FR-045), and `hidden` is the reader's own `⇧R`
+/// has nothing to index (FR-045), and `hidden` is the reader's own `⇧I`
 /// choice, which belongs to the window rather than to the conversation open in
 /// it (FR-047).
 ///
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn hiding_the_rail_holds_at_every_width() {
-        // FR-047: `⇧R` is a decision about this window, and widening the
+        // FR-047: `⇧I` is a decision about this window, and widening the
         // window is not a request to undo it.
         for width in [900, 1200, 1600] {
             assert_eq!(presentation(width, 6, true), None, "at {width}px");

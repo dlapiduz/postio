@@ -143,6 +143,7 @@ mod gtk_sidebar_tree;
 mod gtk_signature_placement;
 mod gtk_style;
 mod gtk_toast;
+mod gtk_toggle_rail;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
@@ -820,6 +821,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_style::the_generated_stylesheet_works_in_gtk",
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
+    ),
+    (
+        "gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back",
+        gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back as fn(),
     ),
     (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
