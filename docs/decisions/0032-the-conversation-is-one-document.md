@@ -202,11 +202,49 @@ both modes. Worth landing whether or not this proposal is ever accepted.
 
 ## Status
 
-Still **Proposed**, and now built enough to be judged rather than argued
-about. What has not happened is the thing this ADR says should decide it — a
-screen-reader pass over an HTML conversation, against the widget tree it would
-replace. There is now something to run Orca against; that is the next step, and
-it may end this proposal.
+Still **Proposed** (reviewed 2026-09-09), and now built, measured and depended
+on — but **not** accepted, because the thing this ADR names as deciding it has
+still not happened: a screen-reader pass over an HTML conversation, against the
+widget tree it would replace.
+
+That is deliberate. Orca is a person's to run (`/gtk-design`), and this ADR
+trades an accessibility guarantee for performance; letting the measurements
+alone carry it to Accepted would be answering the easy half of its own
+question. Everything below is what an agent could settle. **The outstanding
+gate is a human's.**
+
+### What has been settled since (2026-09-09)
+
+The cost question, which the proposal left open, is answered. #1348 measured
+both panes with one instrument, in Pss rather than RSS — the first attempt
+reported 7.3 GB, mostly the same pages counted fifty times:
+
+| | one document | a view per message |
+|---|---|---|
+| memory | flat, ~101 MiB | ~31 MiB per message, 1559 MiB at fifty |
+| time to show a thread | 47–102 ms | up to 1.34 s at fifty |
+
+The pane is what `specs/001-conversation-reading-pane/` builds on, and several
+of its requirements now depend on this shape: FR-013 (every body visible) is
+only affordable because of the flat line above, and FR-015, the conversation
+rail and the per-message verbs are all built against one document.
+
+### Amendment: containment is not free
+
+The proposal assumed the sender's markup arrived stripped of styling. #1325
+admitted the inline `style` attribute, so a document holding several senders
+has to contain what their CSS can reach — which the widget tree got for free by
+giving each message its own view. That cost is now part of "one document":
+
+- `sanitize::contain_declarations` and the refusal table, which drop the
+  declarations that escape a message's own block (`position`, `z-index`, and
+  the viewport units)
+- `contain_body`'s non-visible overflow, which is what actually stops a
+  `transform` painting over a neighbour (#1326 corrected my claim that an
+  inline style "has no selector therefore no reach")
+- `style-src` naming no source to fetch from, so a sender's stylesheet cannot
+  phone home (#1383) — unexercised today because `<style>` elements are
+  dropped whole, and the only thing standing there the day #1326 admits them
 
 Originally: proposed, and deliberately not started. It revisits an accepted ADR, moves a
 surface out of the widget layer, and trades accessibility guarantees for
