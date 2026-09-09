@@ -60,6 +60,21 @@ pub const REPLY_SCHEME: &str = "postio-reply";
 /// The scheme a per-message `Forward` uses. See [`REPLY_SCHEME`].
 pub const FORWARD_SCHEME: &str = "postio-forward";
 
+/// The element id a message carries, so a pane can scroll to it.
+///
+/// One function rather than two format strings, because the id and the
+/// fragment that navigates to it have to agree and nothing would say so if
+/// they stopped: a `#m-3` aimed at a document with no `m-3` scrolls nowhere,
+/// silently, and looks exactly like a message that happens to be on screen
+/// already (#1386).
+///
+/// Takes the scope raw and escapes it here, for the same reason: an escape
+/// applied on one side and not the other is the same silent mismatch wearing
+/// a different hat.
+pub fn message_anchor(scope: &str) -> String {
+    format!("m-{}", escape(scope))
+}
+
 /// One message's place in a conversation document.
 ///
 /// A single message is a thread of one, expanded — the pane renders both
@@ -120,7 +135,6 @@ pub fn conversation_document(entries: &[Entry<'_>], remote: RemoteImages, sheet:
 
 fn entry_html(entry: &Entry<'_>) -> String {
     let open = if entry.expanded { " open" } else { "" };
-    let scope = escape(entry.scope);
     let sender = escape(entry.sender);
     let address = escape(entry.address);
     let when = escape(entry.when);
@@ -173,15 +187,24 @@ fn entry_html(entry: &Entry<'_>) -> String {
          aria-label=\"Forward {sender}&#39;s message\" \
          title=\"Forward {sender}&#39;s message\">Forward</a>\
          </span>",
-        scope = entry.scope,
+        // Escaped. It was not, and a scope carrying a quote closed the
+        // `href` and put whatever followed it into the tag as an attribute
+        // -- found by `an_anchor_cannot_break_out_of_the_attribute_it_sits_in`
+        // while proving the *anchor* was safe. Not reachable today, because a
+        // scope is a message's own database id and `enable_javascript_markup`
+        // is off besides; a link that builds an attribute out of an
+        // unescaped value is still a link waiting for the day one of those
+        // stops being true.
+        scope = escape(entry.scope),
         sender = sender,
     );
     let body = contain_body(entry.body);
+    let anchor = message_anchor(entry.scope);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
     // `the_markup_is_well_formed` caught.
     format!(
-        "<details class=\"postio-message\" id=\"m-{scope}\"{open}>\
+        "<details class=\"postio-message\" id=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
          <span class=\"postio-from\">{sender}</span>\
          <span class=\"postio-address\">{address}</span>\
@@ -456,5 +479,37 @@ mod tests {
         assert!(document.contains("Content-Security-Policy"));
         assert!(document.contains("img-src postio-cid: data:;"));
         assert!(document.contains("base-uri 'none'"));
+    }
+
+    #[test]
+    fn an_anchor_cannot_break_out_of_the_attribute_it_sits_in() {
+        // The document writes this into `id="…"` and a pane navigates to it.
+        // A scope carrying a quote would close the attribute and everything
+        // after it would be markup the sender wrote.
+        //
+        // Asserting the *pair* -- that the document contains what the helper
+        // produces -- would prove nothing: both sides call this function, so
+        // they agree by construction and the assertion cannot fail. This is
+        // the part construction does not give for free.
+        let hostile = r#"1" onmouseover="steal()"#;
+        let anchor = message_anchor(hostile);
+        assert!(
+            !anchor.contains('"'),
+            "an anchor with a bare quote in it escapes its attribute: {anchor}"
+        );
+
+        let document = conversation_document(
+            &[entry(hostile, "Ada", "<p>one</p>", true)],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(
+            !document.contains("onmouseover=\"steal()"),
+            "the sender's attribute survived into the document: {document}"
+        );
+        assert!(
+            document.contains(&format!("id=\"{anchor}\"")),
+            "and the message still has an anchor to scroll to: {document}"
+        );
     }
 }
