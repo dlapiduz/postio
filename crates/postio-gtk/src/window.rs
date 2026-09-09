@@ -2099,8 +2099,20 @@ impl Window {
             // (#438) is the reader's own business the same way the parts
             // panel's cursor is -- nothing outside this window needs to hear
             // about it.
-            CommandId::ScrollReaderDown => self.reader().page_down(),
-            CommandId::ScrollReaderUp => self.reader().page_up(),
+            // The conversation's own reader when that pane is up, the way
+            // `ViewOriginal` reaches it (#1398). `Window::reader()` is the
+            // single-message one, and paging it while a conversation is on
+            // screen scrolls a view nobody is looking at (#1402).
+            CommandId::ScrollReaderDown => {
+                if !self.conversation().page(true) {
+                    self.reader().page_down();
+                }
+            }
+            CommandId::ScrollReaderUp => {
+                if !self.conversation().page(false) {
+                    self.reader().page_up();
+                }
+            }
             _ => return false,
         }
         true
