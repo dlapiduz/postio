@@ -2308,6 +2308,19 @@ button.postio-compose-more {
   color: var(--postio-dim);
 }
 
+/* `latest · all 6`, at row two's trailing edge (canvas screen 30).
+
+   Mono like the meta line beside it, because it is metadata about what the
+   verbs above will act on rather than prose. Dimmer than that line: it
+   qualifies the bar, and a note competing with the count it sits beside would
+   read as a second fact rather than a footnote to one. The brief calls it
+   "terse" and the wording carries the weight -- the type should not. */
+.conversation-scoping {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-faint);
+}
+
 /* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
 .conversation-divider {
   padding: var(--postio-space-2) var(--postio-space-4);

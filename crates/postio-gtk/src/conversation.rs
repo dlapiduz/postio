@@ -525,24 +525,38 @@ pub struct Header {
     subject: gtk::Label,
     meta: gtk::Label,
     expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
+    /// The conversation's verbs, at row one's trailing edge (canvas screen 30).
+    actions: std::rc::Rc<crate::widgets::ActionBar>,
+    /// Row two's trailing note: `latest · all 6`.
+    ///
+    /// Required rather than decorative. The bar's verbs are scoped two
+    /// different ways — reply to the latest message, archive to the whole
+    /// conversation — and the brief is explicit that this "is not obvious, so
+    /// the scoping note in row 2 is required".
+    scoping: gtk::Label,
 }
 
 impl Header {
     /// Build the header, empty.
     pub fn new() -> Self {
-        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        // Two rows, each with its own trailing element, rather than one row
+        // of [titles | button]: canvas screen 30 puts the action cluster
+        // beside the *subject* and the scoping note beside the *meta line*,
+        // which a single trailing column spanning both rows cannot express.
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
         root.add_css_class("conversation-header");
         root.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        titles.set_hexpand(true);
+        let first = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let second = gtk::Box::new(gtk::Orientation::Horizontal, 8);
 
         let subject = gtk::Label::new(None);
         subject.set_xalign(0.0);
         subject.set_wrap(false);
         subject.set_ellipsize(gtk::pango::EllipsizeMode::End);
         subject.add_css_class("conversation-subject");
-        titles.append(&subject);
+        subject.set_hexpand(true);
+        first.append(&subject);
 
         let meta = gtk::Label::new(None);
         meta.set_xalign(0.0);
@@ -551,8 +565,8 @@ impl Header {
         meta.set_wrap(false);
         meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
         meta.add_css_class("conversation-meta");
-        titles.append(&meta);
-        root.append(&titles);
+        meta.set_hexpand(true);
+        second.append(&meta);
 
         let expand_all = std::rc::Rc::new(crate::widgets::KeycapButton::new(
             Some(postio_core::CommandId::ExpandAll),
@@ -561,13 +575,69 @@ impl Header {
             false,
         ));
         crate::widgets::KeycapButton::arm(&expand_all);
-        root.append(&expand_all.widget());
+        first.append(&expand_all.widget());
+
+        let actions =
+            crate::widgets::ActionBar::new(&DOCUMENT_ACTIONS, "conversation-header-actions");
+        actions.set_visible(false);
+        first.append(&actions.widget());
+
+        let scoping = gtk::Label::new(None);
+        scoping.set_wrap(false);
+        scoping.add_css_class("conversation-scoping");
+        scoping.set_visible(false);
+        second.append(&scoping);
+
+        root.append(&first);
+        root.append(&second);
 
         Header {
             root,
             subject,
             meta,
             expand_all,
+            actions,
+            scoping,
+        }
+    }
+
+    /// The conversation's verbs. Wired and shown by the pane that owns them.
+    pub fn actions(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
+        std::rc::Rc::clone(&self.actions)
+    }
+
+    /// Say what each verb will act on, in words and in the scoping note.
+    ///
+    /// Spec FR-008a. The bar's verbs are scoped two ways — reply, reply all
+    /// and forward to the latest message, archive to the whole conversation —
+    /// and a user reading the third message of six who presses Reply gets a
+    /// reply to the sixth. The only thing that makes that safe is the
+    /// interface saying so before they press it.
+    ///
+    /// The wording comes from `postio_ui`, so the macOS bar says the same
+    /// thing rather than inventing its own phrasing.
+    fn describe_actions(&self, messages: usize) {
+        use postio_ui::reader::header::ReaderAction;
+
+        for (verb, action) in ReaderAction::ALL.iter().zip(DOCUMENT_ACTIONS.iter()) {
+            let Some(button) = self.actions.button(action.command) else {
+                continue;
+            };
+            let described = verb.describe(messages);
+            button.widget().set_tooltip_text(Some(&described));
+            button
+                .widget()
+                .update_property(&[gtk::accessible::Property::Label(&described)]);
+        }
+
+        // `latest · all 6` — the terse form the brief asks for, and only where
+        // there is a distinction to draw. One message is not a conversation
+        // and saying so would imply others exist.
+        if messages > 1 {
+            self.scoping.set_visible(true);
+            self.scoping.set_label(&format!("latest · all {messages}"));
+        } else {
+            self.scoping.set_visible(false);
         }
     }
 
@@ -591,6 +661,7 @@ impl Header {
         // button would be offered with nothing left to do (#1173). The same
         // n=1 surface as the footer standing down.
         self.expand_all.widget().set_visible(rows.len() > 1);
+        self.describe_actions(rows.len());
         self.subject.set_label(
             rows.iter()
                 .find_map(|row| row.subject.as_deref())
@@ -686,8 +757,6 @@ mod imp {
         /// `Archive thread`, pinned below — where the thread's own verbs
         /// live, as against the per-message ones inside each entry (#1006).
         pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
-        /// The one-document pane's bar. See [`super::DOCUMENT_ACTIONS`].
-        pub(super) document_footer: std::rc::Rc<crate::widgets::ActionBar>,
         /// Who to ask to run a `CommandId` one of this pane's bars carries.
         ///
         /// The footer had none, so its buttons did nothing when pressed —
@@ -840,10 +909,6 @@ mod imp {
                     &super::CONVERSATION_ACTIONS,
                     "conversation-footer",
                 ),
-                document_footer: crate::widgets::ActionBar::new(
-                    &super::DOCUMENT_ACTIONS,
-                    "conversation-footer",
-                ),
                 scroller: gtk::ScrolledWindow::default(),
                 spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -910,9 +975,9 @@ mod imp {
                 let view = view.clone();
                 move |command| view.emit_command(command)
             });
-            self.root.append(&self.document_footer.widget());
-            self.document_footer.set_visible(false);
-            self.document_footer.connect_command({
+            // The one-document pane's verbs live in the header (canvas screen
+            // 30), so the bar is the header's and the pane only wires it.
+            self.header.actions().connect_command({
                 let view = view.clone();
                 move |command| view.emit_command(command)
             });
@@ -1222,7 +1287,7 @@ impl ConversationView {
             }
             imp.focused.set(messages.first().map(|row| row.id));
             imp.header.set_conversation(&messages, chrono::Local::now());
-            imp.document_footer.set_visible(true);
+            imp.header.actions().set_visible(true);
             // Always, whatever the length -- unlike the stacked pane below.
             //
             // There, a single message stands its footer down because the
@@ -1249,7 +1314,7 @@ impl ConversationView {
         // the lone message carries `Archive` in its own bar instead, so
         // nothing is lost by the footer standing down.
         imp.footer.set_visible(messages.len() > 1);
-        imp.document_footer.set_visible(false);
+        imp.header.actions().set_visible(false);
 
         let focus = opening_focus(&messages);
         let expanded = match focus {
@@ -1425,8 +1490,8 @@ impl ConversationView {
     /// the one a person can see rather than the one a given branch built.
     pub fn visible_actions(&self) -> Option<std::rc::Rc<crate::widgets::ActionBar>> {
         let imp = self.imp();
-        if imp.document_footer.is_visible() {
-            Some(std::rc::Rc::clone(&imp.document_footer))
+        if imp.header.actions().is_visible() {
+            Some(imp.header.actions())
         } else if imp.footer.is_visible() {
             Some(std::rc::Rc::clone(&imp.footer))
         } else {
@@ -1885,7 +1950,7 @@ impl ConversationView {
         }
         self.imp().header.set_keymap(keymap);
         self.imp().footer.set_keymap(keymap);
-        self.imp().document_footer.set_keymap(keymap);
+        self.imp().header.actions().set_keymap(keymap);
     }
 
     /// Shorten the dwell for a test that cannot wait a second.
