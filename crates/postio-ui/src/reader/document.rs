@@ -828,6 +828,69 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// `style-src` must never name a host (#1383, spec FR-022).
+    ///
+    /// CSS fetches. `@import url(https://tracker/…)` is a request to another
+    /// machine, made when the stylesheet parses, carrying the referer and the
+    /// reader's IP — an open-rate beacon with no `<img>` anywhere in the
+    /// message. Nothing aimed at images would stop it: the sanitizer's
+    /// `contain_declarations` reads declarations, and `img-src` is about
+    /// images. What refuses it is `style-src` having nowhere to fetch from.
+    ///
+    /// # This is a lock, not a discovery
+    ///
+    /// A sender cannot do this **today**, because the sanitizer drops `<style>`
+    /// elements whole and `@import` is only valid inside a stylesheet — the
+    /// admitted route is the inline `style` attribute, which cannot carry one.
+    /// So this asserts a property that is currently unreachable, which is
+    /// exactly why it is worth writing down: #1326 is about admitting `<style>`
+    /// blocks, and on the day that lands this is the difference between a
+    /// scoped stylesheet and a tracking pixel that needs no pixel.
+    ///
+    /// It is also the shape of change that looks like a fix. A sender's
+    /// stylesheet failing to load is a bug report, and `style-src` gaining
+    /// `https:` is its one-line answer; every other test in this workspace
+    /// would stay green. This one does not: it was watched failing against
+    /// exactly that edit.
+    #[test]
+    fn a_stylesheet_has_nowhere_to_fetch_from() {
+        for remote in [RemoteImages::Blocked, RemoteImages::Allowed] {
+            let policy = content_security_policy(remote);
+            let style_src = policy
+                .split(';')
+                .map(str::trim)
+                .find(|directive| directive.starts_with("style-src"))
+                .unwrap_or_else(|| panic!("no style-src at all in {policy:?}"));
+            assert_eq!(
+                style_src, "style-src 'unsafe-inline'",
+                "style-src must permit inline declarations and name no source \
+                 to fetch from -- with {remote:?} images it read {style_src:?}"
+            );
+        }
+    }
+
+    /// The other two directives that decide what leaves the machine keep
+    /// working, so the assertion above cannot be satisfied by breaking them.
+    #[test]
+    fn images_and_fonts_still_have_their_sources() {
+        let blocked = content_security_policy(RemoteImages::Blocked);
+        assert!(
+            !blocked.contains("https:"),
+            "images are blocked until the reader says otherwise: {blocked}"
+        );
+        let allowed = content_security_policy(RemoteImages::Allowed);
+        assert!(
+            allowed.contains("img-src") && allowed.contains("https:"),
+            "and they arrive once consented, or consent means nothing: {allowed}"
+        );
+        assert!(
+            allowed.contains(&format!("font-src {FONT_SCHEME}:")),
+            "the reader's own fonts are served, not inlined (ADR 0023): {allowed}"
+        );
+    }
+
     /// A document must not carry bulk that is identical for every message
     /// (#1341, spec FR-059).
     ///
@@ -897,7 +960,6 @@ mod tests {
         );
     }
 
-    use super::*;
     use postio_model::message::MessageBody;
 
     /// The sender's sheet is for one gesture only: leaving reader view.
