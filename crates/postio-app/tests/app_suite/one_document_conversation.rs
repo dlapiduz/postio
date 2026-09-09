@@ -58,6 +58,13 @@ fn threaded_message(
         Some("Ada Lovelace"),
         "ada@example.com",
     )];
+    // Who it went to, which the document has to say (#1427). Two, so the
+    // drawn line is the plain list rather than the "and N others" form --
+    // the shortening has its own tests in `postio_ui::reader::header`.
+    message.to = vec![
+        postio_model::EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
+        postio_model::EmailAddress::new(None::<&str>, "bob@example.com"),
+    ];
     message.sync.body_state = postio_model::BodyState::Full;
     if seen {
         message.flags.insert(postio_model::Flag::Seen);
@@ -133,6 +140,111 @@ fn open_messages(window: &Window) -> Vec<String> {
 /// Deliberately sets **nothing**. Every other case in this file turns the
 /// pane on through `OneDocument::on()` and would pass against a build that
 /// still needed asking; this is the one that would not.
+/// An open message says who it went to (#1427).
+///
+/// The stacked pane drew `To` and `Cc` on every expanded message through
+/// `postio_ui::reader::header::recipient_line`. The one-document pane drew
+/// the sender and stopped -- so #1316, making it the default, made the
+/// application say less about a message than it had.
+///
+/// The count is the information: "and 197 others" is what stops a reply-all,
+/// and #1332 kept the full list in a tooltip for the same reason. Asserted on
+/// the document that actually reached WebKit.
+pub fn an_open_message_says_who_it_went_to() {
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    // SAFETY: first statements of a single-threaded test, before the app runs.
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let database = test_support::memory();
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    let (account, inbox) = {
+        let connection = database.connection().expect("a connection");
+        test_support::account_with_inbox(&connection)
+    };
+    let thread = {
+        let connection = database.connection().expect("a connection");
+        let mut thread = postio_model::Thread::new(account.id);
+        ThreadRepository::new(&connection)
+            .create(&mut thread)
+            .expect("create the thread")
+    };
+    let seat = Seat {
+        account: account.id,
+        mailbox: inbox,
+        thread,
+    };
+    for index in 0..2 {
+        threaded_message(
+            &database,
+            &seat,
+            index as i64,
+            &format!("message {index}"),
+            &body_of(index),
+            true,
+        );
+    }
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+    let window = Window::default();
+    window.present();
+    settle();
+    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
+
+    let list = window.list();
+    assert!(
+        settle_until(|| list.model().n_items() > 0),
+        "the seeded thread never reached the list"
+    );
+    list.first_row();
+    let cursor = list.cursor_row().expect("a row to land on");
+    window.open_conversation(&cursor);
+    assert!(
+        settle_until(|| window.conversation().len() == 2),
+        "opening the thread never filled the pane"
+    );
+
+    // The control: the document exists and holds both messages, so a failure
+    // below is about recipients rather than about nothing having rendered.
+    assert!(
+        settle_until(|| window
+            .conversation()
+            .thread_document()
+            .is_some_and(|document| document.matches("<details").count() == 2)),
+        "the document never drew both messages"
+    );
+
+    assert!(
+        settle_until(|| window
+            .conversation()
+            .thread_document()
+            .is_some_and(|document| document.contains("grace@example.com")
+                && document.contains("bob@example.com"))),
+        "the open message does not say who it went to. The stacked pane drew \
+         To and Cc on every expanded message; one document drew the sender \
+         and stopped (#1427)"
+    );
+
+    window.destroy();
+}
+
 pub fn a_conversation_opens_as_one_document_without_being_asked() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test, before the app runs.

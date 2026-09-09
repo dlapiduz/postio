@@ -1165,6 +1165,13 @@ mod imp {
         /// The bodies that have arrived so far, by message.
         pub(super) thread_bodies:
             RefCell<std::collections::HashMap<MessageId, postio_model::MessageBody>>,
+        /// Who each message went to, already drawn, beside its body.
+        ///
+        /// Separate from `thread_bodies` because it arrives from the
+        /// envelope rather than the body, and a message can have one without
+        /// the other -- the document must be able to draw the recipients of a
+        /// message whose body has not landed yet.
+        pub(super) thread_recipients: RefCell<std::collections::HashMap<MessageId, String>>,
         /// Whether a redraw is already queued for the next idle turn.
         ///
         /// Bodies arrive one at a time and every one of them changes the
@@ -1265,6 +1272,7 @@ mod imp {
                 document_reader: RefCell::new(None),
                 thread_rows: RefCell::new(Vec::new()),
                 thread_bodies: RefCell::new(std::collections::HashMap::new()),
+                thread_recipients: RefCell::new(std::collections::HashMap::new()),
                 redraw_queued: Cell::new(false),
                 redraw_deadline: Cell::new(None),
                 thread_renders: Cell::new(0),
@@ -1467,6 +1475,27 @@ impl ConversationView {
         self.queue_document_redraw();
     }
 
+    /// Who `message` went to, as the document should draw it.
+    ///
+    /// Drawn by the caller through
+    /// `postio_ui::reader::header::recipient_line`, which is the same
+    /// function the stacked pane's per-entry header uses -- so the two panes
+    /// cannot start counting recipients differently, and "and 197 others"
+    /// means the same thing in both (#1427).
+    ///
+    /// Empty is a real answer: a message with no recipients draws no line
+    /// rather than an empty one.
+    pub fn set_thread_recipients(&self, message: MessageId, recipients: String) {
+        let imp = self.imp();
+        if !imp.one_document.get() {
+            return;
+        }
+        imp.thread_recipients
+            .borrow_mut()
+            .insert(message, recipients);
+        self.queue_document_redraw();
+    }
+
     /// Whether every message the pane is showing now has a body.
     fn thread_is_whole(&self) -> bool {
         let imp = self.imp();
@@ -1566,6 +1595,12 @@ impl ConversationView {
                         .unwrap_or_else(|| "Unknown sender".to_string()),
                     address: from.map(|from| from.address.clone()).unwrap_or_default(),
                     when: postio_ui::row::timestamp(row.received_at, now),
+                    recipients: imp
+                        .thread_recipients
+                        .borrow()
+                        .get(&row.id)
+                        .cloned()
+                        .unwrap_or_default(),
                     preview: row.preview.clone().unwrap_or_default(),
                     expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
@@ -1624,6 +1659,7 @@ impl ConversationView {
         if imp.thread_id.get() != opening {
             imp.thread_id.set(opening);
             imp.thread_bodies.borrow_mut().clear();
+            imp.thread_recipients.borrow_mut().clear();
             imp.expanded_in_document.borrow_mut().clear();
             // A different conversation, so "show this one whole" is answered
             // afresh. Cleared here rather than on every redraw: a body

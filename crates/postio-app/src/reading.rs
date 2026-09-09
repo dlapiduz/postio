@@ -764,6 +764,23 @@ impl Fill {
                     let Ok(Some(loaded)) = answer.recv().await else {
                         return;
                     };
+                    // The envelope first, and separately from the body: a
+                    // message can have one without the other, and who it went
+                    // to should be drawn as soon as it is known rather than
+                    // waiting on a body that may still be fetching.
+                    //
+                    // `fill_reader` twenty lines below has always used
+                    // `loaded.envelope` to feed the stacked pane's per-entry
+                    // header. This dropped everything but the body, which is
+                    // why the one-document pane said nothing about
+                    // recipients (#1427) -- not because the data was not
+                    // there.
+                    if let Some(envelope) = &loaded.envelope {
+                        pane.set_thread_recipients(
+                            row.id,
+                            postio_ui::reader::header::recipient_line(&envelope.to),
+                        );
+                    }
                     if let crate::compose::Body::Ready { body, .. } = loaded.body {
                         pane.set_thread_body(row.id, body);
                     }

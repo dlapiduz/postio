@@ -258,6 +258,11 @@ pub struct ThreadMessage {
     pub address: String,
     /// When, already formatted.
     pub when: String,
+    /// Who it went to, already drawn by
+    /// `postio_ui::reader::header::recipient_line` -- the same rule the
+    /// stacked pane's per-entry header uses, so the two panes cannot start
+    /// counting recipients differently (#1427).
+    pub recipients: String,
     /// The one line a collapsed message shows.
     pub preview: String,
     /// Whether it starts open.
@@ -1515,6 +1520,7 @@ fn compose_thread_document(
             blocked: rendered.held_back.remote_images,
             body: &rendered.html,
             styles: &rendered.styles,
+            recipients: &message.recipients,
         })
         .collect();
 
