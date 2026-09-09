@@ -2758,6 +2758,7 @@ dependencies = [
  "postio-smtp",
  "postio-storage",
  "postio-test-support",
+ "postio-ui",
  "serde-xml-rs",
  "tempfile",
  "tokio",

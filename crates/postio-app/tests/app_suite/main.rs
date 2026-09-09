@@ -44,6 +44,7 @@ mod reading;
 mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
+mod render_dedup;
 mod reply_identity;
 mod reply_source;
 mod resume_draft;
@@ -164,6 +165,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing",
         cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing as fn(),
+    ),
+    (
+        "render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing",
+        render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing as fn(),
     ),
     (
         "drag_out_portal::a_dragged_message_survives_the_portal",
