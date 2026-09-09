@@ -688,6 +688,47 @@ mod tests {
         }
     }
 
+    /// A `<style>` element does not survive, and neither does its `@import`
+    /// (#1383).
+    ///
+    /// This is where the reader's only route to a CSS-borne fetch is closed
+    /// today. `@import` is valid only inside a stylesheet, and the admitted
+    /// route for a sender's styling is the inline `style` *attribute*, which
+    /// cannot carry one — so the element going is what makes
+    /// `style-src 'unsafe-inline'` an unexercised second layer rather than the
+    /// only thing standing between a sender and an open-rate beacon that needs
+    /// no pixel.
+    ///
+    /// Written down because #1326 is about admitting `<style>` blocks, and the
+    /// day that lands this test should fail and be replaced by one that proves
+    /// the `@import` is stripped from a stylesheet Postio does admit.
+    #[test]
+    fn a_style_element_and_its_import_do_not_survive() {
+        let hostile = r#"<style>@import url(https://tracker.example.net/s.css);
+             p { color: red }</style><p style="color:green">text</p>"#;
+        let clean = sanitize_body(hostile, RemoteImages::Allowed);
+
+        assert!(
+            !clean.html.contains("@import"),
+            "a sender's stylesheet import survived sanitizing: {}",
+            clean.html
+        );
+        assert!(
+            !clean.html.contains("<style"),
+            "the element carrying it survived too: {}",
+            clean.html
+        );
+        // The control: the attribute route *is* admitted, so the assertions
+        // above are about `<style>` rather than about styling being dropped
+        // wholesale -- which would make them pass for the wrong reason.
+        assert!(
+            clean.html.contains("color:green") || clean.html.contains("color: green"),
+            "an inline style attribute must still survive, or this test is \
+             passing because nothing styled anything: {}",
+            clean.html
+        );
+    }
+
     // -- likely trackers ---------------------------------------------------
     //
     // The maintainer settled the heuristic on 2026-08-25 (#174): a remote
