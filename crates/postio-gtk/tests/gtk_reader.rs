@@ -650,6 +650,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     a_senders_width_cannot_make_the_pane_scroll_sideways();
     one_senders_styling_cannot_reach_another_message();
     a_whole_thread_costs_one_web_process();
+    an_allowed_senders_images_survive_the_thread_document();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1119,6 +1120,88 @@ fn measure(document: &str, expression: &str) -> String {
         "the measuring WebView outlived its window -- #794 all over again"
     );
     value
+}
+
+/// A sender the user already allowed keeps their images in a thread (#1353).
+///
+/// The single-message path asks the allow list before choosing a policy:
+/// `is_some_and(|sender| allowlist.borrow().is_allowed(&sender))`. The thread
+/// path passed `RemoteImages::Blocked` unconditionally, so a decision the user
+/// had already made was ignored the moment the same message appeared in a
+/// conversation.
+///
+/// Per **sender**, not per thread: a conversation holds several, and allowing
+/// one must not allow the rest. That is the half of this a coarse fix would
+/// get wrong, so it is asserted rather than assumed.
+fn an_allowed_senders_images_survive_the_thread_document() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    const ALLOWED: &str = "trusted@example.com";
+    const BLOCKED: &str = "stranger@example.org";
+    let remote = |who: &str| MessageBody {
+        text: None,
+        html: Some(format!(
+            r#"<p>from {who}</p><img src="https://images.example.net/{who}.gif">"#
+        )),
+    };
+
+    let mut allowlist = RemoteImageAllowList::default();
+    allowlist.allow(ALLOWED);
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        allowlist,
+        scratch_path("thread-allowlist"),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let message = |address: &str, latest: bool| postio_gtk::reader::view::ThreadMessage {
+        scope: address.len().to_string(),
+        sender: address.to_owned(),
+        address: address.to_owned(),
+        when: "24 Aug".to_owned(),
+        preview: "preview".to_owned(),
+        expanded: true,
+        latest,
+        body: remote(address),
+    };
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&[message(ALLOWED, false), message(BLOCKED, true)]);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+
+    let document = reader.test_document();
+    window.set_visible(false);
+
+    assert!(
+        document.contains(&format!("https://images.example.net/{ALLOWED}.gif")),
+        "a sender the user allowed had their images stripped anyway, so a \
+         decision already made was thrown away the moment the message appeared \
+         in a conversation"
+    );
+    // Surviving the sanitizer is not enough to be *fetchable*: the document
+    // carries one `Content-Security-Policy` for the whole page, and a
+    // `img-src` without `https:` would refuse the allowed sender's image
+    // anyway. Asserting only that the URL is present would have passed while
+    // the picture stayed blank.
+    assert!(
+        document.contains("img-src") && document.contains("https:"),
+        "the URL survived but the document's policy still refuses it, so the \
+         allowed sender's images would not load"
+    );
+    assert!(
+        !document.contains(&format!("https://images.example.net/{BLOCKED}.gif")),
+        "a sender the user has NOT allowed had their images kept, which is the \
+         promise this feature exists to make -- and allowing one sender must \
+         never allow the rest of a thread"
+    );
 }
 
 /// Wait for the listener to report a connection, pumping GTK meanwhile.

@@ -708,9 +708,20 @@ impl Reader {
                 } else {
                     Rendering::Original
                 };
+                // Per **message**, from its own sender. A conversation holds
+                // several and the decision is per sender (`PRODUCT.md` §21),
+                // so one allowed correspondent must not carry the rest of the
+                // thread with them. This asked for `Blocked` unconditionally,
+                // which threw away a decision the user had already made the
+                // moment the message appeared in a conversation (#1353).
+                let remote = if self.allowlist.borrow().is_allowed(&message.address) {
+                    RemoteImages::Allowed
+                } else {
+                    RemoteImages::Blocked
+                };
                 postio_ui::reader::document::body_html_in(
                     &message.body,
-                    RemoteImages::Blocked,
+                    remote,
                     rendering,
                     Some(&message.scope),
                 )
@@ -732,9 +743,32 @@ impl Reader {
             })
             .collect();
 
+        // The document's `Content-Security-Policy` is one policy for the whole
+        // page, and there is no per-message form of it -- which is exactly the
+        // limitation ADR 0032 names: "a document-level network policy cannot
+        // express [per-sender], so the distinction has to move into how each
+        // message's images are addressed".
+        //
+        // So it opens only when some message in the thread is from a sender
+        // the user allowed, and the *sanitizer* is what keeps the others out:
+        // a blocked sender's `src` is dropped before the markup is composed,
+        // and the assertion in `gtk_reader` that a stranger's image is absent
+        // is what holds that line.
+        //
+        // Worth saying plainly rather than leaving implied: for such a
+        // document the CSP is no longer a second, independent refusal. It is
+        // still the only refusal for every thread where nobody is allowed,
+        // which is the ordinary case.
+        let anyone_allowed = messages
+            .iter()
+            .any(|message| self.allowlist.borrow().is_allowed(&message.address));
         postio_ui::reader::thread::conversation_document(
             &entries,
-            RemoteImages::Blocked,
+            if anyone_allowed {
+                RemoteImages::Allowed
+            } else {
+                RemoteImages::Blocked
+            },
             postio_ui::reader::document::Sheet::Theme,
         )
     }
