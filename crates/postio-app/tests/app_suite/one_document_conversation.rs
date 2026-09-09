@@ -21,6 +21,7 @@ use crate::{settle, settle_until};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_app::feed_the_window;
+use postio_core::CommandId;
 use postio_core::bridge::{Bridge, event_channel, handler_fn};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
@@ -312,4 +313,122 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
 
     let _ = wired;
     bridge.shutdown();
+}
+
+/// A conversation of one message still offers its verbs (#1349).
+///
+/// The footer stands down for a single message, and the comment on that
+/// condition says exactly why: *"drawing both bars put `Reply` on screen twice
+/// with `e` on each (#1173); the lone message carries `Archive` in its own bar
+/// instead"*.
+///
+/// All true for the stacked pane. In the one-document pane the per-message
+/// chrome is HTML in the document, so there is no second bar to collide with
+/// and nothing left to carry the verbs — the footer stands down and the pane
+/// offers no way to reply with the mouse at all. That is #1259's complaint,
+/// which is the reason `postio_ui::reader::header` exists.
+///
+/// Rendered side by side to find it: the stacked pane draws four buttons, the
+/// one-document pane draws none.
+pub fn a_single_message_conversation_still_offers_its_verbs() {
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    // SAFETY: single-threaded test, before the app runs.
+    unsafe {
+        std::env::set_var("XDG_STATE_HOME", state_dir.path());
+        std::env::set_var("POSTIO_ONE_DOCUMENT", "1");
+    }
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let database = test_support::memory();
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    let (account, inbox) = {
+        let connection = database.connection().expect("a connection");
+        test_support::account_with_inbox(&connection)
+    };
+    let thread = {
+        let connection = database.connection().expect("a connection");
+        let mut thread = postio_model::Thread::new(account.id);
+        ThreadRepository::new(&connection)
+            .create(&mut thread)
+            .expect("create the thread")
+    };
+    let seat = Seat {
+        account: account.id,
+        mailbox: inbox,
+        thread,
+    };
+    threaded_message(&database, &seat, 0, "message 0", &body_of(0), true);
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+    let window = Window::default();
+    window.present();
+    settle();
+    // Held to the end of the test: dropping the wiring tears down the feeds
+    // that keep the pane filled.
+    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
+
+    let list = window.list();
+    assert!(
+        settle_until(|| list.model().n_items() > 0),
+        "the seeded message never reached the list"
+    );
+    assert!(
+        window.conversation().is_one_document(),
+        "POSTIO_ONE_DOCUMENT was set and the pane is still stacked, so nothing \
+         below is testing what it says"
+    );
+
+    list.first_row();
+    let cursor = list.cursor_row().expect("a row to land on");
+    window.open_conversation(&cursor);
+    assert!(
+        settle_until(|| window.conversation().thread_document().is_some()),
+        "the single-message conversation never composed a document"
+    );
+
+    // Whichever bar is on screen: what matters is that a person can reply,
+    // not which branch built the widget.
+    let footer = window
+        .conversation()
+        .visible_actions()
+        .expect("no action bar is on screen at all");
+    assert!(
+        footer.is_visible(),
+        "a conversation of one message offers no verbs at all: the footer \
+         stood down for a per-message bar that does not exist in this pane, so \
+         there is no way to reply with the mouse. That is #1259."
+    );
+    // `ArchiveThread`, not `Archive`: spec FR-008 scopes reply, reply all and
+    // forward to the latest message and archive to the **whole conversation**,
+    // which is what a person means by archiving a thread. The first draft of
+    // this test asked for `Archive` and was wrong about the requirement rather
+    // than finding a bug.
+    for command in [
+        CommandId::Reply,
+        CommandId::ReplyAll,
+        CommandId::Forward,
+        CommandId::ArchiveThread,
+    ] {
+        assert!(
+            footer.button(command).is_some(),
+            "{command:?} is not on the bar"
+        );
+    }
 }
