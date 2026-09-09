@@ -1318,6 +1318,34 @@ impl ConversationView {
                 // thread would be the stack's furniture with none of its use.
                 reader.header().widget().set_visible(false);
                 reader.set_actions_visible(false);
+                // A message's own verbs, from inside the document (#1365).
+                // The scope is the message id in decimal, which is what
+                // `ThreadMessage` puts in the URI; the mapping back lives
+                // here for the same reason it does for the stacked pane's
+                // per-message bars -- the reader knows scopes, the
+                // conversation knows messages.
+                reader.connect_message_action({
+                    let view = self.downgrade();
+                    move |scope, verb| {
+                        let Some(view) = view.upgrade() else {
+                            return;
+                        };
+                        let Ok(id) = scope.parse::<i64>() else {
+                            glib::g_warning!(
+                                "postio",
+                                "a message verb named a scope that is not a message id: {scope}"
+                            );
+                            return;
+                        };
+                        view.emit_action(
+                            MessageId::new(id),
+                            match verb {
+                                crate::reader::view::MessageVerb::Reply => ReplyKind::Reply,
+                                crate::reader::view::MessageVerb::Forward => ReplyKind::Forward,
+                            },
+                        );
+                    }
+                });
                 let widget = reader.widget();
                 widget.set_vexpand(true);
                 imp.stack.append(&widget);

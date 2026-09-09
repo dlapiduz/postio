@@ -41,6 +41,55 @@
   padding: 10px 16px;
   cursor: default;
   list-style: none;
+  /* The containing block for this message's own actions, which are taken out
+     of flow so they can appear without moving anything. */
+  position: relative;
+}
+
+/* Reply and forward for *this* message.
+
+   The brief asks for two things that sound contradictory — "reserve no space
+   when idle" and "nothing shifts when they appear" — and absolute positioning
+   is how both are true at once: out of flow, so the row is laid out as though
+   they were not there, and revealing them cannot reflow it.
+
+   `visibility` rather than `display`, because a `display: none` control is not
+   focusable, and these have to be reachable by keyboard as well as by pointer.
+   The `:focus-within` half is not a nicety: without it a keyboard user tabs to
+   a control nobody can see. */
+.postio-message-actions {
+  position: absolute;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  visibility: hidden;
+}
+
+.postio-message-head:hover .postio-message-actions,
+.postio-message-actions:focus-within {
+  visibility: visible;
+}
+
+.postio-message-action {
+  font-size: 0.8125rem;
+  color: var(--r-ink-secondary);
+  text-decoration: none;
+  padding: 2px 8px;
+  border: 1px solid var(--r-hairline);
+  border-radius: 6px;
+  background: var(--r-ground);
+}
+
+.postio-message-action:hover {
+  color: var(--r-ink);
+}
+
+/* The reader's own focus ring, on a control the reader drew -- never the
+   engine's default, which is a different shape from every other focusable
+   thing in the application. */
+.postio-message-action:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
 }
 
 .postio-message-head:hover {

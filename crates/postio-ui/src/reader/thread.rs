@@ -50,6 +50,16 @@ const THREAD_CSS: &str = include_str!("../../data/thread.css");
 /// a message cannot forge one.
 pub const ALLOW_SCHEME: &str = "postio-allow";
 
+/// The scheme a per-message `Reply` uses.
+///
+/// A verb of its own rather than a parameter on one scheme, so the frontend
+/// can tell them apart before deciding what to do — and so an unrecognised
+/// verb is refused rather than mapped to the nearest thing.
+pub const REPLY_SCHEME: &str = "postio-reply";
+
+/// The scheme a per-message `Forward` uses. See [`REPLY_SCHEME`].
+pub const FORWARD_SCHEME: &str = "postio-forward";
+
 /// One message's place in a conversation document.
 ///
 /// A single message is a thread of one, expanded — the pane renders both
@@ -143,6 +153,29 @@ fn entry_html(entry: &Entry<'_>) -> String {
             )
         }
     };
+    // Spec FR-009: the header's bar is fixed to the latest message, so
+    // without these there is no way to reply to an older one at all — the
+    // mistake the fixed bar exists to prevent, arriving from the other side.
+    //
+    // Out of flow, which is how the brief's two requirements — "reserve no
+    // space when idle" and "nothing shifts when they appear" — are both true
+    // at once rather than contradictory. `thread.css` positions them against
+    // the header row.
+    //
+    // Named for the message rather than the verb: an icon-only control that a
+    // screen reader announces as "button" is a control that is not reachable,
+    // and in a stack of six the verb alone does not say which one it means.
+    let actions = format!(
+        "<span class=\"postio-message-actions\">\
+         <a class=\"postio-message-action\" href=\"{REPLY_SCHEME}:{scope}\" \
+         aria-label=\"Reply to {sender}\" title=\"Reply to {sender}\">Reply</a>\
+         <a class=\"postio-message-action\" href=\"{FORWARD_SCHEME}:{scope}\" \
+         aria-label=\"Forward {sender}&#39;s message\" \
+         title=\"Forward {sender}&#39;s message\">Forward</a>\
+         </span>",
+        scope = entry.scope,
+        sender = sender,
+    );
     let body = contain_body(entry.body);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
@@ -155,6 +188,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
          <span class=\"postio-preview\">{preview}</span>\
          {latest}\
          <span class=\"postio-when\">{when}</span>\
+         {actions}\
          </summary>{blocked}{body}</details>"
     )
 }

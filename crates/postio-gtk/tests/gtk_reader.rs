@@ -652,6 +652,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     a_whole_thread_costs_one_web_process();
     an_allowed_senders_images_survive_the_thread_document();
     the_show_verb_actually_grants_consent();
+    a_messages_own_verb_names_that_message();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1315,6 +1316,83 @@ fn the_show_verb_actually_grants_consent() {
         allowlist_path.exists(),
         "consent was granted for this session only -- the allow list was never \
          written, so the next launch asks again"
+    );
+}
+
+/// A message's own reply acts on **that** message (#1365).
+///
+/// The header's bar is fixed to the latest message (FR-008), so without these
+/// there is no way to reply to an older one at all — the mistake the fixed bar
+/// exists to prevent, arriving from the other side. Which means the only thing
+/// worth asserting is *which message the verb named*.
+///
+/// Driven as a real navigation, like the consent verb, and asserted on the
+/// scope the reader reported rather than on the link's presence — a link that
+/// is there and names the wrong message would pass a markup test.
+fn a_messages_own_verb_names_that_message() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let message = |scope: &str, sender: &str| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: sender.to_owned(),
+        address: format!("{sender}@example.com"),
+        when: "24 Aug".to_owned(),
+        preview: "preview".to_owned(),
+        expanded: true,
+        latest: false,
+        body: MessageBody {
+            text: None,
+            html: Some(format!("<p>from {sender}</p>")),
+        },
+    };
+
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("message-verbs"),
+    );
+    let named: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&named);
+    reader.connect_message_action(move |scope, verb| {
+        seen.borrow_mut().push(format!("{verb:?}:{scope}"));
+    });
+
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&[message("3", "ada"), message("9", "grace")]);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+
+    let document = reader.test_document();
+    assert!(
+        document.contains("postio-reply:3") && document.contains("postio-reply:9"),
+        "each message must offer a reply for itself"
+    );
+
+    // The older message's own reply, not the latest one's.
+    reader.view().load_uri("postio-reply:3");
+    pump_for(Duration::from_millis(200));
+    // And a forward, to prove the two verbs are told apart rather than both
+    // mapping to whichever was checked first.
+    reader.view().load_uri("postio-forward:9");
+    pump_for(Duration::from_millis(200));
+
+    let named = named.borrow().clone();
+    window.set_visible(false);
+
+    assert_eq!(
+        named,
+        vec!["Reply:3".to_owned(), "Forward:9".to_owned()],
+        "the verbs reported {named:?}: a message's own action must name that \
+         message and its own verb, or it is the header's bar with extra steps"
     );
 }
 
