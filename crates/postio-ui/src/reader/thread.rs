@@ -491,6 +491,12 @@ mod tests {
         // produces -- would prove nothing: both sides call this function, so
         // they agree by construction and the assertion cannot fail. This is
         // the part construction does not give for free.
+        //
+        // Against `entry_html` rather than a whole document, deliberately.
+        // `conversation_document` counts itself in `reader::cost`, whose own
+        // test asserts an exact delta over a *global* counter -- so a test
+        // assembling a document here races it under libtest's thread pool
+        // and fails it (#1390). One message is all this needs.
         let hostile = r#"1" onmouseover="steal()"#;
         let anchor = message_anchor(hostile);
         assert!(
@@ -498,18 +504,14 @@ mod tests {
             "an anchor with a bare quote in it escapes its attribute: {anchor}"
         );
 
-        let document = conversation_document(
-            &[entry(hostile, "Ada", "<p>one</p>", true)],
-            postio_body::RemoteImages::Blocked,
-            crate::reader::document::Sheet::Theme,
+        let html = entry_html(&entry(hostile, "Ada", "<p>one</p>", true));
+        assert!(
+            !html.contains("onmouseover=\"steal()"),
+            "the sender's attribute survived into the markup: {html}"
         );
         assert!(
-            !document.contains("onmouseover=\"steal()"),
-            "the sender's attribute survived into the document: {document}"
-        );
-        assert!(
-            document.contains(&format!("id=\"{anchor}\"")),
-            "and the message still has an anchor to scroll to: {document}"
+            html.contains(&format!("id=\"{anchor}\"")),
+            "and the message still has an anchor to scroll to: {html}"
         );
     }
 }
