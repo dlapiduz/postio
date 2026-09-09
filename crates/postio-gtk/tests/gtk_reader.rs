@@ -929,26 +929,26 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
             document::Sheet::Theme,
         );
 
-        // **The cascade, not the geometry.** Three rounds of this assertion
-        // failed on CI while passing locally, and the reason is not the
-        // numbers: CI reported `0px against an unstyled 0px`, and 32px before
-        // that, because nothing there has layout at all. The window is never
-        // presented, so every `getBoundingClientRect` is zero and every
-        // geometric comparison is vacuous. #1307 records the same thing from
-        // the other end -- no test here exercises the renderer a user gets.
+        // **The specified value, not the computed one.** A computed `width`
+        // is the *used* value, so it resolves against layout like everything
+        // else -- CI reported `33.554428px` for a declared four thousand,
+        // which is what a resolved length looks like on a display that never
+        // presents. Colour survives that treatment; a length does not, and
+        // assuming otherwise cost a fourth round.
         //
-        // `computed` works in that environment precisely because a computed
-        // *style* comes from the cascade rather than from a laid-out box. So
-        // the claim is put that way: FR-019a says a sender's declared width is
-        // honoured, and honoured means it survived sanitising and reached the
-        // engine's style resolution. Whether the box is then painted 4000px
-        // wide is a question this suite cannot ask of any property.
-        let resolved = computed(&document, ".postio-body > *", "width");
+        // What FR-019a claims at this boundary is that the declaration
+        // *reached the document*: it was not stripped between the sanitizer
+        // and the engine. That is a DOM fact -- the attribute the sender
+        // wrote, still there -- and it needs no layout at all.
+        let declared = measure(
+            &document,
+            "(() => { const el = document.querySelector('.postio-body > *'); \
+              return el.style.width || el.getAttribute('width') || ''; })()",
+        );
         assert!(
-            resolved.starts_with("4000"),
-            "{name}: the declared width resolved to {resolved:?} rather than \
-             4000px, so it was dropped somewhere between the sanitizer and the \
-             style engine (FR-019a)"
+            declared.contains("4000"),
+            "{name}: the declared width reached the document as {declared:?}, \
+             so it was stripped between the sanitizer and the engine (FR-019a)"
         );
     }
 }

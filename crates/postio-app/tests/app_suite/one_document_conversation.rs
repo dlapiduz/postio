@@ -121,13 +121,42 @@ fn open_messages(window: &Window) -> Vec<String> {
     open
 }
 
+/// Turns the one-document pane on, and **off again when it goes out of scope**.
+///
+/// `app_suite` is one binary running every case in one process, so a variable
+/// one case sets is a variable every later case inherits. `POSTIO_ONE_DOCUMENT`
+/// leaked exactly that way: the cases here run before
+/// `conversation_by_default`, `conversation_recipients`,
+/// `conversation_body_arrives` and `orientation`, and every one of them was
+/// then driving the wrong pane. Locally that is three failures; on CI it was
+/// four, and the list moved around, which is what shared process state looks
+/// like from the outside.
+///
+/// A guard rather than a `remove_var` at the end of each case, because a case
+/// that fails must not leave the variable set -- the failure after it would
+/// then be a consequence of the first one rather than a finding of its own.
+struct OneDocument;
+
+impl OneDocument {
+    fn on() -> Self {
+        // SAFETY: single-threaded test, before the app under test starts.
+        unsafe { std::env::set_var("POSTIO_ONE_DOCUMENT", "1") };
+        Self
+    }
+}
+
+impl Drop for OneDocument {
+    fn drop(&mut self) {
+        // SAFETY: as above, and on the same thread.
+        unsafe { std::env::remove_var("POSTIO_ONE_DOCUMENT") };
+    }
+}
+
 pub fn a_thread_opens_as_one_document_holding_every_message() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test, before the app runs.
-    unsafe {
-        std::env::set_var("XDG_STATE_HOME", state_dir.path());
-        std::env::set_var("POSTIO_ONE_DOCUMENT", "1");
-    }
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    let _one_document = OneDocument::on();
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -333,10 +362,8 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
 pub fn a_single_message_conversation_still_offers_its_verbs() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: single-threaded test, before the app runs.
-    unsafe {
-        std::env::set_var("XDG_STATE_HOME", state_dir.path());
-        std::env::set_var("POSTIO_ONE_DOCUMENT", "1");
-    }
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    let _one_document = OneDocument::on();
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
