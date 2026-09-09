@@ -1,7 +1,9 @@
 # ADR 0015 — One row per thread, and the conversation pane
 
 - **Status:** Accepted — **GO** (2026-08-25), **Q1 implementation and Q4
-  revised 2026-08-26**, **Q4's column superseded 2026-09-03** (see §Q4)
+  revised 2026-08-26**, **Q4's column superseded 2026-09-03** (see §Q4),
+  **focus and collapsing superseded 2026-09-09 for the one-document pane**
+  (see §Superseded by the conversation reading pane)
 - **Date:** 2026-08-25
 - **Issue:** [#134](https://github.com/dlapiduz/postio/issues/134), decided by
   the maintainer: a single row per thread in the list, and the reading pane
@@ -215,6 +217,8 @@ the two surfaces different jobs:
   replacing its contents.
 - **The reading pane** holds every message of the conversation, oldest first,
   **read messages collapsed** to a one-line header (sender, snippet, date).
+  *(Superseded for the one-document pane by FR-013 — see the section at the
+  foot of this ADR. Still true of the stacked pane.)*
   Each expanded message is the existing reader surface — the hardened WebKit
   view, the parts panel, the remote-image banner — unchanged. A stack of the
   reader Postio already has, not a new renderer.
@@ -229,6 +233,9 @@ and the pane's focused message are the same state. Moving either moves both.
   way through, and landing at the end means scrolling back past what you have
   already read. When everything has been read there is no first unread, and
   focus lands on the **newest**, expanded.
+  *(Superseded 2026-09-09 by FR-015 — both panes now open on the newest. The
+  argument above is not withdrawn; see the section at the foot of this ADR for
+  why it stopped applying.)*
 - Focus is **drawn, not implied**. It uses the vocabulary PLATE 1b already
   established for the list — accent edge, full-strength ink — rather than
   dimming the messages around it. This is the one surface in the application
@@ -310,3 +317,54 @@ rather than giving up the conversation view.
   existing verbs; no registry changes.
 - Implementation lands as three sequenced issues under E7 — the store
   query, the list row, the conversation pane — filed with this ADR.
+
+---
+
+## Superseded by the conversation reading pane (2026-09-09)
+
+`specs/001-conversation-reading-pane/` supersedes two of the decisions above.
+Recorded here rather than edited away, because both were reasoned and the
+reasoning is what a future session needs in order to disagree well.
+
+### Focus opens on the newest, not the first unread — FR-015 (#1385)
+
+The maintainer settled it while the spec was clarified: *the focus is on the
+last message when we open the thread*, whether or not earlier messages are
+unread.
+
+What this ADR argued — that a conversation you open is one you are part way
+through, so landing at the end means scrolling back past what you have read —
+was true of the pane it was written for. Two things changed underneath it:
+
+- The pane shows every body rather than collapsing the read ones (below), so
+  "landing at the end" is no longer a hunt back through one-line headers.
+- The conversation rail (#1374) makes the position visible and movable, so
+  opening somewhere and walking back is a gesture rather than a search.
+
+The case the old rule was strongest on is a **wholly unread** thread, where it
+opened at the beginning because reading from the end backwards is not how
+anyone reads. FR-015 overrides that too, deliberately.
+`conversation::opening_focus` carries the same note, so the argument is found
+by whoever changes the code as well as by whoever reads this.
+
+### Every body is visible — FR-013 (#1389), in the one-document pane only
+
+FR-013: no message is reduced to a summary row, there is no divider standing
+for a run of hidden messages, and there is nothing to expand in order to read
+the conversation.
+
+**This does not retire the collapsing rule, it scopes it.** In the stacked
+pane every open message is a `WebKitWebView`, and `EAGER_EXPANSION_CAP` is what
+stops a thirty-message thread from opening thirty processes — that reasoning is
+untouched and the stacked pane still behaves exactly as this ADR describes.
+
+The one-document pane (ADR 0032) is one view, so a collapsed message saves no
+process and almost no memory. #1348 measured it: one document is flat at
+~101 MiB Pss and 47–102 ms whatever the message count, against the stack's
+~31 MiB per message rising to 1559 MiB and 1.34 s at fifty. Collapsing there
+bought nothing and cost the requirement.
+
+The bound that survives is FR-051 — a conversation of a hundred messages or
+more must not prepare every body at once — which is about *preparing* bodies
+rather than hiding prepared ones, and is not implemented yet.
+`conversation::expanded_in_document` says where it goes.
