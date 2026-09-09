@@ -338,3 +338,156 @@ pub fn a_single_message_conversation_has_no_rail() {
 
     window.close();
 }
+
+pub fn below_the_floor_the_header_carries_the_index() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+
+    pane.open((1..=6).map(message).collect());
+    pane.set_window_width(1400);
+    let counter = pane.header().counter();
+    assert!(
+        !counter.is_visible(),
+        "a window with room for the column does not also carry a counter -- \
+         the rail already says the position"
+    );
+
+    let wide_meta = pane.header().meta();
+    assert!(
+        wide_meta.contains("Ada Norwood"),
+        "a wide header names the participants: {wide_meta}"
+    );
+
+    pane.set_window_width(1000);
+    assert!(
+        counter.is_visible(),
+        "below the floor the header takes over saying where you are"
+    );
+    // Screen 29's narrow header is `6 messages · 22-25 Aug` and nothing else.
+    // With the names still in it the line ellipsised to a single letter once
+    // the counter took the trailing edge, which says less than leaving them
+    // out -- and the avatar chips still say who is here.
+    let narrow_meta = pane.header().meta();
+    assert!(
+        !narrow_meta.contains("Ada Norwood"),
+        "the names are the first thing to go when the header is short of \
+         room: {narrow_meta}"
+    );
+    assert!(
+        narrow_meta.contains("6 messages"),
+        "but the count stays, because nothing else says it: {narrow_meta}"
+    );
+    // The names going was not enough on its own: with the chips and the
+    // scoping note still there, the *dates* then ellipsised to one character.
+    // Screen 29's narrow row is the count, the dates and the counter.
+    assert!(
+        !pane.header().scoping_visible(),
+        "the scoping note stands down with the names"
+    );
+    assert!(
+        !pane.header().participants_visible(),
+        "and so do the avatar chips"
+    );
+    // Against the rail's own mark rather than a literal. The counter is the
+    // rail in another shape, so what matters is that the two cannot say
+    // different things -- and the pane opens on the newest message, not the
+    // first, which is what the literal got wrong.
+    let marked = pane
+        .rail()
+        .marked_position()
+        .expect("opening a conversation marks the message it lands on");
+    assert_eq!(
+        counter.label().unwrap_or_default(),
+        format!("{marked}/6"),
+        "the counter and the rail must not be able to disagree"
+    );
+
+    // The same widget, moved -- not a second one built to look the same.
+    // Two rails would be two marked rows, and the second would be wrong
+    // exactly when someone scrolled with the index open.
+    assert!(
+        pane.rail()
+            .widget()
+            .ancestor(gtk::Popover::static_type())
+            .is_some(),
+        "at the popover step the index lives in the popover, not the pane"
+    );
+    assert_eq!(
+        pane.header().index().child().map(|child| child.type_()),
+        Some(pane.rail().widget().type_()),
+        "and the popover's child is that rail"
+    );
+
+    // Back up the ladder, and it goes back to being a column.
+    pane.set_window_width(1400);
+    assert!(
+        pane.rail()
+            .widget()
+            .ancestor(gtk::Popover::static_type())
+            .is_none(),
+        "widening puts the rail back beside the body"
+    );
+    assert!(pane.rail().widget().is_visible());
+    assert!(
+        !counter.is_visible(),
+        "and the counter stands down again -- exactly one of the two speaks"
+    );
+    assert_eq!(
+        pane.header().meta(),
+        wide_meta,
+        "and the participants come back with the room for them"
+    );
+    assert!(pane.header().scoping_visible());
+    assert!(pane.header().participants_visible());
+
+    window.close();
+}
+
+pub fn a_conversation_with_no_rail_has_no_counter_either() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+
+    // FR-045: one message has no position worth stating, at any width.
+    pane.open(vec![message(1)]);
+    pane.set_window_width(1000);
+    assert!(!pane.header().counter().is_visible());
+
+    // FR-047: nor does a conversation whose rail was put away. The counter
+    // is the rail in another shape, so hiding one hides the other -- a
+    // counter that survived would be the index the reader just dismissed.
+    pane.open((1..=6).map(message).collect());
+    pane.toggle_rail();
+    pane.set_window_width(1000);
+    assert!(!pane.header().counter().is_visible());
+
+    window.close();
+}
+
+pub fn opening_a_conversation_narrow_keeps_the_header_short() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+
+    // The application's order, and the opposite of every other case in this
+    // file: the ladder runs *inside* `open`, before the header has been given
+    // its conversation. Setting the width afterwards -- which is what the
+    // other cases do -- re-runs the ladder and hides the bug, and did: the
+    // header put the long line back and nothing ran again to correct it.
+    // Only a screenshot noticed.
+    pane.set_window_width(1000);
+    pane.open((1..=6).map(message).collect());
+
+    let meta = pane.header().meta();
+    assert!(
+        !meta.contains("Ada Norwood"),
+        "opening a conversation must not undo the ladder's step: {meta}"
+    );
+    assert!(
+        pane.header().counter().is_visible(),
+        "and the counter is drawn on open, not only on the next resize"
+    );
+
+    window.close();
+}
