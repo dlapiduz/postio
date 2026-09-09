@@ -497,21 +497,32 @@ pub const DOCUMENT_ACTIONS: [crate::widgets::Action; 4] = [
         "conversation-document-reply",
     )
     .primary(),
+    // Icon-only from here, per canvas screen 30. Four labelled buttons
+    // crowded the subject down to "Tuesday w..." at the narrow breakpoint --
+    // the header's most important line, truncated by its own controls.
+    //
+    // Platform icon names rather than drawn assets: `PRODUCT.md` §19 asks for
+    // an app that reads as native, and these three ship with it. Archive is
+    // the exception and always was -- `postio-archive-symbolic` is vendored in
+    // `data/icons/` because the platform has none worth using.
     crate::widgets::Action::new(
         postio_ui::reader::header::ReaderAction::ReplyAll.command(),
         postio_ui::reader::header::ReaderAction::ReplyAll.title(),
         "conversation-document-reply-all",
-    ),
+    )
+    .icon("mail-reply-all-symbolic"),
     crate::widgets::Action::new(
         postio_ui::reader::header::ReaderAction::Forward.command(),
         postio_ui::reader::header::ReaderAction::Forward.title(),
         "conversation-document-forward",
-    ),
+    )
+    .icon("mail-forward-symbolic"),
     crate::widgets::Action::new(
         postio_core::CommandId::ArchiveThread,
         "Archive thread",
         "conversation-document-archive",
-    ),
+    )
+    .icon("postio-archive-symbolic"),
 ];
 
 /// The pane's own header: what conversation this is, and how much of it.

@@ -31,6 +31,12 @@ pub struct Action {
     pub label: &'static str,
     pub class: &'static str,
     pub primary: bool,
+    /// Drawn instead of the label, when the design asks for an icon.
+    ///
+    /// The label is not optional even then: it stays the accessible name and
+    /// the tooltip. A platform icon name rather than a drawn asset, because
+    /// `PRODUCT.md` §19 asks for an application that reads as native.
+    pub icon: Option<&'static str>,
 }
 
 impl Action {
@@ -41,7 +47,14 @@ impl Action {
             label,
             class,
             primary: false,
+            icon: None,
         }
+    }
+
+    /// Draw it as `icon` rather than as words.
+    pub const fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = Some(icon);
+        self
     }
 
     /// The one verb the bar exists for.
@@ -72,12 +85,21 @@ impl ActionBar {
         let buttons: Vec<Rc<KeycapButton>> = actions
             .iter()
             .map(|action| {
-                let button = Rc::new(KeycapButton::new(
-                    Some(action.command),
-                    action.label,
-                    action.class,
-                    action.primary,
-                ));
+                let button = Rc::new(match action.icon {
+                    Some(icon) => KeycapButton::with_icon(
+                        Some(action.command),
+                        action.label,
+                        icon,
+                        action.class,
+                        action.primary,
+                    ),
+                    None => KeycapButton::new(
+                        Some(action.command),
+                        action.label,
+                        action.class,
+                        action.primary,
+                    ),
+                });
                 KeycapButton::arm(&button);
                 root.append(&button.widget());
                 button
