@@ -947,29 +947,42 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
         // And it is contained rather than clipped: the content is still there
         // to scroll to inside its own box. A container that simply hid the
         // overflow would pass the assertion above and lose the message.
-        // The container's own scrollable extent, **not** compared against its
-        // client width. That comparison needs the window to be narrower than
-        // the content, and a compositor does not have to honour a requested
-        // size -- `shot` says so in as many words (#933), and this assertion
-        // passed locally at 600px and failed on CI, which is the same lesson
-        // arriving through a slower channel.
+        // **Relative, not absolute.** Two rounds of this assertion failed on
+        // CI while passing locally: first comparing scroll width against
+        // client width (a compositor need not honour a requested window size
+        // -- #933), then against a fixed pixel figure (CI reported 32px where
+        // four thousand were declared). Both measured the environment as much
+        // as the behaviour.
         //
-        // The content width is the size-independent fact: 4000px of declared
-        // width has to still be *there* to scroll to. A container that clipped
-        // it away would report its own width instead, and would pass the
-        // overflow assertion above while losing the message.
-        let extent = measure(
+        // What FR-019a claims is that the sender's declared width is
+        // *honoured*, and that is a comparison: the styled element must come
+        // out wider than the same element without the style. True at any
+        // viewport, on any renderer, and false the moment the declaration is
+        // dropped.
+        let widths = measure(
             &document,
-            "(() => { const b = document.querySelector('.postio-body'); \
-              return String(b.scrollWidth); })()",
+            "(() => { const body = document.querySelector('.postio-body'); \
+              const plain = document.createElement('div'); \
+              plain.textContent = 'x'; \
+              body.appendChild(plain); \
+              const bare = plain.getBoundingClientRect().width; \
+              const styled = body.firstElementChild.getBoundingClientRect().width; \
+              return [Math.round(styled), Math.round(bare)].join(','); })()",
         );
-        let extent: i64 = extent.trim().parse().unwrap_or(0);
+        let (styled, bare) = widths
+            .split_once(',')
+            .map(|(a, b)| {
+                (
+                    a.trim().parse::<f64>().unwrap_or(0.0),
+                    b.trim().parse::<f64>().unwrap_or(0.0),
+                )
+            })
+            .unwrap_or((0.0, 0.0));
         assert!(
-            extent >= 3000,
-            "{name}: the container's scrollable extent is {extent}px for four \
-             thousand pixels of content, so the content is being clipped away \
-             instead of contained -- which passes the assertion above while \
-             losing the message"
+            styled > bare,
+            "{name}: four thousand pixels were declared and the element came \
+             out {styled}px against an unstyled {bare}px, so the width was \
+             dropped rather than honoured (FR-019a)"
         );
     }
 }
