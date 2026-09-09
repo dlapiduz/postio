@@ -40,6 +40,7 @@ pub mod actions;
 pub mod allowlist;
 pub mod banner;
 pub mod message_header;
+pub mod rail;
 pub mod scheme;
 pub mod view;
 
