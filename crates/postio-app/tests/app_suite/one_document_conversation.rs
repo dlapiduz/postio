@@ -121,42 +121,93 @@ fn open_messages(window: &Window) -> Vec<String> {
     open
 }
 
-/// Turns the one-document pane on, and **off again when it goes out of scope**.
+/// The one-document pane is what a conversation opens as, with nobody asking
+/// for it (#1316, ADR 0032 Accepted).
 ///
-/// `app_suite` is one binary running every case in one process, so a variable
-/// one case sets is a variable every later case inherits. `POSTIO_ONE_DOCUMENT`
-/// leaked exactly that way: the cases here run before
-/// `conversation_by_default`, `conversation_recipients`,
-/// `conversation_body_arrives` and `orientation`, and every one of them was
-/// then driving the wrong pane. Locally that is three failures; on CI it was
-/// four, and the list moved around, which is what shared process state looks
-/// like from the outside.
+/// It shipped behind `POSTIO_ONE_DOCUMENT` while ADR 0032 was Proposed, and
+/// the variable's own comment said why: *"an experiment with a decision still
+/// to be made, and `config.toml` is where settled choices live."* The
+/// decision is made, so the experiment is the default and the variable is
+/// gone.
 ///
-/// A guard rather than a `remove_var` at the end of each case, because a case
-/// that fails must not leave the variable set -- the failure after it would
-/// then be a consequence of the first one rather than a finding of its own.
-struct OneDocument;
+/// Deliberately sets **nothing**. Every other case in this file turns the
+/// pane on through `OneDocument::on()` and would pass against a build that
+/// still needed asking; this is the one that would not.
+pub fn a_conversation_opens_as_one_document_without_being_asked() {
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    // SAFETY: first statements of a single-threaded test, before the app runs.
+    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-impl OneDocument {
-    fn on() -> Self {
-        // SAFETY: single-threaded test, before the app under test starts.
-        unsafe { std::env::set_var("POSTIO_ONE_DOCUMENT", "1") };
-        Self
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
     }
-}
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
 
-impl Drop for OneDocument {
-    fn drop(&mut self) {
-        // SAFETY: as above, and on the same thread.
-        unsafe { std::env::remove_var("POSTIO_ONE_DOCUMENT") };
+    let database = test_support::memory();
+    let directory = tempfile::tempdir().expect("a blob directory");
+    let blobs = BlobStore::open(
+        directory.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+
+    // An account and one thread: `feed_the_window` needs an account to feed
+    // from, and the pane is only asked what shape it is once there is
+    // something for it to be that shape about.
+    let (account, inbox) = {
+        let connection = database.connection().expect("a connection");
+        test_support::account_with_inbox(&connection)
+    };
+    let thread = {
+        let connection = database.connection().expect("a connection");
+        let mut thread = postio_model::Thread::new(account.id);
+        ThreadRepository::new(&connection)
+            .create(&mut thread)
+            .expect("create the thread")
+    };
+    let seat = Seat {
+        account: account.id,
+        mailbox: inbox,
+        thread,
+    };
+    for index in 0..2 {
+        threaded_message(
+            &database,
+            &seat,
+            index as i64,
+            &format!("message {index}"),
+            &body_of(index),
+            true,
+        );
     }
+
+    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+    let (sink, _events) = event_channel();
+    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+    let window = Window::default();
+    window.present();
+    settle();
+    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
+
+    assert!(
+        window.conversation().is_one_document(),
+        "a conversation pane still opens stacked with nothing asking it to. \
+         ADR 0032 is Accepted and `POSTIO_ONE_DOCUMENT` is gone; the pane is \
+         supposed to need no persuading"
+    );
+
+    window.destroy();
 }
 
 pub fn a_thread_opens_as_one_document_holding_every_message() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test, before the app runs.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
-    let _one_document = OneDocument::on();
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -223,8 +274,9 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
     );
     assert!(
         window.conversation().is_one_document(),
-        "POSTIO_ONE_DOCUMENT was set and the pane is still stacked, so nothing \
-         below is testing what it says"
+        "the pane is stacked, so nothing below is testing what it says. It \
+         is the default since ADR 0032 was accepted (#1316), so this failing \
+         means the default moved rather than that a variable went unset"
     );
 
     list.first_row();
@@ -363,7 +415,6 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: single-threaded test, before the app runs.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
-    let _one_document = OneDocument::on();
 
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
@@ -418,8 +469,9 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
     );
     assert!(
         window.conversation().is_one_document(),
-        "POSTIO_ONE_DOCUMENT was set and the pane is still stacked, so nothing \
-         below is testing what it says"
+        "the pane is stacked, so nothing below is testing what it says. It \
+         is the default since ADR 0032 was accepted (#1316), so this failing \
+         means the default moved rather than that a variable went unset"
     );
 
     list.first_row();

@@ -175,6 +175,19 @@ pub fn an_expanded_entry_shows_who_it_went_to_without_repeating_its_header() {
         "the fixture's conversation never reached the list"
     );
 
+    // **The stacked pane, deliberately.** This case reads
+    // `test_expanded_widget(message)` -- a GTK widget per expanded message,
+    // with its own `Reader` and its own header -- and the one-document pane
+    // has none of those: it is one `WebView` holding the whole thread
+    // (ADR 0032). Since #1316 made one document the default, this has to ask
+    // for the shape it tests rather than inherit it.
+    //
+    // **And the behaviour it covers is missing from the default pane.** The
+    // one-document pane draws the sender and no recipients, so the
+    // application now says less about a message than it did. That is #1427,
+    // and this test passing does not mean a user sees any of it.
+    window.conversation().set_one_document(false);
+
     list.first_row();
     let cursor = list.cursor_row().expect("a row to land on");
     window.open_conversation(&cursor);
