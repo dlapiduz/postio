@@ -651,6 +651,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     one_senders_styling_cannot_reach_another_message();
     a_whole_thread_costs_one_web_process();
     an_allowed_senders_images_survive_the_thread_document();
+    the_show_verb_actually_grants_consent();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1222,6 +1223,98 @@ fn an_allowed_senders_images_survive_the_thread_document() {
         "a sender the user has NOT allowed had their images kept, which is the \
          promise this feature exists to make -- and allowing one sender must \
          never allow the rest of a thread"
+    );
+}
+
+/// Activating `Show` grants consent, for that sender and no other (#1363).
+///
+/// #1353 gave the blocked-images notice a verb and asserted that the **link
+/// appears**. That is the same shape as the defect it fixed: a notice
+/// reporting a decision you cannot make is a dead end, and a control that
+/// looks like it grants consent and does not is worse, because it also lies
+/// about it.
+///
+/// Driven as a real navigation through `Reader::view`, which is what a link
+/// click becomes once `decide_policy` sees it — no simulation and no test-only
+/// branch around the production path.
+fn the_show_verb_actually_grants_consent() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    const ASKING: &str = "asking@example.com";
+    const OTHER: &str = "other@example.org";
+    let remote = |who: &str| MessageBody {
+        text: None,
+        html: Some(format!(
+            r#"<p>from {who}</p><img src="https://images.example.net/{who}.gif">"#
+        )),
+    };
+    let message = |address: &str, scope: &str| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: address.to_owned(),
+        address: address.to_owned(),
+        when: "24 Aug".to_owned(),
+        preview: "preview".to_owned(),
+        expanded: true,
+        latest: false,
+        body: remote(address),
+    };
+
+    let allowlist_path = scratch_path("consent-allowlist");
+    let _ = std::fs::remove_file(&allowlist_path);
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        allowlist_path.clone(),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&[message(ASKING, "7"), message(OTHER, "8")]);
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+
+    let before = reader.test_document();
+    assert!(
+        !before.contains(&format!("https://images.example.net/{ASKING}.gif")),
+        "nothing was blocked, so there is no consent to grant and this proves \
+         nothing"
+    );
+    assert!(
+        before.contains("postio-allow:7"),
+        "the notice offers no way to act on the block"
+    );
+
+    // The link click, as the engine delivers it.
+    let finished = track_load_finished(&reader);
+    reader.view().load_uri("postio-allow:7");
+    wait_for(&finished, Duration::from_secs(5));
+    pump_for(Duration::from_millis(200));
+
+    let after = reader.test_document();
+    window.set_visible(false);
+
+    assert!(
+        after.contains(&format!("https://images.example.net/{ASKING}.gif")),
+        "activating Show changed nothing: the control is there and does not \
+         work, which is worse than the notice it replaced"
+    );
+    assert!(
+        !after.contains(&format!("https://images.example.net/{OTHER}.gif")),
+        "allowing one sender allowed another in the same thread. The promise \
+         is per sender, and a coarse implementation passes every other \
+         assertion here"
+    );
+    assert!(
+        allowlist_path.exists(),
+        "consent was granted for this session only -- the allow list was never \
+         written, so the next launch asks again"
     );
 }
 
