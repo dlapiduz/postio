@@ -2362,3 +2362,92 @@ button.postio-compose-more {
   border-top: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
 }
+
+/* ---- The conversation rail (#1374) ---------------------------------------
+
+   Screen 28: a 150px column on the trailing edge of the conversation pane,
+   separated from the body by a hairline rather than by a filled panel. It is
+   an index, not a second sidebar, and reads as one because everything in it
+   is quiet: dim text, mono numbers, and no ground of its own until a row is
+   marked. */
+.postio-rail {
+  border-left: 1px solid var(--postio-hairline);
+  padding: var(--postio-space-3) 0 var(--postio-space-2) 0;
+}
+
+/* `In this thread`. Set like the sidebar's section headings — the smallest
+   type in the interface, letter-spaced, and faint enough to be a label rather
+   than a row. */
+.postio-rail-heading {
+  font-family: var(--postio-font-heading);
+  font-size: 0.7159rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--postio-faint);
+  padding: 0 var(--postio-space-3) var(--postio-space-2) var(--postio-space-3);
+}
+
+.postio-rail-rows {
+  background: transparent;
+}
+
+.postio-rail-row {
+  padding: var(--postio-space-1) var(--postio-space-3);
+}
+
+/* The position. Mono because it is a number you count with, and dim because
+   you read the name — the number is there for `J/K` and for the footer to
+   agree with. */
+.postio-rail-number {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+.postio-rail-sender {
+  font-size: 0.8409rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* A line count, on the long messages only. Mono, and at the trailing edge,
+   so the eye can run down the column and find the essay without reading a
+   single name. */
+.postio-rail-length {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+/* The marked row: the same treatment the message list gives a selection, so
+   "this is the one" means one thing everywhere in the window. */
+.postio-rail-rows > row:selected {
+  background: var(--postio-selected-bg);
+  box-shadow: inset 3px 0 0 var(--postio-selected-border);
+}
+
+.postio-rail-rows > row:selected .postio-rail-sender {
+  color: var(--postio-selected-fg);
+}
+
+.postio-rail-rows > row:selected .postio-rail-number,
+.postio-rail-rows > row:selected .postio-rail-length {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-rail-rows > row:hover:not(:selected) {
+  background: var(--postio-hover-bg);
+}
+
+/* `J/K jumps`, `3 of 6 in view`, `84 lines here`. All three are the app
+   telling you where you are, which is the mono voice. */
+.postio-rail-footer {
+  border-top: 1px solid var(--postio-hairline);
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2) var(--postio-space-3) 0 var(--postio-space-3);
+}
+
+.postio-rail-hint {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
