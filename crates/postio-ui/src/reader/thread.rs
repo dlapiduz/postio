@@ -514,4 +514,51 @@ mod tests {
             "and the message still has an anchor to scroll to: {html}"
         );
     }
+
+    #[test]
+    fn a_quote_folds_inside_the_message_it_belongs_to() {
+        // Each message is already a `<details>` whose `<summary>` is its
+        // header, so a folded quote is a second `<details>` nested inside one.
+        // "It folded" and "it folded inside the right message" are different
+        // claims in a document holding several senders, and only the second is
+        // worth anything -- a quote that escaped its message would be attached
+        // to somebody else's mail.
+        let quoted = "<p>my reply</p><details class=\"postio-quote\"><summary>quoted \
+                      text</summary><blockquote>theirs</blockquote></details>";
+        let document = conversation_document(
+            &[
+                entry("7", "Ada", quoted, true),
+                entry("11", "Grace", "<p>no quote here</p>", true),
+            ],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+
+        let ada = document
+            .split(&format!("id=\"{}\"", message_anchor("7")))
+            .nth(1)
+            .and_then(|rest| {
+                rest.split(&format!("id=\"{}\"", message_anchor("11")))
+                    .next()
+            })
+            .expect("Ada's message is in the document");
+        assert!(
+            ada.contains("postio-quote"),
+            "the fold is not inside the message that owns it: {ada}"
+        );
+        assert!(
+            ada.contains("my reply"),
+            "and the prose it belongs with is there too: {ada}"
+        );
+
+        let grace = document
+            .split(&format!("id=\"{}\"", message_anchor("11")))
+            .nth(1)
+            .expect("Grace's message is in the document");
+        assert!(
+            !grace.contains("postio-quote"),
+            "a message with nothing to fold gained a fold from its neighbour: \
+             {grace}"
+        );
+    }
 }

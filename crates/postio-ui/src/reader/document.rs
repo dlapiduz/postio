@@ -830,6 +830,55 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 mod tests {
     use super::*;
 
+    /// A message's quotes fold, on the path that actually draws one (#1406).
+    ///
+    /// `postio_body::quote::fold_html_quotes` does the folding and has its own
+    /// tests. This asserts something they cannot: that it is **called**. Drop
+    /// either call in `body_html_in` and every test in `quote.rs` still
+    /// passes — the function keeps working perfectly, unused. That is
+    /// `postio-bl2`, and the shape this repository's characteristic bug takes.
+    ///
+    /// FR-017 is what it costs when it breaks: a six-message thread prints the
+    /// same reply history six times, which in one document is also the bulk
+    /// FR-059 says a document must not carry.
+    #[test]
+    fn a_quote_reaches_the_document_folded() {
+        let body = postio_model::message::MessageBody {
+            text: None,
+            html: Some("<p>my reply</p><blockquote><p>what they wrote</p></blockquote>".to_owned()),
+        };
+        // `Original`, because that is correspondence's rendering and quoting is
+        // a correspondence problem — reader view reduces bulk mail, where
+        // there is rarely a quote to fold.
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, None);
+
+        assert!(
+            rendered.html.contains("<details"),
+            "the quote did not fold, so `fold_html_quotes` is no longer \
+             reached from the path that draws a message: {}",
+            rendered.html
+        );
+        // The other half, and the reason folding is worth anything: what is
+        // *not* quoted stays where the reader can see it.
+        let before_fold = rendered
+            .html
+            .split("<details")
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(
+            before_fold.contains("my reply"),
+            "the prose folded away with the quote: {}",
+            rendered.html
+        );
+        // ADR 0003: the disclosure is HTML's own, not a script's.
+        assert!(
+            !rendered.html.contains("<script"),
+            "folding must not need script: {}",
+            rendered.html
+        );
+    }
+
     /// `style-src` must never name a host (#1383, spec FR-022).
     ///
     /// CSS fetches. `@import url(https://tracker/…)` is a request to another
