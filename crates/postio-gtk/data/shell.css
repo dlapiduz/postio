@@ -2451,3 +2451,40 @@ button.postio-compose-more {
   font-size: 0.7159rem;
   color: var(--postio-faint);
 }
+
+/* The middle step of the ladder: numbers and initials, no names. The column
+   is narrower, so the row's padding closes up with it -- at 118px the wide
+   gutter would leave the numbers floating in the middle of nothing. */
+.postio-rail-narrow .postio-rail-row {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+.postio-rail-narrow .postio-rail-heading {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+.postio-rail-narrow .postio-rail-footer {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+/* `hide rail`, at the foot of the column. A quiet text control rather than a
+   button with a ground: it is the least important thing in the rail, and the
+   rail is already the least important thing in the pane. */
+.postio-rail-hide {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: var(--postio-space-1) 0;
+  min-height: 0;
+}
+
+.postio-rail-hide:hover {
+  color: var(--postio-ink-secondary);
+  background: none;
+}

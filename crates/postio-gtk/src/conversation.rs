@@ -23,7 +23,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::ids::MessageId;
-use postio_ui::reader::rail::{Effect, Rail};
+use postio_ui::reader::rail::{Effect, NARROW_BELOW, Presentation, Rail, presentation, rows};
 
 use crate::list::Row;
 
@@ -828,6 +828,20 @@ mod imp {
         /// The scroller the stack lives in. A conversation is longer than the
         /// pane, and jumping to a message means scrolling this.
         pub(super) scroller: gtk::ScrolledWindow,
+        /// The row of the pane the body scrolls in: the scroller, and beside
+        /// it the rail.
+        ///
+        /// The rail is a sibling of the scroller rather than of the whole
+        /// pane, because the header spans the full width above both and the
+        /// rail must not scroll with the body it indexes.
+        pub(super) body: gtk::Box,
+        /// The conversation rail (#1374), or nothing drawn when the ladder
+        /// says this window is too narrow for one.
+        pub(super) rail: crate::reader::rail::RailColumn,
+        /// Whether `⇧R` has put the rail away. Per window, not per thread
+        /// (FR-047), which is why it lives on the pane and not beside the
+        /// messages.
+        pub(super) rail_hidden: Cell<bool>,
         /// The stack itself, one [`Entry`] per message, oldest first.
         pub(super) stack: gtk::Box,
         pub(super) entries: RefCell<Vec<Entry>>,
@@ -967,6 +981,9 @@ mod imp {
                     "conversation-footer",
                 ),
                 scroller: gtk::ScrolledWindow::default(),
+                body: gtk::Box::new(gtk::Orientation::Horizontal, 0),
+                rail: crate::reader::rail::RailColumn::new(),
+                rail_hidden: Cell::new(false),
                 spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 entries: RefCell::new(Vec::new()),
@@ -1025,8 +1042,25 @@ mod imp {
             // away would put the conversation's own verbs somewhere you have
             // to go looking for.
             self.root.append(&self.header.widget());
-            self.root.append(&self.scroller);
+            self.body.append(&self.scroller);
+            self.body.append(self.rail.widget());
+            self.body.set_vexpand(true);
+            self.root.append(&self.body);
             self.root.append(&self.footer.widget());
+            // Nothing until a conversation says how many messages there are:
+            // the ladder's floor is a single message, and a rail drawn before
+            // the thread is known would flash on for every one of them.
+            self.rail.widget().set_visible(false);
+            self.rail.connect_hide({
+                let view = view.clone();
+                move || view.toggle_rail()
+            });
+            self.rail.connect_activated({
+                let view = view.clone();
+                move |index| {
+                    view.focus_at(index);
+                }
+            });
             self.footer.set_visible(false);
             self.footer.connect_command({
                 let view = view.clone();
@@ -1360,8 +1394,34 @@ impl ConversationView {
         self.queue_document_redraw();
     }
 
+    /// What one message contributes to the rail.
+    ///
+    /// The sender the same way the document names it, so the rail and the
+    /// message headers cannot disagree about who wrote something.
+    fn rail_sender(row: &Row) -> String {
+        let from = row.from.as_ref();
+        from.and_then(|from| from.name.clone())
+            .or_else(|| from.map(|from| from.address.clone()))
+            .unwrap_or_else(|| "Unknown sender".to_string())
+    }
+
+    /// Give the rail the thread, and take the ladder's step for it.
+    ///
+    /// Lengths are all `None` for now. The count is stored (#1329, migration
+    /// `0015_body_line_count.sql`) but is not carried on `list::Row`, so
+    /// nothing here can see it yet -- and `rail::rows` draws a row with no
+    /// number rather than a row with a wrong one, which is the right failure.
+    fn fill_rail(&self, messages: &[Row]) {
+        let imp = self.imp();
+        let senders: Vec<String> = messages.iter().map(Self::rail_sender).collect();
+        let lengths: Vec<Option<u32>> = vec![None; messages.len()];
+        imp.rail.set_thread(&rows(&senders, &lengths));
+        self.apply_rail_ladder(self.root_width(), messages.len());
+    }
+
     pub fn open(&self, messages: Vec<Row>) {
         let imp = self.imp();
+        self.fill_rail(&messages);
         for entry in imp.entries.borrow().iter() {
             imp.stack.remove(&entry.container());
         }
@@ -1729,10 +1789,100 @@ impl ConversationView {
             entry.header.set_selected(entry.message == message);
         }
         self.scroll_to(message);
+        // The rail follows the focus rather than being set beside it, so
+        // there is no path that moves one without the other.
+        self.imp().rail.set_marked(self.focused_index());
         self.start_dwell(message);
         for handler in self.imp().on_focus.borrow().iter() {
             handler(message);
         }
+    }
+
+    /// Focus the message at `index`, which is what activating a rail row
+    /// does.
+    ///
+    /// Through `Rail::activate` rather than straight to `focus_message`, so a
+    /// rail click and `J` take the same route to the same mark (#1372). That
+    /// is the whole of the brief's *"one entry point"*: two ways in that each
+    /// set the value are two ways to disagree.
+    pub fn focus_at(&self, index: usize) -> bool {
+        let entries = self.imp().entries.borrow();
+        let mut rail = Rail::at(entries.len(), self.focused_index());
+        if rail.activate(index) == Effect::Nothing {
+            return false;
+        }
+        let Some(landing) = rail.marked() else {
+            return false;
+        };
+        let message = entries[landing].message;
+        drop(entries);
+        self.focus_message(message);
+        true
+    }
+
+    /// Tell the pane how wide its window is, so the rail can take its step
+    /// on the ladder.
+    ///
+    /// The window's business rather than the pane's: the ladder's numbers are
+    /// window widths, and a pane that measured itself would give a different
+    /// answer depending on what else was on screen.
+    pub fn set_window_width(&self, width: i32) {
+        let imp = self.imp();
+        let messages = imp.entries.borrow().len();
+        self.apply_rail_ladder(width, messages);
+    }
+
+    fn apply_rail_ladder(&self, width: i32, messages: usize) {
+        let imp = self.imp();
+        let step = presentation(width, messages, imp.rail_hidden.get());
+        match step {
+            Some(Presentation::Full) => {
+                imp.rail.widget().set_visible(true);
+                imp.rail.set_narrow(false);
+            }
+            Some(Presentation::Narrow) => {
+                imp.rail.widget().set_visible(true);
+                imp.rail.set_narrow(true);
+            }
+            // The popover step draws no column. What opens it is the header's
+            // counter, which is #1374's second half and not wired yet -- so
+            // for now the narrow window simply has no rail, which is what it
+            // had before this landed.
+            Some(Presentation::Popover) | None => imp.rail.widget().set_visible(false),
+        }
+    }
+
+    /// `⇧R`: put the rail away, or bring it back.
+    ///
+    /// The choice belongs to the window and outlives the conversation open in
+    /// it (FR-047), which is why nothing here touches the thread.
+    pub fn toggle_rail(&self) {
+        let imp = self.imp();
+        imp.rail_hidden.set(!imp.rail_hidden.get());
+        let width = self.root_width();
+        let messages = imp.entries.borrow().len();
+        self.apply_rail_ladder(width, messages);
+    }
+
+    /// Whether `⇧R` has the rail put away.
+    pub fn rail_hidden(&self) -> bool {
+        self.imp().rail_hidden.get()
+    }
+
+    /// The rail, so a test can read back what a person would see.
+    pub fn rail(&self) -> &crate::reader::rail::RailColumn {
+        &self.imp().rail
+    }
+
+    /// The width the ladder is being asked about when nobody has said.
+    ///
+    /// The pane's own allocation is not the window's, but it is the only
+    /// number available before the window has told us, and it is never wider
+    /// -- so it can only ever pick a *quieter* step of the ladder, never a
+    /// busier one than the window can hold.
+    fn root_width(&self) -> i32 {
+        let width = self.imp().root.width();
+        if width > 0 { width } else { NARROW_BELOW }
     }
 
     /// Move focus to the next message in the stack — `J`.

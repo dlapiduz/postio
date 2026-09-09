@@ -116,6 +116,53 @@ pub fn rows(senders: &[String], lengths: &[Option<u32>]) -> Vec<Row> {
         .collect()
 }
 
+/// How the rail is presented at a given window width.
+///
+/// One component, three presentations over the same data and the same
+/// activation behaviour (FR-044). The brief is explicit that these are not
+/// three widgets: *"Build the index as one component with two presentations
+/// (column and popover) over the same data and the same click behaviour"*, and
+/// screen 29 counts the narrowed column as a third.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presentation {
+    /// A 150px column. Numbers, senders and lengths.
+    Full,
+    /// A 118px column. Numbers and initials only — there is not room for a
+    /// name, and a truncated name is worse than none.
+    Narrow,
+    /// No column. The header carries a counter that opens the same index.
+    Popover,
+}
+
+/// Below this the rail unmounts and the header carries the counter.
+pub const UNMOUNT_BELOW: i32 = 1100;
+
+/// Below this the rail narrows, at and above it the rail is full width.
+pub const NARROW_BELOW: i32 = 1240;
+
+/// Which presentation a window of `width` gets, if any.
+///
+/// `None` means no rail and no counter at all — a single-message conversation
+/// has nothing to index (FR-045), and `hidden` is the reader's own `⇧R`
+/// choice, which belongs to the window rather than to the conversation open in
+/// it (FR-047).
+///
+/// The reading measure never gives up width to fund the rail (FR-043), which
+/// is what the bottom step of the ladder is *for*: the rail unmounts rather
+/// than the body narrowing.
+pub fn presentation(width: i32, messages: usize, hidden: bool) -> Option<Presentation> {
+    if hidden || messages < 2 {
+        return None;
+    }
+    if width < UNMOUNT_BELOW {
+        return Some(Presentation::Popover);
+    }
+    if width < NARROW_BELOW {
+        return Some(Presentation::Narrow);
+    }
+    Some(Presentation::Full)
+}
+
 /// What the caller must do after asking the rail to move its mark.
 ///
 /// Returned by every entry point, so a caller that does nothing on
@@ -489,5 +536,46 @@ mod tests {
         let mut rail = Rail::new(6);
         rail.previous_message();
         assert_eq!(rail.marked(), Some(5), "K starts at the end");
+    }
+
+    #[test]
+    fn the_ladder_has_three_steps_and_a_floor() {
+        // Screen 29's table, read straight across.
+        assert_eq!(presentation(1400, 6, false), Some(Presentation::Full));
+        assert_eq!(
+            presentation(NARROW_BELOW, 6, false),
+            Some(Presentation::Full)
+        );
+        assert_eq!(
+            presentation(NARROW_BELOW - 1, 6, false),
+            Some(Presentation::Narrow)
+        );
+        assert_eq!(
+            presentation(UNMOUNT_BELOW, 6, false),
+            Some(Presentation::Narrow)
+        );
+        assert_eq!(
+            presentation(UNMOUNT_BELOW - 1, 6, false),
+            Some(Presentation::Popover)
+        );
+    }
+
+    #[test]
+    fn a_single_message_has_no_rail_at_any_width() {
+        // FR-045. Not even the counter: a `1/1` that opens a list of one is
+        // an index of nothing, and it would appear on most of the mail a
+        // person actually reads.
+        for width in [900, 1200, 1600] {
+            assert_eq!(presentation(width, 1, false), None, "at {width}px");
+        }
+    }
+
+    #[test]
+    fn hiding_the_rail_holds_at_every_width() {
+        // FR-047: `⇧R` is a decision about this window, and widening the
+        // window is not a request to undo it.
+        for width in [900, 1200, 1600] {
+            assert_eq!(presentation(width, 6, true), None, "at {width}px");
+        }
     }
 }

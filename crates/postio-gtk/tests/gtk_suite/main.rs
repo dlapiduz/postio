@@ -1044,6 +1044,18 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
     ),
     (
+        "gtk_rail::the_rail_takes_its_step_on_the_ladder",
+        gtk_rail::the_rail_takes_its_step_on_the_ladder as fn(),
+    ),
+    (
+        "gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width",
+        gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width as fn(),
+    ),
+    (
+        "gtk_rail::a_single_message_conversation_has_no_rail",
+        gtk_rail::a_single_message_conversation_has_no_rail as fn(),
+    ),
+    (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
         gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one as fn(),
     ),
