@@ -21,6 +21,7 @@ mod composer_warm;
 mod conversation_body_arrives;
 mod conversation_by_default;
 mod conversation_recipients;
+mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
 mod decode_notice;
@@ -165,6 +166,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
         conversation_by_default::landing_on_a_thread_row_opens_the_conversation as fn(),
+    ),
+    (
+        "conversation_reply_target::the_conversations_verbs_answer_the_message_they_name",
+        conversation_reply_target::the_conversations_verbs_answer_the_message_they_name as fn(),
     ),
     (
         "conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header",
