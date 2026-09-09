@@ -96,6 +96,14 @@ pub struct Row {
     /// avatar chips use, so the rail and the list abbreviate a person the
     /// same way.
     pub initials: String,
+    /// When it arrived, already formatted the way the rest of the window
+    /// formats a date.
+    ///
+    /// The rail does not draw this — screen 28's rows are a number, a name
+    /// and sometimes a count. It is here because the row's accessible name
+    /// says it (FR-046): the visible row is terse *because* the label carries
+    /// what the eye gets from the message header instead.
+    pub when: String,
     /// Its length, when there is one and it is worth saying.
     pub length: Option<u32>,
 }
@@ -110,7 +118,12 @@ pub struct Row {
 /// two are not the same question: an address with no display name abbreviates
 /// from its local part, and `sender` has already collapsed that to a whole
 /// address that would abbreviate wrong.
-pub fn rows(senders: &[String], initials: &[String], lengths: &[Option<u32>]) -> Vec<Row> {
+pub fn rows(
+    senders: &[String],
+    initials: &[String],
+    whens: &[String],
+    lengths: &[Option<u32>],
+) -> Vec<Row> {
     senders
         .iter()
         .enumerate()
@@ -118,6 +131,7 @@ pub fn rows(senders: &[String], initials: &[String], lengths: &[Option<u32>]) ->
             position: index + 1,
             sender: sender.clone(),
             initials: initials.get(index).cloned().unwrap_or_default(),
+            when: whens.get(index).cloned().unwrap_or_default(),
             length: lengths
                 .get(index)
                 .copied()
@@ -384,6 +398,7 @@ mod tests {
         let rows = rows(
             &["Ada".to_owned(), "Grace".to_owned()],
             &["AD".to_owned(), "GR".to_owned()],
+            &["1 Sep".to_owned(), "2 Sep".to_owned()],
             &[Some(LENGTH_THRESHOLD - 1), Some(LENGTH_THRESHOLD)],
         );
         assert_eq!(rows[0].length, None, "a short message shows no length");
@@ -395,7 +410,12 @@ mod tests {
         // Different facts: "nothing to count yet" and "counted, and it is
         // short" both show no number, but the row exists either way — which is
         // the whole of FR-040.
-        let rows = rows(&["Ada".to_owned()], &["AD".to_owned()], &[None]);
+        let rows = rows(
+            &["Ada".to_owned()],
+            &["AD".to_owned()],
+            &["1 Sep".to_owned()],
+            &[None],
+        );
         assert_eq!(rows[0].length, None);
         assert_eq!(rows[0].position, 1, "the row exists without a body");
     }
@@ -405,6 +425,7 @@ mod tests {
         let rows = rows(
             &["Ada".to_owned(), "Grace".to_owned()],
             &["AD".to_owned(), "GR".to_owned()],
+            &["1 Sep".to_owned(), "2 Sep".to_owned()],
             &[None, None],
         );
         assert_eq!(

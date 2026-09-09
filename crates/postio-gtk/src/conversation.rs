@@ -1418,8 +1418,14 @@ impl ConversationView {
             .iter()
             .map(|row| postio_ui::row::initials(row.from.as_ref()))
             .collect();
+        let now = chrono::Local::now();
+        let whens: Vec<String> = messages
+            .iter()
+            .map(|row| postio_ui::row::timestamp(row.received_at, now))
+            .collect();
         let lengths: Vec<Option<u32>> = vec![None; messages.len()];
-        imp.rail.show_thread(&rows(&senders, &initials, &lengths));
+        imp.rail
+            .show_thread(&rows(&senders, &initials, &whens, &lengths));
         self.apply_rail_ladder(self.window_width(), messages.len());
     }
 

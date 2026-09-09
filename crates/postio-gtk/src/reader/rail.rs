@@ -228,6 +228,17 @@ impl RailColumn {
         }
     }
 
+    /// The list itself, so a test can ask the accessibility tree what role
+    /// it has rather than trust that a `ListBox` was used.
+    pub fn list(&self) -> gtk::Widget {
+        self.list.clone().upcast()
+    }
+
+    /// The row at `index`, for the same reason.
+    pub fn row_widget(&self, index: usize) -> Option<gtk::Widget> {
+        self.list.row_at_index(index as i32).map(|row| row.upcast())
+    }
+
     /// Mark the row the rule chose.
     ///
     /// `None` unmarks: nothing visible is a real state while the pane settles,
@@ -335,6 +346,9 @@ fn of_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Label> {
 /// What a screen reader says for one row.
 fn announce(row: &Row, total: usize) -> String {
     let mut said = format!("Message {} of {}, {}", row.position, total, row.sender);
+    if !row.when.is_empty() {
+        said.push_str(&format!(", {}", row.when));
+    }
     if let Some(lines) = row.length {
         said.push_str(&format!(", {lines} lines"));
     }
@@ -354,9 +368,13 @@ mod tests {
             position: 3,
             sender: "Tessa Vaughn".to_owned(),
             initials: "TV".to_owned(),
+            when: "24 Aug".to_owned(),
             length: Some(84),
         };
-        assert_eq!(announce(&row, 6), "Message 3 of 6, Tessa Vaughn, 84 lines");
+        assert_eq!(
+            announce(&row, 6),
+            "Message 3 of 6, Tessa Vaughn, 24 Aug, 84 lines"
+        );
     }
 
     #[test]
@@ -365,8 +383,9 @@ mod tests {
             position: 1,
             sender: "Ada".to_owned(),
             initials: "AD".to_owned(),
+            when: "3 Sep".to_owned(),
             length: None,
         };
-        assert_eq!(announce(&row, 2), "Message 1 of 2, Ada");
+        assert_eq!(announce(&row, 2), "Message 1 of 2, Ada, 3 Sep");
     }
 }
