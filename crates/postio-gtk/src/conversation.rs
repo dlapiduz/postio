@@ -157,6 +157,33 @@ const REDRAW_COALESCE: std::time::Duration = std::time::Duration::from_millis(30
 /// than waiting for something that is not coming.
 const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(400);
 
+/// Which messages the **one-document** pane draws open.
+///
+/// Separate from [`expanded_on_open`], which bounds the stacked pane, and it
+/// has to be: there every open message is a `WebKitWebView`, and the cap is
+/// what stops a thirty-message thread from opening thirty processes. Here the
+/// whole thread is one view (ADR 0032), so a collapsed message saves no
+/// process and almost no memory — #1348 measured one document flat at
+/// ~101 MiB whatever the message count.
+///
+/// **All of them**, which is the whole of FR-013: no message is reduced to a
+/// summary row and there is nothing to expand in order to read the
+/// conversation. It read `!seen || focused || newest`, which opened a
+/// conversation you had already read as one body and five one-line headers —
+/// and since the pane opens on the newest (FR-015) that was the common case,
+/// hiding exactly what the reader came back for.
+///
+/// A function over the thread rather than a bare `true`, because the bound
+/// that *does* survive lands here: FR-051 says a conversation of a hundred
+/// messages or more must not prepare every body at once. That is about
+/// preparing bodies, not about hiding the ones already prepared, and it is not
+/// implemented yet — when it is, this is where it goes.
+///
+/// `seen` is per message, in thread order.
+pub fn expanded_in_document(seen: &[bool]) -> Vec<bool> {
+    vec![true; seen.len()]
+}
+
 /// Which messages are expanded when the conversation opens.
 ///
 /// Read messages are collapsed: they are one line, and collapsing them is
@@ -274,6 +301,33 @@ mod tests {
     #[test]
     fn an_empty_conversation_has_nowhere_to_focus() {
         assert_eq!(opening_focus(&[]), None);
+    }
+
+    // -- what the one-document pane opens ---------------------------------
+
+    #[test]
+    fn a_conversation_you_have_read_still_shows_every_body() {
+        // FR-013: every message's body is visible, no message is reduced to a
+        // summary row, and there is nothing to expand in order to read the
+        // conversation. The designer's brief says it twice.
+        //
+        // The common case, not an edge one: the pane opens on the newest
+        // message (FR-015), so a thread you have already read is exactly what
+        // you come back to.
+        let read = [true, true, true, true, true, true];
+        assert_eq!(
+            expanded_in_document(&read),
+            vec![true; 6],
+            "a read conversation must not open as one body and five headers"
+        );
+    }
+
+    #[test]
+    fn an_unread_conversation_shows_every_body_too() {
+        // The rule reads nothing about a message to decide: FR-013 is not
+        // "unread ones open", it is "all of them".
+        let mixed = [true, false, true, false];
+        assert_eq!(expanded_in_document(&mixed), vec![true; 4]);
     }
 
     // -- what opens expanded ----------------------------------------------
@@ -618,6 +672,9 @@ pub struct Header {
     /// ever the first minus one part and rebuilding it would mean keeping the
     /// senders and the dates around to rebuild it *from*.
     meta_text: std::cell::RefCell<(String, String)>,
+    /// Whether this header belongs to a pane drawing the thread as one
+    /// document, where nothing is collapsed and so nothing can be expanded.
+    one_document: std::cell::Cell<bool>,
     /// Whether there is a scoping note to show when there is room.
     has_scoping: std::cell::Cell<bool>,
     /// Whether there are participant chips to show when there is room.
@@ -715,6 +772,7 @@ impl Header {
             index,
             meta_text: std::cell::RefCell::new((String::new(), String::new())),
             compact: std::cell::Cell::new(false),
+            one_document: std::cell::Cell::new(false),
             has_scoping: std::cell::Cell::new(false),
             has_participants: std::cell::Cell::new(false),
         }
@@ -764,6 +822,11 @@ impl Header {
         let text = self.meta_text.borrow();
         self.meta
             .set_label(if self.compact.get() { &text.1 } else { &text.0 });
+    }
+
+    /// Say whether the pane draws the thread as one document.
+    pub fn set_one_document(&self, one_document: bool) {
+        self.one_document.set(one_document);
     }
 
     /// Whether the scoping note is drawn. Test-facing.
@@ -880,7 +943,20 @@ impl Header {
         // Nothing to expand in a thread of one: it opens expanded, so the
         // button would be offered with nothing left to do (#1173). The same
         // n=1 surface as the footer standing down.
-        self.expand_all.widget().set_visible(rows.len() > 1);
+        //
+        // Nothing to expand in the one-document pane either, at any length --
+        // FR-013 is that there is nothing for the user to expand in order to
+        // read the conversation, and since #1389 every body is drawn open. A
+        // control that would do nothing is worse than no control: it says
+        // there is something you have not seen.
+        //
+        // Not tied to the *narrow* header as well, though screen 29 does not
+        // draw it there: that is a second decision about a crowded row, and
+        // tying it here hid the control in the stacked pane at every width
+        // the test window happened to be.
+        self.expand_all
+            .widget()
+            .set_visible(rows.len() > 1 && !self.one_document.get());
         self.describe_actions(rows.len());
         self.subject.set_label(
             rows.iter()
@@ -1327,6 +1403,7 @@ impl ConversationView {
     /// same mail. Set before the first [`open`](Self::open).
     pub fn set_one_document(&self, one_document: bool) {
         self.imp().one_document.set(one_document);
+        self.imp().header.set_one_document(one_document);
     }
 
     /// Whether this pane is in one-document mode.
@@ -1429,19 +1506,17 @@ impl ConversationView {
             return;
         }
         let bodies = imp.thread_bodies.borrow();
-        let focused = imp.focused.get();
         let newest = rows.last().map(|row| row.id);
-        // Decided once per message, then kept. Unread messages and the one
-        // focus is on open, the same question `expanded_on_open` answers for
-        // the stack -- except that here it costs nothing but height, so there
-        // is no cap. A message already decided keeps its answer, whatever the
-        // model has done since.
+        // Every message, per FR-013 -- see `expanded_in_document`. The map is
+        // still per message and still keeps what it decided, because folding
+        // one shut by hand is a gesture the reader can make and the model
+        // changing underneath must not undo it.
         let expanded: std::collections::HashSet<MessageId> = {
+            let seen: Vec<bool> = rows.iter().map(|row| row.seen).collect();
+            let open = expanded_in_document(&seen);
             let mut decided = imp.expanded_in_document.borrow_mut();
-            for row in rows.iter() {
-                decided.entry(row.id).or_insert_with(|| {
-                    !row.seen || focused == Some(row.id) || newest == Some(row.id)
-                });
+            for (row, open) in rows.iter().zip(open) {
+                decided.entry(row.id).or_insert(open);
             }
             decided
                 .iter()
