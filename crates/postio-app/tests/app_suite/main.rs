@@ -138,6 +138,10 @@ const CASES: &[(&str, fn())] = &[
         one_document_conversation::a_thread_opens_as_one_document_holding_every_message as fn(),
     ),
     (
+        "one_document_conversation::a_single_message_conversation_still_offers_its_verbs",
+        one_document_conversation::a_single_message_conversation_still_offers_its_verbs as fn(),
+    ),
+    (
         "click_preview::clicking_a_message_fills_the_reading_pane",
         click_preview::clicking_a_message_fills_the_reading_pane as fn(),
     ),

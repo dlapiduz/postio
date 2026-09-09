@@ -474,6 +474,46 @@ pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::A
     "conversation-footer-archive",
 )];
 
+/// The verbs the **one-document** pane offers, in canvas order (#1349).
+///
+/// A second set rather than an extension of [`CONVERSATION_ACTIONS`], because
+/// the two panes need different ones and the difference is not cosmetic. The
+/// stacked pane draws a bar per message, so a conversation bar carrying
+/// `Reply` would put it on screen twice with `e` on each (#1173) -- which is
+/// why that set holds one verb. The one-document pane has no per-message bar
+/// at all: its message chrome is HTML inside the document, so this is the only
+/// bar there is, and a single verb left a pane you could not reply to with the
+/// mouse.
+///
+/// Scoped per spec FR-008: reply, reply all and forward act on the latest
+/// message; archive acts on the whole conversation, which is why the fourth is
+/// `ArchiveThread` and not `Archive`. Labels and commands for the first three
+/// come from [`postio_ui::reader::header::ReaderAction`], so the two frontends
+/// name them identically.
+pub const DOCUMENT_ACTIONS: [crate::widgets::Action; 4] = [
+    crate::widgets::Action::new(
+        postio_ui::reader::header::ReaderAction::Reply.command(),
+        postio_ui::reader::header::ReaderAction::Reply.title(),
+        "conversation-document-reply",
+    )
+    .primary(),
+    crate::widgets::Action::new(
+        postio_ui::reader::header::ReaderAction::ReplyAll.command(),
+        postio_ui::reader::header::ReaderAction::ReplyAll.title(),
+        "conversation-document-reply-all",
+    ),
+    crate::widgets::Action::new(
+        postio_ui::reader::header::ReaderAction::Forward.command(),
+        postio_ui::reader::header::ReaderAction::Forward.title(),
+        "conversation-document-forward",
+    ),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ArchiveThread,
+        "Archive thread",
+        "conversation-document-archive",
+    ),
+];
+
 /// The pane's own header: what conversation this is, and how much of it.
 ///
 /// Subject at the largest size in the pane — this is the one place the
@@ -646,6 +686,8 @@ mod imp {
         /// `Archive thread`, pinned below — where the thread's own verbs
         /// live, as against the per-message ones inside each entry (#1006).
         pub(super) footer: std::rc::Rc<crate::widgets::ActionBar>,
+        /// The one-document pane's bar. See [`super::DOCUMENT_ACTIONS`].
+        pub(super) document_footer: std::rc::Rc<crate::widgets::ActionBar>,
         /// Who to ask to run a `CommandId` one of this pane's bars carries.
         ///
         /// The footer had none, so its buttons did nothing when pressed —
@@ -798,6 +840,10 @@ mod imp {
                     &super::CONVERSATION_ACTIONS,
                     "conversation-footer",
                 ),
+                document_footer: crate::widgets::ActionBar::new(
+                    &super::DOCUMENT_ACTIONS,
+                    "conversation-footer",
+                ),
                 scroller: gtk::ScrolledWindow::default(),
                 spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
@@ -861,6 +907,12 @@ mod imp {
             self.root.append(&self.footer.widget());
             self.footer.set_visible(false);
             self.footer.connect_command({
+                let view = view.clone();
+                move |command| view.emit_command(command)
+            });
+            self.root.append(&self.document_footer.widget());
+            self.document_footer.set_visible(false);
+            self.document_footer.connect_command({
                 let view = view.clone();
                 move |command| view.emit_command(command)
             });
@@ -1170,7 +1222,17 @@ impl ConversationView {
             }
             imp.focused.set(messages.first().map(|row| row.id));
             imp.header.set_conversation(&messages, chrono::Local::now());
-            imp.footer.set_visible(messages.len() > 1);
+            imp.document_footer.set_visible(true);
+            // Always, whatever the length -- unlike the stacked pane below.
+            //
+            // There, a single message stands its footer down because the
+            // message's own bar carries the verbs and drawing both put
+            // `Reply` on screen twice with `e` on each (#1173). Here the
+            // per-message chrome is HTML inside the document, so there is no
+            // second bar to collide with and nothing to fall back on: the
+            // footer standing down left a pane with no way to reply with the
+            // mouse at all, which is #1259 (#1349).
+            imp.footer.set_visible(false);
             self.open_as_document(messages);
             return;
         }
@@ -1187,6 +1249,7 @@ impl ConversationView {
         // the lone message carries `Archive` in its own bar instead, so
         // nothing is lost by the footer standing down.
         imp.footer.set_visible(messages.len() > 1);
+        imp.document_footer.set_visible(false);
 
         let focus = opening_focus(&messages);
         let expanded = match focus {
@@ -1355,6 +1418,22 @@ impl ConversationView {
     }
 
     /// The conversation's own action bar.
+    /// Whichever action bar is currently on screen, if either is.
+    ///
+    /// The two panes carry different bars ([`CONVERSATION_ACTIONS`] and
+    /// [`DOCUMENT_ACTIONS`]), and a test asking "can this be replied to" wants
+    /// the one a person can see rather than the one a given branch built.
+    pub fn visible_actions(&self) -> Option<std::rc::Rc<crate::widgets::ActionBar>> {
+        let imp = self.imp();
+        if imp.document_footer.is_visible() {
+            Some(std::rc::Rc::clone(&imp.document_footer))
+        } else if imp.footer.is_visible() {
+            Some(std::rc::Rc::clone(&imp.footer))
+        } else {
+            None
+        }
+    }
+
     pub fn footer(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
         std::rc::Rc::clone(&self.imp().footer)
     }
@@ -1806,6 +1885,7 @@ impl ConversationView {
         }
         self.imp().header.set_keymap(keymap);
         self.imp().footer.set_keymap(keymap);
+        self.imp().document_footer.set_keymap(keymap);
     }
 
     /// Shorten the dwell for a test that cannot wait a second.
