@@ -648,6 +648,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
+    one_senders_styling_cannot_reach_another_message();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -957,6 +958,96 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
              above while losing the message"
         );
     }
+}
+
+/// Can one message's inline styling move another message? (#1346)
+///
+/// Two pieces of work rest on opposite answers. #1327 admitted the sender's
+/// inline styling, reasoning that an inline declaration has no selector and
+/// so reaches its own subtree and nothing else. #1316's note says the
+/// opposite in terms — that stripping `style` is *"the only"* reason several
+/// senders can share a page — and the one-document conversation is built on
+/// that premise.
+///
+/// The inheritance argument is sound as far as it goes and does not cover the
+/// ways an element affects a **sibling** without inheriting into it: `float`
+/// escapes normal flow, a negative `margin` pulls content outside its own
+/// box, and `transform` paints outside the box without changing layout.
+/// #1327's refusal table names neither.
+///
+/// So it is asked of the engine, in the arrangement that makes contamination
+/// possible at all: two messages in one document. Geometry is compared
+/// against the identical document with a benign first message, because an
+/// absolute pixel value would only say the layout is what it is.
+fn one_senders_styling_cannot_reach_another_message() {
+    // Everything #1327 does not refuse, in one message.
+    // A block that occupies its own 120px, then paints itself 120px lower --
+    // exactly over whatever follows it. `transform` is the operative part: it
+    // paints above normal flow, so the intruder lands *on top of* the next
+    // message rather than beside or beneath it. #1327 refuses neither
+    // transform nor a negative margin.
+    //
+    // On one line deliberately. In a raw string a trailing `\` is a literal
+    // backslash, not a line continuation, and it lands inside the attribute
+    // where CSS reads it as an escape and swallows the declaration after it.
+    // Three earlier versions of this test "passed" against a payload broken
+    // exactly that way.
+    const HOSTILE: &str = r#"<div id="intruder" style="height:120px;transform:translateY(120px);background:#f0f">first</div>"#;
+    const SECOND: &str = r#"<p id="probe">second</p>"#;
+
+    // **What is actually being asked.** Not whether two boxes overlap: a
+    // float contributes nothing to its parent's height, so box arithmetic
+    // reports "clear" while the float paints straight over the message below.
+    // The question a person experiences is *what is drawn at this point*, so
+    // that is what is asked -- hit-test inside the second message and see
+    // whose element answers.
+    let hit_at_probe = |wrap: bool| -> String {
+        let first = if wrap {
+            document::contain_body(HOSTILE)
+        } else {
+            format!("<div>{HOSTILE}</div>")
+        };
+        let second = if wrap {
+            document::contain_body(SECOND)
+        } else {
+            format!("<div>{SECOND}</div>")
+        };
+        let document = document::wrap_document(
+            &format!("{first}{second}{}", document::scroll_markers()),
+            postio_body::RemoteImages::Blocked,
+            document::Sheet::Theme,
+        );
+        measure(
+            &document,
+            "(() => { const p = document.getElementById('probe') \
+              .getBoundingClientRect(); \
+              const hit = document.elementFromPoint(p.left + p.width / 2, \
+                                                    p.top + p.height / 2); \
+              return hit ? (hit.id || hit.tagName) : 'nothing'; })()",
+        )
+    };
+
+    // The control first, and it is what makes the rest mean anything: without
+    // the container, the hostile message *does* reach the one below it.
+    // Measured: the intruder occupies 136-256 and the probe 136-157, so they
+    // overlap exactly, and the transformed element paints above normal flow. If
+    // this ever reports the probe, the styling is being refused by something
+    // else and the assertion below is a coincidence rather than a containment.
+    assert_eq!(
+        hit_at_probe(false),
+        "intruder",
+        "the hostile styling did not reach the message below even without a \
+         container, so it is not hostile enough to prove anything"
+    );
+
+    // And with each message in its own `.postio-body`, it does not.
+    assert_eq!(
+        hit_at_probe(true),
+        "probe",
+        "one sender's content is drawn over another sender's mail. #1327's \
+         REFUSED table needs float, transform and negative margin BEFORE the \
+         one-document conversation lands"
+    );
 }
 
 /// Evaluate `expression` against `document` and return it as a string.
