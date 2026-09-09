@@ -1394,7 +1394,7 @@ impl ConversationView {
 
     /// Put a conversation in the pane, oldest first.
     ///
-    /// Focus lands on the first unread — see [`opening_focus`] — and
+    /// Focus lands on the most recent message — see [`opening_focus`] — and
     /// [`expanded_on_open`] decides how much opens with it.
     /// Render this thread as one document in one `WebView` (ADR 0032, #1316).
     ///
