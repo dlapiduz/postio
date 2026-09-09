@@ -23,6 +23,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use postio_model::ids::MessageId;
+use postio_ui::reader::rail::{Effect, Rail};
 
 use crate::list::Row;
 
@@ -1782,24 +1783,32 @@ impl ConversationView {
     /// Answers whether it moved, so a caller can tell "there was nowhere to
     /// go" from "the pane is empty" — the first is a no-op the user will
     /// expect, the second means the key reached the wrong surface.
+    /// Where `J` and `K` land, asked of the rail's rule rather than answered
+    /// again here.
+    ///
+    /// The clamping, and the two different starting points for an unfocused
+    /// conversation, used to be written out in this function. They are the
+    /// same rule the conversation rail needs, and a rule in a widget cannot be
+    /// proven without a display while the same rule in `postio-ui` is
+    /// arithmetic — so this asks, and `rail::Rail` answers.
     fn step(&self, by: isize) -> bool {
         let entries = self.imp().entries.borrow();
         if entries.is_empty() {
             return false;
         }
-        let Some(current) = self.focused_index() else {
-            // Nothing focused: `J` starts at the beginning, `K` at the end.
-            let landing = if by > 0 { 0 } else { entries.len() - 1 };
-            let message = entries[landing].message;
-            drop(entries);
-            self.focus_message(message);
-            return true;
+        let mut rail = Rail::at(entries.len(), self.focused_index());
+        let effect = if by > 0 {
+            rail.next_message()
+        } else {
+            rail.previous_message()
         };
-        let next = current as isize + by;
-        if next < 0 || next as usize >= entries.len() {
+        if effect == Effect::Nothing {
             return false;
         }
-        let message = entries[next as usize].message;
+        let Some(landing) = rail.marked() else {
+            return false;
+        };
+        let message = entries[landing].message;
         drop(entries);
         self.focus_message(message);
         true

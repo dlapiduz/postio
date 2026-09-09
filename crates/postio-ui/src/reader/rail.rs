@@ -116,6 +116,170 @@ pub fn rows(senders: &[String], lengths: &[Option<u32>]) -> Vec<Row> {
         .collect()
 }
 
+/// What the caller must do after asking the rail to move its mark.
+///
+/// Returned by every entry point, so a caller that does nothing on
+/// [`Effect::Nothing`] repaints only when something actually changed. That is
+/// where the brief's *"never animate it"* is enforceable: a widget told to
+/// move only when the value differs has nothing to animate between.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// The mark is already where it was asked to go. Do not repaint.
+    Nothing,
+    /// The mark moved. Repaint the rail; leave the pane where it is.
+    Mark,
+    /// The mark moved and the pane must be scrolled to it. Hand the token
+    /// back to [`Rail::settled`] when the scroll finishes.
+    MarkAndScroll(Settle),
+}
+
+/// Names one programmatic scroll, so a settle that arrives late cannot end
+/// the suppression belonging to a newer one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Settle(u64);
+
+/// The rail's state for one window: which message is marked, and whether the
+/// reader wants to see the rail at all.
+///
+/// # One entry point
+///
+/// Three things move the mark — a rail row being activated, `J`/`K`, and the
+/// observer reporting what is on screen — and the brief requires they resolve
+/// through one place *"so keyboard nav and scroll-derived marking can never
+/// disagree"*. They all end up in [`Rail::mark`], which is private: there is
+/// no second way to set the value.
+#[derive(Debug, Clone)]
+pub struct Rail {
+    count: usize,
+    marked: Option<usize>,
+    /// The scroll currently in flight, if any. While this is set the observer
+    /// is not listened to, because what it can see is the scroll passing over
+    /// messages on its way somewhere the reader already chose.
+    suppressed: Option<u64>,
+    /// Names each scroll in turn. Without it, the settle belonging to a
+    /// finished scroll would end the suppression of a newer one.
+    scrolls: u64,
+}
+
+impl Rail {
+    /// A rail for a conversation of `count` messages, nothing marked yet.
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            marked: None,
+            suppressed: None,
+            scrolls: 0,
+        }
+    }
+
+    /// A rail for a conversation of `count` messages with `marked` already
+    /// current.
+    ///
+    /// For a caller that keeps the mark somewhere else and wants this to
+    /// answer one question about it — where `J` goes from here.
+    pub fn at(count: usize, marked: Option<usize>) -> Self {
+        Self {
+            marked: marked.filter(|index| *index < count),
+            ..Self::new(count)
+        }
+    }
+
+    /// Which message is marked.
+    pub fn marked(&self) -> Option<usize> {
+        self.marked
+    }
+
+    /// A new conversation is being shown.
+    pub fn set_conversation(&mut self, count: usize) {
+        self.count = count;
+        self.marked = None;
+        // A scroll belonging to the conversation that just went away must not
+        // go on silencing the observer in the one that replaced it.
+        self.suppressed = None;
+    }
+
+    /// A rail row was activated, or `J`/`K` moved. The pane follows.
+    pub fn activate(&mut self, index: usize) -> Effect {
+        self.mark(index, true)
+    }
+
+    /// `J`: walk to the next message. Stops at the last one rather than
+    /// wrapping — a thread has an oldest and a newest, and jumping from the
+    /// newest back to the oldest is not what the key means.
+    ///
+    /// Named for the message rather than as `next`, because a `next` taking
+    /// `&mut self` on a non-iterator reads as one and clippy says so.
+    pub fn next_message(&mut self) -> Effect {
+        match self.marked {
+            Some(index) if index + 1 < self.count => self.activate(index + 1),
+            None if self.count > 0 => self.activate(0),
+            _ => Effect::Nothing,
+        }
+    }
+
+    /// `K`: walk to the previous message, stopping at the first.
+    ///
+    /// With nothing marked it starts at the **last** message, as `J` starts at
+    /// the first — the rule `Conversation::step` already shipped for the
+    /// stacked pane. Starting both at the first would make `K` in a
+    /// freshly-opened thread walk forwards.
+    pub fn previous_message(&mut self) -> Effect {
+        match self.marked {
+            Some(index) if index > 0 => self.activate(index - 1),
+            None if self.count > 0 => self.activate(self.count - 1),
+            _ => Effect::Nothing,
+        }
+    }
+
+    /// The observer reported what is on screen. The pane does not follow —
+    /// it is already there.
+    pub fn observed(&mut self, index: Option<usize>) -> Effect {
+        match index {
+            Some(index) => self.mark(index, false),
+            None => Effect::Nothing,
+        }
+    }
+
+    /// A programmatic scroll finished, and the observer may speak again.
+    ///
+    /// Ignores a token that does not name the scroll in flight, so a `scrollend`
+    /// arriving late for a superseded scroll changes nothing. Callers should
+    /// also arm a timeout against this: `scrollend` does not always arrive, and
+    /// suppression that never ends is a mark frozen for the rest of the
+    /// session — worse than the loop it prevents.
+    pub fn settled(&mut self, settle: Settle) {
+        if self.suppressed == Some(settle.0) {
+            self.suppressed = None;
+        }
+    }
+
+    /// The one place the mark is set.
+    ///
+    /// `scroll` distinguishes the two kinds of caller: someone choosing a
+    /// message, whom the pane must follow, and the observer describing where
+    /// the pane already is. Only the second is suppressible — swallowing a
+    /// keypress because the pane is still catching up would read as a broken
+    /// key.
+    fn mark(&mut self, index: usize, scroll: bool) -> Effect {
+        if index >= self.count {
+            return Effect::Nothing;
+        }
+        if !scroll && self.suppressed.is_some() {
+            return Effect::Nothing;
+        }
+        if self.marked == Some(index) {
+            return Effect::Nothing;
+        }
+        self.marked = Some(index);
+        if !scroll {
+            return Effect::Mark;
+        }
+        self.scrolls += 1;
+        self.suppressed = Some(self.scrolls);
+        Effect::MarkAndScroll(Settle(self.scrolls))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +348,146 @@ mod tests {
             rows.iter().map(|row| row.position).collect::<Vec<_>>(),
             vec![1, 2]
         );
+    }
+
+    /// A helper that activates and hands back the token, because every
+    /// suppression test needs both.
+    fn activate(rail: &mut Rail, index: usize) -> Settle {
+        match rail.activate(index) {
+            Effect::MarkAndScroll(settle) => settle,
+            other => panic!("activating a row must scroll the pane, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn activation_and_the_observer_agree_on_the_mark() {
+        // The whole point of one entry point: once the scroll activation asked
+        // for has finished, the observer reporting that same message is not
+        // news. If these were two paths setting the value independently, the
+        // agreement would be a coincidence rather than a property.
+        let mut rail = Rail::new(6);
+        let settle = activate(&mut rail, 2);
+        rail.settled(settle);
+        assert_eq!(rail.marked(), Some(2));
+        assert_eq!(
+            rail.observed(Some(2)),
+            Effect::Nothing,
+            "the observer confirming the activation is not a change"
+        );
+    }
+
+    #[test]
+    fn a_report_from_a_scroll_in_flight_does_not_move_the_mark() {
+        // The sync loop the brief names: the programmatic scroll passes over
+        // message 0 on its way to 3, the observer sees it, and without
+        // suppression the mark lands back where the reader was not going.
+        let mut rail = Rail::new(6);
+        activate(&mut rail, 3);
+        assert_eq!(rail.observed(Some(0)), Effect::Nothing);
+        assert_eq!(rail.marked(), Some(3), "the mark stays where it was sent");
+    }
+
+    #[test]
+    fn a_stale_settle_does_not_unsuppress_a_newer_scroll() {
+        // Two presses of J in quick succession. The first scroll's settle
+        // arrives while the second is still in flight; clearing suppression on
+        // it would reopen exactly the window this closes.
+        let mut rail = Rail::new(6);
+        let first = activate(&mut rail, 1);
+        activate(&mut rail, 4);
+        rail.settled(first);
+        assert_eq!(rail.observed(Some(0)), Effect::Nothing);
+        assert_eq!(rail.marked(), Some(4));
+    }
+
+    #[test]
+    fn settling_lets_the_observer_speak_again() {
+        // The other half: suppression that never ends is a mark frozen for the
+        // rest of the session, which is worse than the loop it prevents.
+        let mut rail = Rail::new(6);
+        let settle = activate(&mut rail, 3);
+        rail.settled(settle);
+        assert_eq!(rail.observed(Some(0)), Effect::Mark);
+        assert_eq!(rail.marked(), Some(0));
+    }
+
+    #[test]
+    fn an_activation_is_never_suppressed() {
+        // Suppression is aimed at the observer alone. Holding J must keep
+        // moving; a reader whose keypresses were swallowed while the pane
+        // caught up would think the key was broken.
+        let mut rail = Rail::new(6);
+        activate(&mut rail, 1);
+        activate(&mut rail, 2);
+        assert_eq!(rail.marked(), Some(2));
+    }
+
+    #[test]
+    fn re_reporting_the_marked_message_is_not_a_change() {
+        let mut rail = Rail::new(6);
+        assert_eq!(rail.observed(Some(1)), Effect::Mark);
+        assert_eq!(
+            rail.observed(Some(1)),
+            Effect::Nothing,
+            "a settled scroll reports repeatedly; only the first is news"
+        );
+    }
+
+    #[test]
+    fn nothing_visible_leaves_the_mark_alone() {
+        // `current` returns None while the pane is scrolled past its content.
+        // Blanking the rail for that moment would be a flicker, not a fact.
+        let mut rail = Rail::new(6);
+        rail.observed(Some(2));
+        assert_eq!(rail.observed(None), Effect::Nothing);
+        assert_eq!(rail.marked(), Some(2));
+    }
+
+    #[test]
+    fn walking_the_thread_stops_at_the_ends() {
+        // No wrapping: a thread has a first and a last message, and jumping
+        // from the newest back to the oldest is not what J means.
+        let mut rail = Rail::new(2);
+        activate(&mut rail, 1);
+        assert_eq!(rail.next_message(), Effect::Nothing);
+        assert_eq!(rail.marked(), Some(1));
+        activate(&mut rail, 0);
+        assert_eq!(rail.previous_message(), Effect::Nothing);
+        assert_eq!(rail.marked(), Some(0));
+    }
+
+    #[test]
+    fn a_new_conversation_forgets_the_old_mark() {
+        // Message 3 of the thread you just left is not message 3 of this one.
+        let mut rail = Rail::new(6);
+        rail.observed(Some(3));
+        rail.set_conversation(4);
+        assert_eq!(rail.marked(), None);
+    }
+
+    #[test]
+    fn a_new_conversation_forgets_a_scroll_in_flight() {
+        // Selecting another conversation while a scroll is still travelling
+        // would otherwise leave the observer muted in the new one, and the
+        // mark would sit on nothing until the reader happened to press a key.
+        let mut rail = Rail::new(6);
+        activate(&mut rail, 3);
+        rail.set_conversation(4);
+        assert_eq!(rail.observed(Some(1)), Effect::Mark);
+        assert_eq!(rail.marked(), Some(1));
+    }
+
+    #[test]
+    fn walking_from_nothing_starts_at_the_end_you_came_from() {
+        // The rule `Conversation::step` already shipped: with nothing marked,
+        // `J` starts at the first message and `K` at the last. Landing on the
+        // first for both would make `K` in a fresh thread walk forwards.
+        let mut rail = Rail::new(6);
+        assert_eq!(rail.next_message(), Effect::MarkAndScroll(Settle(1)));
+        assert_eq!(rail.marked(), Some(0), "J starts at the beginning");
+
+        let mut rail = Rail::new(6);
+        rail.previous_message();
+        assert_eq!(rail.marked(), Some(5), "K starts at the end");
     }
 }
