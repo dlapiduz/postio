@@ -747,7 +747,14 @@ pub fn body_html_in(
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
-                styles: sanitized.styles,
+                // Not `sanitized.styles`. Reduction strips `style`,
+                // `bgcolor`, `width` and `class` from the markup because
+                // reader view *is* the simplified presentation; handing the
+                // same message a stylesheet would put the layout back, and
+                // back halfway at that -- class selectors matching nothing
+                // while `p` and `a` still applied. `View original` is the way
+                // back to what the sender built, and it carries them.
+                styles: String::new(),
                 held_back: HeldBack {
                     remote_images: sanitized.remote_blocked,
                     trackers: sanitized.trackers,
@@ -960,6 +967,43 @@ mod tests {
         assert!(
             document.contains(&sanitize::message_selector(Some("7"))),
             "still scoped when it gets there: {document}"
+        );
+    }
+
+    /// Reader view drops the sender's stylesheet with the rest of their
+    /// styling (#1326).
+    ///
+    /// `reader_view::reduce` strips `style`, `bgcolor`, `width` and `class`
+    /// from the markup, which is the whole of what reader view is: the
+    /// simplified presentation, with `View original` as the way back to what
+    /// the sender built (T065). Handing that same message a `<style>` block
+    /// would put the layout straight back — and worse, halfway: `class`
+    /// selectors would match nothing while `p` and `a` still applied.
+    #[test]
+    fn reader_view_keeps_no_stylesheet_of_the_senders() {
+        let html = "<style>p { color: rgb(1, 2, 3) }</style><p>hi</p>";
+        let body = postio_model::message::MessageBody {
+            text: None,
+            html: Some(html.to_owned()),
+        };
+
+        let reduced = body_html_in(&body, RemoteImages::Blocked, Rendering::Reader, Some("7"));
+        assert_eq!(reduced.rendering, Rendering::Reader);
+        assert!(
+            reduced.styles.is_empty(),
+            "reader view strips the sender's styling and then hands back \
+             their stylesheet: {}",
+            reduced.styles
+        );
+
+        // The control: `View original` is the way back, and it must still be
+        // a way back to something.
+        let original = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            original.styles.contains("rgb(1, 2, 3)"),
+            "the original must still carry it, or the assertion above passes \
+             because nothing is ever carried: {}",
+            original.styles
         );
     }
 
