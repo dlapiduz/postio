@@ -15,7 +15,11 @@ use chrono::{DateTime, Datelike, Local};
 use postio_model::address::EmailAddress;
 
 /// How many names fit before the line starts eliding.
-const NAMES_SHOWN: usize = 3;
+///
+/// Public because the header's participant chips show the same people this
+/// line names, and two limits that could drift apart would let the faces and
+/// the names disagree about who was elided.
+pub const NAMES_SHOWN: usize = 3;
 
 /// The people in a conversation, short and newest-biased.
 ///

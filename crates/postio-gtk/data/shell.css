@@ -2308,6 +2308,31 @@ button.postio-compose-more {
   color: var(--postio-dim);
 }
 
+/* The participant chips on row two (canvas screens 28 and 30): two letters
+   each, overlapping slightly so three of them read as a group rather than as
+   three separate controls.
+
+   Barlow Condensed and the dim ink of `.postio-row-avatar`, because they are
+   the same object as the list row's chip seen at conversation scale -- a
+   second treatment for the same idea is how an interface stops looking like
+   one thing. The hairline border is what keeps the overlap legible: without an
+   edge, two overlapping letters read as one smudged word. */
+.conversation-participant {
+  font-family: var(--postio-font-heading);
+  font-size: 0.7273rem;
+  font-weight: 500;
+  color: var(--postio-dim);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-sm);
+  padding: 0 var(--postio-space-1);
+  background-color: var(--postio-ground);
+}
+
+/* The overlap itself. Not on the first, or the group starts indented. */
+.conversation-participant:not(:first-child) {
+  margin-left: -3px;
+}
+
 /* `latest · all 6`, at row two's trailing edge (canvas screen 30).
 
    Mono like the meta line beside it, because it is metadata about what the
