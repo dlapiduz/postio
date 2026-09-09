@@ -112,6 +112,8 @@ pub struct Reader {
     thread: Rc<RefCell<Vec<ThreadMessage>>>,
     /// Who to tell when a message's own verb is activated.
     on_message_action: Rc<RefCell<Vec<MessageActionHandler>>>,
+    /// Who to tell when the message filling the pane changes.
+    on_current_message: Rc<RefCell<Vec<CurrentMessageHandler>>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
     /// `None` whenever a body is on screen — the two are exclusive, and
@@ -202,6 +204,17 @@ impl Drop for DarkNotify {
     }
 }
 
+/// The script message handler the rail's observer posts through.
+///
+/// Named rather than derived, because the same string has to appear in the
+/// injected script and in the Rust registration, and a mismatch is a channel
+/// that silently never delivers.
+const RAIL_HANDLER: &str = "postioRail";
+
+/// What [`Reader::connect_current_message`] holds: the scope of the message
+/// filling most of the pane.
+type CurrentMessageHandler = Box<dyn Fn(&str)>;
+
 /// What [`Reader::connect_message_action`] holds: the scope a verb named, and
 /// which verb it was.
 type MessageActionHandler = Box<dyn Fn(&str, MessageVerb)>;
@@ -284,10 +297,18 @@ impl Reader {
         let context = webkit6::WebContext::new();
         scheme::register(&context, source);
 
+        // The channel the rail's observer reports through (#1370). Registered
+        // on the view rather than on the context, because the context is per
+        // reader and a handler on a shared one would deliver another reader's
+        // scrolling here.
+        let content = webkit6::UserContentManager::new();
+        content.register_script_message_handler(RAIL_HANDLER, None);
+
         let view = webkit6::WebView::builder()
             .web_context(&context)
             .network_session(&network_session)
             .settings(&hardened_settings())
+            .user_content_manager(&content)
             .hexpand(true)
             .vexpand(true)
             .build();
@@ -346,6 +367,7 @@ impl Reader {
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
             on_message_action: Rc::new(RefCell::new(Vec::new())),
+            on_current_message: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
@@ -438,6 +460,32 @@ impl Reader {
                     handle_decide_policy(view, decision, kind)
                 });
             }
+            {
+                // What the observer reports, arriving from the document.
+                //
+                // Treated as untrusted input even though Postio wrote the
+                // script: it comes from a page that also holds several
+                // senders' markup, and a panic here would take the
+                // application down from inside a message. An unparseable or
+                // unknown payload is dropped.
+                let on_current_message = Rc::clone(&reader.on_current_message);
+                let thread = Rc::clone(&reader.thread);
+                content.connect_script_message_received(Some(RAIL_HANDLER), move |_, value| {
+                    let Some(scope) = value.to_str().split('\n').next().map(str::to_owned) else {
+                        return;
+                    };
+                    // Only a scope this document actually rendered. A message
+                    // naming something else is not a message the rail can act
+                    // on, whoever sent it.
+                    if !thread.borrow().iter().any(|message| message.scope == scope) {
+                        return;
+                    }
+                    for handler in on_current_message.borrow().iter() {
+                        handler(&scope);
+                    }
+                });
+            }
+
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             // Weakly, and this is the half that is easy to get wrong: the
@@ -529,6 +577,32 @@ impl Reader {
         }
         {
             let view = reader.view.clone();
+            {
+                // What the observer reports, arriving from the document.
+                //
+                // Treated as untrusted input even though Postio wrote the
+                // script: it comes from a page that also holds several
+                // senders' markup, and a panic here would take the
+                // application down from inside a message. An unparseable or
+                // unknown payload is dropped.
+                let on_current_message = Rc::clone(&reader.on_current_message);
+                let thread = Rc::clone(&reader.thread);
+                content.connect_script_message_received(Some(RAIL_HANDLER), move |_, value| {
+                    let Some(scope) = value.to_str().split('\n').next().map(str::to_owned) else {
+                        return;
+                    };
+                    // Only a scope this document actually rendered. A message
+                    // naming something else is not a message the rail can act
+                    // on, whoever sent it.
+                    if !thread.borrow().iter().any(|message| message.scope == scope) {
+                        return;
+                    }
+                    for handler in on_current_message.borrow().iter() {
+                        handler(&scope);
+                    }
+                });
+            }
+
             let open = Rc::clone(&reader.open);
             let allowlist = Rc::clone(&reader.allowlist);
             let highlight = Rc::clone(&reader.highlight);
@@ -782,6 +856,67 @@ impl Reader {
     }
 
     /// The document a thread composes to, without handing it over.
+    /// Ask the document to say which message is filling the pane, and to keep
+    /// saying so as the reader scrolls.
+    ///
+    /// Injected after the load rather than written into the document, so the
+    /// markup a sender's message sits in carries no script at all — the
+    /// document is still something that would be inert if the setting changed
+    /// back, and the observer is unmistakably Postio's rather than something
+    /// that arrived with the mail.
+    ///
+    /// The **rule** is not here. This measures and reports; which message wins
+    /// is `postio_ui::reader::rail::current`, which is where the judgement
+    /// lives and where it can be proven without a display. What crosses the
+    /// boundary is a scope, already decided.
+    ///
+    /// Only for a thread: a single message is always the current one, and a
+    /// pane that reported it on every scroll would be spending a message per
+    /// wheel notch to say nothing.
+    fn watch_for_the_current_message(&self) {
+        if self.thread.borrow().len() < 2 {
+            return;
+        }
+        // Debounced, not continuous. The brief asks for the marked row to
+        // settle rather than track the scroll exactly: "jitter during a
+        // flick-scroll is worse than lag".
+        let script = format!(
+            "(() => {{\
+               const post = () => {{\
+                 const view = document.documentElement.clientHeight;\
+                 const top = window.scrollY;\
+                 let best = null, most = 0;\
+                 for (const el of document.querySelectorAll('.postio-message')) {{\
+                   const box = el.getBoundingClientRect();\
+                   const visible = Math.max(0, Math.min(box.bottom, view) - Math.max(box.top, 0));\
+                   if (visible > most) {{ most = visible; best = el.id; }}\
+                 }}\
+                 if (best) {{\
+                   window.webkit.messageHandlers.{handler}.postMessage(best.replace(/^m-/, ''));\
+                 }}\
+               }};\
+               let pending = null;\
+               addEventListener('scroll', () => {{\
+                 clearTimeout(pending);\
+                 pending = setTimeout(post, 100);\
+               }}, {{ passive: true }});\
+               post();\
+             }})()",
+            handler = RAIL_HANDLER,
+        );
+        self.view.evaluate_javascript(
+            &script,
+            None,
+            None,
+            None::<&gtk::gio::Cancellable>,
+            |outcome| {
+                if let Err(error) = outcome {
+                    glib::g_warning!("postio", "the rail observer did not start: {error}");
+                }
+            },
+        );
+    }
+
     fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
         compose_thread_document(messages, &self.allowlist)
     }
@@ -821,6 +956,7 @@ impl Reader {
 
         let document = self.compose_thread(messages);
         load_document(&self.canvas(), &document);
+        self.watch_for_the_current_message();
     }
 
     /// Draw the sender's own markup for whatever is on screen — `C-o`.
@@ -942,6 +1078,16 @@ impl Reader {
     /// A scope rather than a `MessageId` because that is what the document
     /// carries; the conversation view owns the mapping back, as it already
     /// does for the per-message bars in the stacked pane.
+    /// Called with the scope of the message filling most of the pane, as the
+    /// reader scrolls.
+    ///
+    /// The rail's own rule decides *which* that is —
+    /// [`postio_ui::reader::rail::current`] — from extents the observer
+    /// measures. What arrives here is already the answer.
+    pub fn connect_current_message(&self, handler: impl Fn(&str) + 'static) {
+        self.on_current_message.borrow_mut().push(Box::new(handler));
+    }
+
     pub fn connect_message_action(&self, handler: impl Fn(&str, MessageVerb) + 'static) {
         self.on_message_action.borrow_mut().push(Box::new(handler));
     }
