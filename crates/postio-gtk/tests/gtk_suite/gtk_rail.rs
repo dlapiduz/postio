@@ -597,3 +597,34 @@ pub fn the_rail_moves_the_focus_in_the_one_document_pane() {
 
     window.close();
 }
+
+pub fn the_one_document_pane_offers_nothing_to_expand() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+
+    // The stacked pane still offers it: there, read messages are collapsed to
+    // keep a thirty-message thread from opening thirty `WebView`s.
+    pane.set_one_document(false);
+    pane.open((1..=6).map(message).collect());
+    crate::pump();
+    assert!(
+        pane.header().offers_expand_all(),
+        "the stacked pane collapses read messages, so expanding them is a \
+         thing a reader can want"
+    );
+
+    // FR-013: in the one-document pane there is nothing for the user to
+    // expand in order to read the conversation, so a control that would do
+    // nothing must not be drawn -- it says there is something unseen.
+    pane.set_one_document(true);
+    pane.open((1..=6).map(message).collect());
+    crate::pump();
+    assert!(
+        !pane.header().offers_expand_all(),
+        "every body is already open, so Expand all has nothing to do"
+    );
+
+    window.close();
+}
