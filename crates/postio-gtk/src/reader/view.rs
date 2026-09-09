@@ -110,6 +110,8 @@ pub struct Reader {
     /// find the message its scope names and the sender that message is from.
     /// Empty whenever a single message is drawn instead.
     thread: Rc<RefCell<Vec<ThreadMessage>>>,
+    /// Who to tell when a message's own verb is activated.
+    on_message_action: Rc<RefCell<Vec<MessageActionHandler>>>,
     open: Rc<RefCell<Option<Open>>>,
     /// Which [`Absent`] the pane is explaining, when it has no body to draw.
     /// `None` whenever a body is on screen — the two are exclusive, and
@@ -198,6 +200,19 @@ impl Drop for DarkNotify {
             adw::StyleManager::default().disconnect(handler);
         }
     }
+}
+
+/// What [`Reader::connect_message_action`] holds: the scope a verb named, and
+/// which verb it was.
+type MessageActionHandler = Box<dyn Fn(&str, MessageVerb)>;
+
+/// A verb a message offers for itself, inside the document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageVerb {
+    /// Reply to this message rather than to the latest one.
+    Reply,
+    /// Forward this message.
+    Forward,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -330,6 +345,7 @@ impl Reader {
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
+            on_message_action: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
             absent: Rc::new(std::cell::Cell::new(None)),
             highlight: Rc::new(RefCell::new(Vec::new())),
@@ -372,7 +388,21 @@ impl Reader {
                 let page = Rc::clone(&reader.page);
                 let loads = Rc::clone(&reader.loads);
                 let allowlist_path = allowlist_path.clone();
+                let on_message_action = Rc::clone(&reader.on_message_action);
                 view.connect_decide_policy(move |view, decision, kind| {
+                    if let Some((scope, verb)) = message_verb(decision, kind) {
+                        // **No re-render.** Replying opens a composer; reloading
+                        // the document to do it would throw away the scroll
+                        // position and every `<details>` the reader had opened.
+                        // #1316's note calls a reload "affordable for a verb and
+                        // not for a disclosure triangle" -- this is a verb that
+                        // needs none at all.
+                        for handler in on_message_action.borrow().iter() {
+                            handler(&scope, verb);
+                        }
+                        decision.ignore();
+                        return true;
+                    }
                     if let Some(scope) = allow_scope(decision, kind) {
                         // Whose consent this is. The scope names a message and the
                         // message names a sender: allowing "this thread" would be
@@ -906,6 +936,16 @@ impl Reader {
     /// chip to click. Same destination as [`Reader::connect_attachment`],
     /// with no particular part in hand: it opens on whatever the pane is
     /// showing, same as clicking any chip does today.
+    /// Called when a message's own reply or forward is activated, with the
+    /// scope that message was rendered under.
+    ///
+    /// A scope rather than a `MessageId` because that is what the document
+    /// carries; the conversation view owns the mapping back, as it already
+    /// does for the per-message bars in the stacked pane.
+    pub fn connect_message_action(&self, handler: impl Fn(&str, MessageVerb) + 'static) {
+        self.on_message_action.borrow_mut().push(Box::new(handler));
+    }
+
     pub fn connect_parts_requested(&self, handler: impl Fn() + 'static) {
         self.on_parts_requested.borrow_mut().push(Box::new(handler));
     }
@@ -1414,6 +1454,48 @@ fn leaves_the_pane(kind: webkit6::PolicyDecisionType, navigation: webkit6::Navig
         && navigation == webkit6::NavigationType::LinkClicked
 }
 
+/// The message scope and verb a per-message action names, if this navigation
+/// is one.
+///
+/// Checked before the consent verb and before anything reaches the browser,
+/// and matched on the scheme for `allow_scope`'s reason: a sender controls a
+/// link's text and its class, and neither of the schemes the sanitizer will
+/// emit.
+fn message_verb(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<(String, MessageVerb)> {
+    let uri = navigation_uri(decision, kind)?;
+    for (scheme, verb) in [
+        (postio_ui::reader::thread::REPLY_SCHEME, MessageVerb::Reply),
+        (
+            postio_ui::reader::thread::FORWARD_SCHEME,
+            MessageVerb::Forward,
+        ),
+    ] {
+        if let Some(scope) = uri.strip_prefix(&format!("{scheme}:")) {
+            return Some((scope.to_owned(), verb));
+        }
+    }
+    None
+}
+
+/// The URI a navigation is for, when it is a navigation at all.
+fn navigation_uri(
+    decision: &webkit6::PolicyDecision,
+    kind: webkit6::PolicyDecisionType,
+) -> Option<String> {
+    if kind != webkit6::PolicyDecisionType::NavigationAction {
+        return None;
+    }
+    decision
+        .downcast_ref::<webkit6::NavigationPolicyDecision>()?
+        .navigation_action()?
+        .request()?
+        .uri()
+        .map(|uri| uri.to_string())
+}
+
 /// The message scope a `Show` link names, if this navigation is one.
 ///
 /// Matched on the scheme rather than on the link's text or class: the sender
@@ -1423,15 +1505,8 @@ fn allow_scope(
     decision: &webkit6::PolicyDecision,
     kind: webkit6::PolicyDecisionType,
 ) -> Option<String> {
-    if kind != webkit6::PolicyDecisionType::NavigationAction {
-        return None;
-    }
-    let uri = decision
-        .downcast_ref::<webkit6::NavigationPolicyDecision>()?
-        .navigation_action()?
-        .request()?
-        .uri()?;
-    uri.strip_prefix(&format!("{}:", postio_ui::reader::thread::ALLOW_SCHEME))
+    navigation_uri(decision, kind)?
+        .strip_prefix(&format!("{}:", postio_ui::reader::thread::ALLOW_SCHEME))
         .map(str::to_owned)
 }
 
