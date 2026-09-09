@@ -1618,6 +1618,13 @@ impl ConversationView {
             imp.thread_id.set(opening);
             imp.thread_bodies.borrow_mut().clear();
             imp.expanded_in_document.borrow_mut().clear();
+            // A different conversation, so "show this one whole" is answered
+            // afresh. Cleared here rather than on every redraw: a body
+            // arriving re-renders the thread, and forgetting there would undo
+            // the choice as the rest of it loaded (#1398).
+            if let Some(reader) = imp.document_reader.borrow().as_ref() {
+                reader.forget_originals();
+            }
         }
         imp.thread_rows.replace(messages.clone());
 
@@ -2201,6 +2208,26 @@ impl ConversationView {
             index.set_child(None::<&gtk::Widget>);
             imp.body.append(rail);
         }
+    }
+
+    /// Show the focused message as its sender wrote it — the one-document
+    /// pane's half of `⌃O`.
+    ///
+    /// Answers whether it did anything, so the window can fall through to the
+    /// single-message reader when this pane is not the one on screen.
+    pub fn show_focused_message_whole(&self) -> bool {
+        let imp = self.imp();
+        if !imp.one_document.get() {
+            return false;
+        }
+        let Some(focused) = imp.focused.get() else {
+            return false;
+        };
+        let Some(reader) = imp.document_reader.borrow().clone() else {
+            return false;
+        };
+        reader.view_original_for(&focused.get().to_string());
+        true
     }
 
     /// `⇧R`: put the rail away, or bring it back.
