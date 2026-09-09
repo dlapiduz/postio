@@ -149,6 +149,38 @@ pub const REFUSED: &[(&str, Refusal)] = &[
     ("z-index", Refusal::Containment),
 ];
 
+/// Every at-rule a sender may not use, with the reason it may not.
+///
+/// The counterpart of [`REFUSED`] for the other half of a stylesheet, and
+/// deliberately the same shape and the same [`Refusal`] enum: spec FR-019b's
+/// point is that the set of refusals is *enumerable*, and two tables in one
+/// place is one place. Nothing here is refused by a judgement made somewhere
+/// on the render path.
+///
+/// Not exhaustive, and does not need to be. [`crate::styles`] admits a named
+/// set — `@media`, `@supports`, `@container`, `@layer`, `@keyframes` — and
+/// refuses everything else by omission, which is the safe direction: a CSS
+/// feature Postio has never heard of is not one it can reason about the reach
+/// of. This table is the subset that has been thought about and has a reason
+/// worth writing down.
+pub const REFUSED_AT_RULES: &[(&str, Refusal)] = &[
+    // Fetches when the stylesheet parses, carrying the referer and the
+    // reader's IP. It needs no `<img>`, so neither `contain_declarations` nor
+    // the document's `img-src` touches it.
+    ("import", Refusal::Privacy),
+    // Same fetch, one indirection later: a `src` naming a remote host is a
+    // request made the moment a glyph is needed. ADR 0023 has Postio serve
+    // its own faces rather than fetch them; a sender does not get an
+    // exception to that.
+    ("font-face", Refusal::Privacy),
+    // Rebinds what element names mean, which is the one thing that could make
+    // a scoped selector match something other than what it reads as.
+    ("namespace", Refusal::Containment),
+    // Both speak for the whole document rather than for one message in it.
+    ("charset", Refusal::Containment),
+    ("page", Refusal::Containment),
+];
+
 /// Not here on purpose: `top`, `right`, `bottom`, `left` and `inset`.
 ///
 /// They were in the first draft of this table and should not have been. They
@@ -344,7 +376,11 @@ fn rewrite_attribute<'u>(
 /// discard the `color` written beside it — a message that loses its palette
 /// because it also tried to pin itself is a message rendered wrongly, and the
 /// user cannot tell that from a sender who never set a colour.
-fn contain_declarations(value: &str, remote: RemoteImages, blocked_count: &AtomicU32) -> String {
+pub(crate) fn contain_declarations(
+    value: &str,
+    remote: RemoteImages,
+    blocked_count: &AtomicU32,
+) -> String {
     let mut kept: Vec<&str> = Vec::new();
     for declaration in split_declarations(value) {
         let Some((property, declared)) = declaration.split_once(':') else {
