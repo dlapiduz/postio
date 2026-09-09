@@ -927,8 +927,16 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
             r#"<table width="4000"><tr><td>a very wide layout table</td></tr></table>"#,
         ),
     ] {
+        // Through the sanitizer, not around it. This fed `document_for` the
+        // raw markup, which meant it asserted containment of a `width` the
+        // real path *stripped* before it ever arrived -- ammonia's per-tag
+        // defaults did not carry table layout attributes until #1396. The
+        // assertion below only becomes load-bearing when the attribute
+        // genuinely reaches the engine, so it has to start where a message
+        // starts.
+        let sanitized = postio_body::sanitize_body(body, postio_body::RemoteImages::Blocked);
         let document = document::document_for(
-            body,
+            &sanitized.html,
             postio_body::RemoteImages::Blocked,
             document::Sheet::Theme,
         );
