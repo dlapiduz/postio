@@ -218,3 +218,62 @@ fn a_message_cannot_style_its_way_out_of_its_own_block() {
         );
     }
 }
+
+/// What `reads_as_bulk` must not start catching (#1412, T066).
+///
+/// The heuristic is two signals — a nested table, or ten links — and the
+/// pressure on it is to add a third now that the sender's inline styling
+/// survives (#1325, #1396). Measured before changing anything, it has one
+/// real blind spot and two correct answers worth keeping:
+///
+/// | | reads as bulk |
+/// |---|---|
+/// | a table-free campaign with six links | **no** — the blind spot |
+/// | the same with twelve | yes, on the link count |
+/// | a reply quoting one table | no |
+/// | a heavily styled personal note | no |
+///
+/// The blind spot is mild: a campaign that opens in its sender's own layout
+/// is what FR-019a asks for anyway, and reader view exists for mail that is
+/// *unreadable* raw. A style signal would close it and would risk the last
+/// row — correspondence is styled too, and reducing somebody's letter to
+/// prose because they chose Georgia is the worse error of the two.
+///
+/// So this pins the answers rather than changing them. Whoever adds a third
+/// signal has to keep the personal note out, which is the constraint that
+/// makes the change hard and is invisible without a test.
+#[test]
+fn styled_correspondence_is_not_mistaken_for_a_campaign() {
+    let letter = sanitize::sanitize_body(
+        "<p style=\"font-family:Georgia;color:#333;line-height:1.6;margin:24px\">Dear Ada, \
+         the plans arrived and the survey is booked.</p>\
+         <p style=\"color:#666\">Best, Grace</p>",
+        RemoteImages::Blocked,
+    )
+    .html;
+    assert!(
+        !reader_view::reads_as_bulk(&letter),
+        "a styled letter read as a campaign. Reducing somebody's
+         correspondence to prose because they chose a serif is worse than
+         letting a campaign through: {letter}"
+    );
+
+    let quoting = sanitize::sanitize_body(
+        "<p>Sounds good.</p><blockquote><table><tr><td>agenda</td></tr></table></blockquote>",
+        RemoteImages::Blocked,
+    )
+    .html;
+    assert!(
+        !reader_view::reads_as_bulk(&quoting),
+        "a reply quoting one table read as a campaign -- the signal is \
+         *nested* tables, because a template nests them and a quote does \
+         not: {quoting}"
+    );
+
+    // And the corpus newsletter still is one, so the guard rails above have
+    // not been won by making the heuristic answer no to everything.
+    assert!(
+        reader_view::reads_as_bulk(&sanitized("html-newsletter")),
+        "the corpus newsletter stopped reading as bulk"
+    );
+}
