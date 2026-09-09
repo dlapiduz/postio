@@ -4,4 +4,5 @@ pub mod cost;
 pub mod document;
 pub mod header;
 pub mod parts;
+pub mod rail;
 pub mod thread;
