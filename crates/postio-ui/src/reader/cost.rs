@@ -164,7 +164,7 @@ mod tests {
         let before = test_support::documents_built();
         let bytes_before = test_support::document_bytes();
 
-        let document = document::document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        let document = document::document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
 
         assert_eq!(
             test_support::documents_built() - before,

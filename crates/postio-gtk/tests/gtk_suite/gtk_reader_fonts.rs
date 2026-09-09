@@ -106,6 +106,7 @@ pub fn the_faces_are_fetched_over_the_scheme_and_not_carried_by_the_document() {
     // typeface catalogue.
     let document = postio_ui::reader::document::document_for(
         "<p>The tide gate interlock is fixed.</p>",
+        "",
         postio_body::RemoteImages::Blocked,
         postio_ui::reader::document::Sheet::Theme,
     );
