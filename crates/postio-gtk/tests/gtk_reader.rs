@@ -645,6 +645,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     // reported as passing (#355, `check-one-gtk-test-per-binary`).
     rendering_the_next_message_keeps_the_web_process();
     each_reader_costs_a_web_process_of_its_own();
+    fifty_conversations_hold_what_one_holds();
     sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
@@ -1820,6 +1821,80 @@ fn rendering_the_next_message_keeps_the_web_process() {
 /// Recorded rather than fixed. Sharing one context needs the `postio-reader:`
 /// scheme handler to route by URI instead of closing over one message's
 /// blobs, which is a change to how parts are addressed, not a tuning knob.
+/// Fifty conversations cost what one does (#1412, spec FR-057).
+///
+/// #1348 measured the shape this protects: one document flat at ~101 MiB Pss
+/// whatever the message count, against the stacked pane's ~31 MiB per message
+/// rising to 1559 MiB at fifty. **Flat is the whole claim of ADR 0032**, and
+/// a reader that quietly kept a surface per conversation would show the same
+/// numbers on the first thread and none of the same numbers on the fiftieth —
+/// the regression a person notices last and a counter notices at once.
+///
+/// Held rather than created. `surfaces_created` legitimately grows if a reader
+/// is rebuilt; what must not grow is the number still alive, which is what
+/// `surfaces_held` is signed for.
+fn fifty_conversations_hold_what_one_holds() {
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("fifty-conversations"),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let thread = |n: usize| {
+        (0..3)
+            .map(|index| postio_gtk::reader::view::ThreadMessage {
+                scope: format!("{n}-{index}"),
+                sender: format!("sender{index}@example.com"),
+                address: format!("sender{index}@example.com"),
+                when: "24 Aug".to_owned(),
+                preview: format!("conversation {n}"),
+                expanded: true,
+                latest: index == 2,
+                body: MessageBody {
+                    text: Some(format!("the body of message {index} in conversation {n}")),
+                    html: None,
+                },
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // The first conversation is the baseline, not zero: opening one costs a
+    // surface, and that one is the pane.
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&thread(0));
+    wait_for(&finished, Duration::from_secs(5));
+    let held_after_one = postio_ui::test_support::surfaces_held();
+    let renders_after_one = postio_ui::test_support::renders_issued();
+
+    for n in 1..50 {
+        let finished = track_load_finished(&reader);
+        reader.render_thread(&thread(n));
+        wait_for(&finished, Duration::from_secs(5));
+    }
+
+    // The control first, for the reason #1400 taught: a reader that had
+    // stopped rendering entirely would sail through the ceiling below.
+    assert!(
+        postio_ui::test_support::renders_issued() > renders_after_one,
+        "forty-nine more conversations issued no renders, so the ceiling \
+         below was not measured -- it was dodged"
+    );
+    assert_eq!(
+        postio_ui::test_support::surfaces_held(),
+        held_after_one,
+        "fifty conversations hold more surfaces than one. That is the flat \
+         line ADR 0032 was accepted on, and a leak of one surface per \
+         conversation is fifty web processes by the end of a morning"
+    );
+
+    window.destroy();
+}
+
 fn each_reader_costs_a_web_process_of_its_own() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
