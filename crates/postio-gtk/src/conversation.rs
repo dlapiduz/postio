@@ -2210,6 +2210,28 @@ impl ConversationView {
         }
     }
 
+    /// Turn the page of the one-document pane's own reader.
+    ///
+    /// Answers whether it did anything, so the window can fall through to the
+    /// single-message reader when this pane is not the one on screen —
+    /// `Window::reader()` is that other reader, and paging it while a
+    /// conversation is up would scroll a view nobody is looking at.
+    pub fn page(&self, down: bool) -> bool {
+        let imp = self.imp();
+        if !imp.one_document.get() {
+            return false;
+        }
+        let Some(reader) = imp.document_reader.borrow().clone() else {
+            return false;
+        };
+        if down {
+            reader.page_down();
+        } else {
+            reader.page_up();
+        }
+        true
+    }
+
     /// Show the focused message as its sender wrote it — the one-document
     /// pane's half of `⌃O`.
     ///
@@ -2318,6 +2340,14 @@ impl ConversationView {
     /// it ([`focus_message`](Self::focus_message)), so collapsed-and-focused
     /// is a state nothing else reaches.
     pub fn toggle_fold(&self) {
+        // Nothing folds in the one-document pane -- FR-013 (#1389) puts every
+        // body on screen -- so `space` there would be a dead key on the
+        // surface this application is mostly for. It turns the page instead,
+        // which is what `space` means everywhere else in the interface.
+        if self.imp().one_document.get() {
+            self.page(true);
+            return;
+        }
         let Some(focused) = self.focused() else {
             return;
         };

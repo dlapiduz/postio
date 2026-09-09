@@ -1174,6 +1174,15 @@ static SPECS: &[CommandSpec] = &[
         // and keeps `Page_Down`. The canvas is explicit, and folding is the
         // gesture a stack is *for* -- scrolling is what the scrollbar and
         // the wheel already do.
+        //
+        // **`Page_Down` is still missing from the conversation, and
+        // `Page_Up` is not** -- `ScrollReaderUp` serves `MESSAGE_SURFACES`.
+        // Nothing argues for that asymmetry, and it cannot be fixed here:
+        // adding the conversation to this row makes `space` collide with
+        // `ToggleFold`, which `bindings_do_not_collide_within_a_context`
+        // forbids and canvas turn 8a decided. Which command owns `space` in
+        // a conversation is #1402, and it is the maintainer's (#1375 is the
+        // same shape).
         contexts: ctx(&[Context::List, Context::Reader]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
@@ -1583,6 +1592,25 @@ mod tests {
         for (spec, id) in SPECS.iter().zip(CommandId::ALL) {
             assert_eq!(spec.id, *id, "registry row out of order at `{id}`");
         }
+    }
+
+    /// `space` folds in a conversation, and that is the constraint #1402 ran
+    /// into.
+    ///
+    /// Canvas turn 8a gave `space` to folding and the stacked pane still
+    /// folds, so a page-turn key cannot take it: adding the conversation to
+    /// `ScrollReaderDown` makes the two collide, which
+    /// `bindings_do_not_collide_within_a_context` forbids. Asserted here so
+    /// the constraint is visible from the row that has to respect it.
+    #[test]
+    fn space_still_folds_in_a_conversation() {
+        let keymap = crate::config::Keymap::defaults();
+        assert_eq!(
+            keymap.command_for(Context::Conversation, "space"),
+            Some(CommandId::ToggleFold.into()),
+            "a page-turn key took `space` away from folding, which canvas \
+             turn 8a gave it and the stacked pane still needs"
+        );
     }
 
     // -- binding_conflict (#881) --------------------------------------------
