@@ -36,6 +36,9 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+#[path = "../webkit_probe.rs"]
+mod webkit_probe;
+
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -106,6 +109,7 @@ mod gtk_reader_actions;
 mod gtk_reader_fonts;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
+mod gtk_reader_styles;
 mod gtk_reader_teardown;
 mod gtk_reading_pane;
 mod gtk_result_order;
@@ -168,6 +172,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies",
         gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies as fn(),
+    ),
+    (
+        "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",
+        gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message as fn(),
     ),
     (
         "gtk_settings_sync::the_pane_shows_the_files_values",

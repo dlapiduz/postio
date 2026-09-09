@@ -596,6 +596,14 @@ pub fn sheet_for(rendering: Rendering, suits_reader_view: bool) -> Sheet {
 pub struct Rendered {
     /// The markup, ready for [`contain_body`].
     pub html: String,
+    /// The sender's own stylesheets, already scoped to this message
+    /// (`postio_body::styles`). Empty for the great majority of mail.
+    ///
+    /// Carried beside the markup all the way to the document because the
+    /// sender's `<style>` element does not survive sanitizing -- Postio emits
+    /// CSS it parsed itself, and a reader that forgets this field renders a
+    /// message unstyled while every test about the CSS still passes.
+    pub styles: String,
     /// What the remote-image policy held back.
     pub held_back: HeldBack,
     /// Which way it was drawn — what the notice reports, and what decides
@@ -739,6 +747,7 @@ pub fn body_html_in(
             let reduced = reader_view::reduce(&sanitized.html);
             return Rendered {
                 html: reduced.html,
+                styles: sanitized.styles,
                 held_back: HeldBack {
                     remote_images: sanitized.remote_blocked,
                     trackers: sanitized.trackers,
@@ -754,6 +763,7 @@ pub fn body_html_in(
         let sanitized = sanitize::sanitize_body_in(html, remote, scope);
         return Rendered {
             html: quote::fold_html_quotes(&sanitized.html),
+            styles: sanitized.styles,
             held_back: HeldBack {
                 remote_images: sanitized.remote_blocked,
                 trackers: sanitized.trackers,
@@ -782,7 +792,30 @@ pub fn body_html_in(
 /// as chrome that is native toolkit widgets stacked around the rendering
 /// surface rather than markup inside its document.
 pub fn contain_body(content: &str) -> String {
-    format!(r#"<div class="postio-body">{content}</div>"#)
+    contain_body_in(content, None)
+}
+
+/// [`contain_body`], naming the message the content belongs to.
+///
+/// The name is what [`sanitize::message_selector`] matches, and it is the
+/// only reason a sender's `<style>` block can be admitted at all: without the
+/// attribute the scoped selector names nothing, and the message renders
+/// unstyled. The two are asserted to agree in this module's tests, because
+/// this is the joint where they would drift apart in silence.
+pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
+    let class = sanitize::BODY_CLASS;
+    match scope {
+        Some(scope) => format!(
+            r#"<div class="{class}" {}="{}">{content}</div>"#,
+            sanitize::MESSAGE_ATTRIBUTE,
+            {
+                let mut escaped = String::with_capacity(scope.len());
+                escape_into(&mut escaped, scope);
+                escaped
+            }
+        ),
+        None => format!(r#"<div class="{class}">{content}</div>"#),
+    }
 }
 
 /// The whole document for sender content that has already been sanitized.
@@ -797,9 +830,14 @@ pub fn contain_body(content: &str) -> String {
 /// a style: #323 gave the sender's content a visible edge so that markup
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
-pub fn document_for(content: &str, remote: RemoteImages, sheet: Sheet) -> String {
+pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
     let document = wrap_document(
-        &format!("{}{}", contain_body(content), scroll_markers()),
+        &format!(
+            "{}{}{}",
+            senders_stylesheet(styles),
+            contain_body(content),
+            scroll_markers()
+        ),
         remote,
         sheet,
     );
@@ -808,6 +846,25 @@ pub fn document_for(content: &str, remote: RemoteImages, sheet: Sheet) -> String
     // same answer for every frontend. See `crate::reader::cost`.
     crate::reader::cost::note_document(document.len());
     document
+}
+
+/// A sender's scoped CSS, in Postio's own `<style>` element.
+///
+/// After Postio's sheet, not before: a message renders as its sender built it
+/// (FR-019), and where the two genuinely collide the sender's rule is the one
+/// describing the message.
+pub fn senders_stylesheet(styles: &str) -> String {
+    if styles.trim().is_empty() {
+        return String::new();
+    }
+    // `</style` is the one sequence that ends the element, and CSS the
+    // sanitizer emitted cannot contain it -- `postio_body::styles` writes
+    // selectors and declarations it parsed, never raw sender text. Refusing
+    // it here anyway costs nothing and means a future change to that module
+    // cannot turn a stylesheet into markup: the element would close early and
+    // whatever followed would be parsed as HTML.
+    let safe = styles.replace("</style", "");
+    format!("<style>\n{safe}</style>")
 }
 
 /// What the sanitizer already enforces at the DOM level, restated as policy
@@ -829,6 +886,94 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The container carries what the stylesheet's selector matches (#1326).
+    ///
+    /// Two constants, one written into HTML and one into CSS, and nothing but
+    /// this test between them. Rename the attribute on one side and every
+    /// test about scoping still passes -- against a selector that now names
+    /// nothing, so every styled message renders bare and no assertion
+    /// anywhere notices.
+    #[test]
+    fn the_container_carries_what_the_stylesheet_selector_matches() {
+        let container = contain_body_in("<p>hi</p>", Some("7"));
+        let selector = sanitize::message_selector(Some("7"));
+
+        let class = selector
+            .split(['[', ':'])
+            .next()
+            .expect("the selector names a class")
+            .trim_start_matches('.');
+        assert!(
+            container.contains(&format!(r#"class="{class}""#)),
+            "the selector matches .{class} and the container is {container}"
+        );
+        let attribute = selector
+            .split_once('[')
+            .and_then(|(_, rest)| rest.strip_suffix(']'))
+            .expect("the selector names the message");
+        let (name, value) = attribute.split_once('=').expect("as name=\"value\"");
+        assert!(
+            container.contains(&format!("{name}={value}")),
+            "the selector matches [{attribute}] and the container is {container}"
+        );
+    }
+
+    /// A sender's stylesheet reaches the document it was sent in (#1326).
+    ///
+    /// `postio_body::styles` scopes it and has its own tests; this asserts
+    /// the thing they cannot, that it is **carried** -- through `Rendered`,
+    /// through `document_for`, into the markup an engine is handed. Drop
+    /// either step and every test in `styles.rs` still passes while every
+    /// styled message renders bare.
+    #[test]
+    fn a_senders_stylesheet_reaches_the_document() {
+        let body = postio_model::message::MessageBody {
+            text: None,
+            html: Some("<style>p { color: rgb(1, 2, 3) }</style><p>hi</p>".to_owned()),
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        assert!(
+            rendered.styles.contains("rgb(1, 2, 3)"),
+            "the sanitizer kept it: {}",
+            rendered.styles
+        );
+
+        let document = document_for(
+            &rendered.html,
+            &rendered.styles,
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
+        assert!(
+            document.contains("rgb(1, 2, 3)"),
+            "and the document carries it: {document}"
+        );
+        assert!(
+            document.contains(&sanitize::message_selector(Some("7"))),
+            "still scoped when it gets there: {document}"
+        );
+    }
+
+    /// A sender cannot end their `<style>` and start writing markup (#1326).
+    #[test]
+    fn a_stylesheet_cannot_close_its_own_element() {
+        let body = postio_model::message::MessageBody {
+            text: None,
+            html: Some("<style>p { color: red }</style:x><p>hi</p>".to_owned()),
+        };
+        let rendered = body_html_in(&body, RemoteImages::Blocked, Rendering::Original, Some("7"));
+        let document = document_for(
+            &rendered.html,
+            &rendered.styles,
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
+        assert!(
+            !document.contains("</style><script") && !document.contains("<script"),
+            "{document}"
+        );
+    }
 
     /// A message's quotes fold, on the path that actually draws one (#1406).
     ///
@@ -960,7 +1105,7 @@ mod tests {
     #[test]
     fn a_document_carries_font_references_and_not_font_bytes() {
         let before = crate::test_support::largest_document();
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
 
         // The faces are still named. Without this, deleting the fonts
         // altogether would satisfy every assertion below while making the
@@ -1026,7 +1171,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_document_carries_no_sheet_of_its_own() {
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
         assert!(
             !document.contains(SENDERS_SHEET_CLASS),
             "the theme document must not carry the sender's sheet: {document}"
@@ -1040,7 +1185,7 @@ mod tests {
     /// canvas asks for, not a detail of it.
     #[test]
     fn the_senders_sheet_lights_the_body_box_and_leaves_the_chrome_alone() {
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Senders);
         assert!(
             document.contains(&format!(r#"<html class="{SENDERS_SHEET_CLASS}">"#)),
             "the root says which sheet it is: {document}"
@@ -1060,7 +1205,7 @@ mod tests {
     /// away from the design system (#296).
     #[test]
     fn the_senders_sheet_is_the_generated_light_palette_and_not_a_second_copy() {
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Senders);
+        let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Senders);
         let light = reader_ground(false);
         let dark = reader_ground(true);
         assert_ne!(light, dark, "the palette must actually differ by scheme");
@@ -1494,7 +1639,7 @@ mod tests {
     /// absent plate included.
     #[test]
     fn the_document_is_proportional_to_the_message_not_to_the_font_catalogue() {
-        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+        let document = document_for("<p>hi</p>", "", RemoteImages::Blocked, Sheet::Theme);
         assert!(
             !document.contains("data:font/"),
             "the faces are still travelling with the document"

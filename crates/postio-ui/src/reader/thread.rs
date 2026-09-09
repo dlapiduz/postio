@@ -35,7 +35,7 @@
 
 use postio_body::sanitize::RemoteImages;
 
-use super::document::{Sheet, contain_body, scroll_markers, wrap_document};
+use super::document::{Sheet, contain_body_in, scroll_markers, senders_stylesheet, wrap_document};
 
 /// The conversation chrome, appended only to a conversation document.
 const THREAD_CSS: &str = include_str!("../../data/thread.css");
@@ -107,6 +107,12 @@ pub struct Entry<'a> {
     /// The message's body: already rendered *and already sanitised under
     /// [`scope`](Self::scope)*.
     pub body: &'a str,
+    /// This message's own stylesheets, scoped to it
+    /// (`postio_body::sanitize::Sanitized::styles`). Empty for most mail.
+    ///
+    /// Must be the scoped output, for the same reason [`Entry::body`] must:
+    /// a rule that arrived unscoped restyles every other sender on this page.
+    pub styles: &'a str,
 }
 
 /// The whole conversation, as one hardened document.
@@ -117,13 +123,26 @@ pub struct Entry<'a> {
 /// document, not less: several senders share this page.
 pub fn conversation_document(entries: &[Entry<'_>], remote: RemoteImages, sheet: Sheet) -> String {
     let mut content = String::new();
-    // Ours, not a sender's: `sanitize` strips `<style>` tag-and-contents from
-    // everything that arrives, which is exactly what makes it safe for
-    // several senders to share this page. `style-src 'unsafe-inline'` is
-    // already the reader's policy, so this needs no widening of it.
+    // Postio's first, then the senders'. Ours is the ground the page sits on;
+    // theirs describes their own message and wins where the two genuinely
+    // collide (FR-019).
+    //
+    // A sender's rules used to be simply absent here -- `sanitize` stripped
+    // `<style>` tag-and-contents -- and that was what made it safe for several
+    // senders to share one page. #1326 admits them, so what makes it safe now
+    // is that every rule has been rewritten under its own message's container
+    // (`postio_body::styles`). That is a stronger claim resting on a parser
+    // rather than on a deletion, which is why it is tested against the engine
+    // and not only against the markup.
     content.push_str("<style>");
     content.push_str(THREAD_CSS);
     content.push_str("</style>");
+    let senders: String = entries
+        .iter()
+        .map(|entry| entry.styles)
+        .collect::<Vec<_>>()
+        .join("\n");
+    content.push_str(&senders_stylesheet(&senders));
     content.push_str(r#"<div class="postio-thread">"#);
     for entry in entries {
         content.push_str(&entry_html(entry));
@@ -198,7 +217,9 @@ fn entry_html(entry: &Entry<'_>) -> String {
         scope = escape(entry.scope),
         sender = sender,
     );
-    let body = contain_body(entry.body);
+    // Named, not just contained: the name is what this message's own rules
+    // were scoped to, and without it they match nothing.
+    let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
@@ -289,6 +310,8 @@ mod tests {
         );
     }
 
+    use postio_body::sanitize;
+
     use super::*;
 
     fn entry<'a>(scope: &'a str, sender: &'a str, body: &'a str, expanded: bool) -> Entry<'a> {
@@ -301,6 +324,7 @@ mod tests {
             expanded,
             latest: false,
             blocked: 0,
+            styles: "",
             body,
         }
     }
@@ -376,7 +400,21 @@ mod tests {
             entry("2", "Grace", "<p>b</p>", true),
         ];
         let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
-        assert_eq!(document.matches(r#"<div class="postio-body">"#).count(), 2);
+        assert_eq!(
+            document
+                .matches(&format!(r#"<div class="{}""#, sanitize::BODY_CLASS))
+                .count(),
+            2
+        );
+        // And each one named, because the name is what #1326 scoped that
+        // message's own stylesheet to. A container that lost it is a message
+        // that renders unstyled.
+        for scope in ["1", "2"] {
+            assert!(
+                document.contains(&format!(r#"{}="{scope}""#, sanitize::MESSAGE_ATTRIBUTE)),
+                "message {scope} is not named: {document}"
+            );
+        }
     }
 
     /// A display name is sender-controlled text going into markup. The body

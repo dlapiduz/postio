@@ -1514,6 +1514,7 @@ fn compose_thread_document(
             latest: message.latest,
             blocked: rendered.held_back.remote_images,
             body: &rendered.html,
+            styles: &rendered.styles,
         })
         .collect();
 
@@ -1610,7 +1611,10 @@ fn render_open(
     // actually sent. `sheet_for` is where that rule lives, so this frontend
     // and the FFI one cannot express it differently.
     let sheet = sheet_for(drawn.rendering, bulk);
-    load_document(canvas, &document_for(&content, remote, sheet));
+    load_document(
+        canvas,
+        &document_for(&content, &drawn.styles, remote, sheet),
+    );
 
     for handler in rendered.borrow().iter() {
         handler(held_back);
