@@ -24,7 +24,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
 //! cargo run -p postio-app --example shot -- /tmp/first-run.png demo orientation
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
-//! cargo run -p postio-app --example shot -- /tmp/thread.png demo thread 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/thread.png demo conversation 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
 //! ```
 //!
@@ -60,6 +60,7 @@
 //! database it reads is created, seeded and thrown away in process.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -642,48 +643,13 @@ fn settle(window: &impl IsA<gtk::Widget>) {
     heartbeat.remove();
 }
 
-/// Every literal mode word `flag` checks for below, so an argument matching
-/// none of them can be caught rather than silently ignored (#599).
-const KNOWN_FLAGS: &[&str] = &[
-    "dark",
-    "hc",
-    "demo",
-    "accounts",
-    "backfill",
-    "locked",
-    "comfortable",
-    "compact",
-    "command",
-    "folder",
-    "contact",
-    "search",
-    "syncing",
-    "settings",
-    "filters",
-    "composing",
-    "appearance",
-    "keyboard",
-    "storage",
-    "privacy",
-    "configfile",
-    "weights",
-    "account",
-    "tested",
-    "signature",
-    "compose",
-    "addaccount",
-    "browser",
-    "syncwindow",
-    "detached",
-    "selected",
-    "thread",
-    "orientation",
-    "open",
-    "shipping",
-];
-
-/// Every argument (after the output path) that matches none of
-/// [`KNOWN_FLAGS`], no `WxH` size and no `text` scale prefix.
+/// Every argument (after the output path) that no mode asked about, and that
+/// is not a `WxH` size or a `text` scale prefix.
+///
+/// `asked` is what `flag` was consulted about during this run, which is the
+/// whole change: this compared against a hand-kept `KNOWN_FLAGS`, a second
+/// copy of "what this tool understands" that drifted from the first in both
+/// directions at once (#1376).
 ///
 /// #599's actual cause: consecutive shots looked broken, and the working
 /// hypothesis was a compositor that had stopped delivering frame callbacks
@@ -697,11 +663,11 @@ const KNOWN_FLAGS: &[&str] = &[
 /// flag took effect -- for a first render, the pre-populate placeholder:
 /// empty sidebar, "offline · never synced". A confident, wrong picture,
 /// with nothing on screen saying why.
-fn unrecognized_arguments(args: &[String]) -> Vec<&str> {
+fn unrecognized_arguments<'a>(args: &'a [String], asked: &HashSet<String>) -> Vec<&'a str> {
     args.iter()
         .skip(1)
         .filter(|token| {
-            !KNOWN_FLAGS.contains(&token.as_str())
+            !asked.contains(token.as_str())
                 && token
                     .split_once('x')
                     .is_none_or(|(w, h)| w.parse::<i32>().is_err() || h.parse::<i32>().is_err())
@@ -711,8 +677,8 @@ fn unrecognized_arguments(args: &[String]) -> Vec<&str> {
         .collect()
 }
 
-fn warn_about_unrecognized_arguments(args: &[String]) {
-    for token in unrecognized_arguments(args) {
+fn warn_about_unrecognized_arguments(args: &[String], asked: &HashSet<String>) {
+    for token in unrecognized_arguments(args, asked) {
         eprintln!(
             "shot: '{token}' is not a mode this tool recognizes, and was silently \
              ignored -- the picture below is whatever the window looked like before \
@@ -737,21 +703,40 @@ mod unrecognized_argument_tests {
             .collect()
     }
 
+    /// What `flag` was asked about during the run.
+    fn asked(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
     #[test]
-    fn every_known_flag_is_recognized() {
-        for name in KNOWN_FLAGS {
-            assert_eq!(
-                unrecognized_arguments(&args(&[name])),
-                Vec::<&str>::new(),
-                "{name} is in KNOWN_FLAGS but was flagged as unrecognized"
-            );
-        }
+    fn a_mode_the_run_asked_about_is_recognized() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo"]), &asked(&["demo"])),
+            Vec::<&str>::new()
+        );
+    }
+
+    /// The `thread` case exactly: passed, accepted, and inert.
+    ///
+    /// It sat in `KNOWN_FLAGS` and nothing queried it, so the usage this
+    /// example documents in its own header -- `shot out.png demo thread` --
+    /// was accepted, drew the *default* picture, and said nothing. The
+    /// opposite happened too: `conversation`, which the code did query, was
+    /// missing from the list and so was reported as "silently ignored" when it
+    /// had in fact run. Two failures that look like each other's opposite,
+    /// from one list that had to be kept in step by hand (#1376).
+    #[test]
+    fn a_mode_nothing_asked_about_is_flagged() {
+        assert_eq!(
+            unrecognized_arguments(&args(&["thread"]), &asked(&["conversation"])),
+            vec!["thread"]
+        );
     }
 
     #[test]
     fn a_size_argument_is_recognized() {
         assert_eq!(
-            unrecognized_arguments(&args(&["1400x800"])),
+            unrecognized_arguments(&args(&["1400x800"]), &asked(&[])),
             Vec::<&str>::new()
         );
     }
@@ -759,30 +744,39 @@ mod unrecognized_argument_tests {
     #[test]
     fn a_text_scale_argument_is_recognized() {
         assert_eq!(
-            unrecognized_arguments(&args(&["text150"])),
+            unrecognized_arguments(&args(&["text150"]), &asked(&[])),
             Vec::<&str>::new()
         );
     }
 
     #[test]
     fn two_words_collapsed_into_one_shell_argument_is_flagged() {
-        // #599: exactly what an unquoted `$mode` set to "demo thread"
+        // #599: exactly what an unquoted `$mode` set to "demo conversation"
         // becomes under a shell that does not word-split it.
         assert_eq!(
-            unrecognized_arguments(&args(&["demo thread"])),
-            vec!["demo thread"]
+            unrecognized_arguments(
+                &args(&["demo conversation"]),
+                &asked(&["demo", "conversation"])
+            ),
+            vec!["demo conversation"]
         );
     }
 
     #[test]
     fn a_plain_typo_is_flagged() {
-        assert_eq!(unrecognized_arguments(&args(&["dmeo"])), vec!["dmeo"]);
+        assert_eq!(
+            unrecognized_arguments(&args(&["dmeo"]), &asked(&["demo"])),
+            vec!["dmeo"]
+        );
     }
 
     #[test]
     fn a_normally_split_pair_is_not_flagged() {
         assert_eq!(
-            unrecognized_arguments(&args(&["demo", "thread", "1400x800"])),
+            unrecognized_arguments(
+                &args(&["demo", "conversation", "1400x800"]),
+                &asked(&["demo", "conversation"])
+            ),
             Vec::<&str>::new()
         );
     }
@@ -843,8 +837,14 @@ fn main() -> glib::ExitCode {
         .first()
         .cloned()
         .unwrap_or_else(|| "postio.png".to_string());
-    warn_about_unrecognized_arguments(&args);
-    let flag = |name: &str| args.iter().skip(1).any(|a| a == name);
+    // Every mode word this run asks about. `flag` is the only way a mode is
+    // consumed, so what it was asked *is* what the tool understands -- a fact
+    // about the run rather than a list somebody has to remember to update.
+    let asked: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+    let flag = |name: &str| {
+        asked.borrow_mut().insert(name.to_owned());
+        args.iter().skip(1).any(|a| a == name)
+    };
     // A `WxH` argument forces the window size, which is how the adaptive
     // modes get rendered without a compositor in the loop.
     let size = args.iter().skip(1).find_map(|a| {
@@ -1238,6 +1238,13 @@ fn main() -> glib::ExitCode {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+
+    // Now, not before the modes run. The question is whether anything *asked*
+    // about each word the caller passed, and that is only answerable once
+    // every `flag` call has happened -- which is the whole reason this stopped
+    // being a hand-kept list. It comes before the picture so the warning is
+    // read alongside it rather than scrolled off above.
+    warn_about_unrecognized_arguments(&args, &asked.borrow());
 
     // The picture, and the wait for it, both belong to `postio_gtk::capture`
     // -- which turns the main loop until the window is actually drawable
