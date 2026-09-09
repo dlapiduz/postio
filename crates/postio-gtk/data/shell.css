@@ -2488,3 +2488,12 @@ button.postio-compose-more {
   color: var(--postio-ink-secondary);
   background: none;
 }
+
+/* The two letters the narrow step shows in place of a name. Mono, like the
+   number beside it: at 118px the row is a pair of codes, and setting them in
+   different faces would make it read as a name that had been cut off. */
+.postio-rail-initials {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-ink-secondary);
+}

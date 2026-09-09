@@ -173,6 +173,16 @@ impl RailColumn {
         number.set_xalign(1.0);
         line.append(&number);
 
+        // Both, with the ladder choosing which is shown. Swapping one
+        // label's text on every resize would mean the narrow step had to
+        // remember the name it overwrote, and that is a second copy of the
+        // thread waiting to disagree with the first.
+        let initials = gtk::Label::new(Some(&row.initials));
+        initials.add_css_class("postio-rail-initials");
+        initials.set_xalign(0.0);
+        initials.set_visible(false);
+        line.append(&initials);
+
         let sender = gtk::Label::new(Some(&row.sender));
         sender.add_css_class("postio-rail-sender");
         sender.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -212,6 +222,9 @@ impl RailColumn {
         }
         for text in of_class(self.widget(), "postio-rail-sender") {
             text.set_visible(!narrow);
+        }
+        for text in of_class(self.widget(), "postio-rail-initials") {
+            text.set_visible(narrow);
         }
     }
 
@@ -340,6 +353,7 @@ mod tests {
         let row = Row {
             position: 3,
             sender: "Tessa Vaughn".to_owned(),
+            initials: "TV".to_owned(),
             length: Some(84),
         };
         assert_eq!(announce(&row, 6), "Message 3 of 6, Tessa Vaughn, 84 lines");
@@ -350,6 +364,7 @@ mod tests {
         let row = Row {
             position: 1,
             sender: "Ada".to_owned(),
+            initials: "AD".to_owned(),
             length: None,
         };
         assert_eq!(announce(&row, 2), "Message 1 of 2, Ada");

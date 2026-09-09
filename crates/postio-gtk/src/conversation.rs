@@ -1414,9 +1414,13 @@ impl ConversationView {
     fn fill_rail(&self, messages: &[Row]) {
         let imp = self.imp();
         let senders: Vec<String> = messages.iter().map(Self::rail_sender).collect();
+        let initials: Vec<String> = messages
+            .iter()
+            .map(|row| postio_ui::row::initials(row.from.as_ref()))
+            .collect();
         let lengths: Vec<Option<u32>> = vec![None; messages.len()];
-        imp.rail.set_thread(&rows(&senders, &lengths));
-        self.apply_rail_ladder(self.root_width(), messages.len());
+        imp.rail.set_thread(&rows(&senders, &initials, &lengths));
+        self.apply_rail_ladder(self.window_width(), messages.len());
     }
 
     pub fn open(&self, messages: Vec<Row>) {
@@ -1859,7 +1863,7 @@ impl ConversationView {
     pub fn toggle_rail(&self) {
         let imp = self.imp();
         imp.rail_hidden.set(!imp.rail_hidden.get());
-        let width = self.root_width();
+        let width = self.window_width();
         let messages = imp.entries.borrow().len();
         self.apply_rail_ladder(width, messages);
     }
@@ -1874,15 +1878,22 @@ impl ConversationView {
         &self.imp().rail
     }
 
-    /// The width the ladder is being asked about when nobody has said.
+    /// How wide the window is, asked of the window.
     ///
-    /// The pane's own allocation is not the window's, but it is the only
-    /// number available before the window has told us, and it is never wider
-    /// -- so it can only ever pick a *quieter* step of the ladder, never a
-    /// busier one than the window can hold.
-    fn root_width(&self) -> i32 {
-        let width = self.imp().root.width();
-        if width > 0 { width } else { NARROW_BELOW }
+    /// The first version of this measured the *pane* and called it close
+    /// enough, reasoning that the pane is never wider than the window so the
+    /// ladder could only err quiet. It erred quiet every time: the reading
+    /// pane is about 660px in a 1280px window, which is below the ladder's
+    /// floor, so the rail unmounted itself in a window with ample room for it
+    /// and the breakpoints never corrected it -- neither one applies above
+    /// 1240, so neither one fires. Nothing was wrong that a screenshot did
+    /// not show immediately, and nothing but a screenshot would have.
+    fn window_width(&self) -> i32 {
+        self.root()
+            .and_downcast::<gtk::Window>()
+            .map(|window| window.width())
+            .filter(|width| *width > 0)
+            .unwrap_or(NARROW_BELOW)
     }
 
     /// Move focus to the next message in the stack — `J`.
