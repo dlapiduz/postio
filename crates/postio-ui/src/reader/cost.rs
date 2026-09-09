@@ -30,18 +30,52 @@
 //!   released, so a conversation that never lets go shows up here even while
 //!   every individual render looks cheap.
 //!
-//! Counters are process-wide and never reset. Tests read a `before`, act, and
-//! assert on the delta -- which is what lets them span an async boundary that
-//! a scoped closure could not.
+//! Counters are never reset. Tests read a `before`, act, and assert on the
+//! delta -- which is what lets them span an async boundary that a scoped
+//! closure could not.
+//!
+//! # Per thread, not per process (#1390)
+//!
+//! They were `AtomicU64` statics, and a delta assertion over a shared counter
+//! is only exact if nothing else is counting. libtest runs `#[test]`s on a
+//! thread pool, so a test asserting "assembling a document counts one"
+//! failed the moment another test in the same binary assembled one between
+//! its snapshot and its assertion. The exactness is not the problem -- "a
+//! frontend that grows a second path to the engine is invisible" is the
+//! whole point of it -- so the counters moved instead.
+//!
+//! Everything that counts here runs on the thread that owns the interface:
+//! documents are assembled on it, and a frontend's load choke point is on it
+//! because the toolkit has no other. A counter incremented on a worker and
+//! read on the main thread would read zero, which is worth knowing before
+//! adding one -- there is no such caller today.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
+use std::thread::LocalKey;
 
-pub(crate) static DOCUMENTS: AtomicU64 = AtomicU64::new(0);
-pub(crate) static DOCUMENT_BYTES: AtomicU64 = AtomicU64::new(0);
-pub(crate) static LARGEST_DOCUMENT: AtomicU64 = AtomicU64::new(0);
-pub(crate) static RENDERS: AtomicU64 = AtomicU64::new(0);
-pub(crate) static SURFACES_CREATED: AtomicU64 = AtomicU64::new(0);
-pub(crate) static SURFACES_RELEASED: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    pub(crate) static DOCUMENTS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static DOCUMENT_BYTES: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static LARGEST_DOCUMENT: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static RENDERS: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SURFACES_CREATED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Add to a counter.
+pub(crate) fn bump(counter: &'static LocalKey<Cell<u64>>, by: u64) {
+    counter.with(|count| count.set(count.get().saturating_add(by)));
+}
+
+/// Raise a counter to `value` if it is higher — the high-water mark.
+fn raise(counter: &'static LocalKey<Cell<u64>>, value: u64) {
+    counter.with(|count| count.set(count.get().max(value)));
+}
+
+/// Read a counter.
+pub(crate) fn read(counter: &'static LocalKey<Cell<u64>>) -> u64 {
+    counter.with(Cell::get)
+}
 
 /// One document was assembled, of `bytes` bytes.
 ///
@@ -49,9 +83,9 @@ pub(crate) static SURFACES_RELEASED: AtomicU64 = AtomicU64::new(0);
 /// question "did this document carry bulk" is answered where the document is
 /// built and is the same answer for every frontend.
 pub(crate) fn note_document(bytes: usize) {
-    DOCUMENTS.fetch_add(1, Ordering::Relaxed);
-    DOCUMENT_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
-    LARGEST_DOCUMENT.fetch_max(bytes as u64, Ordering::Relaxed);
+    bump(&DOCUMENTS, 1);
+    bump(&DOCUMENT_BYTES, bytes as u64);
+    raise(&LARGEST_DOCUMENT, bytes as u64);
 }
 
 /// A document was handed to a rendering surface.
@@ -60,12 +94,12 @@ pub(crate) fn note_document(bytes: usize) {
 /// one; if a frontend grows a second path to the engine, this counter is what
 /// makes that visible instead of silently doubling the cost of a keystroke.
 pub fn note_render() {
-    RENDERS.fetch_add(1, Ordering::Relaxed);
+    bump(&RENDERS, 1);
 }
 
 /// A rendering surface was created.
 pub fn note_surface_created() {
-    SURFACES_CREATED.fetch_add(1, Ordering::Relaxed);
+    bump(&SURFACES_CREATED, 1);
 }
 
 /// A rendering surface was released.
@@ -73,11 +107,54 @@ pub fn note_surface_created() {
 /// Released rather than dropped, because what matters is whether the engine
 /// process behind it can go, not whether a Rust value went out of scope.
 pub fn note_surface_released() {
-    SURFACES_RELEASED.fetch_add(1, Ordering::Relaxed);
+    bump(&SURFACES_RELEASED, 1);
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A counter another thread is also using stays exact here (#1390).
+    ///
+    /// This is the failure that started it, reproduced deliberately: a delta
+    /// assertion over a *shared* counter is only exact if nothing else is
+    /// counting, and libtest runs tests on a thread pool. So
+    /// `assembling_a_document_is_counted_with_its_size` failed with
+    /// `left: 2, right: 1` the moment another test in the binary assembled a
+    /// document between its snapshot and its assertion — which #1386's
+    /// anchor test did, and which any future test that builds a document
+    /// would do again.
+    ///
+    /// Against `AtomicU64` statics this fails. Against thread-local counters
+    /// the other thread's thousand documents are its own, and this one still
+    /// counts one.
+    #[test]
+    fn a_neighbours_counting_does_not_reach_this_thread() {
+        let before = read(&DOCUMENTS);
+
+        let busy = std::thread::spawn(|| {
+            for _ in 0..1000 {
+                note_document(512);
+            }
+            read(&DOCUMENTS)
+        });
+        note_document(16);
+        let neighbour = busy.join().expect("the neighbour thread finished");
+
+        assert_eq!(
+            read(&DOCUMENTS) - before,
+            1,
+            "a thousand documents assembled beside this one were counted \
+             against it, so every exact-delta assertion in this workspace is \
+             a coin toss"
+        );
+        assert_eq!(
+            neighbour, 1000,
+            "the neighbour's own counting went somewhere else, which would \
+             mean the counters are not per thread but merely broken"
+        );
+    }
+
     use crate::reader::document::{self, Sheet};
     use crate::test_support;
     use postio_body::RemoteImages;
