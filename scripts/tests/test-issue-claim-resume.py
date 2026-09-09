@@ -55,7 +55,18 @@ if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; f
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then cat "$STUB_DIR/issues.json"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then echo "OPEN ready,p2"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then exit 0; fi
-if [ "$1" = "pr" ] && [ "$2" = "list" ]; then cat "$STUB_DIR/prs.json" 2>/dev/null || echo "[]"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+    # Real `gh` applies `--jq` to what it prints, and #1401's fix reads a
+    # single field that way. A stub that ignored the filter would hand the
+    # script a whole JSON array where it expects a branch name, and the test
+    # would be exercising something the tool never does.
+    if printf '%s' "$*" | grep -q -- "baseRefName"; then
+        printf '%s' "$PR_BASE_REF"
+        exit 0
+    fi
+    cat "$STUB_DIR/prs.json" 2>/dev/null || echo "[]"
+    exit 0
+fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then echo "OPEN"; exit 0; fi
 if [ "$1" = "api" ]; then echo "null"; exit 0; fi
 exit 1
@@ -97,7 +108,7 @@ def world(base: Path) -> tuple[Path, Path]:
     return repo, stub_dir
 
 
-def claim(repo: Path, base: Path, stub_dir: Path, *args: str):
+def claim(repo: Path, base: Path, stub_dir: Path, *args: str, env_extra: dict[str, str] | None = None):
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
@@ -106,6 +117,7 @@ def claim(repo: Path, base: Path, stub_dir: Path, *args: str):
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["POSTIO_CLAIM_SEED"] = "0"
+    environment.update(env_extra or {})
     return patience.run(
         ["bash", str(repo / "scripts" / "issue-claim.sh"), *args],
         cwd=repo, env=environment, capture_output=True, text=True, timeout=120,
@@ -150,6 +162,41 @@ def main() -> int:
         out = result.stdout + result.stderr
         if "#77" not in out or "--resume 4242" not in out:
             fail("notice", "a dry run did not name the red PR and the resume command", result)
+
+        # ── --resume records the base the PR actually targets (#1401) ────
+        # `--base` is a claim-time argument and nobody passes it to
+        # `--resume`; the branch already exists and its PR already targets
+        # something. Recording the default `main` on a branch claimed with
+        # `--base feature/x` made `issue-land.sh` refuse to merge -- rightly,
+        # because a worktree and a PR that disagree is not a thing to guess
+        # about, but the disagreement was this script's own doing and the
+        # landing that hit it had already run every gate and pushed.
+        result = claim(
+            repo, base, stub_dir, "--resume", "4242",
+            env_extra={"PR_BASE_REF": "feature/conversation-reading-pane"},
+        )
+        recorded = (worktrees / "issue-4242" / ".git")
+        base_file = None
+        if recorded.is_file():
+            # a worktree's `.git` is a pointer file
+            pointer = recorded.read_text(encoding="utf-8").split(":", 1)[1].strip()
+            base_file = Path(pointer) / "postio-base"
+        if result.returncode != 0:
+            fail("resume base", "the resume failed", result)
+        elif base_file is None or not base_file.is_file():
+            fail("resume base", "no postio-base was recorded", result)
+        elif base_file.read_text(encoding="utf-8").strip() != "feature/conversation-reading-pane":
+            fail(
+                "resume base",
+                "recorded "
+                f"{base_file.read_text(encoding='utf-8').strip()!r} rather than the "
+                "branch the PR targets, so the landing will refuse to merge",
+                result,
+            )
+        shutil.rmtree(worktrees / "issue-4242", ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=repo, check=False, capture_output=True)
+        git("branch", "-q", "-D", "issue-4242-red-pr", cwd=repo)
+        shutil.rmtree(base / "claims", ignore_errors=True)
 
         # ── --resume cuts the worktree from the remote branch ────────────
         result = claim(repo, base, stub_dir, "--resume", "4242")
