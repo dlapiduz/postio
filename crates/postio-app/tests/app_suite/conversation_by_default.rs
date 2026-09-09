@@ -3,7 +3,7 @@
 //!
 //! ADR 0015 Q4: "The column is an index. The pane is the conversation."
 //! Opening a thread row — the cursor landing on it, a click, `Enter` —
-//! shows the whole conversation, focused on the first unread, expanded and
+//! shows the whole conversation, focused on its most recent message, and
 //! scrolled to. There is no second gesture and no second surface (#1003).
 //!
 //! On the bug, `Fill::fill` read `row.id` and never asked `row.is_thread()`,
@@ -145,17 +145,25 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
         window.conversation().widget().is_visible(),
         "the conversation pane filled but is not the surface on screen"
     );
-    // Focus opens on the first unread — the oldest here, both being unread —
-    // expanded, per the pane's own opening policy.
+    // Focus opens on the most recent message, whether or not earlier ones
+    // are unread — FR-015, which superseded ADR 0015's first-unread rule in
+    // #1385. This asserted `oldest`, and only CI caught it: `app_suite` is
+    // not in the sanity tier, so the local gate that passes says nothing
+    // about it.
     assert_eq!(
         window.conversation().focused(),
-        Some(oldest),
-        "the conversation must open focused on the first unread message"
+        Some(newest),
+        "the conversation must open focused on its most recent message"
+    );
+    assert!(
+        window.conversation().is_expanded(newest),
+        "the focused message must open expanded, or focus points at a \
+         closed door"
     );
     assert!(
         window.conversation().is_expanded(oldest),
-        "the focused message must open expanded, or focus points at a \
-         closed door"
+        "and the message before it is open too -- landing on the newest \
+         must not be a reason to close what came before (FR-013)"
     );
 
     // ── `Enter` on the same row is the same answer, not a downgrade ──────
