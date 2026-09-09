@@ -87,7 +87,13 @@ pub fn the_rail_lists_a_thread_and_marks_what_is_on_screen() {
         "TV".to_owned(),
         "ME".to_owned(),
     ];
-    rail.show_thread(&rows(&senders, &initials, &lengths));
+    let whens = vec![
+        "22 Aug".to_owned(),
+        "24 Aug".to_owned(),
+        "24 Aug".to_owned(),
+        "25 Aug".to_owned(),
+    ];
+    rail.show_thread(&rows(&senders, &initials, &whens, &lengths));
     rail.set_marked(Some(2));
 
     let seen = labels(rail.widget());
@@ -144,6 +150,7 @@ pub fn activating_a_row_reports_the_message_it_names() {
     rail.show_thread(&rows(
         &["Ada".to_owned(), "Grace".to_owned(), "Katherine".to_owned()],
         &["AD".to_owned(), "GR".to_owned(), "KA".to_owned()],
+        &["1 Sep".to_owned(), "2 Sep".to_owned(), "3 Sep".to_owned()],
         &[None, None, None],
     ));
 
