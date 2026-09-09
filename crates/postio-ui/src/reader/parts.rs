@@ -21,6 +21,26 @@
 pub trait BlobSource {
     /// The part's bytes and MIME type, or `None` if no part carries this id.
     fn resolve(&self, content_id: &str) -> Option<(Vec<u8>, String)>;
+
+    /// The same, for a reference that names *which message* it belongs to.
+    ///
+    /// A single-message document does not need to: the reader knows which
+    /// message is open, so `scope` is `None` and this is [`resolve`]. ADR
+    /// 0032's conversation document holds a whole thread, where "whichever is
+    /// open" names nothing — two messages may each carry a part called `logo`,
+    /// and a sender may reference a `Content-ID` they know belongs to somebody
+    /// else's message in the same thread.
+    ///
+    /// The default ignores the scope, which is right for a source that only
+    /// ever holds one message's parts and wrong for one that holds a thread's.
+    /// A thread source must override it, and a scope it does not recognise
+    /// must resolve to nothing rather than to whatever it has.
+    ///
+    /// [`resolve`]: Self::resolve
+    fn resolve_in(&self, scope: Option<&str>, content_id: &str) -> Option<(Vec<u8>, String)> {
+        let _ = scope;
+        self.resolve(content_id)
+    }
 }
 
 impl<F: Fn(&str) -> Option<(Vec<u8>, String)>> BlobSource for F {

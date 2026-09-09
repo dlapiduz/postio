@@ -1,0 +1,146 @@
+/* The conversation, as one document (ADR 0032, #1316).
+ *
+ * Appended only to a conversation document, so a single-message reader's
+ * stylesheet is untouched -- though a single message *is* a thread of one
+ * here, and renders through these same rules.
+ *
+ * Every value comes from the token layer. Canvas 17 (conversation view) is
+ * what these are matched against: collapsed rows with a marker, a sender and
+ * a preview; an expanded message with an avatar chip, the address in mono and
+ * the time; a left accent edge on the message being read.
+ */
+
+.postio-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── a message ──────────────────────────────────────────────────────── */
+
+.postio-message {
+  border-bottom: 1px solid var(--r-hairline);
+}
+
+.postio-message:last-child {
+  border-bottom: none;
+}
+
+/* The disclosure triangle is the browser's, and it is not Postio's design
+   language. The marker in canvas 17 is a small square that reads as a state,
+   not as an affordance to twist. */
+.postio-message-head::-webkit-details-marker,
+.postio-message-head::marker {
+  display: none;
+  content: "";
+}
+
+.postio-message-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: default;
+  list-style: none;
+}
+
+.postio-message-head:hover {
+  background: var(--r-quote-bg);
+}
+
+/* The square marker, drawn rather than typed so it cannot pick up a font. */
+.postio-message-head::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--r-ink-secondary);
+  transform: translateY(-1px);
+}
+
+.postio-message[open] > .postio-message-head::before {
+  background: var(--r-ink-secondary);
+}
+
+.postio-from {
+  flex: none;
+  color: var(--r-ink);
+  font-weight: 600;
+}
+
+.postio-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--r-dim);
+}
+
+/* Metadata is IBM Plex Mono, for the reason everything numeric in Postio is:
+   the mono face is what says "this is metadata". */
+.postio-when {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+}
+
+/* An open message hides its own preview: the body is right there, and a
+   truncated copy of its first line above it is noise. */
+.postio-message[open] > .postio-message-head > .postio-preview {
+  display: none;
+}
+
+/* ── the expanded header, canvas 17 ─────────────────────────────────── */
+
+.postio-message[open] {
+  border-left: 3px solid var(--r-accent);
+}
+
+.postio-message[open] > .postio-message-head {
+  padding-left: 13px; /* 16 less the accent edge, so nothing shifts */
+  flex-wrap: wrap;
+}
+
+.postio-address {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+}
+
+/* Only an open message shows the address: a collapsed row is a name and a
+   line of the message, which is what canvas 17 draws. */
+.postio-message:not([open]) > .postio-message-head > .postio-address {
+  display: none;
+}
+
+.postio-latest {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75em;
+  color: var(--r-ink-secondary);
+  border: 1px solid var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+  padding: 1px 6px;
+}
+
+/* ── what was held back ─────────────────────────────────────────────── */
+
+/* Stated per message, because the decision it reports is per sender. The
+   experiment blocks every message's remote images (one document has one
+   Content-Security-Policy), so this says so rather than offering a Show
+   button it could not honour for one sender alone. */
+.postio-blocked {
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8em;
+  color: var(--r-ink-secondary);
+}
+
+.postio-message .postio-body {
+  padding: 0 16px 16px;
+}

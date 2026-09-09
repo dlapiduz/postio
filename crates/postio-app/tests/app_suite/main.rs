@@ -36,6 +36,7 @@ mod list_contract;
 mod manual_sync;
 mod navigation_cost;
 mod onboarding_probe;
+mod one_document_conversation;
 mod orientation;
 mod parts_open_wiring;
 mod read_receipt_wiring;
@@ -131,6 +132,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "composer_warm::the_window_warms_its_editing_surface_without_being_asked",
         composer_warm::the_window_warms_its_editing_surface_without_being_asked as fn(),
+    ),
+    (
+        "one_document_conversation::a_thread_opens_as_one_document_holding_every_message",
+        one_document_conversation::a_thread_opens_as_one_document_holding_every_message as fn(),
     ),
     (
         "click_preview::clicking_a_message_fills_the_reading_pane",

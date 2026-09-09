@@ -441,6 +441,27 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // window has the blob source and the allow-list path, and only this
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
+    // ADR 0032's experiment (#1316): render the thread as one document in one
+    // `WebView` instead of a stack of readers. Off unless asked for, so both
+    // shapes are in the same binary and can be compared on the same mail.
+    //
+    // An environment variable and not a config key, deliberately: this is an
+    // experiment with a decision still to be made, and `config.toml` is where
+    // settled choices live.
+    if std::env::var_os("POSTIO_ONE_DOCUMENT").is_some() {
+        window.conversation().set_one_document(true);
+        window.conversation().connect_thread_opened({
+            let fill = Rc::clone(&parts);
+            let window = glib::object::ObjectExt::downgrade(window);
+            move |rows| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                fill.fill_thread(&window.conversation(), rows);
+            }
+        });
+    }
+
     window.conversation().set_reader_factory({
         // Weak, for the reason `install_run` states in `search.rs`: the
         // conversation pane is a child the window owns, and a strong clone
@@ -709,6 +730,38 @@ impl Fill {
                 })
             }
         })
+    }
+
+    /// Fetch every body in a thread, for one-document mode (ADR 0032, #1316).
+    ///
+    /// The stacked pane fetches a body when a message is expanded, and
+    /// `fill_reader` is where that lands. One document has no expansions to
+    /// hang it on: the whole thread is drawn at once, so the whole thread is
+    /// asked for at once and each body is handed to the pane as it arrives.
+    ///
+    /// Still one crossing per message, and still through `read`, so a body
+    /// that is not on this machine reports the same absence it would in the
+    /// stack — a message waiting for its body draws collapsed with its
+    /// preview rather than as an empty box.
+    fn fill_thread(
+        &self,
+        pane: &postio_gtk::conversation::ConversationView,
+        rows: Vec<postio_gtk::list::Row>,
+    ) {
+        for row in rows {
+            let answer = self.read(row.id);
+            glib::spawn_future_local({
+                let pane = pane.clone();
+                async move {
+                    let Ok(Some(loaded)) = answer.recv().await else {
+                        return;
+                    };
+                    if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                        pane.set_thread_body(row.id, body);
+                    }
+                }
+            });
+        }
     }
 
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {

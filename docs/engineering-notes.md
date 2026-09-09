@@ -3435,6 +3435,7 @@ Three things worth keeping:
 - 2026-09-05 — [The WAL is not the startup cost, and measuring it took ten minutes (2026-09-05, #1175)](notes/2026-09-05-the-wal-is-not-the-startup-cost.md)
 - 2026-09-05 — [The error log was never switched on (2026-09-05, #1184)](notes/2026-09-05-the-error-log-was-never-switched-on.md)
 - 2026-09-05 — [The app that ran, logged, and drew nothing (2026-09-05, #1156)](notes/2026-09-05-the-app-that-ran-logged-and-drew-nothing.md)
+- 2026-09-08 — [Building a reading pane on a WebView (2026-09-08, #1316)](notes/2026-09-08-building-a-reading-pane-on-a-webview.md)
 - 2026-09-07 — [What a list repaint actually costs (2026-09-07, #1216)](notes/2026-09-07-what-a-list-repaint-actually-costs.md)
 - 2026-09-06 — [Moving code out of a crate you cannot compile (2026-09-06, #1221)](notes/2026-09-06-moving-code-out-of-a-crate-you-cannot-compile.md)
 - 2026-09-06 — [Where a search and a store actually spend their time (2026-09-06, #1216)](notes/2026-09-06-where-a-search-and-a-store-actually-spend-their-time.md)

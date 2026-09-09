@@ -147,6 +147,32 @@ pub const REFUSED_UNITS: &[&str] = &[
 /// those against the message's local parts (or answers 404 for a dangling
 /// reference — the corpus has one on purpose).
 pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
+    sanitize_body_in(html, remote, None)
+}
+
+/// [`sanitize_body`], naming the message the body belongs to.
+///
+/// A `postio-cid:` URI names a `Content-ID` and nothing else, which is exact
+/// while one document is one message. ADR 0032 puts a whole thread in one
+/// document, and then it is not: two messages in a thread may each carry a
+/// part called `logo`, and a sender may reference a `Content-ID` they know
+/// belongs to someone else's message in the same thread.
+///
+/// `scope` stamps the message on every rewritten reference, so the handler
+/// resolves against *that* message's parts rather than against whichever one
+/// happens to be open. `/` is the separator and is safe: `percent_encode`
+/// escapes it, so an encoded `Content-ID` never contains a literal one and
+/// the split cannot be confused however odd the id.
+///
+/// The scope is Postio's and is applied on the way out, so a body that
+/// arrives already naming a message does not keep that name — it is
+/// percent-encoded into the id like any other sender text.
+///
+/// `None` is the single-message reader, and produces exactly what
+/// [`sanitize_body`] always did.
+pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -> Sanitized {
+    // Owned: the filter is a `'static` closure and cannot borrow the caller's.
+    let scope = scope.map(str::to_owned);
     let blocked_count = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&blocked_count);
     let tracker_count = Arc::new(AtomicU32::new(0));
@@ -190,7 +216,14 @@ pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
         .add_generic_attributes(["style"])
         .attribute_filter(move |element, attribute, value| {
             rewrite_attribute(
-                element, attribute, value, remote, &counter, &trackers, &beacons,
+                element,
+                attribute,
+                value,
+                remote,
+                &counter,
+                &trackers,
+                &beacons,
+                scope.as_deref(),
             )
         });
 
@@ -210,6 +243,7 @@ fn rewrite_attribute<'u>(
     blocked_count: &AtomicU32,
     tracker_count: &AtomicU32,
     beacons: &HashSet<String>,
+    scope: Option<&str>,
 ) -> Option<Cow<'u, str>> {
     if attribute == "style" {
         let kept = contain_declarations(value, remote, blocked_count);
@@ -218,11 +252,28 @@ fn rewrite_attribute<'u>(
     if attribute != "src" {
         return Some(Cow::Borrowed(value));
     }
+    // Postio's own scheme, written by the sender. There is no legitimate
+    // reason for it to appear in arriving markup -- `cid:` is what a message
+    // uses -- and it is an attempt to address the reader's internals: under
+    // ADR 0032's one-document conversation it names *another message's*
+    // parts, and even in a single-message document it reaches past what the
+    // rewrite below decides. Dropped rather than rewritten, because a
+    // reference nobody can justify is not one to guess the intent of.
+    if value
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with(&format!("{CID_SCHEME}:"))
+    {
+        return None;
+    }
     if let Some(id) = value.strip_prefix("cid:") {
-        return Some(Cow::Owned(format!(
-            "{CID_SCHEME}:{}",
-            percent_encode(id.trim().trim_start_matches('<').trim_end_matches('>'))
-        )));
+        let id = percent_encode(id.trim().trim_start_matches('<').trim_end_matches('>'));
+        return Some(Cow::Owned(match scope {
+            // The separator is a literal `/`, and the encoded id can never
+            // hold one — see `sanitize_body_in`.
+            Some(scope) => format!("{CID_SCHEME}:{scope}/{id}"),
+            None => format!("{CID_SCHEME}:{id}"),
+        }));
     }
     if is_remote(value) && remote == RemoteImages::Blocked {
         // One or the other, never both: the panel adds them up.
@@ -934,5 +985,74 @@ mod tests {
             RemoteImages::Allowed,
         );
         assert_eq!(out.html, "<p>ok</p>");
+    }
+}
+
+#[cfg(test)]
+mod conversation_scope_tests {
+    use super::*;
+
+    /// One document holding a whole thread needs `cid:` to say *whose*.
+    ///
+    /// A `postio-cid:` URI names a `Content-ID` and nothing else, and the
+    /// handler resolves it against whichever message is open. That is exact
+    /// when one document is one message. Put a thread in one document (ADR
+    /// 0032) and it is ambiguous: two messages may each carry a part called
+    /// `logo`, and a sender may reference a `Content-ID` they know belongs to
+    /// somebody else's message in the same thread.
+    ///
+    /// So a scoped sanitize stamps the message on the URI. The separator is
+    /// `/`, which is safe because `percent_encode` escapes it -- a
+    /// `Content-ID` can never contain a literal one, so the split is
+    /// unambiguous however odd the id.
+    #[test]
+    fn a_scoped_body_stamps_its_message_on_every_cid() {
+        let html = r#"<img src="cid:logo"><img src="cid:a/b">"#;
+        let scoped = sanitize_body_in(html, RemoteImages::Blocked, Some("42"));
+        assert!(
+            scoped.html.contains("postio-cid:42/logo"),
+            "an inline image did not carry its message: {}",
+            scoped.html
+        );
+        assert!(
+            scoped.html.contains("postio-cid:42/a%2Fb"),
+            "a Content-ID containing a slash must stay escaped, or the split \
+             would read it as another message: {}",
+            scoped.html
+        );
+    }
+
+    /// Unscoped is what a single-message reader still asks for, unchanged.
+    #[test]
+    fn an_unscoped_body_is_exactly_what_it_always_was() {
+        let html = r#"<img src="cid:logo">"#;
+        assert_eq!(
+            sanitize_body_in(html, RemoteImages::Blocked, None).html,
+            sanitize_body(html, RemoteImages::Blocked).html,
+        );
+        assert!(
+            sanitize_body(html, RemoteImages::Blocked)
+                .html
+                .contains("postio-cid:logo")
+        );
+    }
+
+    /// The scope is Postio's, never the sender's: it is stamped on the way
+    /// out, so markup that arrives already naming another message cannot
+    /// keep it.
+    #[test]
+    fn a_sender_cannot_name_another_message() {
+        let html = r#"<img src="cid:9/secret"><img src="postio-cid:9/secret">"#;
+        let scoped = sanitize_body_in(html, RemoteImages::Blocked, Some("42"));
+        assert!(
+            !scoped.html.contains("postio-cid:9/secret"),
+            "a sender's own scope survived sanitising: {}",
+            scoped.html
+        );
+        assert!(
+            scoped.html.contains("postio-cid:42/9%2Fsecret"),
+            "the rewritten reference should be scoped to this message: {}",
+            scoped.html
+        );
     }
 }

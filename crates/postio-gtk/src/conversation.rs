@@ -126,6 +126,21 @@ pub fn opening_focus(messages: &[Row]) -> Option<usize> {
         .or(Some(messages.len() - 1))
 }
 
+/// How long a one-document pane gathers body arrivals before it redraws.
+///
+/// Every redraw is a full document teardown and reload, and the bodies of a
+/// thread arrive one per turn of the main loop, so rendering on arrival costs
+/// one load per message (#1316). This is the window they coalesce in.
+const REDRAW_COALESCE: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// How long a redraw will wait for the bodies that have not arrived.
+///
+/// The pane draws as soon as every message it is showing has a body, and this
+/// is the longest it will hold out for the ones that have not — a thread with
+/// a body that is not on this machine has to draw, showing the rest, rather
+/// than waiting for something that is not coming.
+const REDRAW_DEADLINE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Which messages are expanded when the conversation opens.
 ///
 /// Read messages are collapsed: they are one line, and collapsing them is
@@ -690,6 +705,49 @@ mod imp {
         /// stored range would be a second source of truth that could only
         /// ever disagree with the first.
         pub(super) dividers: RefCell<Vec<gtk::Box>>,
+        /// Whether this pane renders the thread as one document in one
+        /// `WebView` (ADR 0032, #1316) rather than as a stack of readers.
+        ///
+        /// The stacked pane builds a `Reader` per expanded message, and
+        /// WebKitGTK runs a process per *view*, so a thirty-message thread
+        /// ends with thirty of them. Switched by `POSTIO_ONE_DOCUMENT` so
+        /// both shapes can be compared in one binary, on the same mail.
+        pub(super) one_document: Cell<bool>,
+        /// The single reader, in one-document mode. Built once and kept: not
+        /// rebuilding it per message is the whole point.
+        pub(super) document_reader: RefCell<Option<crate::reader::Reader>>,
+        /// The thread currently open, in the order it is drawn.
+        pub(super) thread_rows: RefCell<Vec<Row>>,
+        /// The bodies that have arrived so far, by message.
+        pub(super) thread_bodies:
+            RefCell<std::collections::HashMap<MessageId, postio_model::MessageBody>>,
+        /// Whether a redraw is already queued for the next idle turn.
+        ///
+        /// Bodies arrive one at a time and every one of them changes the
+        /// document, so without this a ten-message thread would hand WebKit
+        /// ten documents on the way to the one it wants.
+        pub(super) redraw_queued: Cell<bool>,
+        /// When the pane stops waiting for bodies that have not arrived and
+        /// draws what it has. See [`REDRAW_DEADLINE`].
+        pub(super) redraw_deadline: Cell<Option<std::time::Instant>>,
+        /// How many documents this pane has actually handed over. See
+        /// [`super::ConversationView::thread_renders`].
+        pub(super) thread_renders: Cell<u32>,
+        /// Which thread the pane is holding, so reopening the same one keeps
+        /// what it has instead of refetching and re-deciding it.
+        pub(super) thread_id: Cell<Option<postio_model::ids::ThreadId>>,
+        /// Whether each message is drawn open.
+        ///
+        /// Decided once per message and then kept, because expansion is the
+        /// reader's state and not a function of the model. Recomputing it on
+        /// every redraw meant a message folded shut under the person reading
+        /// it the moment resting on it marked it read (#1316).
+        pub(super) expanded_in_document: RefCell<std::collections::HashMap<MessageId, bool>>,
+        /// Told when a thread opens in one-document mode, so whoever owns the
+        /// store fetches every body rather than waiting for an expansion that
+        /// never comes.
+        #[allow(clippy::type_complexity)]
+        pub(super) on_thread_opened: RefCell<Vec<Box<dyn Fn(Vec<Row>)>>>,
     }
 
     /// One message in the stack: its header, and the body when it has one.
@@ -755,6 +813,16 @@ mod imp {
                 dividers: RefCell::new(Vec::new()),
                 on_command: RefCell::new(Vec::new()),
                 own_addresses: RefCell::new(Vec::new()),
+                one_document: Cell::new(false),
+                document_reader: RefCell::new(None),
+                thread_rows: RefCell::new(Vec::new()),
+                thread_bodies: RefCell::new(std::collections::HashMap::new()),
+                redraw_queued: Cell::new(false),
+                redraw_deadline: Cell::new(None),
+                thread_renders: Cell::new(0),
+                thread_id: Cell::new(None),
+                expanded_in_document: RefCell::new(std::collections::HashMap::new()),
+                on_thread_opened: RefCell::new(Vec::new()),
             }
         }
     }
@@ -859,10 +927,252 @@ impl ConversationView {
     ///
     /// Focus lands on the first unread — see [`opening_focus`] — and
     /// [`expanded_on_open`] decides how much opens with it.
+    /// Render this thread as one document in one `WebView` (ADR 0032, #1316).
+    ///
+    /// Off by default. `postio-app` turns it on from `POSTIO_ONE_DOCUMENT`, so
+    /// the stacked pane and this one can be compared in the same binary on the
+    /// same mail. Set before the first [`open`](Self::open).
+    pub fn set_one_document(&self, one_document: bool) {
+        self.imp().one_document.set(one_document);
+    }
+
+    /// Whether this pane is in one-document mode.
+    pub fn is_one_document(&self) -> bool {
+        self.imp().one_document.get()
+    }
+
+    /// Called when a thread opens in one-document mode, with every row in it.
+    ///
+    /// The stacked pane fetches a body when a message is expanded; one
+    /// document has no expansions to hang that on, so whoever owns the store
+    /// is told the whole thread at once and fills it through
+    /// [`set_thread_body`](Self::set_thread_body).
+    pub fn connect_thread_opened(&self, handler: impl Fn(Vec<Row>) + 'static) {
+        self.imp()
+            .on_thread_opened
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// A body arrived for one message of the open thread.
+    ///
+    /// Redrawn on the next idle turn rather than here: bodies arrive one at a
+    /// time and each changes the document, so drawing on arrival would hand
+    /// WebKit one document per message on the way to the one it wants.
+    pub fn set_thread_body(&self, message: MessageId, body: postio_model::MessageBody) {
+        let imp = self.imp();
+        if !imp.one_document.get() {
+            return;
+        }
+        imp.thread_bodies.borrow_mut().insert(message, body);
+        self.queue_document_redraw();
+    }
+
+    /// Whether every message the pane is showing now has a body.
+    fn thread_is_whole(&self) -> bool {
+        let imp = self.imp();
+        let rows = imp.thread_rows.borrow();
+        let bodies = imp.thread_bodies.borrow();
+        !rows.is_empty() && rows.iter().all(|row| bodies.contains_key(&row.id))
+    }
+
+    fn queue_document_redraw(&self) {
+        let imp = self.imp();
+        // Everything is here: draw it now rather than waiting out a timer for
+        // arrivals that cannot come.
+        if self.thread_is_whole() {
+            imp.redraw_deadline.set(None);
+            imp.redraw_queued.set(false);
+            self.redraw_document();
+            return;
+        }
+        if imp.redraw_queued.replace(true) {
+            return;
+        }
+        if imp.redraw_deadline.get().is_none() {
+            imp.redraw_deadline
+                .set(Some(std::time::Instant::now() + REDRAW_DEADLINE));
+        }
+        // A short delay, not an idle turn. Every render is a full document
+        // teardown and reload -- JavaScript is off, so there is no
+        // incremental path -- and the bodies of a thread arrive one per main
+        // loop turn, so an idle callback coalesced nothing: a four-message
+        // thread cost four loads and a thirty-message one would cost thirty.
+        //
+        // Long enough to gather a burst of arrivals, short enough not to be
+        // felt: what a person waits for is the first paint, and the store
+        // reads this is coalescing are already slower than this.
+        glib::timeout_add_local_once(REDRAW_COALESCE, {
+            let pane = self.clone();
+            move || {
+                let imp = pane.imp();
+                imp.redraw_queued.set(false);
+                let overdue = imp
+                    .redraw_deadline
+                    .get()
+                    .is_none_or(|deadline| std::time::Instant::now() >= deadline);
+                if pane.thread_is_whole() || overdue {
+                    imp.redraw_deadline.set(None);
+                    pane.redraw_document();
+                } else {
+                    // Still filling, and there is time left: wait for the rest
+                    // rather than spending a whole document on a partial one.
+                    pane.queue_document_redraw();
+                }
+            }
+        });
+    }
+
+    /// Compose every message that has a body into one document and hand it
+    /// over. A message still waiting for its body is drawn collapsed with its
+    /// preview, which is what it would show in the stack too.
+    fn redraw_document(&self) {
+        let imp = self.imp();
+        let Some(reader) = imp.document_reader.borrow().clone() else {
+            return;
+        };
+        let rows = imp.thread_rows.borrow().clone();
+        if rows.is_empty() {
+            return;
+        }
+        let bodies = imp.thread_bodies.borrow();
+        let focused = imp.focused.get();
+        let newest = rows.last().map(|row| row.id);
+        // Decided once per message, then kept. Unread messages and the one
+        // focus is on open, the same question `expanded_on_open` answers for
+        // the stack -- except that here it costs nothing but height, so there
+        // is no cap. A message already decided keeps its answer, whatever the
+        // model has done since.
+        let expanded: std::collections::HashSet<MessageId> = {
+            let mut decided = imp.expanded_in_document.borrow_mut();
+            for row in rows.iter() {
+                decided.entry(row.id).or_insert_with(|| {
+                    !row.seen || focused == Some(row.id) || newest == Some(row.id)
+                });
+            }
+            decided
+                .iter()
+                .filter(|(_, open)| **open)
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        let now = chrono::Local::now();
+        let messages: Vec<crate::reader::view::ThreadMessage> = rows
+            .iter()
+            .map(|row| {
+                let from = row.from.as_ref();
+                crate::reader::view::ThreadMessage {
+                    scope: row.id.get().to_string(),
+                    sender: from
+                        .and_then(|from| from.name.clone())
+                        .or_else(|| from.map(|from| from.address.clone()))
+                        .unwrap_or_else(|| "Unknown sender".to_string()),
+                    address: from.map(|from| from.address.clone()).unwrap_or_default(),
+                    when: postio_ui::row::timestamp(row.received_at, now),
+                    preview: row.preview.clone().unwrap_or_default(),
+                    expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
+                    latest: newest == Some(row.id) && rows.len() > 1,
+                    body: bodies.get(&row.id).cloned().unwrap_or_default(),
+                }
+            })
+            .collect();
+        drop(bodies);
+        // A load that changes nothing is still a full teardown and reload,
+        // and the reader's scroll position goes with it. Several things queue
+        // a redraw -- a body arriving, a thread reopening, a timer armed
+        // before either -- and they overlap, so the guard belongs here rather
+        // than at each of them. This is #749's fourth cause, in a new pane.
+        if reader.would_render_thread(&messages) {
+            imp.thread_renders.set(imp.thread_renders.get() + 1);
+            reader.render_thread(&messages);
+        }
+    }
+
+    /// How many conversation documents this pane has handed to WebKit.
+    ///
+    /// Every one is a full teardown and reload — JavaScript is off, so there
+    /// is no incremental path, and the scroll position goes with it. A thread
+    /// fill should cost a small number of these, not one per message.
+    ///
+    /// Counted here rather than read off `Reader::loads`, which counts every
+    /// load that reader ever did — including the ones that were not this
+    /// pane's, and which made this number look four when the pane had drawn
+    /// twice.
+    pub fn thread_renders(&self) -> u32 {
+        self.imp().thread_renders.get()
+    }
+
+    /// The document the one-document pane last handed to WebKit.
+    ///
+    /// The last artifact before the engine, which is where a wiring mistake
+    /// shows: a pane that opened but never composed, or composed without the
+    /// bodies. `None` when the pane is stacked, or before anything opened.
+    pub fn thread_document(&self) -> Option<String> {
+        self.imp()
+            .document_reader
+            .borrow()
+            .as_ref()
+            .map(|reader| reader.test_document())
+    }
+
+    /// Open `messages` as one document rather than as a stack.
+    fn open_as_document(&self, messages: Vec<Row>) {
+        let imp = self.imp();
+        // A thread opens twice: once with the row the list had, and again
+        // with the whole conversation once it is read. Those are the same
+        // thread, and so is a re-read after a flag changed -- clearing on
+        // each of them would refetch every body and decide every expansion
+        // again, which is what folded a message shut under the reader.
+        let opening = messages.first().and_then(|row| row.thread);
+        if imp.thread_id.get() != opening {
+            imp.thread_id.set(opening);
+            imp.thread_bodies.borrow_mut().clear();
+            imp.expanded_in_document.borrow_mut().clear();
+        }
+        imp.thread_rows.replace(messages.clone());
+
+        if imp.document_reader.borrow().is_none() {
+            // Through the same factory the stack uses, so this reader is
+            // built and wired exactly as any other -- scheme handlers,
+            // hardening, allow list.
+            let built = messages
+                .first()
+                .and_then(|row| imp.factory.borrow().as_ref().map(|make| make(row.id)))
+                .flatten();
+            if let Some(reader) = built {
+                // The reader's own single-message chrome is the chrome ADR
+                // 0032 moves into the document: an empty header band above a
+                // thread would be the stack's furniture with none of its use.
+                reader.header().widget().set_visible(false);
+                reader.set_actions_visible(false);
+                let widget = reader.widget();
+                widget.set_vexpand(true);
+                imp.stack.append(&widget);
+                imp.document_reader.replace(Some(reader));
+            }
+        }
+
+        for handler in imp.on_thread_opened.borrow().iter() {
+            handler(messages.clone());
+        }
+        self.queue_document_redraw();
+    }
+
     pub fn open(&self, messages: Vec<Row>) {
         let imp = self.imp();
         for entry in imp.entries.borrow().iter() {
             imp.stack.remove(&entry.container());
+        }
+        if imp.one_document.get() {
+            imp.entries.borrow_mut().clear();
+            for divider in imp.dividers.borrow_mut().drain(..) {
+                imp.stack.remove(&divider);
+            }
+            imp.focused.set(messages.first().map(|row| row.id));
+            imp.header.set_conversation(&messages, chrono::Local::now());
+            imp.footer.set_visible(messages.len() > 1);
+            self.open_as_document(messages);
+            return;
         }
         imp.entries.borrow_mut().clear();
         for divider in imp.dividers.borrow_mut().drain(..) {
@@ -1068,6 +1378,9 @@ impl ConversationView {
 
     /// How many messages the pane is holding.
     pub fn len(&self) -> usize {
+        if self.imp().one_document.get() {
+            return self.imp().thread_rows.borrow().len();
+        }
         self.imp().entries.borrow().len()
     }
 
@@ -1102,6 +1415,14 @@ impl ConversationView {
     /// The drill-in column indexes this, and the two must agree on the order
     /// or jumping lands somewhere other than where it pointed.
     pub fn rows(&self) -> Vec<Row> {
+        // One document has no entries, and the rows are still the pane's
+        // answer to what it is showing -- `Window::conversation_on` asks this
+        // to decide whether a thread read is still wanted, so a pane that
+        // answered nothing would drop the rest of every conversation it
+        // opened and keep the one row the list gave it.
+        if self.imp().one_document.get() {
+            return self.imp().thread_rows.borrow().clone();
+        }
         self.imp()
             .entries
             .borrow()

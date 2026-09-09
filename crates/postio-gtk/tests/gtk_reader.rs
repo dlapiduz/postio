@@ -649,6 +649,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
     one_senders_styling_cannot_reach_another_message();
+    a_whole_thread_costs_one_web_process();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1592,4 +1593,90 @@ fn main() {
         );
         std::process::exit(1);
     }
+}
+
+/// ADR 0032's claim, measured: a thread of any length is one web process.
+///
+/// The stacked pane builds a `Reader` per expanded message, and
+/// `each_reader_costs_a_web_process_of_its_own` above is why that is not
+/// free — WebKitGTK runs a process per *view*, so a thirty-message thread
+/// ends with thirty of them. One document in one view should cost one,
+/// whatever the thread's length, and this is what says whether it does.
+///
+/// Counted rather than timed, and counted against a *long* thread and a
+/// short one in the same reader: the number that matters is that it does not
+/// grow.
+fn a_whole_thread_costs_one_web_process() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    // Before this reader exists: the cases above it in this binary leave
+    // their own readers alive, and what this measures is what *this* one
+    // costs, not what the process happens to be holding.
+    let before = web_processes();
+
+    let window = gtk::Window::new();
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("one-document-thread"),
+    );
+    window.set_child(Some(&reader.widget()));
+    window.present();
+
+    let parsed = postio_model::mime::parse(test_corpus::load("multipart-alternative").bytes());
+    let thread = |count: usize| -> Vec<postio_gtk::reader::view::ThreadMessage> {
+        (0..count)
+            .map(|index| postio_gtk::reader::view::ThreadMessage {
+                scope: index.to_string(),
+                sender: format!("Sender {index}"),
+                address: format!("sender{index}@example.com"),
+                when: "09:14".into(),
+                preview: "the first line".into(),
+                expanded: index + 1 == count,
+                latest: index + 1 == count,
+                body: parsed.body.clone(),
+            })
+            .collect()
+    };
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&thread(2));
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let short = web_processes();
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&thread(30));
+    wait_for(&finished, Duration::from_secs(5));
+    pump();
+    let long = web_processes();
+
+    eprintln!("2 messages {short:?}, 30 messages {long:?}");
+    window.set_visible(false);
+
+    assert_eq!(
+        short.len(),
+        before.len() + 1,
+        "the thread never rendered, or it cost more than one view's process \
+         ({before:?} -> {short:?}), and either way the count below proves \
+         nothing"
+    );
+    assert_eq!(
+        long.len(),
+        short.len(),
+        "a thirty-message thread cost more web processes than a two-message \
+         one ({short:?} -> {long:?}), which is the whole claim of ADR 0032"
+    );
+
+    // And every message is actually in the document -- a view that rendered
+    // one message would also pass the count above.
+    let document = reader.test_document();
+    assert_eq!(
+        document.matches("<details").count(),
+        30,
+        "the document does not hold the whole thread"
+    );
 }

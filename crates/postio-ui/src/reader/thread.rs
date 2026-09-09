@@ -1,0 +1,352 @@
+//! A whole conversation as one document (ADR 0032, #1316).
+//!
+//! The reading pane builds a `WebView` per expanded message today, and
+//! WebKitGTK runs a web process per *view* — so a thirty-message thread ends
+//! up with thirty processes, and moving between them composites black while
+//! a new one starts. Measured in `gtk_reader`: one reader is one process, two
+//! readers are two, and rendering a second message into the same reader
+//! reuses it.
+//!
+//! This composes the thread instead: one document, one view, one process,
+//! whatever the thread's length.
+//!
+//! # Why several senders can share a document here
+//!
+//! Because they cannot contaminate each other. `postio_body::sanitize`
+//! removes `<style>` tag-and-contents and strips every inline `style`
+//! attribute, and parses to a tree rather than passing text through, so every
+//! body already renders under Postio's stylesheet and nothing else. That
+//! precondition was met for reasons that had nothing to do with this.
+//!
+//! # Expansion without script
+//!
+//! The reader runs with JavaScript off by construction (ADR 0003), so
+//! expansion is `<details>`/`<summary>` — a disclosure widget in HTML itself,
+//! keyboard-operable and announced by screen readers without a line of it.
+//!
+//! # Inline images name their message
+//!
+//! `postio-cid:` names a `Content-ID` and nothing else, which is exact while
+//! one document is one message. Here it is not, so every body is sanitised
+//! through [`postio_body::sanitize::sanitize_body_in`] with the message's own
+//! scope, and the handler routes on it. Composing a body that was sanitised
+//! unscoped would silently resolve one message's images against another's
+//! parts, so [`Entry::body`] documents that it must be the scoped output.
+
+use postio_body::sanitize::RemoteImages;
+
+use super::document::{Sheet, contain_body, scroll_markers, wrap_document};
+
+/// The conversation chrome, appended only to a conversation document.
+const THREAD_CSS: &str = include_str!("../../data/thread.css");
+
+/// One message's place in a conversation document.
+///
+/// A single message is a thread of one, expanded — the pane renders both
+/// through this, so there is one set of chrome rather than two that can drift.
+pub struct Entry<'a> {
+    /// What `postio-cid:` references in [`body`](Self::body) are stamped with,
+    /// and what the scheme handler routes on. Must be the same scope the body
+    /// was sanitised under.
+    ///
+    /// Unreserved characters only — it is written into a URI without escaping,
+    /// and a message id in decimal is what the frontend passes.
+    pub scope: &'a str,
+    /// Who it is from, as a person reads it.
+    pub sender: &'a str,
+    /// Their address, shown beside the name on an open message (canvas 17).
+    pub address: &'a str,
+    /// When, already formatted for the reader's locale.
+    pub when: &'a str,
+    /// The one line a collapsed message shows.
+    pub preview: &'a str,
+    /// Whether it starts open.
+    pub expanded: bool,
+    /// Whether this is the newest message in the thread — canvas 17's
+    /// `latest` badge. Always false for a thread of one, where there is
+    /// nothing for it to distinguish.
+    pub latest: bool,
+    /// How many remote references this message had stripped, so the document
+    /// can say so where the decision was made rather than once for the page.
+    pub blocked: u32,
+    /// The message's body: already rendered *and already sanitised under
+    /// [`scope`](Self::scope)*.
+    pub body: &'a str,
+}
+
+/// The whole conversation, as one hardened document.
+///
+/// Each message is a `<details>` whose `<summary>` is its header, and whose
+/// body is wrapped in `.postio-body` — #323's visible edge between what Postio
+/// wrote and what arrived, which matters more here than in a single-message
+/// document, not less: several senders share this page.
+pub fn conversation_document(entries: &[Entry<'_>], remote: RemoteImages, sheet: Sheet) -> String {
+    let mut content = String::new();
+    // Ours, not a sender's: `sanitize` strips `<style>` tag-and-contents from
+    // everything that arrives, which is exactly what makes it safe for
+    // several senders to share this page. `style-src 'unsafe-inline'` is
+    // already the reader's policy, so this needs no widening of it.
+    content.push_str("<style>");
+    content.push_str(THREAD_CSS);
+    content.push_str("</style>");
+    content.push_str(r#"<div class="postio-thread">"#);
+    for entry in entries {
+        content.push_str(&entry_html(entry));
+    }
+    content.push_str("</div>");
+    content.push_str(&scroll_markers());
+    wrap_document(&content, remote, sheet)
+}
+
+fn entry_html(entry: &Entry<'_>) -> String {
+    let open = if entry.expanded { " open" } else { "" };
+    let scope = escape(entry.scope);
+    let sender = escape(entry.sender);
+    let address = escape(entry.address);
+    let when = escape(entry.when);
+    let preview = escape(entry.preview);
+    let latest = if entry.latest {
+        r#"<span class="postio-latest">latest</span>"#.to_string()
+    } else {
+        String::new()
+    };
+    // Said per message because the decision it reports is per sender, even
+    // though this document blocks every one of them — see
+    // `Reader::render_thread` for why one document cannot honour a per-sender
+    // allowance.
+    let blocked = match entry.blocked {
+        0 => String::new(),
+        1 => r#"<div class="postio-blocked">1 remote image blocked</div>"#.to_string(),
+        count => format!(r#"<div class="postio-blocked">{count} remote images blocked</div>"#),
+    };
+    let body = contain_body(entry.body);
+    // A normal string, not a raw one: a raw string cannot be line-continued,
+    // and the backslash would be a character in the markup — which is what
+    // `the_markup_is_well_formed` caught.
+    format!(
+        "<details class=\"postio-message\" id=\"m-{scope}\"{open}>\
+         <summary class=\"postio-message-head\">\
+         <span class=\"postio-from\">{sender}</span>\
+         <span class=\"postio-address\">{address}</span>\
+         <span class=\"postio-preview\">{preview}</span>\
+         {latest}\
+         <span class=\"postio-when\">{when}</span>\
+         </summary>{blocked}{body}</details>"
+    )
+}
+
+/// Postio's own chrome text, escaped.
+///
+/// A sender's name and their preview are sender-controlled strings going into
+/// markup — the one place in this module where that is true, since the body
+/// arrives already sanitised. `<` and `&` are what turn a display name into an
+/// element; the quotes matter because these also land in attributes elsewhere.
+fn escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(character),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry<'a>(scope: &'a str, sender: &'a str, body: &'a str, expanded: bool) -> Entry<'a> {
+        Entry {
+            scope,
+            sender,
+            address: "ada@example.com",
+            when: "09:14",
+            preview: "the first line of it",
+            expanded,
+            latest: false,
+            blocked: 0,
+            body,
+        }
+    }
+
+    #[test]
+    fn a_thread_is_one_document_holding_every_message() {
+        let entries = [
+            entry("1", "Ada Lovelace", "<p>first</p>", true),
+            entry("2", "Grace Hopper", "<p>second</p>", false),
+            entry("3", "Ada Lovelace", "<p>third</p>", false),
+        ];
+        let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
+
+        // One document. The whole point: one document is one view is one web
+        // process, whatever the thread's length.
+        assert_eq!(document.matches("<!DOCTYPE html>").count(), 1);
+        assert_eq!(document.matches("<html").count(), 1);
+
+        for body in ["<p>first</p>", "<p>second</p>", "<p>third</p>"] {
+            assert_eq!(
+                document.matches(body).count(),
+                1,
+                "{body} should appear exactly once in the thread"
+            );
+        }
+        assert_eq!(document.matches("<details").count(), 3);
+        assert!(document.contains("Ada Lovelace"));
+        assert!(document.contains("Grace Hopper"));
+    }
+
+    #[test]
+    fn the_markup_is_well_formed_and_carries_no_stray_escapes() {
+        // The entry's own markup, not the whole document: the generated
+        // stylesheet legitimately contains backslashes, and this is about
+        // whether a raw string swallowed a line continuation.
+        let markup = entry_html(&entry("1", "Ada", "<p>hi</p>", true));
+        assert!(
+            !markup.contains('\\'),
+            "a backslash reached the markup: {markup}"
+        );
+        assert!(
+            !markup.contains("  "),
+            "stray indentation in markup: {markup}"
+        );
+        assert!(markup.contains("<summary class=\"postio-message-head\">"));
+        assert!(markup.contains("</summary>"));
+        assert_eq!(markup.matches("</details>").count(), 1);
+    }
+
+    #[test]
+    fn only_the_expanded_messages_start_open() {
+        let entries = [
+            entry("1", "Ada", "<p>a</p>", false),
+            entry("2", "Grace", "<p>b</p>", true),
+        ];
+        let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
+        assert_eq!(
+            document.matches(" open>").count(),
+            1,
+            "exactly one message should start open: {document}"
+        );
+        assert!(document.contains(r#"id="m-2" open>"#));
+        assert!(document.contains(r#"id="m-1">"#));
+    }
+
+    /// #323's edge, which matters more here than in a single-message document:
+    /// several senders share this page, so each one's content needs its own
+    /// visible boundary.
+    #[test]
+    fn every_body_keeps_its_own_bounded_surface() {
+        let entries = [
+            entry("1", "Ada", "<p>a</p>", true),
+            entry("2", "Grace", "<p>b</p>", true),
+        ];
+        let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
+        assert_eq!(document.matches(r#"<div class="postio-body">"#).count(), 2);
+    }
+
+    /// A display name is sender-controlled text going into markup. The body
+    /// arrives sanitised; this does not.
+    #[test]
+    fn a_sender_cannot_write_markup_through_their_name() {
+        let entries = [entry("1", "<script>alert(1)</script>", "<p>a</p>", true)];
+        let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
+        assert!(
+            !document.contains("<script>"),
+            "a display name became an element: {document}"
+        );
+        assert!(document.contains("&lt;script&gt;"));
+    }
+
+    /// A single message is a thread of one, so the pane has one set of
+    /// chrome rather than two that can drift (the maintainer asked for this
+    /// directly, 2026-09-07).
+    #[test]
+    fn one_message_is_a_thread_of_one() {
+        let mut only = entry("7", "Marketside", "<p>out for delivery</p>", true);
+        only.address = "orders@marketside.example";
+        let document = conversation_document(&[only], RemoteImages::Blocked, Sheet::Theme);
+
+        assert_eq!(document.matches("<details").count(), 1);
+        assert!(
+            document.contains(r#"id="m-7" open>"#),
+            "the one message has to be open, or a single message opens closed"
+        );
+        assert!(document.contains("orders@marketside.example"));
+        assert!(document.contains("<p>out for delivery</p>"));
+        assert!(
+            // The markup, not the class name: the stylesheet names it too.
+            !document.contains(r#"<span class="postio-latest">"#),
+            "a thread of one has nothing for `latest` to distinguish"
+        );
+    }
+
+    /// Canvas 17 states what was held back inside the message it was held
+    /// back for, because the decision is per sender.
+    #[test]
+    fn each_message_says_what_was_held_back_for_it() {
+        let mut first = entry("1", "Ada", "<p>a</p>", true);
+        first.blocked = 6;
+        let mut second = entry("2", "Grace", "<p>b</p>", true);
+        second.blocked = 1;
+        let third = entry("3", "Hedy", "<p>c</p>", true);
+        let document =
+            conversation_document(&[first, second, third], RemoteImages::Blocked, Sheet::Theme);
+
+        assert!(document.contains("6 remote images blocked"));
+        assert!(document.contains("1 remote image blocked"));
+        assert_eq!(
+            document.matches(r#"<div class="postio-blocked">"#).count(),
+            2,
+            "a message with nothing held back should say nothing"
+        );
+    }
+
+    /// The newest message wears the badge; nothing else does.
+    #[test]
+    fn only_the_newest_message_is_marked_latest() {
+        let first = entry("1", "Ada", "<p>a</p>", false);
+        let mut second = entry("2", "Grace", "<p>b</p>", true);
+        second.latest = true;
+        let document = conversation_document(&[first, second], RemoteImages::Blocked, Sheet::Theme);
+        assert_eq!(
+            document.matches(r#"<span class="postio-latest">"#).count(),
+            1
+        );
+    }
+
+    /// The chrome is dressed from the token layer, never from literals: #296
+    /// says a colour has one source.
+    #[test]
+    fn the_thread_chrome_reads_its_colours_off_the_tokens() {
+        let document = conversation_document(
+            &[entry("1", "Ada", "<p>a</p>", true)],
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
+        assert!(
+            document.contains(".postio-message"),
+            "the thread sheet is missing"
+        );
+        for token in ["var(--r-hairline)", "var(--r-accent)", "var(--r-dim)"] {
+            assert!(
+                document.contains(token),
+                "the thread chrome should dress itself from {token}"
+            );
+        }
+    }
+
+    /// The document is still the hardened one: same CSP, same no-script
+    /// posture as a single message's.
+    #[test]
+    fn the_thread_document_is_as_hardened_as_a_single_messages() {
+        let entries = [entry("1", "Ada", "<p>a</p>", true)];
+        let document = conversation_document(&entries, RemoteImages::Blocked, Sheet::Theme);
+        assert!(document.contains("Content-Security-Policy"));
+        assert!(document.contains("img-src postio-cid: data:;"));
+        assert!(document.contains("base-uri 'none'"));
+    }
+}
