@@ -1243,6 +1243,55 @@ fn handle_decide_policy(
 
 #[cfg(test)]
 mod tests {
+    /// The ground colour must not fail silently (#1343, spec FR-060).
+    ///
+    /// #749's second mechanism: nothing ever set a background colour on the
+    /// reader's `WebView`, and under the GTK4 GL / DMA-BUF path an
+    /// uncommitted WebKit surface composites **black**. `paint_ground` is the
+    /// fix, and it degrades quietly — hand it a value gdk cannot parse and it
+    /// warns, returns, and leaves the view unpainted. That is the bug
+    /// restored, with a warning nobody reads and every test still green.
+    ///
+    /// `reader-tokens.css` is *generated* from the design tokens, so the
+    /// value can change without anyone touching this file.
+    ///
+    /// No display needed: parsing a colour is string work, which is why this
+    /// belongs in `src/` rather than in `tests/`.
+    #[test]
+    fn the_reader_ground_parses_in_both_schemes() {
+        for dark in [false, true] {
+            let ground = postio_ui::reader::document::reader_ground(dark);
+            let parsed = ground.parse::<gtk::gdk::RGBA>().unwrap_or_else(|error| {
+                panic!(
+                    "the {} ground {ground:?} is not a colour gdk can parse \
+                     ({error}), so paint_ground will warn and leave the view \
+                     unpainted -- which is #749's black frame, back",
+                    if dark { "dark" } else { "light" }
+                )
+            });
+            assert_eq!(
+                parsed.alpha(),
+                1.0,
+                "the {} ground is not opaque, so the surface composites \
+                 through to whatever is behind it -- the state a ground colour \
+                 exists to replace",
+                if dark { "dark" } else { "light" }
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_schemes_do_not_share_a_ground() {
+        // A palette that collapsed to one value would paint a white flash
+        // into dark mode and pass a test that only checked parseability.
+        assert_ne!(
+            postio_ui::reader::document::reader_ground(false),
+            postio_ui::reader::document::reader_ground(true),
+            "both schemes report the same ground, so one of them is painting \
+             the wrong colour between messages"
+        );
+    }
+
     use super::*;
 
     /// #752: a clicked link goes to the desktop, and nothing else does.
