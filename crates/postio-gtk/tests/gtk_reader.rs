@@ -654,6 +654,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     the_show_verb_actually_grants_consent();
     a_messages_own_verb_names_that_message();
     the_shipped_reader_refuses_a_senders_script();
+    the_rail_hears_which_message_is_on_screen();
 }
 
 /// **The proof #1323 exists for.** With JavaScript enabled at the engine
@@ -1488,6 +1489,99 @@ fn the_shipped_reader_refuses_a_senders_script() {
         "the application cannot evaluate script in the shipped reader, so the \
          rail has no way to learn what is on screen and this posture bought \
          nothing"
+    );
+}
+
+/// The rail's channel carries a scope, and refuses one it did not render
+/// (#1370).
+///
+/// **The channel, not the numbers.** Which message wins is
+/// `postio_ui::reader::rail::current`, proven in `postio-ui` over given
+/// extents (#1359). What cannot be proven here is anything geometric: this
+/// display lays nothing out, so every rect is zero and an assertion about
+/// which message the observer *picked* would be an assertion about zeroes —
+/// see `docs/notes/2026-09-09-the-suite-cannot-see-a-laid-out-page.md`.
+///
+/// So this asserts the part that is real here: a post from the document
+/// reaches the application, and a post naming something this document never
+/// rendered does not. The payload arrives from a page that also holds several
+/// senders' markup, and is treated as untrusted even though Postio wrote the
+/// script that sends it.
+fn the_rail_hears_which_message_is_on_screen() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let message = |scope: &str| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: "Ada".to_owned(),
+        address: "ada@example.com".to_owned(),
+        when: "24 Aug".to_owned(),
+        preview: "preview".to_owned(),
+        expanded: true,
+        latest: false,
+        body: MessageBody {
+            text: None,
+            html: Some("<p>body</p>".to_owned()),
+        },
+    };
+
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("rail-channel"),
+    );
+    let heard: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&heard);
+    reader.connect_current_message(move |scope| seen.borrow_mut().push(scope.to_owned()));
+
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&[message("4"), message("5")]);
+    wait_for(&finished, Duration::from_secs(5));
+    pump_for(Duration::from_millis(300));
+
+    // A post the document could make, made directly, so the assertion is about
+    // the channel rather than about layout.
+    reader.view().evaluate_javascript(
+        "window.webkit.messageHandlers.postioRail.postMessage('5')",
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        |_| {},
+    );
+    pump_for(Duration::from_millis(300));
+
+    // And one naming a message this document never rendered.
+    reader.view().evaluate_javascript(
+        "window.webkit.messageHandlers.postioRail.postMessage('999')",
+        None,
+        None,
+        None::<&gtk::gio::Cancellable>,
+        |_| {},
+    );
+    pump_for(Duration::from_millis(300));
+
+    let heard = heard.borrow().clone();
+    window.set_visible(false);
+
+    assert!(
+        heard.contains(&"5".to_owned()),
+        "the observer's post never reached the application: {heard:?}. The \
+         handler name has to match on both sides, and a mismatch is a channel \
+         that silently never delivers"
+    );
+    assert!(
+        !heard.contains(&"999".to_owned()),
+        "a scope this document never rendered was accepted: {heard:?}. The \
+         payload comes from a page holding several senders' markup and is not \
+         a trusted caller"
     );
 }
 
