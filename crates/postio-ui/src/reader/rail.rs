@@ -91,6 +91,11 @@ pub struct Row {
     pub position: usize,
     /// Who wrote it.
     pub sender: String,
+    /// The two letters that stand in for the sender when the column is too
+    /// narrow for a name — screen 29's middle step. From the same helper the
+    /// avatar chips use, so the rail and the list abbreviate a person the
+    /// same way.
+    pub initials: String,
     /// Its length, when there is one and it is worth saying.
     pub length: Option<u32>,
 }
@@ -100,13 +105,19 @@ pub struct Row {
 /// `lengths` is per message and `None` where the body is not local yet, which
 /// is a different fact from a short message and is shown as no length rather
 /// than as zero.
-pub fn rows(senders: &[String], lengths: &[Option<u32>]) -> Vec<Row> {
+///
+/// `initials` comes in rather than being derived from `sender`, because the
+/// two are not the same question: an address with no display name abbreviates
+/// from its local part, and `sender` has already collapsed that to a whole
+/// address that would abbreviate wrong.
+pub fn rows(senders: &[String], initials: &[String], lengths: &[Option<u32>]) -> Vec<Row> {
     senders
         .iter()
         .enumerate()
         .map(|(index, sender)| Row {
             position: index + 1,
             sender: sender.clone(),
+            initials: initials.get(index).cloned().unwrap_or_default(),
             length: lengths
                 .get(index)
                 .copied()
@@ -372,6 +383,7 @@ mod tests {
     fn a_length_below_the_threshold_is_not_worth_saying() {
         let rows = rows(
             &["Ada".to_owned(), "Grace".to_owned()],
+            &["AD".to_owned(), "GR".to_owned()],
             &[Some(LENGTH_THRESHOLD - 1), Some(LENGTH_THRESHOLD)],
         );
         assert_eq!(rows[0].length, None, "a short message shows no length");
@@ -383,14 +395,18 @@ mod tests {
         // Different facts: "nothing to count yet" and "counted, and it is
         // short" both show no number, but the row exists either way — which is
         // the whole of FR-040.
-        let rows = rows(&["Ada".to_owned()], &[None]);
+        let rows = rows(&["Ada".to_owned()], &["AD".to_owned()], &[None]);
         assert_eq!(rows[0].length, None);
         assert_eq!(rows[0].position, 1, "the row exists without a body");
     }
 
     #[test]
     fn rows_are_numbered_as_a_person_counts() {
-        let rows = rows(&["Ada".to_owned(), "Grace".to_owned()], &[None, None]);
+        let rows = rows(
+            &["Ada".to_owned(), "Grace".to_owned()],
+            &["AD".to_owned(), "GR".to_owned()],
+            &[None, None],
+        );
         assert_eq!(
             rows.iter().map(|row| row.position).collect::<Vec<_>>(),
             vec![1, 2]

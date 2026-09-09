@@ -81,7 +81,13 @@ pub fn the_rail_lists_a_thread_and_marks_what_is_on_screen() {
     // The third message is the essay; the rest are short, and the last has no
     // body yet -- three different reasons for a row to carry no number.
     let lengths = [Some(4), Some(LENGTH_THRESHOLD - 1), Some(84), None];
-    rail.set_thread(&rows(&senders, &lengths));
+    let initials = vec![
+        "TV".to_owned(),
+        "ME".to_owned(),
+        "TV".to_owned(),
+        "ME".to_owned(),
+    ];
+    rail.set_thread(&rows(&senders, &initials, &lengths));
     rail.set_marked(Some(2));
 
     let seen = labels(rail.widget());
@@ -137,6 +143,7 @@ pub fn activating_a_row_reports_the_message_it_names() {
 
     rail.set_thread(&rows(
         &["Ada".to_owned(), "Grace".to_owned(), "Katherine".to_owned()],
+        &["AD".to_owned(), "GR".to_owned(), "KA".to_owned()],
         &[None, None, None],
     ));
 
@@ -195,6 +202,23 @@ fn pane() -> Option<(gtk::Window, ConversationView)> {
     Some((window, pane))
 }
 
+/// The labels of `class` that are actually visible.
+fn shown(root: &gtk::Widget, class: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut next = root.first_child();
+    while let Some(child) = next {
+        if let Some(label) = child.downcast_ref::<gtk::Label>()
+            && label.has_css_class(class)
+            && label.is_visible()
+        {
+            found.push(label.label().to_string());
+        }
+        found.extend(shown(&child, class));
+        next = child.next_sibling();
+    }
+    found
+}
+
 pub fn the_rail_takes_its_step_on_the_ladder() {
     let Some((window, pane)) = pane() else {
         return;
@@ -214,6 +238,15 @@ pub fn the_rail_takes_its_step_on_the_ladder() {
         !rail.has_css_class("postio-rail-narrow"),
         "a wide window is not the narrow step"
     );
+    assert_eq!(
+        shown(rail, "postio-rail-sender").len(),
+        6,
+        "the full step shows names"
+    );
+    assert!(
+        shown(rail, "postio-rail-initials").is_empty(),
+        "and not initials as well -- one or the other, never both"
+    );
 
     pane.set_window_width(1150);
     assert!(rail.is_visible(), "the middle step still draws a column");
@@ -225,6 +258,15 @@ pub fn the_rail_takes_its_step_on_the_ladder() {
     assert!(
         rail.has_css_class("postio-rail-narrow"),
         "the narrow step drops the senders, which is a class not a rebuild"
+    );
+    assert!(
+        shown(rail, "postio-rail-sender").is_empty(),
+        "no names at 118px -- a name cut to four characters is not a name"
+    );
+    assert_eq!(
+        shown(rail, "postio-rail-initials").len(),
+        6,
+        "screen 29's middle step is numbers *and initials*, not numbers alone"
     );
 
     pane.set_window_width(1000);
