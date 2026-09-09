@@ -812,6 +812,75 @@ pub fn content_security_policy(remote: RemoteImages) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A document must not carry bulk that is identical for every message
+    /// (#1341, spec FR-059).
+    ///
+    /// This is #749's largest single measured cost. Every document once
+    /// carried eight `@font-face` faces as base64 data URIs — 909 KB of TTF
+    /// becoming ~1.21 MB of document, re-decoded by the engine on **every**
+    /// message switch, which its report called "the difference between an
+    /// imperceptible gap and a visible one". ADR 0023 moved the bytes behind
+    /// `postio-font:` and nothing has asserted they stayed there.
+    ///
+    /// Re-inlining is a one-line change that looks like a simplification: a
+    /// reader of `reader_css` sees a scheme handler, a custom URI and a CSP
+    /// narrowing, and the obvious tidy-up is to put the bytes back and delete
+    /// all three. Every other test would stay green — the fonts would render
+    /// and the words would be right. The pane would just be slower, which is
+    /// the one property this codebase has decided it cannot measure with a
+    /// stopwatch.
+    #[test]
+    fn a_document_carries_font_references_and_not_font_bytes() {
+        let before = crate::test_support::largest_document();
+        let document = document_for("<p>hi</p>", RemoteImages::Blocked, Sheet::Theme);
+
+        // The faces are still named. Without this, deleting the fonts
+        // altogether would satisfy every assertion below while making the
+        // reader fall back to whatever the sandbox happens to have.
+        assert!(
+            document.contains("@font-face"),
+            "the document no longer names any face, so rendered text will not \
+             inherit Postio typography at all"
+        );
+        assert!(
+            document.contains(&format!("url({FONT_SCHEME}:")),
+            "the faces are named but not served over {FONT_SCHEME}:"
+        );
+
+        // And it does not carry them.
+        assert!(
+            !document.contains("data:font"),
+            "a font is inlined as a data URI again — this is #768 returning"
+        );
+        assert!(
+            !document.contains(";base64,"),
+            "something is base64-encoded into every document, which is the \
+             shape of the 1.21 MB #749 measured"
+        );
+
+        // A bound rather than an exact size, because the stylesheet and the
+        // markers legitimately change. Measured: a one-paragraph document is
+        // ~16 KB today, and the regression this guards against was ~1.21 MB.
+        // 128 KB sits eight times above the first and seventy-five times
+        // below the second, so ordinary growth cannot trip it and re-inlining
+        // the faces cannot survive it.
+        const CEILING: usize = 128 * 1024;
+        assert!(
+            document.len() < CEILING,
+            "a one-paragraph document is {} bytes, over the {CEILING}-byte \
+             ceiling. Something identical for every message is being embedded \
+             in each of them",
+            document.len()
+        );
+
+        assert!(
+            crate::test_support::largest_document() > before
+                || crate::test_support::largest_document() >= document.len() as u64,
+            "the counter did not see this document, so it cannot notice the \
+             regression it exists for"
+        );
+    }
+
     use super::*;
     use postio_model::message::MessageBody;
 
