@@ -166,6 +166,17 @@ pub fn a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_o
         "the seeded conversation never reached the list"
     );
 
+    // **The stacked pane, deliberately.** Everything below is about
+    // per-entry repaint -- `reader_for(message)`, one reader per expanded
+    // message, one repaint for the entry waiting on a body -- and the
+    // one-document pane has none of those: it is one `WebView` holding the
+    // whole thread (ADR 0032). Since #1316 made one document the default,
+    // this case has to ask for the shape it is testing rather than inherit
+    // it, or it silently drives the other pane and asserts nothing.
+    //
+    // That the application itself no longer builds this shape is #1426.
+    window.conversation().set_one_document(false);
+
     list.first_row();
     let cursor = list.cursor_row().expect("a row to land on");
     window.open_conversation(&cursor);
