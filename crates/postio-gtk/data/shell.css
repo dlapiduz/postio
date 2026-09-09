@@ -2497,3 +2497,31 @@ button.postio-compose-more {
   font-size: 0.7159rem;
   color: var(--postio-ink-secondary);
 }
+
+/* `3/6 ⌄` at row two's trailing edge, below the ladder's floor (screen 29).
+   Mono, because it is a position you count with, and outlined rather than
+   filled: it opens something, which is a quieter act than the header's verbs
+   and must not compete with them. */
+.conversation-counter {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-ink-secondary);
+  background: none;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-sm);
+  padding: 0 var(--postio-space-2);
+  min-height: 0;
+  margin-left: var(--postio-space-2);
+}
+
+.conversation-counter:hover {
+  background: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* The index, open. It holds the rail itself, so the column's own hairline
+   would draw a rule down the inside of a popover that already has an edge. */
+.conversation-index .postio-rail {
+  border-left: none;
+  padding-top: var(--postio-space-2);
+}

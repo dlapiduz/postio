@@ -429,6 +429,11 @@ pub fn the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs() {
     for message in messages.iter_mut().skip(4) {
         message.from = Some(bo.clone());
     }
+    // Say the width. The header is two headers -- screen 28's, and screen
+    // 29's shorter one for a window with no room for a rail -- and a test
+    // that does not say which it is asking about gets whichever size the
+    // compositor happened to give this window (#1380).
+    pane.set_window_width(1400);
     pane.open(messages);
     crate::pump();
 

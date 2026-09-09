@@ -1056,6 +1056,18 @@ const CASES: &[(&str, fn())] = &[
         gtk_rail::a_single_message_conversation_has_no_rail as fn(),
     ),
     (
+        "gtk_rail::below_the_floor_the_header_carries_the_index",
+        gtk_rail::below_the_floor_the_header_carries_the_index as fn(),
+    ),
+    (
+        "gtk_rail::a_conversation_with_no_rail_has_no_counter_either",
+        gtk_rail::a_conversation_with_no_rail_has_no_counter_either as fn(),
+    ),
+    (
+        "gtk_rail::opening_a_conversation_narrow_keeps_the_header_short",
+        gtk_rail::opening_a_conversation_narrow_keeps_the_header_short as fn(),
+    ),
+    (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",
         gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one as fn(),
     ),

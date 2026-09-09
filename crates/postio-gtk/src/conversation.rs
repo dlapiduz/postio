@@ -548,6 +548,35 @@ pub struct Header {
     /// conversation — and the brief is explicit that this "is not obvious, so
     /// the scoping note in row 2 is required".
     scoping: gtk::Label,
+    /// `3/6 ⌄` at row two's trailing edge, below the ladder's floor.
+    ///
+    /// A `MenuButton` rather than a button and a popover wired together: it
+    /// brings the open-on-click, close-on-`Esc` and close-on-click-outside
+    /// behaviour the brief asks for, and an accessible role that says the
+    /// control opens something.
+    counter: gtk::MenuButton,
+    /// What the counter opens. Holds the rail itself while the window is too
+    /// narrow to draw a column.
+    index: gtk::Popover,
+    /// The metadata line in both its lengths: with the participants, and
+    /// without them.
+    ///
+    /// Two strings rather than a recomposition, because the second is only
+    /// ever the first minus one part and rebuilding it would mean keeping the
+    /// senders and the dates around to rebuild it *from*.
+    meta_text: std::cell::RefCell<(String, String)>,
+    /// Whether there is a scoping note to show when there is room.
+    has_scoping: std::cell::Cell<bool>,
+    /// Whether there are participant chips to show when there is room.
+    has_participants: std::cell::Cell<bool>,
+    /// Whether the metadata line is currently the short one.
+    ///
+    /// Remembered rather than applied once, because `set_conversation` writes
+    /// the label too: with only a setter, opening a conversation put the long
+    /// line back and the ladder never ran again to correct it. Every test
+    /// passed -- they set the width *after* opening, which the application
+    /// does in the other order.
+    compact: std::cell::Cell<bool>,
 }
 
 impl Header {
@@ -610,6 +639,14 @@ impl Header {
         scoping.set_visible(false);
         second.append(&scoping);
 
+        let index = gtk::Popover::new();
+        index.add_css_class("conversation-index");
+        let counter = gtk::MenuButton::new();
+        counter.add_css_class("conversation-counter");
+        counter.set_popover(Some(&index));
+        counter.set_visible(false);
+        second.append(&counter);
+
         root.append(&first);
         root.append(&second);
 
@@ -621,10 +658,81 @@ impl Header {
             actions,
             scoping,
             avatars,
+            counter,
+            index,
+            meta_text: std::cell::RefCell::new((String::new(), String::new())),
+            compact: std::cell::Cell::new(false),
+            has_scoping: std::cell::Cell::new(false),
+            has_participants: std::cell::Cell::new(false),
         }
     }
 
     /// The conversation's verbs. Wired and shown by the pane that owns them.
+    /// Show or hide the `3/6` counter, and say what it counts.
+    ///
+    /// `None` hides it: at wider widths the rail itself says the position, and
+    /// a conversation with no rail has no position to state (FR-045).
+    pub fn set_counter(&self, position: Option<(usize, usize)>) {
+        match position {
+            Some((at, total)) => {
+                self.counter.set_label(&format!("{at}/{total}"));
+                self.counter
+                    .set_tooltip_text(Some(&format!("Message {at} of {total} — open the index")));
+                self.counter
+                    .update_property(&[gtk::accessible::Property::Label(&format!(
+                        "Message {at} of {total}, open the index"
+                    ))]);
+                self.counter.set_visible(true);
+            }
+            None => self.counter.set_visible(false),
+        }
+    }
+
+    /// Drop the participants from the metadata line, or put them back.
+    ///
+    /// Their names are the unbounded part of the line and the first thing to
+    /// go when the header is short of room. The avatar chips stay: three
+    /// initials say who is here in a width a name cannot.
+    pub fn set_compact(&self, compact: bool) {
+        self.compact.set(compact);
+        self.draw_meta();
+        // Screen 29's narrow header carries the count, the dates and the
+        // counter, and nothing else. The names went first and the *dates*
+        // then ellipsised to a single character -- there is only so much room
+        // and four things were asking for it. The avatars and the scoping
+        // note stand down together, which is the drawing.
+        self.avatars
+            .set_visible(!compact && self.has_participants.get());
+        self.scoping.set_visible(!compact && self.has_scoping.get());
+    }
+
+    /// Put whichever metadata line is current on screen.
+    fn draw_meta(&self) {
+        let text = self.meta_text.borrow();
+        self.meta
+            .set_label(if self.compact.get() { &text.1 } else { &text.0 });
+    }
+
+    /// Whether the scoping note is drawn. Test-facing.
+    pub fn scoping_visible(&self) -> bool {
+        self.scoping.is_visible()
+    }
+
+    /// Whether the participant chips are drawn. Test-facing.
+    pub fn participants_visible(&self) -> bool {
+        self.avatars.is_visible()
+    }
+
+    /// The counter, so a test can read back what a person would see.
+    pub fn counter(&self) -> &gtk::MenuButton {
+        &self.counter
+    }
+
+    /// The popover the counter opens.
+    pub fn index(&self) -> &gtk::Popover {
+        &self.index
+    }
+
     pub fn actions(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
         std::rc::Rc::clone(&self.actions)
     }
@@ -659,7 +767,9 @@ impl Header {
             chip.set_accessible_role(gtk::AccessibleRole::Presentation);
             self.avatars.append(&chip);
         }
-        self.avatars.set_visible(!seen.is_empty());
+        self.has_participants.set(!seen.is_empty());
+        self.avatars
+            .set_visible(!seen.is_empty() && !self.compact.get());
     }
 
     /// Say what each verb will act on, in words and in the scoping note.
@@ -689,8 +799,9 @@ impl Header {
         // `latest · all 6` — the terse form the brief asks for, and only where
         // there is a distinction to draw. One message is not a conversation
         // and saying so would imply others exist.
+        self.has_scoping.set(messages > 1);
         if messages > 1 {
-            self.scoping.set_visible(true);
+            self.scoping.set_visible(!self.compact.get());
             self.scoping.set_label(&format!("latest · all {messages}"));
         } else {
             self.scoping.set_visible(false);
@@ -738,21 +849,33 @@ impl Header {
             .max()
             .unwrap_or_else(chrono::Utc::now);
 
-        let meta = [
-            postio_ui::conversation::message_count(rows.len()),
+        let count = postio_ui::conversation::message_count(rows.len());
+        let span = postio_ui::conversation::date_span(
+            first.with_timezone(&chrono::Local),
+            last.with_timezone(&chrono::Local),
+            now,
+        );
+        let join = |parts: &[String]| {
+            parts
+                .iter()
+                .filter(|part| !part.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        let meta = join(&[
+            count.clone(),
             postio_ui::conversation::participants(&senders),
-            postio_ui::conversation::date_span(
-                first.with_timezone(&chrono::Local),
-                last.with_timezone(&chrono::Local),
-                now,
-            ),
-        ]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ");
+            span.clone(),
+        ]);
+        // Screen 29's narrow header is `6 messages · 22–25 Aug` and nothing
+        // else: below the ladder's floor the counter takes the trailing edge,
+        // and with the names still there the line ellipsised to a single
+        // letter -- which says less than leaving it out.
+        let compact = join(&[count, span]);
+        self.meta_text.replace((meta.clone(), compact));
         self.set_participants(&senders);
-        self.meta.set_label(&meta);
+        self.draw_meta();
         // The line ellipsises, so the whole of it has to reach a screen
         // reader some other way.
         self.root
@@ -842,6 +965,14 @@ mod imp {
         /// (FR-047), which is why it lives on the pane and not beside the
         /// messages.
         pub(super) rail_hidden: Cell<bool>,
+        /// The window width the ladder was last told about.
+        ///
+        /// Remembered, because `set_window_width` applying the step and not
+        /// keeping it meant every later `open` re-derived the width from the
+        /// window itself and threw the answer away. Breakpoints fire on
+        /// crossing a line, so between crossings this is the only record of
+        /// which side we are on.
+        pub(super) rail_width: Cell<Option<i32>>,
         /// The stack itself, one [`Entry`] per message, oldest first.
         pub(super) stack: gtk::Box,
         pub(super) entries: RefCell<Vec<Entry>>,
@@ -984,6 +1115,7 @@ mod imp {
                 body: gtk::Box::new(gtk::Orientation::Horizontal, 0),
                 rail: crate::reader::rail::RailColumn::new(),
                 rail_hidden: Cell::new(false),
+                rail_width: Cell::new(None),
                 spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 entries: RefCell::new(Vec::new()),
@@ -1838,6 +1970,7 @@ impl ConversationView {
     /// answer depending on what else was on screen.
     pub fn set_window_width(&self, width: i32) {
         let imp = self.imp();
+        imp.rail_width.set(Some(width));
         let messages = imp.entries.borrow().len();
         self.apply_rail_ladder(width, messages);
     }
@@ -1845,6 +1978,10 @@ impl ConversationView {
     fn apply_rail_ladder(&self, width: i32, messages: usize) {
         let imp = self.imp();
         let step = presentation(width, messages, imp.rail_hidden.get());
+        // Where the one rail lives. Moved rather than duplicated: a second
+        // `RailColumn` for the popover would be a second marked row, and it
+        // would be wrong exactly when someone scrolled with the index open.
+        self.house_the_rail(matches!(step, Some(Presentation::Popover)));
         match step {
             Some(Presentation::Full) => {
                 imp.rail.widget().set_visible(true);
@@ -1854,11 +1991,45 @@ impl ConversationView {
                 imp.rail.widget().set_visible(true);
                 imp.rail.set_narrow(true);
             }
-            // The popover step draws no column. What opens it is the header's
-            // counter, which is #1374's second half and not wired yet -- so
-            // for now the narrow window simply has no rail, which is what it
-            // had before this landed.
-            Some(Presentation::Popover) | None => imp.rail.widget().set_visible(false),
+            Some(Presentation::Popover) => {
+                // Visible *within the popover*, which shows nothing until the
+                // counter is pressed. The column beside the body is gone
+                // because the rail is no longer in it.
+                imp.rail.widget().set_visible(true);
+                imp.rail.set_narrow(false);
+            }
+            None => imp.rail.widget().set_visible(false),
+        }
+        let position = match step {
+            Some(Presentation::Popover) => {
+                Some((imp.rail.marked_position().unwrap_or(1), messages))
+            }
+            _ => None,
+        };
+        imp.header.set_counter(position);
+        imp.header
+            .set_compact(matches!(step, Some(Presentation::Popover)));
+    }
+
+    /// Put the rail in the popover, or back beside the body.
+    ///
+    /// Idempotent, and it has to be: the ladder runs on every resize and on
+    /// every conversation, and GTK will not let a widget be added to a second
+    /// parent while the first still holds it.
+    fn house_the_rail(&self, in_popover: bool) {
+        let imp = self.imp();
+        let rail = imp.rail.widget();
+        let index = imp.header.index();
+        let housed_in_popover = rail.ancestor(gtk::Popover::static_type()).is_some();
+        if in_popover == housed_in_popover {
+            return;
+        }
+        if in_popover {
+            imp.body.remove(rail);
+            index.set_child(Some(rail));
+        } else {
+            index.set_child(None::<&gtk::Widget>);
+            imp.body.append(rail);
         }
     }
 
@@ -1895,6 +2066,9 @@ impl ConversationView {
     /// 1240, so neither one fires. Nothing was wrong that a screenshot did
     /// not show immediately, and nothing but a screenshot would have.
     fn window_width(&self) -> i32 {
+        if let Some(width) = self.imp().rail_width.get() {
+            return width;
+        }
         self.root()
             .and_downcast::<gtk::Window>()
             .map(|window| window.width())
