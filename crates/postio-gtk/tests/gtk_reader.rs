@@ -947,17 +947,29 @@ fn a_senders_width_cannot_make_the_pane_scroll_sideways() {
         // And it is contained rather than clipped: the content is still there
         // to scroll to inside its own box. A container that simply hid the
         // overflow would pass the assertion above and lose the message.
-        let reachable = measure(
+        // The container's own scrollable extent, **not** compared against its
+        // client width. That comparison needs the window to be narrower than
+        // the content, and a compositor does not have to honour a requested
+        // size -- `shot` says so in as many words (#933), and this assertion
+        // passed locally at 600px and failed on CI, which is the same lesson
+        // arriving through a slower channel.
+        //
+        // The content width is the size-independent fact: 4000px of declared
+        // width has to still be *there* to scroll to. A container that clipped
+        // it away would report its own width instead, and would pass the
+        // overflow assertion above while losing the message.
+        let extent = measure(
             &document,
             "(() => { const b = document.querySelector('.postio-body'); \
-              return b.scrollWidth > b.clientWidth ? 'scrollable' : 'fits'; })()",
+              return String(b.scrollWidth); })()",
         );
-        assert_eq!(
-            reachable, "scrollable",
-            "{name}: four thousand pixels of content in a six hundred pixel \
-             window is not reachable by scrolling its own box, so it is being \
-             clipped away instead of contained -- which passes the assertion \
-             above while losing the message"
+        let extent: i64 = extent.trim().parse().unwrap_or(0);
+        assert!(
+            extent >= 3000,
+            "{name}: the container's scrollable extent is {extent}px for four \
+             thousand pixels of content, so the content is being clipped away \
+             instead of contained -- which passes the assertion above while \
+             losing the message"
         );
     }
 }
