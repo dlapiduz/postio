@@ -628,3 +628,82 @@ pub fn the_one_document_pane_offers_nothing_to_expand() {
 
     window.close();
 }
+
+pub fn marking_a_message_read_does_not_redraw_the_conversation() {
+    let Some((window, pane)) = pane() else {
+        return;
+    };
+    pane.set_window_width(1400);
+    pane.set_one_document(true);
+
+    let unread: Vec<ListRow> = (1..=3)
+        .map(|id| {
+            let mut row = message(id);
+            row.seen = false;
+            row
+        })
+        .collect();
+    pane.open(unread.clone());
+    crate::pump();
+
+    // Every body first. The pane holds a redraw until the thread is whole or
+    // the deadline passes, so a pane with no bodies has simply not drawn yet
+    // -- and "it did not redraw" would be true of it for the wrong reason.
+    // The control at the foot of this case is what caught that.
+    for id in 1..=3 {
+        pane.set_thread_body(
+            MessageId::new(id),
+            postio_model::MessageBody {
+                text: Some(format!("the body of message {id}")),
+                html: None,
+            },
+        );
+    }
+    crate::settle_until("the conversation drew its thread", || {
+        pane.thread_renders() > 0
+    });
+
+    // A redraw here is not a repaint. It is a full WebKit teardown and reload
+    // of the whole thread, a frame of unpainted view, and the scroll position
+    // discarded -- #749's black flash, which is the complaint ADR 0032 came
+    // from. Marking read happens on a *dwell*, so a pane that redrew for it
+    // would flash whenever someone rested on a message long enough to have
+    // read it, which is continuously.
+    let before = pane.thread_renders();
+
+    // What the application does when a dwell marks one read: the list reloads
+    // and the pane is opened again with the same thread, one row's `seen`
+    // flipped.
+    let mut after_read = unread.clone();
+    after_read[1].seen = true;
+    pane.open(after_read);
+    crate::pump();
+    crate::settle();
+
+    assert_eq!(
+        pane.thread_renders(),
+        before,
+        "marking a message read tore the conversation down and rebuilt it"
+    );
+
+    // The control, and the reason the assertion above means anything: a
+    // change that genuinely alters the document still renders. Without it
+    // this case passed while the pane had never drawn at all.
+    pane.set_thread_body(
+        MessageId::new(2),
+        postio_model::MessageBody {
+            text: Some("a body that has just arrived, and is different".to_owned()),
+            html: None,
+        },
+    );
+    crate::settle_until("the arriving body redrew the thread", || {
+        pane.thread_renders() > before
+    });
+    assert!(
+        pane.thread_renders() > before,
+        "a body arriving did not render either, so the assertion above was \
+         satisfied by a pane that never draws"
+    );
+
+    window.close();
+}
