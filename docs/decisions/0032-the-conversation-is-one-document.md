@@ -1,6 +1,6 @@
-# ADR 0032 — Proposed: the conversation is one document, not one WebView per message
+# ADR 0032 — Accepted: the conversation is one document, not one WebView per message
 
-- **Status:** **Proposed** (2026-09-06) — written to be argued with, not to be implemented from
+- **Status:** **Accepted** (2026-09-09) — **with its own deciding gate not met**; see Status at the foot
 - **Date:** 2026-09-06
 - **Raised by:** the maintainer, reporting a black flicker when moving between messages, and asking directly: *"Why do we need a view per message in the conversation view? Isn't there a way to render all messages in the single view? Maybe with html?"*
 - **Issue:** [#1216](https://github.com/dlapiduz/postio/issues/1216)
@@ -154,6 +154,8 @@ document means moving all of it into HTML:
 - A screen-reader pass over an HTML conversation is at least as good as the
   widget tree it replaces. **This is the one that should decide it**, and it is
   not a matter of opinion — it is testable with Orca before anything is built.
+  **Not met.** The ADR was accepted without it; the pass is [#1424] and is
+  owed after the fact rather than before.
 - The action verbs work through `decide_policy` navigation as reliably as
   `connect_clicked`, including the ones that are destructive.
 - Per-sender image policy survives the move to one document.
@@ -225,16 +227,36 @@ both modes. Worth landing whether or not this proposal is ever accepted.
 
 ## Status
 
-Still **Proposed** (reviewed 2026-09-09), and now built, measured and depended
-on — but **not** accepted, because the thing this ADR names as deciding it has
-still not happened: a screen-reader pass over an HTML conversation, against the
-widget tree it would replace.
+**Accepted 2026-09-09, by the maintainer, with the screen-reader gate not
+met.** Stated plainly rather than folded into the acceptance, because this
+document says of that gate: *"This is the one that should decide it."*
 
-That is deliberate. Orca is a person's to run (`/gtk-design`), and this ADR
-trades an accessibility guarantee for performance; letting the measurements
-alone carry it to Accepted would be answering the easy half of its own
-question. Everything below is what an agent could settle. **The outstanding
-gate is a human's.**
+The paragraph this replaces read: *"Still Proposed, and now built, measured
+and depended on — but not accepted, because the thing this ADR names as
+deciding it has still not happened... letting the measurements alone carry it
+to Accepted would be answering the easy half of its own question."* That
+reasoning was not wrong and has not been rebutted. It was overruled, which is
+a different thing and is the maintainer's to do.
+
+What was accepted, and what was not:
+
+- **The one-document pane is the default**, not an experiment behind
+  `POSTIO_ONE_DOCUMENT`. Everything else under *What would have to be true to
+  accept this* is done and has tests: the verbs work through `decide_policy`
+  navigation (#1394), per-sender image policy survived the move (#1353), the
+  token layer dresses the HTML chrome from one place, and a sender's CSS is
+  confined to its own message (#1326).
+- **The Orca pass has not been run.** It is [#1424]. It is now a check made
+  *after* the fact rather than before, and if it finds the HTML worse than the
+  widget tree it replaces, that is a defect against this ADR rather than a
+  reopening of it.
+
+Two of the three reasons the original Status gave for holding back are
+settled: it was decided by the maintainer rather than by whoever was
+profiling that week, and the surface did move. The third — the accessibility
+trade — is what #1424 still owes an answer for.
+
+[#1424]: https://github.com/dlapiduz/postio/issues/1424
 
 ### What has been settled since (2026-09-09)
 

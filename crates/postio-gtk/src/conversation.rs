@@ -1152,8 +1152,10 @@ mod imp {
         ///
         /// The stacked pane builds a `Reader` per expanded message, and
         /// WebKitGTK runs a process per *view*, so a thirty-message thread
-        /// ends with thirty of them. Switched by `POSTIO_ONE_DOCUMENT` so
-        /// both shapes can be compared in one binary, on the same mail.
+        /// ends with thirty of them. That is what ADR 0032 replaced, and
+        /// since it was accepted (#1316) `postio-app` sets this on every
+        /// pane it builds -- the `false` below is what a pane constructed by
+        /// a test starts as, not what the application ships.
         pub(super) one_document: Cell<bool>,
         /// The single reader, in one-document mode. Built once and kept: not
         /// rebuilding it per message is the whole point.
@@ -1420,9 +1422,14 @@ impl ConversationView {
     /// [`expanded_on_open`] decides how much opens with it.
     /// Render this thread as one document in one `WebView` (ADR 0032, #1316).
     ///
-    /// Off by default. `postio-app` turns it on from `POSTIO_ONE_DOCUMENT`, so
-    /// the stacked pane and this one can be compared in the same binary on the
-    /// same mail. Set before the first [`open`](Self::open).
+    /// `postio-app` always turns this on: ADR 0032 was accepted on
+    /// 2026-09-09 and one document is the shape a conversation has. It stays
+    /// a setter rather than becoming the constructor's business because a
+    /// pane is built before it is told anything, and because the stacked path
+    /// is still what a widget-level test drives when it wants to exercise
+    /// folding and the "N earlier messages" dividers.
+    ///
+    /// Set before the first [`open`](Self::open).
     pub fn set_one_document(&self, one_document: bool) {
         self.imp().one_document.set(one_document);
         self.imp().header.set_one_document(one_document);
@@ -1732,14 +1739,8 @@ impl ConversationView {
             // FR-015: the most recent, through the same rule the stacked
             // pane uses. This said `messages.first()` -- the *oldest* -- so
             // the two panes gave opposite answers to one requirement.
-            imp.focused
-                .set(opening_focus(&messages).map(|index| messages[index].id));
-            // The stacked pane marks the rail from `focus_message`, which
-            // this path never calls -- it sets the focus itself and hands the
-            // whole thread to one document. Without this the rail marked
-            // nothing in the pane the rail was designed for.
+            let opening = opening_focus(&messages).map(|index| messages[index].id);
             imp.thread_rows.replace(messages.clone());
-            imp.rail.set_marked(self.focused_index());
             imp.header.set_conversation(&messages, chrono::Local::now());
             imp.header.actions().set_visible(true);
             // Always, whatever the length -- unlike the stacked pane below.
@@ -1753,6 +1754,22 @@ impl ConversationView {
             // mouse at all, which is #1259 (#1349).
             imp.footer.set_visible(false);
             self.open_as_document(messages);
+            // **Through `focus_in_document`, not by setting the cell.** This
+            // path used to do `imp.focused.set(...)` and tell nobody, which
+            // cost three separate things before anyone connected them: the
+            // rail marked nothing (fixed here by hand), the dwell timer never
+            // started, and `on_focus` never fired -- so the `showing` cell
+            // `compose::install_reply_source` reads stayed empty and `e`
+            // answered nothing at all.
+            //
+            // The stacked pane has never had any of those bugs, because it
+            // calls `focus_message` and gets the whole opening movement in
+            // one place. This now does the same. After `open_as_document`,
+            // because part of that movement is scrolling the focused message
+            // into view and there is no document to scroll before it.
+            if let Some(message) = opening {
+                self.focus_in_document(message);
+            }
             return;
         }
         imp.entries.borrow_mut().clear();
@@ -2058,6 +2075,20 @@ impl ConversationView {
     }
 
     pub fn is_expanded(&self, message: MessageId) -> bool {
+        // The one-document pane has no `entries` -- the whole thread is one
+        // `WebView` (ADR 0032) -- and every body in it is visible by FR-013
+        // (#1389). Reading `entries` there answered `false` for a message
+        // that is on screen, which is the same shape as #1386, #1398 and
+        // #1402: a method that reads `entries` and quietly means "the stacked
+        // pane" without saying so.
+        //
+        // It only surfaced when one document became the default (#1316).
+        // Before that every caller was a test that had turned the pane on
+        // deliberately, and the ones that had not were driving the stacked
+        // pane and were right.
+        if self.imp().one_document.get() {
+            return self.rows().iter().any(|row| row.id == message);
+        }
         self.imp()
             .entries
             .borrow()

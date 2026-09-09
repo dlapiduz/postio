@@ -441,14 +441,22 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // window has the blob source and the allow-list path, and only this
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
-    // ADR 0032's experiment (#1316): render the thread as one document in one
-    // `WebView` instead of a stack of readers. Off unless asked for, so both
-    // shapes are in the same binary and can be compared on the same mail.
+    // ADR 0032, Accepted 2026-09-09 (#1316): a thread is one document in one
+    // `WebView`, not a stack of readers.
     //
-    // An environment variable and not a config key, deliberately: this is an
+    // This was `if std::env::var_os("POSTIO_ONE_DOCUMENT").is_some()` while
+    // the ADR was Proposed, and the variable's own comment said why: "an
     // experiment with a decision still to be made, and `config.toml` is where
-    // settled choices live.
-    if std::env::var_os("POSTIO_ONE_DOCUMENT").is_some() {
+    // settled choices live." The decision is made, so there is no variable and
+    // no second shape to fall back to -- there are no deployed installs to
+    // keep a fallback for, and a code path nothing exercises is a code path
+    // that rots.
+    //
+    // The ADR was accepted **without** its own screen-reader gate being met;
+    // that is recorded there and the pass is #1424. If Orca finds the HTML
+    // worse than the widget tree it replaced, the answer is to fix the HTML,
+    // not to reach for a stacked pane nobody has run in months.
+    {
         window.conversation().set_one_document(true);
         window.conversation().connect_thread_opened({
             let fill = Rc::clone(&parts);
