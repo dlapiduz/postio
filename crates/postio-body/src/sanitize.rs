@@ -872,6 +872,30 @@ mod tests {
     }
 
     #[test]
+    fn a_scope_cannot_break_out_of_the_selector_it_names() {
+        // A scope is a message's own database id, so a quote in one is not a
+        // sender's doing today. It is escaped anyway, for the same reason
+        // `message_anchor` escapes it: an unescaped value would close the
+        // attribute selector and free every rule written after it, and the
+        // day one of those assumptions stops holding is not the day to find
+        // out.
+        let selector = message_selector(Some(r#"a" ] , * { color: red } x["#));
+        let opening = format!(".{BODY_CLASS}[{MESSAGE_ATTRIBUTE}=\"");
+        let inside = selector
+            .strip_prefix(&opening)
+            .and_then(|rest| rest.strip_suffix("\"]"))
+            .unwrap_or_else(|| panic!("not one attribute selector: {selector}"));
+        // Escaped pairs removed first, so what is counted is the quotes that
+        // would actually close the string. Counting raw `"` would call the
+        // escaped one a breakout and the test would fail on correct code.
+        assert!(
+            !inside.replace("\\\\", "").replace("\\\"", "").contains('"'),
+            "an unescaped quote closes the string and frees every rule after \
+             it: {selector}"
+        );
+    }
+
+    #[test]
     fn two_messages_stylesheets_cannot_reach_each_other() {
         let sheet = "<style>p { color: red }</style><p>hi</p>";
         let one = sanitize_body_in(sheet, RemoteImages::Blocked, Some("1"));
