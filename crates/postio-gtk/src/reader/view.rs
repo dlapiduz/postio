@@ -110,6 +110,14 @@ pub struct Reader {
     /// find the message its scope names and the sender that message is from.
     /// Empty whenever a single message is drawn instead.
     thread: Rc<RefCell<Vec<ThreadMessage>>>,
+    /// The messages of the open thread the reader has been asked to show
+    /// whole, by scope.
+    ///
+    /// A thread's rendering is decided per message from its own content, and
+    /// this is the reader overruling that for one of them. Kept beside the
+    /// thread rather than inside `Open`, which only the single-message path
+    /// fills — reading `Open` is what made `⌃O` a no-op here (#1398).
+    originals: Rc<RefCell<std::collections::HashSet<String>>>,
     /// Who to tell when a message's own verb is activated.
     on_message_action: Rc<RefCell<Vec<MessageActionHandler>>>,
     /// Who to tell when the message filling the pane changes.
@@ -366,6 +374,7 @@ impl Reader {
             actions,
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
+            originals: Rc::new(RefCell::new(std::collections::HashSet::new())),
             on_message_action: Rc::new(RefCell::new(Vec::new())),
             on_current_message: Rc::new(RefCell::new(Vec::new())),
             open: Rc::new(RefCell::new(None)),
@@ -405,6 +414,7 @@ impl Reader {
                 // leaves the pane to the system browser, and a consent verb must
                 // be told apart from a link the sender wrote before that happens.
                 let allowlist = Rc::clone(&reader.allowlist);
+                let originals = Rc::clone(&reader.originals);
                 let thread = Rc::clone(&reader.thread);
                 let document = Rc::clone(&reader.document);
                 let page = Rc::clone(&reader.page);
@@ -452,7 +462,7 @@ impl Reader {
                                 page: &page,
                                 loads: &loads,
                             },
-                            &compose_thread_document(&messages, &allowlist),
+                            &compose_thread_document(&messages, &allowlist, &originals.borrow()),
                         );
                         decision.ignore();
                         return true;
@@ -918,7 +928,7 @@ impl Reader {
     }
 
     fn compose_thread(&self, messages: &[ThreadMessage]) -> String {
-        compose_thread_document(messages, &self.allowlist)
+        compose_thread_document(messages, &self.allowlist, &self.originals.borrow())
     }
 
     /// Whether [`render_thread`](Self::render_thread) would change anything.
@@ -943,9 +953,14 @@ impl Reader {
     /// The allow list is a decision about *a sender*, and a document has one
     /// Content-Security-Policy for all of it. Allowing one sender's images in
     /// a thread would allow every sender's in that thread, which is not what
-    /// anybody agreed to. Expressing a per-sender policy inside one document
-    /// is real work (ADR 0032 says so) and it is not what this experiment is
-    /// measuring, so the whole document is `Blocked` and says so.
+    /// anybody agreed to.
+    ///
+    /// That is no longer what happens. #1353 made the decision per message,
+    /// from its own sender's place in the allowlist, so an allowed
+    /// correspondent no longer carries the rest of the thread with them — and
+    /// #1398 does the same for reader view, which each message decides for
+    /// itself and `⌃O` overrules one at a time. This comment said the whole
+    /// document was `Blocked` long after it had stopped being true.
     pub fn render_thread(&self, messages: &[ThreadMessage]) {
         self.thread.replace(messages.to_vec());
         self.paints.set(self.paints.get() + 1);
@@ -957,6 +972,40 @@ impl Reader {
         let document = self.compose_thread(messages);
         load_document(&self.canvas(), &document);
         self.watch_for_the_current_message();
+    }
+
+    /// Draw one message of a thread as its sender wrote it — `⌃O`.
+    ///
+    /// Per message, which is what the single-message [`view_original`] has
+    /// always promised and what a pane holding several has to mean: showing
+    /// one newsletter whole says nothing about the message below it.
+    ///
+    /// A no-op when no thread is on screen, so the key is safe to press
+    /// anywhere, and when that message is already whole.
+    pub fn view_original_for(&self, scope: &str) {
+        if self.thread.borrow().is_empty() {
+            return;
+        }
+        if !self.originals.borrow_mut().insert(scope.to_owned()) {
+            return;
+        }
+        let thread = self.thread.borrow().clone();
+        self.render_thread(&thread);
+    }
+
+    /// Forget which messages were asked for whole.
+    ///
+    /// Called when the conversation changes, not on every redraw: a body
+    /// arriving re-renders the thread, and clearing there would undo the
+    /// choice the moment the rest of the thread loaded.
+    pub fn forget_originals(&self) {
+        self.originals.borrow_mut().clear();
+    }
+
+    /// The document currently composed for the open thread. Test-facing.
+    #[doc(hidden)]
+    pub fn document_for_test(&self) -> String {
+        self.compose_thread(&self.thread.borrow().clone())
     }
 
     /// Draw the sender's own markup for whatever is on screen — `C-o`.
@@ -1415,6 +1464,7 @@ fn load_document(canvas: &Canvas<'_>, document: &str) {
 fn compose_thread_document(
     messages: &[ThreadMessage],
     allowlist: &RefCell<RemoteImageAllowList>,
+    originals: &std::collections::HashSet<String>,
 ) -> String {
     // Rendered first, and held, because `Entry` borrows the markup.
     // Reader view is decided per message, from the message, exactly as
@@ -1423,7 +1473,11 @@ fn compose_thread_document(
     let rendered: Vec<postio_ui::reader::document::Rendered> = messages
         .iter()
         .map(|message| {
-            let rendering = if postio_ui::reader::document::suits_reader_view(&message.body) {
+            // The reader's own choice first: `⌃O` on a message overrules what
+            // its content suggests, for that message and no other (#1398).
+            let rendering = if originals.contains(&message.scope) {
+                Rendering::Original
+            } else if postio_ui::reader::document::suits_reader_view(&message.body) {
                 Rendering::Reader
             } else {
                 Rendering::Original

@@ -648,6 +648,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
     sender_script_is_refused_even_with_javascript_enabled();
     the_counters_see_what_the_reader_actually_does();
     a_senders_width_cannot_make_the_pane_scroll_sideways();
+    view_original_reaches_one_message_of_a_thread();
     one_senders_styling_cannot_reach_another_message();
     a_whole_thread_costs_one_web_process();
     an_allowed_senders_images_survive_the_thread_document();
@@ -682,6 +683,97 @@ fn the_reader_renders_and_hardens_the_corpus() {
 /// application **without** script: `WebView::title()` reads it directly. A
 /// document that changed its own title would prove its script ran even in a
 /// view where nothing could be evaluated to ask.
+/// `View original` must reach a message in a thread (#1398).
+///
+/// Reader view reduces bulk mail to readable prose, and `⌃O` is the consent
+/// to see the layout its sender actually wrote — which is the escape hatch
+/// FR-019 and FR-019a's "the sender's layout reaches the screen" depends on
+/// once a message has been judged bulk.
+///
+/// In the one-document pane it did nothing: `view_original` reads
+/// `self.open`, which `render_thread` never sets, so the guard fell out and
+/// the key was a silent no-op. Whatever `suits_reader_view` decided was the
+/// last word.
+///
+/// Asserted per message, because the pane holds several and the choice is
+/// about one of them: a thread where `⌃O` unreduced everything would be
+/// answering a question nobody asked.
+fn view_original_reaches_one_message_of_a_thread() {
+    let reader = Reader::with_allowlist(
+        Rc::new(NoBlobs),
+        RemoteImageAllowList::default(),
+        scratch_path("thread-view-original"),
+    );
+    let window = gtk::Window::new();
+    window.set_default_size(600, 500);
+    window.set_child(Some(&reader.widget()));
+    window.present();
+    pump();
+
+    // Nested tables and a crowd of links: `reads_as_bulk`'s two signals, so
+    // this one opens reduced without the test asserting that it should.
+    let campaign = {
+        let links: String = (0..12)
+            .map(|n| format!(r#"<a href="https://example.net/{n}">link {n}</a>"#))
+            .collect();
+        format!(
+            r#"<table><tr><td><table><tr><td width="240">campaign</td></tr></table>{links}</td></tr></table>"#
+        )
+    };
+    let plain = r#"<p>an ordinary note</p>"#.to_string();
+
+    let message = |scope: &str, html: &String| postio_gtk::reader::view::ThreadMessage {
+        scope: scope.to_owned(),
+        sender: format!("{scope}@example.com"),
+        address: format!("{scope}@example.com"),
+        when: "24 Aug".to_owned(),
+        preview: "preview".to_owned(),
+        expanded: true,
+        latest: false,
+        body: MessageBody {
+            text: None,
+            html: Some(html.clone()),
+        },
+    };
+    let thread = [message("7", &campaign), message("11", &plain)];
+
+    let finished = track_load_finished(&reader);
+    reader.render_thread(&thread);
+    wait_for(&finished, Duration::from_secs(5));
+
+    // A `<table>` inside the message's own element is the marker: reduction
+    // keeps eleven tags and `href`, and `table` is not among them.
+    let tables_in = |scope: &str| {
+        format!(
+            "(() => {{ const el = document.getElementById('m-{scope}');               return el ? String(el.querySelectorAll('table').length) : 'no such message'; }})()"
+        )
+    };
+    let document = reader.document_for_test();
+    assert_eq!(
+        measure(&document, &tables_in("7")),
+        "0",
+        "the campaign did not open reduced, so this case cannot show `⌃O`          restoring anything"
+    );
+
+    // ── and the key reaches it ────────────────────────────────────────────
+    let finished = track_load_finished(&reader);
+    reader.view_original_for("7");
+    wait_for(&finished, Duration::from_secs(5));
+    let document = reader.document_for_test();
+    assert_ne!(
+        measure(&document, &tables_in("7")),
+        "0",
+        "`View original` left the campaign reduced -- in the one-document          pane the key was a no-op, because `view_original` read state only          `render` sets"
+    );
+    assert_eq!(
+        measure(&document, &tables_in("11")),
+        "0",
+        "showing one message whole must not unreduce the rest of the thread"
+    );
+
+    window.destroy();
+}
+
 fn sender_script_is_refused_even_with_javascript_enabled() {
     // No `Content-Security-Policy` in this document, deliberately. The
     // reader's real documents carry `script-src 'none'` and that is a second,

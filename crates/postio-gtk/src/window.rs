@@ -1951,7 +1951,14 @@ impl Window {
             // when that reader is already showing the sender's own markup
             // (#1009).
             CommandId::ViewOriginal => {
-                self.reader_showing().view_original();
+                // The one-document pane holds several messages in one view, so
+                // the key has to name which one -- the focused message, which
+                // is the one the reader is looking at. `view_original` alone
+                // reads state only the single-message path fills, so it was a
+                // silent no-op there (#1398).
+                if !self.conversation().show_focused_message_whole() {
+                    self.reader_showing().view_original();
+                }
             }
 
             // The conversation's own, so it goes to the pane rather than out
