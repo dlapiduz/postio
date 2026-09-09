@@ -889,16 +889,86 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 # auto-merge at all, and asking it for one is an error whose empty answer
 # reads as "no" -- which is how the first landing after #1107 quietly took
 # the watching path (#1136).
+# Arm GitHub's auto-merge, and say what happened either way.
+#
+# `gh pr merge --auto` fails for several reasons that are not failures of this
+# landing, and under `set -e` a bare call made every one of them look like one:
+# the gates had passed, the branch was pushed, the PR was open, and the script
+# exited non-zero with no line saying which of those was untrue. On one feature
+# branch four of six consecutive landings ended that way, for four different
+# reasons -- and an exit code that is wrong most of the time is one nobody
+# reads, so the landing where a check really did fail is the one that gets
+# missed.
+#
+# The landing is what the exit code is about. Every branch here returns 0
+# because the work landed; what differs is the line telling you whether
+# anything will merge it.
+arm_auto_merge() {
+    local attempt=1 output=""
+    while [ "$attempt" -le 3 ]; do
+        if output=$(gh pr merge --auto --rebase 2>&1); then
+            echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
+            echo "Nothing waits here. If a check fails, your next claim will say so, and"
+            echo "    scripts/issue-claim.sh --resume $ISSUE"
+            echo "comes back to this branch to fix it on the same PR."
+            echo "Now claim the next issue -- finishing an issue is not finishing a session."
+            return 0
+        fi
+
+        case "$output" in
+            # The checks have not been created yet, so the PR momentarily has
+            # nothing pending and GitHub refuses to wait for nothing. Pushing,
+            # opening the PR and arming can all happen faster than that.
+            *"clean status"*)
+                if [ "$attempt" -lt 3 ]; then
+                    sleep $((attempt * 5))
+                    attempt=$((attempt + 1))
+                    continue
+                fi
+                echo "$output"
+                echo "auto-merge could not be armed: this PR has no required checks to wait for."
+                echo "The landing succeeded -- gates green, branch pushed, PR open at $URL --"
+                echo "but nothing will merge it on its own. Merge it when you are satisfied:"
+                echo "    gh pr merge $URL --squash"
+                return 0
+                ;;
+            # No ruleset on the base branch, which is the ordinary state of a
+            # feature branch. There is nothing to arm and nothing wrong.
+            *"Protected branch rules not configured"*)
+                echo "auto-merge is not available: the base branch has no required checks."
+                echo "The landing succeeded; $URL is open and merges when you say so:"
+                echo "    gh pr merge $URL --squash"
+                return 0
+                ;;
+            # GitHub had a moment. Worth another try before saying anything.
+            *"502"*|*"503"*|*"Service Unavailable"*|*"timeout"*|*"Timeout"*)
+                if [ "$attempt" -lt 3 ]; then
+                    sleep $((attempt * 5))
+                    attempt=$((attempt + 1))
+                    continue
+                fi
+                echo "$output"
+                echo "auto-merge could not be armed: GitHub was unavailable, three times."
+                echo "The landing succeeded; $URL is open. Arm it later with:"
+                echo "    gh pr merge $URL --auto --rebase"
+                return 0
+                ;;
+            *)
+                echo "$output"
+                echo "auto-merge could not be armed, for a reason this script does not"
+                echo "recognise. The landing itself succeeded: $URL is open and its"
+                echo "gates passed. Read the message above before merging."
+                return 0
+                ;;
+        esac
+    done
+}
+
 AUTO_MERGE_ALLOWED=$(gh api "repos/{owner}/{repo}" --jq .allow_auto_merge 2>/dev/null || true)
 if [ "$WAIT" != 1 ] && [ "$AUTO_MERGE_ALLOWED" = "true" ]; then
     echo
     echo "--- auto-merge ---"
-    gh pr merge --auto --rebase
-    echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
-    echo "Nothing waits here. If a check fails, your next claim will say so, and"
-    echo "    scripts/issue-claim.sh --resume $ISSUE"
-    echo "comes back to this branch to fix it on the same PR."
-    echo "Now claim the next issue -- finishing an issue is not finishing a session."
+    arm_auto_merge
     exit 0
 fi
 
