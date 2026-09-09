@@ -3436,6 +3436,7 @@ Three things worth keeping:
 - 2026-09-05 — [The error log was never switched on (2026-09-05, #1184)](notes/2026-09-05-the-error-log-was-never-switched-on.md)
 - 2026-09-05 — [The app that ran, logged, and drew nothing (2026-09-05, #1156)](notes/2026-09-05-the-app-that-ran-logged-and-drew-nothing.md)
 - 2026-09-08 — [Building a reading pane on a WebView (2026-09-08, #1316)](notes/2026-09-08-building-a-reading-pane-on-a-webview.md)
+- 2026-09-08 — [What a thread costs, in both panes (2026-09-08, #1348)](notes/2026-09-08-what-a-thread-costs-in-two-panes.md) — ADR 0032's unanswered question, measured: one document is flat at ~101 MiB and 50-100 ms whatever the thread length, where a reader per message grows ~31 MiB of Pss and reaches 1.34 s at fifty.
 - 2026-09-07 — [What a list repaint actually costs (2026-09-07, #1216)](notes/2026-09-07-what-a-list-repaint-actually-costs.md)
 - 2026-09-06 — [Moving code out of a crate you cannot compile (2026-09-06, #1221)](notes/2026-09-06-moving-code-out-of-a-crate-you-cannot-compile.md)
 - 2026-09-06 — [Where a search and a store actually spend their time (2026-09-06, #1216)](notes/2026-09-06-where-a-search-and-a-store-actually-spend-their-time.md)
