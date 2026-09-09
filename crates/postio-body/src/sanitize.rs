@@ -38,6 +38,44 @@ use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
+/// The class every sender's content is wrapped in (`contain_body`), and the
+/// outermost thing a sender's own CSS is allowed to name.
+///
+/// Postio's chrome -- the message head, the blocked-images notice, the
+/// per-message actions -- sits *outside* it, so a scoped rule naming any of
+/// them is well-formed and matches nothing. That is the point: a message must
+/// not be able to hide the notice saying its images were blocked.
+pub const BODY_CLASS: &str = "postio-body";
+
+/// The attribute `contain_body` stamps on that container to name the message.
+///
+/// [`message_selector`] is the other half. They are two constants rather than
+/// one because one is written into HTML and the other into CSS, and a test in
+/// `postio_ui::reader::document` asserts the container carries what the
+/// selector matches -- the joint is exactly where this would rot silently.
+pub const MESSAGE_ATTRIBUTE: &str = "data-postio-message";
+
+/// The selector that confines a sender's stylesheet to their own message.
+///
+/// `None` is the single-message reader: one message in the document, so the
+/// container alone is enough. A scope is a message's own database id, and it
+/// is escaped rather than trusted -- an id carrying a quote would otherwise
+/// close the attribute selector and free every rule after it.
+pub fn message_selector(scope: Option<&str>) -> String {
+    match scope {
+        Some(scope) => format!(
+            ".{BODY_CLASS}[{MESSAGE_ATTRIBUTE}=\"{}\"]",
+            escape_css_string(scope)
+        ),
+        None => format!(".{BODY_CLASS}"),
+    }
+}
+
+/// A string safe to sit inside a double-quoted CSS string.
+fn escape_css_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// The scheme the reading pane resolves inline (`cid:`) images through.
 ///
 /// Kept out of `ammonia`'s default URL schemes, so it has to be added
@@ -61,6 +99,17 @@ pub enum RemoteImages {
 pub struct Sanitized {
     /// The cleaned markup.
     pub html: String,
+    /// The sender's own stylesheets, rewritten so nothing in them reaches
+    /// outside this message ([`crate::styles`]).
+    ///
+    /// Separate from [`Sanitized::html`] on purpose: the sender's `<style>`
+    /// element never survives, and what a reader emits is CSS Postio parsed
+    /// and rewrote itself. Passing the tag through would leave the engine
+    /// reading the sender's text rather than Postio's, which is the whole
+    /// difference between admitting a stylesheet and trusting one.
+    ///
+    /// Empty for a message with no `<style>` block, which is most of them.
+    pub styles: String,
     /// How many remote (`http`/`https`) references were stripped.
     ///
     /// `postio_gtk::reader::banner::RemoteImageBanner` uses whether this is
@@ -229,6 +278,7 @@ pub fn sanitize_body(html: &str, remote: RemoteImages) -> Sanitized {
 /// [`sanitize_body`] always did.
 pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -> Sanitized {
     // Owned: the filter is a `'static` closure and cannot borrow the caller's.
+    let scope_for_styles = scope.map(str::to_owned);
     let scope = scope.map(str::to_owned);
     let blocked_count = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&blocked_count);
@@ -310,10 +360,53 @@ pub fn sanitize_body_in(html: &str, remote: RemoteImages, scope: Option<&str>) -
             )
         });
 
+    // Taken from the DOM before ammonia runs, because ammonia removes
+    // `<style>` tag-and-contents and there is no filter that sees a text
+    // node. The scoped result is returned beside the markup rather than
+    // spliced back into it -- see `Sanitized::styles`.
+    let styles = crate::styles::scope_into(
+        &stylesheets(html),
+        &message_selector(scope_for_styles.as_deref()),
+        remote,
+        &blocked_count,
+    );
+
     Sanitized {
         html: builder.clean(html).to_string(),
+        styles,
         remote_blocked: blocked_count.load(Ordering::Relaxed),
         trackers: tracker_count.load(Ordering::Relaxed),
+    }
+}
+
+/// Every `<style>` element's text, in document order, joined.
+///
+/// Joined rather than kept apart because they are scoped identically and a
+/// browser would cascade them in this order anyway. `<style>` inside
+/// `<template>` or an already-removed subtree is not special-cased: it is
+/// still this sender's CSS, and it still ends up scoped to this sender's
+/// message.
+fn stylesheets(html: &str) -> String {
+    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
+    let mut found = String::new();
+    collect_stylesheets(&dom.document, &mut found);
+    found
+}
+
+fn collect_stylesheets(node: &Handle, found: &mut String) {
+    if let NodeData::Element { name, .. } = &node.data
+        && name.local.as_ref().eq_ignore_ascii_case("style")
+    {
+        for child in node.children.borrow().iter() {
+            if let NodeData::Text { contents } = &child.data {
+                found.push_str(&contents.borrow());
+                found.push('\n');
+            }
+        }
+        return;
+    }
+    for child in node.children.borrow().iter() {
+        collect_stylesheets(child, found);
     }
 }
 
@@ -739,22 +832,35 @@ mod tests {
     /// day that lands this test should fail and be replaced by one that proves
     /// the `@import` is stripped from a stylesheet Postio does admit.
     #[test]
-    fn a_style_element_and_its_import_do_not_survive() {
-        let hostile = r#"<style>@import url(https://tracker.example.net/s.css);
-             p { color: red }</style><p style="color:green">text</p>"#;
-        let clean = sanitize_body(hostile, RemoteImages::Allowed);
+    fn a_style_element_is_admitted_scoped_and_never_as_markup() {
+        // Replaces `a_style_element_and_its_import_do_not_survive` (#1383),
+        // which asserted `<style>` was dropped whole. That was true and is
+        // the reason a sender had no route to a CSS-borne fetch at all; #1326
+        // admits the block, so the assertion that still matters is that
+        // `@import` is stripped from a stylesheet Postio now *does* serve.
+        let hostile = r##"<style>@import url(https://tracker.example.net/s.css);
+             p { color: red }</style><p style="color:green">text</p>"##;
+        let clean = sanitize_body_in(hostile, RemoteImages::Allowed, Some("7"));
 
         assert!(
-            !clean.html.contains("@import"),
-            "a sender's stylesheet import survived sanitizing: {}",
-            clean.html
+            !clean.styles.contains("@import") && !clean.styles.contains("tracker.example.net"),
+            "a sender's stylesheet import survived: {}",
+            clean.styles
         );
         assert!(
-            !clean.html.contains("<style"),
-            "the element carrying it survived too: {}",
+            clean
+                .styles
+                .contains(&format!("{} p", message_selector(Some("7")))),
+            "the rule must arrive scoped to its own message: {}",
+            clean.styles
+        );
+        assert!(
+            !clean.html.contains("<style") && !clean.html.contains("color: red"),
+            "the element itself must never reach the markup -- Postio emits \
+             the CSS it parsed, it does not pass the sender's tag through: {}",
             clean.html
         );
-        // The control: the attribute route *is* admitted, so the assertions
+        // The control: the attribute route is admitted too, so the assertions
         // above are about `<style>` rather than about styling being dropped
         // wholesale -- which would make them pass for the wrong reason.
         assert!(
@@ -765,16 +871,53 @@ mod tests {
         );
     }
 
-    // -- likely trackers ---------------------------------------------------
-    //
-    // The maintainer settled the heuristic on 2026-08-25 (#174): a remote
-    // image reference is a likely tracker when its *declared* dimensions are
-    // <= 2px in either axis, or when it is declared hidden outright. Nothing
-    // domain-based and nothing path-based -- a list of known vendors is
-    // exactly the provider hard-coding CLAUDE.md forbids, and it rots.
-    //
-    // This only ever changes the parts panel's *wording*. Both kinds are
-    // blocked identically, so a beacon this misses is still not fetched.
+    #[test]
+    fn two_messages_stylesheets_cannot_reach_each_other() {
+        let sheet = "<style>p { color: red }</style><p>hi</p>";
+        let one = sanitize_body_in(sheet, RemoteImages::Blocked, Some("1"));
+        let two = sanitize_body_in(sheet, RemoteImages::Blocked, Some("2"));
+        assert_ne!(
+            one.styles, two.styles,
+            "the same sheet in two messages must be scoped to each"
+        );
+        assert!(one.styles.contains(message_selector(Some("1")).as_str()));
+        assert!(!one.styles.contains(message_selector(Some("2")).as_str()));
+    }
+
+    #[test]
+    fn a_remote_reference_in_a_stylesheet_is_counted_with_the_images() {
+        let clean = sanitize_body_in(
+            "<style>p { background-image: url(https://tracker.example/p.gif) }</style>",
+            RemoteImages::Blocked,
+            Some("1"),
+        );
+        assert!(
+            !clean.styles.contains("tracker.example"),
+            "{}",
+            clean.styles
+        );
+        assert_eq!(
+            clean.remote_blocked, 1,
+            "the parts panel says `n remote images blocked`, and a CSS \
+             background is one of them"
+        );
+    }
+
+    #[test]
+    fn the_unscoped_reader_still_gets_a_container_selector() {
+        // The single-message pane has one message and no scope, but the
+        // chrome outside `.postio-body` is the same chrome and a sender must
+        // not be able to name it there either.
+        let clean = sanitize_body(
+            "<style>.postio-blocked { display: none }</style>",
+            RemoteImages::Blocked,
+        );
+        assert!(
+            clean.styles.starts_with(&message_selector(None)),
+            "{}",
+            clean.styles
+        );
+    }
 
     #[test]
     fn a_one_by_one_remote_pixel_is_a_likely_tracker() {
@@ -905,16 +1048,26 @@ mod tests {
     }
 
     #[test]
-    fn a_style_tag_and_its_css_are_removed() {
+    fn a_style_tag_never_reaches_the_markup() {
         let out = sanitize_body(
             "<style>.hero{background:url('https://tracker.example.org/bg.jpg')}</style><p>ok</p>",
             RemoteImages::Blocked,
         );
-        assert_eq!(out.html, "<p>ok</p>");
+        assert_eq!(out.html, "<p>ok</p>", "the element does not survive");
         assert!(!out.html.contains("tracker.example.org"));
-        // A stripped <style> is not a stripped *image*: the banner has
-        // nothing to report about a message that never referenced one.
-        assert_eq!(out.remote_blocked, 0);
+        assert!(
+            !out.styles.contains("tracker.example.org"),
+            "{}",
+            out.styles
+        );
+        // This assertion used to be `remote_blocked == 0`, with the reason
+        // "a stripped <style> is not a stripped *image*: the banner has
+        // nothing to report about a message that never referenced one".
+        // #1326 makes that premise false. The message did reference one --
+        // in CSS -- and now that Postio parses the CSS it can see that. The
+        // banner should say so, because from the reader's side a background
+        // that did not load is exactly as blocked as an `<img>` that did not.
+        assert_eq!(out.remote_blocked, 1);
     }
 
     #[test]
