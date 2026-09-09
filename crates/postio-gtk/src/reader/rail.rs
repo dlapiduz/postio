@@ -39,6 +39,13 @@ type ActivatedHandler = Box<dyn Fn(usize)>;
 /// step means by unmounting rather than shrinking the body.
 pub const FULL_WIDTH: i32 = 150;
 
+/// How wide the rail is when the window is too tight for a name.
+///
+/// The middle step of the ladder: numbers and initials only. A name shortened
+/// to four characters is not a name, so the column drops it rather than
+/// truncating it into noise.
+pub const NARROW_WIDTH: i32 = 118;
+
 /// The rail, drawn as a column.
 pub struct RailColumn {
     root: gtk::Box,
@@ -47,6 +54,7 @@ pub struct RailColumn {
     length: gtk::Label,
     rows: RefCell<Vec<Row>>,
     handlers: Rc<RefCell<Vec<ActivatedHandler>>>,
+    hide: gtk::Button,
 }
 
 impl RailColumn {
@@ -96,6 +104,12 @@ impl RailColumn {
         length.set_xalign(0.0);
         footer.append(&length);
 
+        let hide = gtk::Button::with_label("hide rail");
+        hide.add_css_class("postio-rail-hide");
+        hide.set_halign(gtk::Align::Start);
+        hide.set_tooltip_text(Some("Hide the conversation rail"));
+        footer.append(&hide);
+
         root.append(&footer);
 
         let handlers: Rc<RefCell<Vec<ActivatedHandler>>> = Rc::new(RefCell::new(Vec::new()));
@@ -119,6 +133,7 @@ impl RailColumn {
             length,
             rows: RefCell::new(Vec::new()),
             handlers,
+            hide,
         }
     }
 
@@ -141,6 +156,9 @@ impl RailColumn {
             self.list.append(&self.draw(row, rows.len()));
         }
         self.rows.replace(rows.to_vec());
+        // A thread arriving while the window is narrow must not undo the
+        // step the ladder already took.
+        self.set_narrow(self.root.has_css_class("postio-rail-narrow"));
         self.redraw_footer();
     }
 
@@ -176,6 +194,25 @@ impl RailColumn {
         // *"Message 3 of 6, Tessa Vaughn, 84 lines"*.
         holder.update_property(&[gtk::accessible::Property::Label(&announce(row, total))]);
         holder
+    }
+
+    /// Take the middle step of the ladder, or come back off it.
+    ///
+    /// One component, two of its three presentations: the same rows, the same
+    /// activation, a narrower box and no senders (FR-044). Rebuilding the rail
+    /// as a different widget here is what the brief rules out, and it is also
+    /// how the marked row would get lost on every resize.
+    pub fn set_narrow(&self, narrow: bool) {
+        let width = if narrow { NARROW_WIDTH } else { FULL_WIDTH };
+        self.root.set_size_request(width, -1);
+        if narrow {
+            self.root.add_css_class("postio-rail-narrow");
+        } else {
+            self.root.remove_css_class("postio-rail-narrow");
+        }
+        for text in of_class(self.widget(), "postio-rail-sender") {
+            text.set_visible(!narrow);
+        }
     }
 
     /// Mark the row the rule chose.
@@ -216,6 +253,16 @@ impl RailColumn {
         }
     }
 
+    /// Called when the footer's `hide rail` is pressed.
+    ///
+    /// Screen 28 draws this control, and it is how the rail can be put away
+    /// at all: the brief's `⇧R` is not bound, because `R` already reaches
+    /// `Refresh` on every message surface and taking it away inside the
+    /// conversation is not this issue's call to make.
+    pub fn connect_hide(&self, handler: impl Fn() + 'static) {
+        self.hide.connect_clicked(move |_| handler());
+    }
+
     /// Called when a row is activated, with the message it names.
     ///
     /// The index, not a scroll: what to do about it is
@@ -250,6 +297,26 @@ impl Default for RailColumn {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Every label in the tree carrying `class`.
+///
+/// The narrow step hides senders, and a `ListBox` row's children are several
+/// boxes down — so this walks rather than assuming a shape the row could grow
+/// out of.
+fn of_class(root: &gtk::Widget, class: &str) -> Vec<gtk::Label> {
+    let mut found = Vec::new();
+    let mut next = root.first_child();
+    while let Some(child) = next {
+        if let Some(label) = child.downcast_ref::<gtk::Label>()
+            && label.has_css_class(class)
+        {
+            found.push(label.clone());
+        }
+        found.extend(of_class(&child, class));
+        next = child.next_sibling();
+    }
+    found
 }
 
 /// What a screen reader says for one row.

@@ -35,6 +35,7 @@ use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
+use postio_ui::reader::rail::{NARROW_BELOW, UNMOUNT_BELOW};
 
 /// How big the settings window opens.
 ///
@@ -1572,6 +1573,7 @@ impl Window {
         // fit.
         self.restore(&shell, &sidebar);
         shell.install_breakpoints(self);
+        self.install_rail_breakpoints();
         header.sidebar_toggle.set_active(shell.sidebar_visible());
 
         let _ = self.imp().shell.set(shell);
@@ -1876,6 +1878,39 @@ impl Window {
     /// Closing an overlay and moving the cursor are the window's own
     /// business: nothing outside it needs to hear about them, and there is
     /// nothing for a command bus to do with them.
+    /// Tell the conversation pane which side of the rail's two lines the
+    /// window is on.
+    ///
+    /// Breakpoints report the band; `postio_ui::reader::rail::presentation`
+    /// still decides what to draw, because the ladder is not only about width
+    /// -- a single-message thread and a rail put away with `⇧R` have no rail
+    /// at any width, and a breakpoint cannot know either. So these hand over a
+    /// width and nothing more, and the thresholds stay in one place.
+    fn install_rail_breakpoints(&self) {
+        for (line, below, at_or_above) in [
+            (NARROW_BELOW, NARROW_BELOW - 1, NARROW_BELOW),
+            (UNMOUNT_BELOW, UNMOUNT_BELOW - 1, UNMOUNT_BELOW),
+        ] {
+            let condition = adw::BreakpointCondition::new_length(
+                adw::BreakpointConditionLengthType::MaxWidth,
+                (line - 1) as f64,
+                adw::LengthUnit::Px,
+            );
+            let breakpoint = adw::Breakpoint::new(condition);
+            breakpoint.connect_apply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.conversation().set_window_width(below)
+            ));
+            breakpoint.connect_unapply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.conversation().set_window_width(at_or_above)
+            ));
+            self.add_breakpoint(breakpoint);
+        }
+    }
+
     fn handled_here(&self, id: CommandId) -> bool {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
