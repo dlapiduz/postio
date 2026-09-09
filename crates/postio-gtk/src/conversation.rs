@@ -538,6 +538,8 @@ pub struct Header {
     expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
     /// The conversation's verbs, at row one's trailing edge (canvas screen 30).
     actions: std::rc::Rc<crate::widgets::ActionBar>,
+    /// Up to three participant chips, at row two's leading edge.
+    avatars: gtk::Box,
     /// Row two's trailing note: `latest · all 6`.
     ///
     /// Required rather than decorative. The bar's verbs are scoped two
@@ -568,6 +570,14 @@ impl Header {
         subject.add_css_class("conversation-subject");
         subject.set_hexpand(true);
         first.append(&subject);
+
+        // Canvas screens 28 and 30: overlapping initials before the names.
+        // Ahead of the meta line rather than beside it, because the chips
+        // identify the same people the line then names.
+        let avatars = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        avatars.add_css_class("conversation-participants");
+        avatars.set_visible(false);
+        second.append(&avatars);
 
         let meta = gtk::Label::new(None);
         meta.set_xalign(0.0);
@@ -609,12 +619,46 @@ impl Header {
             expand_all,
             actions,
             scoping,
+            avatars,
         }
     }
 
     /// The conversation's verbs. Wired and shown by the pane that owns them.
     pub fn actions(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
         std::rc::Rc::clone(&self.actions)
+    }
+
+    /// The faces on row two, at most three of them.
+    ///
+    /// The same limit as `conversation::participants` uses for the names
+    /// beside them, so the chips and the line agree about who is shown rather
+    /// than one of them eliding a person the other kept.
+    ///
+    /// Distinct by address: a person who wrote five times is one face. The
+    /// chips are decoration for the line that follows and are hidden from
+    /// assistive technology, which reads the names instead — two letters
+    /// announced as "T V" is noise where "Tessa Vaughn" is already there.
+    fn set_participants(&self, senders: &[postio_model::address::EmailAddress]) {
+        while let Some(child) = self.avatars.first_child() {
+            self.avatars.remove(&child);
+        }
+
+        let mut seen: Vec<&str> = Vec::new();
+        for sender in senders {
+            if seen.len() >= postio_ui::conversation::NAMES_SHOWN {
+                break;
+            }
+            if seen.contains(&sender.address.as_str()) {
+                continue;
+            }
+            seen.push(&sender.address);
+
+            let chip = gtk::Label::new(Some(&postio_ui::row::initials(Some(sender))));
+            chip.add_css_class("conversation-participant");
+            chip.set_accessible_role(gtk::AccessibleRole::Presentation);
+            self.avatars.append(&chip);
+        }
+        self.avatars.set_visible(!seen.is_empty());
     }
 
     /// Say what each verb will act on, in words and in the scoping note.
@@ -706,6 +750,7 @@ impl Header {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" · ");
+        self.set_participants(&senders);
         self.meta.set_label(&meta);
         // The line ellipsises, so the whole of it has to reach a screen
         // reader some other way.
