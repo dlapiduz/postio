@@ -514,7 +514,10 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
 - `List-Unsubscribe` One-Click fires only on deliberate activation — sending it
   confirms to a spammer that the address is live.
 - No link prefetch, no favicon fetch, no speculative connections. The reader's
-  WebView has JavaScript off and network off; `cid:` images resolve from the
+  WebView refuses script that arrived in a message — a `<script>` element, an
+  event-handler attribute, a `javascript:` href — and has network off. Postio's
+  own script runs there, which is how the conversation rail knows which message
+  is on screen (ADR 0003, #1367); `cid:` images resolve from the
   local blob store.
 - Replies and forwards carry nothing outward: quoted content is sanitised on
   the way in and the outgoing body is generated from Postio's own types, so a

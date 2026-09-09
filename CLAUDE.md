@@ -267,8 +267,8 @@ one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 **Nothing leaves this machine that the user did not ask for.** Remote images
 blocked until allowed per sender; read receipts never sent automatically;
 one-click unsubscribe only on deliberate activation; no prefetch, favicon
-fetches, or speculative connections; the reader's WebKit view has JS and
-network off. No telemetry. Credentials go in the OS keyring — never
+fetches, or speculative connections; the reader's WebKit view refuses script
+that arrived in a message and has network off. No telemetry. Credentials go in the OS keyring — never
 `config.toml`, never a log. **Logs never carry message content**: ids,
 counts, outcomes only.
 
