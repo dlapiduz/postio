@@ -166,7 +166,39 @@ pub fn the_plate_layout_matches_the_canvas() {
     // bar's included — and a window-wide search finds whichever one the widget
     // tree happens to reach first. What this assertion is about is the header's.
     let field = find(&bar, &|w| w.has_css_class("postio-search")).expect("the search field");
+
+    // **The resting width, so the field has to be resting.**
+    //
+    // An open finder swaps which children the field draws -- the mode marker
+    // in place of the magnifier -- and it measures 26px narrower for it. This
+    // case is about the width the canvas draws, which is the closed one, and
+    // it said so ("the width it settles at") while measuring whichever state
+    // the field happened to be in.
+    //
+    // That was not hypothetical: in a whole-suite run the finder was open
+    // here and the case failed at 573px, reporting it as a font metric to
+    // retune. It passed alone every time, and under nextest -- a process per
+    // case -- CI never saw it at all (#1445). Which earlier case leaves it
+    // open is #1468; whatever the answer, this case should not depend on it.
+    // Pressed on every turn rather than once: closing is not synchronous, and
+    // whatever opens it is queued -- so a single press followed by one pump
+    // closed it four runs in five and lost the fifth.
+    crate::settle_until("the search field to rest", || {
+        window.finder().press_escape();
+        !window.finder().is_open()
+    });
+
     let (minimum, natural, _, _) = field.measure(gtk::Orientation::Horizontal, -1);
+    // Checked again *after* measuring, because whatever opens it is queued
+    // rather than immediate: under load it has fired between the escape above
+    // and this line, and the width that results is a genuine 573px reading of
+    // a field in the wrong state. Saying so beats reporting it as a font
+    // metric to retune.
+    assert!(
+        !field.has_css_class("open"),
+        "the finder reopened while the field was being measured, so this is \
+         not the resting width (#1468)"
+    );
     let width = natural - field.margin_start();
     assert!(
         (width - header::SEARCH_MAX_WIDTH).abs() <= 6,

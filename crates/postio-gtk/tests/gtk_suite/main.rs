@@ -1273,6 +1273,7 @@ const CASES: &[(&str, fn())] = &[
 ///     was waiting for when it times out.
 ///
 /// Those are converted case by case, not by pattern.
+use gtk::gdk;
 use gtk::glib;
 
 /// Turn the loop until `done`, or fail saying what `what` was.
@@ -1376,6 +1377,33 @@ fn main() {
         .filter(|a| !a.starts_with('-'))
         .map(|s| s.as_str())
         .collect();
+
+    // **Fonts before the first widget, once for the process.**
+    //
+    // A `PangoContext` caches the family it resolved, so `fonts::install()`
+    // after any widget exists bakes the fallback in for the rest of the
+    // session -- and every case here runs in *this* process, one after
+    // another. A case that builds a widget before installing fonts therefore
+    // does not merely measure wrongly itself: it changes what every later
+    // case measures.
+    //
+    // That is not hypothetical. `gtk_shell::the_plate_layout_matches_the_canvas`
+    // measures the header's search field against the canvas' 600px and got
+    // 573px -- but only in a whole-suite run, and it passed on its own every
+    // time. Under nextest each case is its own process, which is why CI never
+    // saw it and why the failure looked like a retune of `SEARCH_WIDTH_CHARS`
+    // rather than what it was (#1445).
+    //
+    // Installing here makes the ordering a property of the harness instead of
+    // of the case list. Cases still call it themselves -- they have to, since
+    // each one may also be run alone in its own process.
+    // Initialised here rather than waited for: at this point no case has run,
+    // so there is no default display yet and a `Display::default().is_some()`
+    // guard is simply always false -- which is how the first version of this
+    // installed nothing and changed nothing.
+    if adw::init().is_ok() && gdk::Display::default().is_some() {
+        let _ = postio_gtk::fonts::install();
+    }
 
     let mut failed = Vec::new();
     let mut ran = 0usize;
