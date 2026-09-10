@@ -145,8 +145,9 @@ mod tests {
 /// `postio-gtk` may hold no SQL at all, so a storage type could not have
 /// reached it.
 ///
-/// Distinct from [`ThreadOrder`]-shaped ideas about a *conversation's own*
-/// messages: that is the drill-in reading down a page and it never pages.
+/// Distinct from `postio-storage`'s `ThreadOrder`, which is about a
+/// *conversation's own* messages: that is the drill-in reading down a page,
+/// and it never pages. (Not a link: it lives a crate above this one.)
 /// This is the list, which is windowed over paged SQLite and stays that way
 /// in both directions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
