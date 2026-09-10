@@ -1370,9 +1370,11 @@ impl Reader {
     /// so WebKit answers with "The URL can't be shown" (#1433). Reported from
     /// a real store, and caught in the end by asking WebKit which URI failed:
     ///
-    ///     load started -> Some("postio-reader:///")
-    ///     load started -> Some("")
-    ///     LOAD FAILED [Started] postio-reader:///#m-82161
+    /// ```text
+    /// load started -> Some("postio-reader:///")
+    /// load started -> Some("")
+    /// LOAD FAILED [Started] postio-reader:///#m-82161
+    /// ```
     ///
     /// Script is the right mechanism anyway: it moves the document without
     /// touching the navigation machinery at all, so nothing can be refused,

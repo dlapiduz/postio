@@ -719,7 +719,9 @@ fn addresses(value: Option<&MpAddress<'_>>) -> Vec<EmailAddress> {
 /// The preview is built from the sender's `text/plain` part, and some senders
 /// put markup there -- a real list row read
 ///
-///     Eventbrite <hr style="height: 1;border: none;border-top: 1px ...
+/// ```text
+/// Eventbrite <hr style="height: 1;border: none;border-top: 1px ...
+/// ```
 ///
 /// **Not a general sanitizer, and not allowed to be one.** `postio-model` may
 /// not depend on `ammonia` or `html5ever` (`check-crate-boundaries.py`,
