@@ -1225,11 +1225,11 @@ fn main() -> glib::ExitCode {
         // focused message's and not the single-message one behind it --
         // rendering into `window.reader()` paints a hidden widget, and the
         // picture comes back showing whatever the demo had already drawn.
-        let reader = window
-            .conversation()
-            .focused()
-            .and_then(|message| window.conversation().reader_for(message))
-            .unwrap_or_else(|| window.reader());
+        // The conversation has one reader for the whole thread now (#1426),
+        // and it is not reachable from here -- the pane fills it from the
+        // store. So this draws into the single-message reader, which is what
+        // the shot wants anyway: one message, rendered, for the camera.
+        let reader = window.reader();
         reader.render(&parsed.body, Some("orders@shop.example.test"));
         let deadline = Instant::now() + Duration::from_secs(2);
         let context = glib::MainContext::default();

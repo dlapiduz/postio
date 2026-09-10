@@ -797,11 +797,13 @@ impl Window {
     /// Falls back to that one, which is what a folder row that is not a
     /// conversation puts on screen.
     fn reader_showing(&self) -> crate::reader::Reader {
+        // The conversation has *one* reader for the whole thread now (#1426),
+        // so there is no per-message one to ask for -- if the pane is up, its
+        // document is what is on screen.
         self.imp()
             .conversation
             .get()
-            .and_then(|pane| pane.focused())
-            .and_then(|message| self.conversation().reader_for(message))
+            .and_then(|pane| pane.document_reader())
             .unwrap_or_else(|| self.reader())
     }
 
