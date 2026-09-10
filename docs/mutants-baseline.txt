@@ -1,0 +1,281 @@
+crates/postio-config/src/change.rs:71:13: replace || with && in ConfigChanged::any
+crates/postio-config/src/change.rs:72:13: replace || with && in ConfigChanged::any
+crates/postio-config/src/change.rs:75:13: replace || with && in ConfigChanged::any
+crates/postio-config/src/compose.rs:45:9: replace SignaturePlacement::as_str -> &'static str with ""
+crates/postio-config/src/compose.rs:45:9: replace SignaturePlacement::as_str -> &'static str with "xyzzy"
+crates/postio-config/src/compose.rs:54:9: replace <impl std::fmt::Display for SignaturePlacement>::fmt -> std::fmt::Result with Ok(Default::default())
+crates/postio-config/src/filters.rs:151:38: replace < with > in Config::move_filter
+crates/postio-config/src/filters.rs:151:68: replace + with * in Config::move_filter
+crates/postio-config/src/filters.rs:151:68: replace + with - in Config::move_filter
+crates/postio-config/src/keys.rs:241:9: replace KeyBindings::is_empty -> bool with true
+crates/postio-config/src/lib.rs:180:32: replace && with || in Config::role_overrides
+crates/postio-config/src/lib.rs:200:25: replace match guard err.kind() == std::io::ErrorKind::NotFound with true in Config::load_from_path
+crates/postio-config/src/lib.rs:218:9: replace Config::load -> Result<Self> with Ok(Default::default())
+crates/postio-config/src/lib.rs:276:25: replace match guard err.kind() == std::io::ErrorKind::NotFound with true in Config::seed_if_missing
+crates/postio-config/src/paths.rs:102:5: replace config_path -> Result<PathBuf> with Ok(Default::default())
+crates/postio-config/src/paths.rs:84:5: replace config_dir -> Result<PathBuf> with Ok(Default::default())
+crates/postio-config/src/secrets.rs:107:18: replace > with < in redact_secret_lines
+crates/postio-config/src/secrets.rs:107:18: replace > with == in redact_secret_lines
+crates/postio-config/src/secrets.rs:107:18: replace > with >= in redact_secret_lines
+crates/postio-config/src/source.rs:130:13: delete match arm DeValue::Array(items) in walk
+crates/postio-config/src/source.rs:88:9: replace SourceMap::key_offset -> Option<usize> with None
+crates/postio-config/src/sync.rs:79:5: replace poll_interval_secs -> u64 with 1
+crates/postio-config/src/sync.rs:83:5: replace max_connections -> u8 with 1
+crates/postio-config/src/sync.rs:87:5: replace initial_sync_messages -> u32 with 1
+crates/postio-config/src/validate.rs:110:9: replace Validation::elapsed -> Duration with Default::default()
+crates/postio-config/src/validate.rs:129:19: replace == with != in Validation::timing
+crates/postio-config/src/validate.rs:166:21: replace match guard err.kind() == std::io::ErrorKind::NotFound with true in check_path
+crates/postio-config/src/validate.rs:272:17: replace match guard !path.is_empty() with true in schema_error
+crates/postio-config/src/validate.rs:59:9: replace ErrorKind::is_blocking -> bool with false
+crates/postio-config/src/watch.rs:145:9: replace <impl Drop for ConfigWatcher>::drop with ()
+crates/postio-model/src/account.rs:126:9: replace Backend::kind -> &'static str with ""
+crates/postio-model/src/account.rs:126:9: replace Backend::kind -> &'static str with "xyzzy"
+crates/postio-model/src/account.rs:202:9: replace Signature::with_html -> Self with Default::default()
+crates/postio-model/src/account.rs:402:13: replace || with && in Account::owns_address
+crates/postio-model/src/address.rs:175:21: replace match guard quoted with false in split_list
+crates/postio-model/src/address.rs:175:21: replace match guard quoted with true in split_list
+crates/postio-model/src/address.rs:177:20: delete ! in split_list
+crates/postio-model/src/address.rs:177:20: replace match guard !quoted with false in split_list
+crates/postio-model/src/address.rs:177:20: replace match guard !quoted with true in split_list
+crates/postio-model/src/address.rs:178:20: replace match guard !quoted with true in split_list
+crates/postio-model/src/address.rs:209:27: replace && with || in parse_one
+crates/postio-model/src/address.rs:230:21: delete ! in unquote
+crates/postio-model/src/address.rs:230:21: replace match guard !escaped with false in unquote
+crates/postio-model/src/address.rs:230:21: replace match guard !escaped with true in unquote
+crates/postio-model/src/address.rs:243:27: replace match guard !name.trim().is_empty() with true in <impl fmt::Display for EmailAddress>::fmt
+crates/postio-model/src/address.rs:291:18: replace > with >= in redact_addresses
+crates/postio-model/src/address.rs:53:27: replace match guard !name.trim().is_empty() with true in EmailAddress::display
+crates/postio-model/src/attachment.rs:148:9: replace Attachment::is_downloaded -> bool with false
+crates/postio-model/src/attachment.rs:159:27: replace match guard !name.trim().is_empty() with true in Attachment::display_name
+crates/postio-model/src/attachment.rs:166:9: replace Attachment::extension -> Option<String> with None
+crates/postio-model/src/attachment.rs:166:9: replace Attachment::extension -> Option<String> with Some(String::new())
+crates/postio-model/src/attachment.rs:166:9: replace Attachment::extension -> Option<String> with Some("xyzzy".into())
+crates/postio-model/src/contact.rs:105:27: delete ! in Contact::display_name
+crates/postio-model/src/contact.rs:105:27: replace match guard !name.trim().is_empty() with false in Contact::display_name
+crates/postio-model/src/contact.rs:105:27: replace match guard !name.trim().is_empty() with true in Contact::display_name
+crates/postio-model/src/contact.rs:97:51: replace > with >= in Contact::record_seen
+crates/postio-model/src/draft.rs:226:29: replace || with && in Draft::has_recipients
+crates/postio-model/src/draft.rs:226:52: replace || with && in Draft::has_recipients
+crates/postio-model/src/draft.rs:226:9: replace Draft::has_recipients -> bool with false
+crates/postio-model/src/draft.rs:231:31: replace && with || in Draft::is_sendable
+crates/postio-model/src/draft.rs:231:9: replace Draft::is_sendable -> bool with false
+crates/postio-model/src/draft.rs:231:9: replace Draft::is_sendable -> bool with true
+crates/postio-model/src/draft.rs:236:9: replace Draft::all_recipients -> impl Iterator<Item =&EmailAddress> with ::std::iter::empty()
+crates/postio-model/src/flag.rs:115:13: delete match arm (Self::Keyword(a), Self::Keyword(b)) in <impl PartialEq for Flag>::eq
+crates/postio-model/src/flag.rs:126:13: delete match arm (Self::Keyword(a), Self::Keyword(b)) in <impl Ord for Flag>::cmp
+crates/postio-model/src/flag.rs:142:9: replace <impl Hash for Flag>::hash with ()
+crates/postio-model/src/flag.rs:151:9: replace <impl fmt::Display for Flag>::fmt -> fmt::Result with Ok(Default::default())
+crates/postio-model/src/flag.rs:209:9: replace FlagSet::is_empty -> bool with false
+crates/postio-model/src/flag.rs:209:9: replace FlagSet::is_empty -> bool with true
+crates/postio-model/src/flag.rs:235:9: replace FlagSet::is_flagged -> bool with true
+crates/postio-model/src/flag.rs:240:9: replace FlagSet::is_answered -> bool with true
+crates/postio-model/src/flag.rs:245:9: replace FlagSet::is_draft -> bool with true
+crates/postio-model/src/flag.rs:250:9: replace FlagSet::is_deleted -> bool with true
+crates/postio-model/src/flag.rs:265:9: replace <impl IntoIterator for &'a FlagSet>::into_iter -> Self::IntoIter with Default::default()
+crates/postio-model/src/flag.rs:271:9: replace <impl Extend<Flag> for FlagSet>::extend with ()
+crates/postio-model/src/flag.rs:57:13: delete match arm "\\answered" in Flag::parse
+crates/postio-model/src/flag.rs:60:13: delete match arm "\\draft" in Flag::parse
+crates/postio-model/src/flag.rs:61:13: delete match arm "\\recent" in Flag::parse
+crates/postio-model/src/flag.rs:92:9: delete ! in Flag::is_system
+crates/postio-model/src/flag.rs:92:9: replace Flag::is_system -> bool with false
+crates/postio-model/src/flag.rs:92:9: replace Flag::is_system -> bool with true
+crates/postio-model/src/headers.rs:102:9: replace <impl IntoIterator for &'a Headers>::into_iter -> Self::IntoIter with Default::default()
+crates/postio-model/src/headers.rs:157:24: replace > with >= in normalize_value
+crates/postio-model/src/headers.rs:162:19: replace > with < in normalize_value
+crates/postio-model/src/headers.rs:162:19: replace > with == in normalize_value
+crates/postio-model/src/headers.rs:162:19: replace > with >= in normalize_value
+crates/postio-model/src/headers.rs:163:17: replace -= with += in normalize_value
+crates/postio-model/src/headers.rs:163:17: replace -= with /= in normalize_value
+crates/postio-model/src/headers.rs:394:30: replace > with >= in looks_like_a_field
+crates/postio-model/src/headers.rs:394:34: replace && with || in looks_like_a_field
+crates/postio-model/src/headers.rs:40:9: replace Headers::push with ()
+crates/postio-model/src/headers.rs:77:9: replace Headers::is_empty -> bool with true
+crates/postio-model/src/ids.rs:239:9: replace RemoteId::as_str -> &str with ""
+crates/postio-model/src/ids.rs:239:9: replace RemoteId::as_str -> &str with "xyzzy"
+crates/postio-model/src/ids.rs:245:9: replace <impl fmt::Display for RemoteId>::fmt -> fmt::Result with Ok(Default::default())
+crates/postio-model/src/ids.rs:264:9: replace BlobId::as_str -> &str with ""
+crates/postio-model/src/ids.rs:264:9: replace BlobId::as_str -> &str with "xyzzy"
+crates/postio-model/src/ids.rs:270:9: replace <impl fmt::Display for BlobId>::fmt -> fmt::Result with Ok(Default::default())
+crates/postio-model/src/ids.rs:333:9: replace <impl std::hash::Hash for RfcMessageId>::hash with ()
+crates/postio-model/src/mailbox.rs:132:13: delete match arm "snoozed" in MailboxRole::from_name
+crates/postio-model/src/mailbox.rs:205:9: replace RoleOverrides::is_empty -> bool with false
+crates/postio-model/src/mailbox.rs:205:9: replace RoleOverrides::is_empty -> bool with true
+crates/postio-model/src/mailbox.rs:363:9: replace Mailbox::generation_changed -> bool with false
+crates/postio-model/src/mailbox.rs:363:9: replace Mailbox::generation_changed -> bool with true
+crates/postio-model/src/mailbox.rs:91:13: delete match arm "flagged" | "starred" in MailboxRole::match_name
+crates/postio-model/src/message.rs:103:28: replace || with && in ServerIdentifiers::is_known_to_server
+crates/postio-model/src/message.rs:103:9: replace ServerIdentifiers::is_known_to_server -> bool with false
+crates/postio-model/src/message.rs:103:9: replace ServerIdentifiers::is_known_to_server -> bool with true
+crates/postio-model/src/mime.rs:207:17: delete field message_id from struct Attachment expression in ParsedMessage::into_message
+crates/postio-model/src/mime.rs:234:9: replace <impl std::fmt::Display for Unparseable>::fmt -> std::fmt::Result with Ok(Default::default())
+crates/postio-model/src/mime.rs:341:37: replace match guard end > start with true in list_id_from_text
+crates/postio-model/src/mime.rs:341:41: replace > with >= in list_id_from_text
+crates/postio-model/src/mime.rs:376:9: delete field body_state from struct ParsedMessage expression in empty
+crates/postio-model/src/mime.rs:676:9: replace && with || in message_id
+crates/postio-model/src/mime.rs:677:9: replace && with || in message_id
+crates/postio-model/src/mime.rs:678:9: replace && with || in message_id
+crates/postio-model/src/mime.rs:763:22: replace == with != in tag_ends_at
+crates/postio-model/src/mime.rs:764:12: replace += with *= in tag_ends_at
+crates/postio-model/src/mime.rs:764:12: replace += with -= in tag_ends_at
+crates/postio-model/src/mime.rs:776:31: replace + with * in tag_ends_at
+crates/postio-model/src/mime.rs:776:31: replace + with - in tag_ends_at
+crates/postio-model/src/mime.rs:776:9: delete match arm Some(b'>') in tag_ends_at
+crates/postio-model/src/mime.rs:778:57: replace + with * in tag_ends_at
+crates/postio-model/src/mime.rs:778:57: replace + with - in tag_ends_at
+crates/postio-model/src/mime.rs:792:32: replace + with * in preview
+crates/postio-model/src/mime.rs:792:32: replace + with - in preview
+crates/postio-model/src/mime.rs:792:44: replace + with * in preview
+crates/postio-model/src/mime.rs:792:67: replace > with >= in preview
+crates/postio-model/src/mime.rs:806:35: replace + with * in preview
+crates/postio-model/src/mime.rs:806:35: replace + with - in preview
+crates/postio-model/src/mime.rs:806:39: replace > with == in preview
+crates/postio-model/src/mime.rs:806:39: replace > with >= in preview
+crates/postio-model/src/mime.rs:944:9: delete match arm PartType::Text(_) in mime_type
+crates/postio-model/src/mime.rs:945:9: delete match arm PartType::Html(_) in mime_type
+crates/postio-model/src/mime.rs:946:9: delete match arm PartType::Message(_) in mime_type
+crates/postio-model/src/mime.rs:967:17: replace match guard part.content_id().is_some() with false in disposition
+crates/postio-model/src/mime.rs:967:17: replace match guard part.content_id().is_some() with true in disposition
+crates/postio-model/src/mime.rs:969:13: delete match arm PartType::InlineBinary(_) in disposition
+crates/postio-model/src/operation.rs:124:25: replace < with <= in OperationRange::is_empty
+crates/postio-model/src/operation.rs:124:25: replace < with == in OperationRange::is_empty
+crates/postio-model/src/operation.rs:124:25: replace < with > in OperationRange::is_empty
+crates/postio-model/src/operation.rs:124:9: replace OperationRange::is_empty -> bool with false
+crates/postio-model/src/operation.rs:124:9: replace OperationRange::is_empty -> bool with true
+crates/postio-model/src/reply.rs:174:23: replace match guard !text.is_empty() with true in quote_body
+crates/postio-model/src/scope.rs:76:9: replace ListScope::mailbox -> Option<MailboxId> with None
+crates/postio-model/src/scope.rs:76:9: replace ListScope::mailbox -> Option<MailboxId> with Some(Default::default())
+crates/postio-model/src/subject.rs:180:31: replace && with || in strip_counter
+crates/postio-model/src/sync.rs:194:9: replace ResyncPlan::is_full -> bool with false
+crates/postio-model/src/test_corpus.rs:220:9: replace Fixture::description -> &'static str with "xyzzy"
+crates/postio-model/src/test_corpus.rs:249:9: replace Fixture::is_empty -> bool with false
+crates/postio-model/src/test_corpus.rs:409:5: replace names -> impl Iterator<Item =&'static str> with ::std::iter::empty()
+crates/postio-model/src/test_corpus.rs:409:5: replace names -> impl Iterator<Item =&'static str> with ::std::iter::once("")
+crates/postio-model/src/test_corpus.rs:409:5: replace names -> impl Iterator<Item =&'static str> with ::std::iter::once("xyzzy")
+crates/postio-model/src/threading.rs:130:9: replace Assignment::thread -> Option<ThreadId> with None
+crates/postio-model/src/threading.rs:130:9: replace Assignment::thread -> Option<ThreadId> with Some(Default::default())
+crates/postio-search/src/date.rs:102:53: replace > with == in calendar
+crates/postio-search/src/date.rs:102:53: replace > with >= in calendar
+crates/postio-search/src/date.rs:120:21: replace match guard (10_000_101..=99_991_231).contains(packed) with true in numeric_date
+crates/postio-search/src/date.rs:122:33: replace / with % in numeric_date
+crates/postio-search/src/date.rs:159:23: replace > with == in split_runs
+crates/postio-search/src/date.rs:159:23: replace > with >= in split_runs
+crates/postio-search/src/date.rs:215:13: replace < with <= in full_year
+crates/postio-search/src/highlight.rs:245:37: replace / with * in snippet
+crates/postio-search/src/highlight.rs:245:41: replace + with * in snippet
+crates/postio-search/src/highlight.rs:245:41: replace + with - in snippet
+crates/postio-search/src/highlight.rs:261:25: replace - with + in snippet
+crates/postio-search/src/highlight.rs:261:25: replace - with / in snippet
+crates/postio-search/src/highlight.rs:60:9: replace Highlighted::is_highlighted -> bool with false
+crates/postio-search/src/highlight.rs:75:28: replace > with >= in Highlighted::runs
+crates/postio-search/src/parser.rs:97:23: replace match guard !rest.is_empty() with true in classify
+crates/postio-search/src/query.rs:392:9: replace ParsedQuery::is_empty -> bool with true
+crates/postio-search/src/size.rs:24:26: replace || with && in parse_size
+crates/postio-search/src/size.rs:38:27: replace || with && in parse_size
+crates/postio-search/src/size.rs:38:36: replace < with <= in parse_size
+crates/postio-search/src/size.rs:38:36: replace < with == in parse_size
+crates/postio-search/src/size.rs:38:51: replace > with >= in parse_size
+crates/postio-sync/src/backfill.rs:1008:19: replace > with < in seed_payloads
+crates/postio-sync/src/backfill.rs:1008:19: replace > with == in seed_payloads
+crates/postio-sync/src/backfill.rs:1008:19: replace > with >= in seed_payloads
+crates/postio-sync/src/backfill.rs:1008:31: replace < with <= in seed_payloads
+crates/postio-sync/src/backfill.rs:1011:16: replace += with *= in seed_payloads
+crates/postio-sync/src/backfill.rs:1011:16: replace += with -= in seed_payloads
+crates/postio-sync/src/backfill.rs:1026:59: replace && with || in pending_payloads
+crates/postio-sync/src/backfill.rs:1353:15: replace += with *= in fetch_text_parts
+crates/postio-sync/src/backfill.rs:1375:27: replace |= with &= in fetch_text_parts
+crates/postio-sync/src/backfill.rs:1402:15: replace += with *= in fetch_text_parts
+crates/postio-sync/src/backfill.rs:1402:15: replace += with -= in fetch_text_parts
+crates/postio-sync/src/backfill.rs:1640:15: replace += with *= in fetch_payloads
+crates/postio-sync/src/backfill.rs:370:21: replace + with * in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:21: replace + with - in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:36: replace + with * in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:36: replace + with - in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:48: replace + with * in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:48: replace + with - in BackfillProgress::settled
+crates/postio-sync/src/backfill.rs:370:9: replace BackfillProgress::settled -> usize with 0
+crates/postio-sync/src/backfill.rs:370:9: replace BackfillProgress::settled -> usize with 1
+crates/postio-sync/src/backfill.rs:487:9: replace Backfill::is_cancelled -> bool with true
+crates/postio-sync/src/backfill.rs:521:9: replace Backfill::is_paused -> bool with true
+crates/postio-sync/src/backfill.rs:540:13: replace || with && in Backfill::enqueue
+crates/postio-sync/src/backfill.rs:547:45: replace > with >= in Backfill::enqueue
+crates/postio-sync/src/backfill.rs:563:36: replace && with || in Backfill::enqueue
+crates/postio-sync/src/backfill.rs:621:39: replace += with *= in Backfill::request_now
+crates/postio-sync/src/backfill.rs:692:9: replace Backfill::forgive_set_aside with ()
+crates/postio-sync/src/backfill.rs:750:33: replace += with *= in Backfill::claim
+crates/postio-sync/src/backfill.rs:811:19: replace > with < in seed
+crates/postio-sync/src/backfill.rs:811:19: replace > with == in seed
+crates/postio-sync/src/backfill.rs:811:19: replace > with >= in seed
+crates/postio-sync/src/backfill.rs:811:31: replace < with <= in seed
+crates/postio-sync/src/backfill.rs:814:16: replace += with *= in seed
+crates/postio-sync/src/backfill.rs:814:16: replace += with -= in seed
+crates/postio-sync/src/backfill.rs:852:5: replace request_whole -> Result<bool> with Ok(false)
+crates/postio-sync/src/backfill.rs:852:5: replace request_whole -> Result<bool> with Ok(true)
+crates/postio-sync/src/blob_sink.rs:82:9: replace BlobSink::bytes -> u64 with 0
+crates/postio-sync/src/blob_sink.rs:82:9: replace BlobSink::bytes -> u64 with 1
+crates/postio-sync/src/blob_sink.rs:93:20: replace += with *= in <impl BodySink for BlobSink>::chunk
+crates/postio-sync/src/coalesce.rs:199:5: replace foldable -> bool with true
+crates/postio-sync/src/coalesce.rs:228:9: delete match arm (ClearFlags{flags:first}, ClearFlags{flags:second}) in merge
+crates/postio-sync/src/coalesce.rs:261:61: replace match guard to == via with true in merge
+crates/postio-sync/src/coalesce.rs:265:66: replace match guard trash == via with true in merge
+crates/postio-sync/src/coalesce.rs:281:74: replace match guard first == second with true in merge
+crates/postio-sync/src/coalesce.rs:292:14: replace match guard first == second with true in merge
+crates/postio-sync/src/connect.rs:123:46: replace + with * in ReconnectPolicy::delay
+crates/postio-sync/src/connect.rs:123:46: replace + with - in ReconnectPolicy::delay
+crates/postio-sync/src/connect.rs:274:9: replace Supervisor::policy -> ReconnectPolicy with Default::default()
+crates/postio-sync/src/connect.rs:320:60: replace > with >= in Supervisor::set_network
+crates/postio-sync/src/connect.rs:324:17: delete match arm Link::Offline in Supervisor::set_network
+crates/postio-sync/src/connect.rs:433:30: replace > with >= in Supervisor::poll
+crates/postio-sync/src/connect.rs:478:5: replace entropy_from -> u64 with 0
+crates/postio-sync/src/connect.rs:478:5: replace entropy_from -> u64 with 1
+crates/postio-sync/src/contacts.rs:51:39: delete ! in record
+crates/postio-sync/src/contacts.rs:54:34: delete ! in record
+crates/postio-sync/src/discover.rs:174:47: replace || with && in link_parents
+crates/postio-sync/src/discover.rs:209:46: replace && with || in retire_missing
+crates/postio-sync/src/discover.rs:209:60: replace != with == in retire_missing
+crates/postio-sync/src/discover.rs:210:12: delete ! in retire_missing
+crates/postio-sync/src/discover.rs:210:30: replace && with || in retire_missing
+crates/postio-sync/src/discover.rs:210:33: delete ! in retire_missing
+crates/postio-sync/src/discover.rs:233:5: replace selectable -> std::result::Result<Vec<MailboxId>, postio_storage::Error> with Ok(vec![])
+crates/postio-sync/src/discover.rs:233:5: replace selectable -> std::result::Result<Vec<MailboxId>, postio_storage::Error> with Ok(vec![Default::default()])
+crates/postio-sync/src/discover.rs:66:20: replace > with >= in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:40: replace > with < in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:40: replace > with == in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:40: replace > with >= in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:44: replace || with && in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:61: replace > with < in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:61: replace > with == in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:61: replace > with >= in DiscoveryReport::changed
+crates/postio-sync/src/discover.rs:66:9: replace DiscoveryReport::changed -> bool with true
+crates/postio-sync/src/drafts.rs:115:78: replace == with != in resolve_save
+crates/postio-sync/src/drafts.rs:240:27: replace match guard error.requires_full_resync() with true in run
+crates/postio-sync/src/drafts.rs:261:5: replace draft_flags -> FlagSet with Default::default()
+crates/postio-sync/src/drain.rs:138:13: replace + with - in DrainReport::settled
+crates/postio-sync/src/drain.rs:139:13: replace + with * in DrainReport::settled
+crates/postio-sync/src/drain.rs:139:13: replace + with - in DrainReport::settled
+crates/postio-sync/src/drain.rs:140:13: replace + with * in DrainReport::settled
+crates/postio-sync/src/drain.rs:140:13: replace + with - in DrainReport::settled
+crates/postio-sync/src/drain.rs:149:29: replace && with || in DrainReport::is_idle
+crates/postio-sync/src/drain.rs:149:9: replace DrainReport::is_idle -> bool with true
+crates/postio-sync/src/drain.rs:535:21: delete match arm Operation::Move{..} | Operation::Delete{..} in Drainer<'a>::resolve
+crates/postio-sync/src/drain.rs:606:13: delete match arm (Operation::SaveDraft{..}, _) in Drainer<'a>::resolve_draft
+crates/postio-sync/src/initial.rs:357:25: replace += with *= in enumerate
+crates/postio-sync/src/resync.rs:153:23: replace match guard error.requires_full_resync() with true in resync_mailbox
+crates/postio-sync/src/resync.rs:248:51: replace match guard error.requires_full_resync() with true in resync_mailbox
+crates/postio-sync/src/resync.rs:438:39: replace + with - in incremental
+crates/postio-sync/src/resync.rs:477:5: replace unaccounted_arrivals -> Option<Uid> with None
+crates/postio-sync/src/resync.rs:484:12: replace < with > in unaccounted_arrivals
+crates/postio-sync/src/send.rs:228:78: replace == with != in resolve
+crates/postio-sync/src/send.rs:669:9: delete match arm Ok(crate::drafts::Removal::Removed | crate::drafts::Removal::Gone) in remove_drafts_copy
+crates/postio-sync/src/status.rs:176:9: replace StatusTracker::status -> &SyncStatus with Box::leak(Box::new(Default::default()))
+crates/postio-sync/src/status.rs:214:28: replace == with != in StatusTracker::on_sync_started
+crates/postio-sync/src/status.rs:275:44: replace == with != in StatusTracker::on_sync_finished
+crates/postio-sync/src/watch.rs:294:9: replace Watcher::policy -> WatchPolicy with Default::default()
+crates/postio-sync/src/watch.rs:304:9: replace Watcher::is_suspended -> bool with false
+crates/postio-sync/src/watch.rs:304:9: replace Watcher::is_suspended -> bool with true
+crates/postio-sync/src/watch.rs:371:27: replace || with && in Watcher::next_poll
+crates/postio-sync/src/watch.rs:388:42: replace < with <= in Watcher::next_poll
+crates/postio-sync/src/watch.rs:388:42: replace < with == in Watcher::next_poll
+crates/postio-sync/src/watch.rs:388:42: replace < with > in Watcher::next_poll
+crates/postio-sync/src/watch.rs:392:58: replace < with <= in Watcher::next_poll
+crates/postio-sync/src/watch.rs:392:58: replace < with == in Watcher::next_poll
+crates/postio-sync/src/watch.rs:392:58: replace < with > in Watcher::next_poll
