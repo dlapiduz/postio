@@ -36,6 +36,19 @@ use webkit6::prelude::*;
 /// it and needs an instrument of its own. Nothing sender-authored is ever
 /// loaded here — the argument is a document Postio composed.
 pub fn computed(document: &str, selector: &str, property: &str) -> String {
+    computed_pseudo(document, selector, "", property)
+}
+
+/// As [`computed`], for a pseudo-element.
+///
+/// `querySelector` cannot return one -- there is no element to return -- so a
+/// selector ending in `::before` silently matches nothing and every property
+/// comes back as the empty string, which reads exactly like "this rule does
+/// not apply". `getComputedStyle` takes the pseudo as its second argument
+/// instead, and that is the only difference between the two.
+///
+/// Pass `""` for a real element.
+pub fn computed_pseudo(document: &str, selector: &str, pseudo: &str, property: &str) -> String {
     let settings = webkit6::Settings::new();
     settings.set_enable_javascript(true);
 
@@ -75,7 +88,7 @@ pub fn computed(document: &str, selector: &str, property: &str) -> String {
         let slot = Rc::clone(&answer);
         view.evaluate_javascript(
             &format!(
-                "getComputedStyle(document.querySelector('{selector}'))\
+                "getComputedStyle(document.querySelector('{selector}'), '{pseudo}')\
                  .getPropertyValue('{property}')"
             ),
             None,

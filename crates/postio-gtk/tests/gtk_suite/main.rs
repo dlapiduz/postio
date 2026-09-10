@@ -168,6 +168,14 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
     ),
     (
+        "gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing",
+        gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing as fn(),
+    ),
+    (
+        "gtk_conversation::an_ordinary_conversation_still_offers_a_reply",
+        gtk_conversation::an_ordinary_conversation_still_offers_a_reply as fn(),
+    ),
+    (
         "gtk_conversation::a_row_knows_whether_the_message_is_the_users_own",
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
     ),
@@ -178,6 +186,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_styles::the_readers_verbs_live_in_its_header",
         gtk_reader_styles::the_readers_verbs_live_in_its_header as fn(),
+    ),
+    (
+        "gtk_reader_styles::the_users_own_message_is_marked_in_the_document",
+        gtk_reader_styles::the_users_own_message_is_marked_in_the_document as fn(),
     ),
     (
         "gtk_reader_styles::from_to_and_cc_share_a_column",

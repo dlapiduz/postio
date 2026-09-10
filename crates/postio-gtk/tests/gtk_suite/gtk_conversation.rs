@@ -1,17 +1,16 @@
-//! The conversation pane on a real display (ADR 0015 Q4, #308).
+//! The conversation pane on a real display (ADR 0032, #1426).
 //!
-//! The two decisions with consequences — where focus opens and how much
-//! expands — are pure and unit-tested in `conversation.rs`. What needs a
-//! display is everything they do not cover: that the pane actually builds an
-//! entry per message, that focus is *drawn*, that jumping to a message
-//! expands it, that a reader is created only for what is expanded, and that
-//! reply and forward carry the message they were drawn on rather than the
-//! conversation's.
+//! The decisions with consequences are pure and unit-tested -- in
+//! `conversation.rs` for the pane's own rules and in
+//! `postio_ui::reader::thread` for the document's markup. What needs a
+//! display is what those cannot see: which controls are *on screen*, and
+//! which message they carry when pressed.
 //!
-//! The last of those is the one worth a display test on its own. Reply,
-//! reply-all and forward are the only per-message verbs in an otherwise
-//! thread-level pane (ADR 0015 Q4), and answering the wrong message of a
-//! conversation is the mistake the whole arrangement exists to prevent.
+//! That is the one worth a display test. The header's verbs are scoped to the
+//! conversation's latest message and a message's own verbs live in the
+//! document, so "can this be replied to" is a question about two surfaces at
+//! once, and answering the wrong message of a conversation is the mistake the
+//! whole arrangement exists to prevent.
 //!
 //! Skips without a display. Nothing here touches the network.
 
@@ -223,4 +222,107 @@ pub fn a_row_knows_whether_the_message_is_the_users_own() {
 /// the same question the drawing will (#1426).
 fn mine_flags(pane: &ConversationView) -> Vec<bool> {
     pane.rows().iter().map(|row| pane.is_mine(row)).collect()
+}
+
+/// A draft's conversation offers `Continue editing`, not a reply (#1212).
+///
+/// The pane's own bar is scoped to the conversation's *latest* message
+/// (`latest_message`), which for a thread you are part-way through answering
+/// is the draft itself. Offered `Reply` there, the primary verb quotes your
+/// own unsent text back at you, and the verb that is actually right --
+/// resuming the composer -- is unannounced.
+///
+/// The stacked pane knew this and drew `DRAFT_ACTIONS` on the message's own
+/// bar. Retiring it (#1426) left the one-document pane with a header bar
+/// built once from `DOCUMENT_ACTIONS` and no way to swap the set, so the
+/// behaviour was absent rather than wrong -- which is #1444.
+///
+/// The document's own per-message verbs are asserted in
+/// `postio_ui::reader::thread`, where they are markup and need no display.
+/// What needs one is this: which bar is *visible*, and what it emits.
+pub fn a_conversation_ending_in_a_draft_offers_continue_editing() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+
+    let ran: Rc<std::cell::RefCell<Vec<postio_core::Command>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = Rc::clone(&ran);
+    pane.connect_command(move |command| seen.borrow_mut().push(command));
+
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // A message and the unsent reply to it: the draft is the latest, which is
+    // what the header's verbs are aimed at.
+    let mut messages: Vec<Row> = (1..=2).map(|id| message(id, true)).collect();
+    messages[1].draft = true;
+    let draft = messages[1].id;
+    pane.open(messages);
+    crate::pump();
+
+    let found = reply_controls(&pane.widget());
+    assert!(
+        found.is_empty(),
+        "a conversation ending in a draft drew {found:?}: you do not reply to \
+         a message you wrote and never sent"
+    );
+
+    let actions = pane
+        .visible_actions()
+        .expect("a draft's conversation still has a bar");
+    actions.press(postio_core::CommandId::OpenMessage);
+    crate::pump();
+    assert_eq!(
+        ran.borrow().as_slice(),
+        [postio_core::Command::OpenMessage {
+            message: Some(draft)
+        }],
+        "`Continue editing` names the draft it resumes, so a thread whose \
+         draft is not the row the list holds still opens the right one"
+    );
+
+    window.close();
+}
+
+/// And a conversation that does not end in one keeps its reply.
+///
+/// The half that keeps the case above honest: a pane that had simply stopped
+/// drawing reply verbs would pass it.
+pub fn an_ordinary_conversation_still_offers_a_reply() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    pane.open((1..=2).map(|id| message(id, true)).collect());
+    crate::pump();
+
+    assert!(
+        !reply_controls(&pane.widget()).is_empty(),
+        "a conversation of sent mail lost the reply verb that is right for it"
+    );
+
+    window.close();
 }

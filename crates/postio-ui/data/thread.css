@@ -119,6 +119,28 @@
   background: var(--r-ink-secondary);
 }
 
+/* The user's own side of the conversation
+   (`Design/screens/18-conversation-row-states.png`, #1241).
+
+   The stacked pane drew `mine` as an *outline* against three filled states,
+   on the reasoning that having-written-it is not a state of having-been-read
+   and filling it would put it on the same axis as the other three. That axis
+   argument still holds and its answer has to change, because in this surface
+   fill is already taken: the marker above is outlined when a message is
+   folded and filled when it is open, so an outline here would read as "this
+   message is collapsed" on a message that is not.
+
+   So `mine` takes the colour axis and leaves fill to open/closed. Both
+   rules, because the marker is a border when folded and a fill when open,
+   and the user's own message has to be recognisable either way. */
+.postio-message.postio-mine > .postio-message-head::before {
+  border-color: var(--r-accent);
+}
+
+.postio-message.postio-mine[open] > .postio-message-head::before {
+  background: var(--r-accent);
+}
+
 .postio-from {
   flex: none;
   color: var(--r-ink);

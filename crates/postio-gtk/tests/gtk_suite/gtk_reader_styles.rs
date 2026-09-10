@@ -58,6 +58,8 @@ pub fn one_senders_stylesheet_cannot_restyle_another_message() {
             preview: "the first line of it",
             expanded: true,
             latest: false,
+            draft: false,
+            mine: false,
             blocked: 0,
             body,
             styles,
@@ -129,6 +131,8 @@ pub fn a_page_key_actually_turns_the_page_of_a_thread() {
         preview: "the first line".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: postio_model::message::MessageBody {
             text: Some("a body long enough to have somewhere to scroll".to_owned()),
             html: None,
@@ -283,6 +287,8 @@ pub fn moving_between_messages_never_loads_an_error_page() {
         preview: "the first line".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: postio_model::message::MessageBody {
             text: Some("a body with enough text to scroll past".to_owned()),
             html: None,
@@ -391,6 +397,101 @@ pub fn the_readers_verbs_live_in_its_header() {
     );
 }
 
+/// The user's own message wears a mark a person can see (#1241).
+///
+/// **Asked of the engine, not of the markup.** The class landing on the right
+/// `<details>` is a `postio-ui` unit test and proves nothing about paint: the
+/// mark is a pseudo-element, and a rule that loses on specificity or names a
+/// custom property that does not reach it writes identical markup and draws
+/// identical pixels.
+///
+/// The axis matters as much as the mark. The stacked pane drew `mine` as an
+/// outline against filled states; here fill already means *open*, so `mine`
+/// takes colour instead and both forms have to differ from a correspondent's
+/// -- the folded one in its border, the open one in its fill.
+pub fn the_users_own_message_is_marked_in_the_document() {
+    if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+
+    let entry =
+        |scope: &'static str, mine: bool, expanded: bool| postio_ui::reader::thread::Entry {
+            scope,
+            sender: "Ada Norwood",
+            address: "ada@example.com",
+            when: "09:14",
+            preview: "the first line",
+            expanded,
+            latest: false,
+            draft: false,
+            mine,
+            blocked: 0,
+            body: "<p>a body</p>",
+            recipients: "",
+            cc: "",
+            styles: "",
+        };
+    let document = postio_ui::reader::thread::conversation_document(
+        &[
+            entry("1", true, false),
+            entry("2", false, false),
+            entry("3", true, true),
+            entry("4", false, true),
+        ],
+        postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::Sheet::Theme,
+    );
+
+    // The mark is a pseudo-element on the head, so the probe has to ask for
+    // it as one: `querySelector('...::before')` matches nothing and answers
+    // "" for every property, which is indistinguishable from a rule that does
+    // not apply.
+    let marker = |scope: &str, property: &str| {
+        crate::webkit_probe::computed_pseudo(
+            &document,
+            &format!(
+                "#{} > .postio-message-head",
+                postio_ui::reader::thread::message_anchor(scope)
+            ),
+            "::before",
+            property,
+        )
+    };
+
+    // Folded: the mark is the border, so that is where the difference has to
+    // be. Open: the mark is filled, so it is the background.
+    let (mine_folded, theirs_folded) = (
+        marker("1", "border-top-color"),
+        marker("2", "border-top-color"),
+    );
+    assert_ne!(
+        mine_folded, theirs_folded,
+        "a folded message of the user's own draws the same mark as a \
+         correspondent's, so nothing on screen says which side it is"
+    );
+    let (mine_open, theirs_open) = (
+        marker("3", "background-color"),
+        marker("4", "background-color"),
+    );
+    assert_ne!(
+        mine_open, theirs_open,
+        "an open message of the user's own draws the same mark as a \
+         correspondent's"
+    );
+    // And the mark is drawn at all rather than merely different by being
+    // absent -- an empty computed value would satisfy `assert_ne!` above.
+    for (label, value) in [
+        ("the folded mark", &mine_folded),
+        ("the open mark", &mine_open),
+    ] {
+        assert!(
+            !value.is_empty() && !value.contains("rgba(0, 0, 0, 0)"),
+            "{label} computed to {value:?}, which paints nothing"
+        );
+    }
+}
+
 /// `From`, `To` and `Cc` line up (#1437).
 ///
 /// **Measured, not eyeballed.** The markup was correct through two attempts
@@ -413,6 +514,8 @@ pub fn from_to_and_cc_share_a_column() {
         preview: "the first line",
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         blocked: 0,
         body: "<p>a body</p>",
         styles: "",

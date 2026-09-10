@@ -60,6 +60,23 @@ pub const REPLY_SCHEME: &str = "postio-reply";
 /// The scheme a per-message `Forward` uses. See [`REPLY_SCHEME`].
 pub const FORWARD_SCHEME: &str = "postio-forward";
 
+/// The scheme a draft's `Continue editing` uses. See [`REPLY_SCHEME`].
+///
+/// A draft has one verb that is true of it and it is not a reply (#1212), so
+/// it does not share the other two: routing it separately is what lets the
+/// frontend raise `CommandId::OpenMessage` -- the same command activating the
+/// row raises -- rather than inventing a second way to resume a composer.
+pub const CONTINUE_SCHEME: &str = "postio-continue";
+
+/// The class the user's own messages wear, for the mark in
+/// `Design/screens/18-conversation-row-states.png` (#1241).
+///
+/// A class rather than a drawn mark, because the document is HTML and the
+/// stylesheet is where a mark belongs -- the stacked pane drew it into a
+/// widget's `snapshot()` and that is precisely why it did not survive the
+/// pane (#1444).
+pub const MINE_CLASS: &str = "postio-mine";
+
 /// The element id a message carries, so a pane can scroll to it.
 ///
 /// One function rather than two format strings, because the id and the
@@ -97,6 +114,18 @@ pub struct Entry<'a> {
     pub preview: &'a str,
     /// Whether it starts open.
     pub expanded: bool,
+    /// Whether this is a draft: a message the user wrote and never sent.
+    ///
+    /// It changes which verbs the message offers -- `Continue editing`, and
+    /// neither reply nor forward (#1212).
+    pub draft: bool,
+    /// Whether the message came from one of the account's own addresses.
+    ///
+    /// Draws the user's own side of the conversation with the outlined mark
+    /// of `Design/screens/18-conversation-row-states.png` (#1241). The
+    /// comparison is folded once by the frontend, which is the only layer
+    /// that knows the account's identities.
+    pub mine: bool,
     /// Whether this is the newest message in the thread — canvas 17's
     /// `latest` badge. Always false for a thread of one, where there is
     /// nothing for it to distinguish.
@@ -212,25 +241,39 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // Named for the message rather than the verb: an icon-only control that a
     // screen reader announces as "button" is a control that is not reachable,
     // and in a stack of six the verb alone does not say which one it means.
-    let actions = format!(
-        "<span class=\"postio-message-actions\">\
+    // A draft's one verb. The other two are the correspondent's, and a draft
+    // has no correspondent yet (#1212) -- so this is not an addition to the
+    // pair below but a replacement for it.
+    let actions = if entry.draft {
+        format!(
+            "<span class=\"postio-message-actions\">\
+             <a class=\"postio-message-action\" href=\"{CONTINUE_SCHEME}:{scope}\" \
+             aria-label=\"Continue editing this draft\" \
+             title=\"Continue editing this draft\">Continue editing</a>\
+             </span>",
+            scope = escape(entry.scope),
+        )
+    } else {
+        format!(
+            "<span class=\"postio-message-actions\">\
          <a class=\"postio-message-action\" href=\"{REPLY_SCHEME}:{scope}\" \
          aria-label=\"Reply to {sender}\" title=\"Reply to {sender}\">Reply</a>\
          <a class=\"postio-message-action\" href=\"{FORWARD_SCHEME}:{scope}\" \
          aria-label=\"Forward {sender}&#39;s message\" \
          title=\"Forward {sender}&#39;s message\">Forward</a>\
          </span>",
-        // Escaped. It was not, and a scope carrying a quote closed the
-        // `href` and put whatever followed it into the tag as an attribute
-        // -- found by `an_anchor_cannot_break_out_of_the_attribute_it_sits_in`
-        // while proving the *anchor* was safe. Not reachable today, because a
-        // scope is a message's own database id and `enable_javascript_markup`
-        // is off besides; a link that builds an attribute out of an
-        // unescaped value is still a link waiting for the day one of those
-        // stops being true.
-        scope = escape(entry.scope),
-        sender = sender,
-    );
+            // Escaped. It was not, and a scope carrying a quote closed the
+            // `href` and put whatever followed it into the tag as an attribute
+            // -- found by `an_anchor_cannot_break_out_of_the_attribute_it_sits_in`
+            // while proving the *anchor* was safe. Not reachable today, because a
+            // scope is a message's own database id and `enable_javascript_markup`
+            // is off besides; a link that builds an attribute out of an
+            // unescaped value is still a link waiting for the day one of those
+            // stops being true.
+            scope = escape(entry.scope),
+            sender = sender,
+        )
+    };
     // Named, not just contained: the name is what this message's own rules
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
@@ -239,8 +282,13 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
     // `the_markup_is_well_formed` caught.
+    let mine = if entry.mine {
+        format!(" {MINE_CLASS}")
+    } else {
+        String::new()
+    };
     format!(
-        "<details class=\"postio-message\" id=\"{anchor}\"{open}>\
+        "<details class=\"postio-message{mine}\" id=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
          <span class=\"postio-recipients-label\">From</span>\
          <span class=\"postio-from\">{sender}</span>\
@@ -303,6 +351,94 @@ fn escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_draft_offers_continue_editing_and_neither_reply_nor_forward() {
+        // #1212: a draft is a message you wrote and never sent, so reply,
+        // reply-all and forward are the correspondent's verbs and it has no
+        // correspondent yet -- a `Reply` here quotes your own unsent text back
+        // at you. The verb that is right was already reachable and
+        // unannounced: activating it resumes the composer on the draft.
+        //
+        // The stacked pane knew this and drew `DRAFT_ACTIONS` on the entry's
+        // own bar. The one document had no equivalent and offered `Reply`
+        // (#1444).
+        let mut draft = entry("7", "Ada", "<p>unsent</p>", true);
+        draft.draft = true;
+        let document = conversation_document(
+            &[draft],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(
+            document.contains(&format!("{CONTINUE_SCHEME}:7")),
+            "a draft was not offered the one verb that is true of it"
+        );
+        assert!(
+            !document.contains(REPLY_SCHEME),
+            "a draft was offered a reply, which would quote the user's own \
+             unsent text back at them"
+        );
+        assert!(
+            !document.contains(FORWARD_SCHEME),
+            "a draft was offered a forward of a message that was never sent"
+        );
+    }
+
+    #[test]
+    fn only_the_draft_of_a_thread_loses_its_reply() {
+        // The draft is not necessarily the row the list holds, and the verbs
+        // are per message: the message it answers keeps its own reply.
+        let sent = entry("1", "Ada", "<p>sent</p>", true);
+        let mut draft = entry("2", "Bo", "<p>unsent</p>", true);
+        draft.draft = true;
+        let document = conversation_document(
+            &[sent, draft],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        assert!(
+            document.contains(&format!("{REPLY_SCHEME}:1")),
+            "the sent message lost the reply that is right for it"
+        );
+        assert!(
+            !document.contains(&format!("{REPLY_SCHEME}:2")),
+            "the draft kept a reply because a sibling had one"
+        );
+        assert!(document.contains(&format!("{CONTINUE_SCHEME}:2")));
+    }
+
+    #[test]
+    fn a_message_from_the_user_is_marked_as_theirs() {
+        // #1241: `Design/screens/18-conversation-row-states.png` gives the
+        // user's own side of a conversation an outlined mark rather than a
+        // filled one. The stacked pane drew it per entry; the document draws
+        // it as a class the stylesheet hangs the mark on (#1444).
+        let mut mine = entry("1", "Ada", "<p>hi</p>", true);
+        mine.mine = true;
+        let theirs = entry("2", "Bo", "<p>hi</p>", true);
+        let document = conversation_document(
+            &[mine, theirs],
+            postio_body::RemoteImages::Blocked,
+            crate::reader::document::Sheet::Theme,
+        );
+        let first = document
+            .split("<details")
+            .nth(1)
+            .expect("the first message");
+        let second = document
+            .split("<details")
+            .nth(2)
+            .expect("the second message");
+        assert!(
+            first.contains(MINE_CLASS),
+            "the user's own message is not marked as theirs"
+        );
+        assert!(
+            !second.contains(MINE_CLASS),
+            "a correspondent's message is marked as the user's own"
+        );
+    }
+
+    #[test]
     fn a_blocked_message_offers_a_way_to_show_its_images() {
         // A notice that only reports a decision the user cannot make is not a
         // privacy feature. Blocking without a way to unblock is the feature
@@ -364,6 +500,8 @@ mod tests {
             when: "09:14",
             preview: "the first line of it",
             expanded,
+            draft: false,
+            mine: false,
             latest: false,
             blocked: 0,
             styles: "",
