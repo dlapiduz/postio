@@ -13,11 +13,17 @@
 //! > because under SQLCipher every page miss costs a decrypt rather than a
 //! > `memcpy`.**
 //!
-//! This is that bench. It is `#[ignore]`d: it seeds 400,000 messages and takes
+//! This is that bench.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
+//!
+//! It seeds 400,000 messages and takes
 //! about three and a half minutes, which is a bench's cost and not a gate's.
 //!
 //! ```text
-//! cargo test -p postio-storage --test cache_pressure -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-storage -E 'binary(cache_pressure)'
 //! ```
 //!
 //! # What it showed
@@ -102,7 +108,6 @@ fn sweep(
 }
 
 #[test]
-#[ignore = "seeds 400,000 messages; a bench, not a gate"]
 fn a_cache_below_the_working_set_costs_cpu() {
     let database = test_support::memory();
     let report = seed_large(&database, 11, MESSAGES);

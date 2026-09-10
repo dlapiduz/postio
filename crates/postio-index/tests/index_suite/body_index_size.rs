@@ -6,12 +6,16 @@
 //! how much of a mail corpus is repeated words. So this builds a store, fills
 //! it, and asks `dbstat`.
 //!
-//! `#[ignore]` because it is a measurement rather than an assertion — it takes
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
+//!
+//! It is a measurement rather than an assertion — it takes
 //! seconds, it prints, and what it prints is only meaningful next to the
 //! account it was run against. Run it with:
 //!
 //! ```text
-//! cargo test -p postio-index --test body_index_size -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-index -E 'test(/^body_index_size::/)'
 //! ```
 
 use postio_index::index::{ensure_schema, index_body};
@@ -56,7 +60,6 @@ fn table_bytes(connection: &Connection, name: &str) -> i64 {
 }
 
 #[test]
-#[ignore = "a measurement, not an assertion; see the module docs"]
 fn what_the_bodies_cost_in_each_place() {
     const MESSAGES: usize = 5_000;
 

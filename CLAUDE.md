@@ -68,6 +68,17 @@ test in the default suite may touch the network — live-server tests are
 `#[ignore]`. Protocol code tests against the `MailBackend` mock and the `.eml`
 corpus in `crates/postio-model/tests/corpus/` (`/add-fixture` extends it).
 
+**`#[ignore]` means one thing: this machine may not have what I need** — a
+live server, a system D-Bus, a Secret Service session, the real desktop.
+Nothing in CI may ever pass `--run-ignored` and `ci.yml` greps the workflows
+to be sure. So it is *not* how you say "too slow for the merge path": a test
+that wears it for that reason runs nowhere at all, which is where six of them
+were until #1450. Slowness is a scheduling question, and it is answered by
+`.config/nextest.toml` — mark the module `//! POSTIO-MEASUREMENT: …`, exclude
+it in `profile.default`'s `default-filter`, and it runs nightly under
+`--profile nightly` (which is also how you run one by hand).
+`check-measurement-tier.py` keeps the two halves honest.
+
 ## Build & test: verify what you touched, nothing more
 
 ```bash

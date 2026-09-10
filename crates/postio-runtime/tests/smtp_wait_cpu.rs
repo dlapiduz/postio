@@ -11,6 +11,15 @@
 //! which is what an unreachable host is, minus the network. If the wait costs
 //! CPU, it costs it here.
 //!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, and it costs
+//! 10.2 s, so it runs on the nightly timer rather than the merge path
+//! (#1450). `.config/nextest.toml`'s `profile.default` filter is what holds
+//! it back; run it with
+//!
+//! ```text
+//! cargo nextest run --profile nightly -p postio-runtime -E 'binary(smtp_wait_cpu)'
+//! ```
+//!
 //! # Its own binary, and why
 //!
 //! It reads this **process's** CPU time (`postio_test_support::cpu`), so anything

@@ -5,12 +5,48 @@
 # settings here exist because that speed changes what the machine looks like
 # to a test, not because the tests changed.
 
+# The measurement tier is not on the merge path (#1450).
+#
+# `#[ignore]` was doing two unrelated jobs. Fifteen tests use it to mean *this
+# machine may not have what I need* -- a live IMAP or JMAP server, a system
+# D-Bus, a Secret Service session, the real desktop -- and `ci.yml` greps the
+# workflow directory to be sure nothing ever opts back into them. Six used it
+# to mean *too slow for the merge path*, and that guard, right for the first
+# fifteen, made the last six unrunnable: nothing anywhere passes
+# `--run-ignored`, so they had never executed in CI once.
+#
+# They are not `#[ignore]`d any more. `#[ignore]` means one thing again,
+# `ci.yml`'s guard goes on being exactly as true as it was, and *when* a test
+# runs is a scheduling question answered here, where scheduling belongs.
+#
+# Three more joined them that had the same character and never got the marker:
+# `idle_store_cpu` (44.1s), `navigation_cost` (21.3s) and `smtp_wait_cpu`
+# (10.2s). Each says in its own doc comment that what it produces is numbers a
+# person reads. Together with the six, 75.6s off every pull request.
+#
+# The filter is written once, negated, and `profile.nightly` lifts it with
+# `all()` rather than repeating it -- nextest config has no bindings, and a
+# second copy of an expression this long is a second thing to keep true.
+# `scripts/checks/check-measurement-tier.py` is what stops it drifting from
+# the `POSTIO-MEASUREMENT:` markers in the tests themselves, and what enforces
+# the rule this tier must never break: nothing it selects may be a test that
+# reaches a live service.
+#
+# A `default-filter` is ANDed with what the command line asks for rather than
+# replaced by it, so a measurement cannot be run from this profile even by
+# name. That is deliberate, and it is not silent -- nextest answers
+# `error: no tests to run` and names the profile that excluded it. To run one,
+# ask for the profile that owns it:
+#
+#     cargo nextest run --profile nightly -E 'binary(hmac_cost)'
 [profile.default]
 # A test that hangs should fail, not stall the run. The GTK suites already
 # carry their own deadlines (`POSTIO_TEST_PATIENCE` scales them); this is the
 # backstop for a case that wedges below its own timeout -- a WebKit process
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
+
+default-filter = 'not (binary(hmac_cost) + binary(cache_pressure) + binary(header_block_size) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-storage) & test(/^measurements::/)) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works
@@ -38,4 +74,11 @@ retries = 2
 
 # CI wants the same thresholds but a machine-readable trail of what flaked.
 [profile.ci]
+fail-fast = false
+
+# Everything, measurements included. `nightly.yml`'s full-suite job runs this,
+# and it is also how you run one measurement by hand: `all()` is a filter an
+# `-E` on the command line narrows rather than fights.
+[profile.nightly]
+default-filter = 'all()'
 fail-fast = false
