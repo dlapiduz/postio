@@ -184,9 +184,7 @@ pub fn a_page_key_moves_the_document_itself() {
     // Long enough to have somewhere to go. The marker tests deliberately use
     // a short body -- they are about arithmetic -- and a short body here
     // would scroll nowhere and pass for the wrong reason.
-    let long = std::iter::repeat("A paragraph of a message that goes on. ")
-        .take(400)
-        .collect::<String>();
+    let long = "A paragraph of a message that goes on. ".repeat(400);
     reader.render(
         &postio_model::message::MessageBody {
             text: Some(long),
