@@ -2308,6 +2308,44 @@ button.postio-compose-more {
   color: var(--postio-dim);
 }
 
+/* The participant chips on row two (canvas screens 28 and 30): two letters
+   each, overlapping slightly so three of them read as a group rather than as
+   three separate controls.
+
+   Barlow Condensed and the dim ink of `.postio-row-avatar`, because they are
+   the same object as the list row's chip seen at conversation scale -- a
+   second treatment for the same idea is how an interface stops looking like
+   one thing. The hairline border is what keeps the overlap legible: without an
+   edge, two overlapping letters read as one smudged word. */
+.conversation-participant {
+  font-family: var(--postio-font-heading);
+  font-size: 0.7273rem;
+  font-weight: 500;
+  color: var(--postio-dim);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-sm);
+  padding: 0 var(--postio-space-1);
+  background-color: var(--postio-ground);
+}
+
+/* The overlap itself. Not on the first, or the group starts indented. */
+.conversation-participant:not(:first-child) {
+  margin-left: -3px;
+}
+
+/* `latest · all 6`, at row two's trailing edge (canvas screen 30).
+
+   Mono like the meta line beside it, because it is metadata about what the
+   verbs above will act on rather than prose. Dimmer than that line: it
+   qualifies the bar, and a note competing with the count it sits beside would
+   read as a second fact rather than a footnote to one. The brief calls it
+   "terse" and the wording carries the weight -- the type should not. */
+.conversation-scoping {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7955rem;
+  color: var(--postio-faint);
+}
+
 /* `--------  5 earlier messages · Ada, Bo  [Show]  --------` */
 .conversation-divider {
   padding: var(--postio-space-2) var(--postio-space-4);
@@ -2323,4 +2361,167 @@ button.postio-compose-more {
 .conversation-footer {
   border-top: 1px solid var(--postio-hairline);
   background-color: var(--postio-ground);
+}
+
+/* ---- The conversation rail (#1374) ---------------------------------------
+
+   Screen 28: a 150px column on the trailing edge of the conversation pane,
+   separated from the body by a hairline rather than by a filled panel. It is
+   an index, not a second sidebar, and reads as one because everything in it
+   is quiet: dim text, mono numbers, and no ground of its own until a row is
+   marked. */
+.postio-rail {
+  border-left: 1px solid var(--postio-hairline);
+  padding: var(--postio-space-3) 0 var(--postio-space-2) 0;
+}
+
+/* `In this thread`. Set like the sidebar's section headings — the smallest
+   type in the interface, letter-spaced, and faint enough to be a label rather
+   than a row. */
+.postio-rail-heading {
+  font-family: var(--postio-font-heading);
+  font-size: 0.7159rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--postio-faint);
+  padding: 0 var(--postio-space-3) var(--postio-space-2) var(--postio-space-3);
+}
+
+.postio-rail-rows {
+  background: transparent;
+}
+
+.postio-rail-row {
+  padding: var(--postio-space-1) var(--postio-space-3);
+}
+
+/* The position. Mono because it is a number you count with, and dim because
+   you read the name — the number is there for `J/K` and for the footer to
+   agree with. */
+.postio-rail-number {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+.postio-rail-sender {
+  font-size: 0.8409rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* A line count, on the long messages only. Mono, and at the trailing edge,
+   so the eye can run down the column and find the essay without reading a
+   single name. */
+.postio-rail-length {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+/* The marked row: the same treatment the message list gives a selection, so
+   "this is the one" means one thing everywhere in the window. */
+.postio-rail-rows > row:selected {
+  background: var(--postio-selected-bg);
+  box-shadow: inset 3px 0 0 var(--postio-selected-border);
+}
+
+.postio-rail-rows > row:selected .postio-rail-sender {
+  color: var(--postio-selected-fg);
+}
+
+.postio-rail-rows > row:selected .postio-rail-number,
+.postio-rail-rows > row:selected .postio-rail-length {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-rail-rows > row:hover:not(:selected) {
+  background: var(--postio-hover-bg);
+}
+
+/* `J/K jumps`, `3 of 6 in view`, `84 lines here`. All three are the app
+   telling you where you are, which is the mono voice. */
+.postio-rail-footer {
+  border-top: 1px solid var(--postio-hairline);
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2) var(--postio-space-3) 0 var(--postio-space-3);
+}
+
+.postio-rail-hint {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+}
+
+/* The middle step of the ladder: numbers and initials, no names. The column
+   is narrower, so the row's padding closes up with it -- at 118px the wide
+   gutter would leave the numbers floating in the middle of nothing. */
+.postio-rail-narrow .postio-rail-row {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+.postio-rail-narrow .postio-rail-heading {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+.postio-rail-narrow .postio-rail-footer {
+  padding-left: var(--postio-space-2);
+  padding-right: var(--postio-space-2);
+}
+
+/* `hide rail`, at the foot of the column. A quiet text control rather than a
+   button with a ground: it is the least important thing in the rail, and the
+   rail is already the least important thing in the pane. */
+.postio-rail-hide {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-faint);
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: var(--postio-space-1) 0;
+  min-height: 0;
+}
+
+.postio-rail-hide:hover {
+  color: var(--postio-ink-secondary);
+  background: none;
+}
+
+/* The two letters the narrow step shows in place of a name. Mono, like the
+   number beside it: at 118px the row is a pair of codes, and setting them in
+   different faces would make it read as a name that had been cut off. */
+.postio-rail-initials {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* `3/6 ⌄` at row two's trailing edge, below the ladder's floor (screen 29).
+   Mono, because it is a position you count with, and outlined rather than
+   filled: it opens something, which is a quieter act than the header's verbs
+   and must not compete with them. */
+.conversation-counter {
+  font-family: var(--postio-font-mono);
+  font-size: 0.7159rem;
+  color: var(--postio-ink-secondary);
+  background: none;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-sm);
+  padding: 0 var(--postio-space-2);
+  min-height: 0;
+  margin-left: var(--postio-space-2);
+}
+
+.conversation-counter:hover {
+  background: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* The index, open. It holds the rail itself, so the column's own hairline
+   would draw a rule down the inside of a popover that already has an edge. */
+.conversation-index .postio-rail {
+  border-left: none;
+  padding-top: var(--postio-space-2);
 }

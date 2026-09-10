@@ -340,6 +340,8 @@ corpus! {
         "Deeply folded headers: a three-hop Received chain, DKIM-Signature, multi-line Authentication-Results and Subject.",
     "headers-only-no-body": [MissingHeaders, PlainText] =>
         "A message that ends after its headers, with no blank line and no body at all.",
+    "html-escaping-styles": [Html] =>
+        "A message whose inline styling tries to leave its own block: position fixed and absolute, a viewport-sized overlay, z-index, a transform, and viewport units \u{2014} beside ordinary colour and a layout table that must survive.",
     "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList] =>
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
     "html-tracking-pixel-remote-images": [Html, RemoteContent, QuotedPrintable] =>

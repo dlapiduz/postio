@@ -55,9 +55,10 @@ command from inside a text field.
 | `o` | Toggle result order | Search |  | `toggle_result_order` |
 | `J` | Next message in conversation | Conversation |  | `next_in_conversation` |
 | `K` | Previous message in conversation | Conversation |  | `prev_in_conversation` |
-| `space` | Fold or unfold this message | Conversation |  | `toggle_fold` |
+| `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `O` | Expand all | Conversation |  | `expand_all` |
+| `I` | Hide or show the conversation rail | Conversation |  | `toggle_rail` |
 | `e` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` | Forward | List, conversation, reader, composer |  | `forward` |
@@ -118,5 +119,5 @@ command from inside a text field.
 | `S` | Save all parts | Parts panel |  | `save_all_parts` |
 | `x` | Open part externally | Parts panel |  | `open_part_externally` |
 | `H` | Render part once | Parts panel |  | `render_part_once` |
-| `Page_Down` or `space` | Scroll reading pane down | List, reader |  | `scroll_reader_down` |
+| `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |

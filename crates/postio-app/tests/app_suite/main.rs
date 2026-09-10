@@ -18,9 +18,8 @@ mod command_wiring;
 mod compose_detach;
 mod compose_typing;
 mod composer_warm;
-mod conversation_body_arrives;
 mod conversation_by_default;
-mod conversation_recipients;
+mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
 mod decode_notice;
@@ -36,6 +35,8 @@ mod list_contract;
 mod manual_sync;
 mod navigation_cost;
 mod onboarding_probe;
+mod one_document_conversation;
+mod opens_from_storage;
 mod orientation;
 mod parts_open_wiring;
 mod read_receipt_wiring;
@@ -44,6 +45,7 @@ mod reading;
 mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
+mod render_dedup;
 mod reply_identity;
 mod reply_source;
 mod resume_draft;
@@ -132,6 +134,26 @@ const CASES: &[(&str, fn())] = &[
         composer_warm::the_window_warms_its_editing_surface_without_being_asked as fn(),
     ),
     (
+        "opens_from_storage::the_list_fills_from_storage_without_a_server",
+        opens_from_storage::the_list_fills_from_storage_without_a_server as fn(),
+    ),
+    (
+        "one_document_conversation::an_open_message_says_who_it_went_to",
+        one_document_conversation::an_open_message_says_who_it_went_to as fn(),
+    ),
+    (
+        "one_document_conversation::a_conversation_opens_as_one_document_without_being_asked",
+        one_document_conversation::a_conversation_opens_as_one_document_without_being_asked as fn(),
+    ),
+    (
+        "one_document_conversation::a_thread_opens_as_one_document_holding_every_message",
+        one_document_conversation::a_thread_opens_as_one_document_holding_every_message as fn(),
+    ),
+    (
+        "one_document_conversation::a_single_message_conversation_still_offers_its_verbs",
+        one_document_conversation::a_single_message_conversation_still_offers_its_verbs as fn(),
+    ),
+    (
         "click_preview::clicking_a_message_fills_the_reading_pane",
         click_preview::clicking_a_message_fills_the_reading_pane as fn(),
     ),
@@ -148,22 +170,20 @@ const CASES: &[(&str, fn())] = &[
         compose_typing::every_letter_can_be_typed_into_the_composer_body as fn(),
     ),
     (
-        "conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other",
-        conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other
-            as fn(),
-    ),
-    (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
         conversation_by_default::landing_on_a_thread_row_opens_the_conversation as fn(),
     ),
     (
-        "conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header",
-        conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header
-            as fn(),
+        "conversation_reply_target::the_conversations_verbs_answer_the_message_they_name",
+        conversation_reply_target::the_conversations_verbs_answer_the_message_they_name as fn(),
     ),
     (
         "cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing",
         cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing as fn(),
+    ),
+    (
+        "render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing",
+        render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing as fn(),
     ),
     (
         "drag_out_portal::a_dragged_message_survives_the_portal",

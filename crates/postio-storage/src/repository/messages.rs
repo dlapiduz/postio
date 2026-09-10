@@ -500,6 +500,7 @@ pub struct UpsertReport {
 /// rows of a few hundred bytes, and a body on every one of them would be the
 /// whole mailbox in memory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+
 pub struct StoredBody {
     /// The `text/plain` body.
     pub text: Option<String>,
@@ -1589,7 +1590,8 @@ impl<'a> MessageRepository<'a> {
             "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
                     body_dictionary_id = ?5, body_state = ?6,
-                    body_headers_truncated = ?7, body_encoding_problems = ?8
+                    body_headers_truncated = ?7, body_encoding_problems = ?8,
+                    body_line_count = ?9
               WHERE id = ?1",
             params![
                 id.get(),
@@ -1600,6 +1602,7 @@ impl<'a> MessageRepository<'a> {
                 body_state.as_str(),
                 body.headers_truncated,
                 body.encoding_problems,
+                body.text.as_deref().map(line_count),
             ],
         )?;
         if changed == 0 {
@@ -2682,4 +2685,27 @@ fn flag_text(flags: &FlagSet) -> String {
 
 fn parse_flags(text: &str) -> FlagSet {
     text.split_whitespace().map(Flag::parse).collect()
+}
+
+/// How many lines a plain-text body has (#1329).
+///
+/// The conversation rail shows a length only on messages long enough for it
+/// to matter, and reads it from the thread model before any body has been
+/// prepared for display. So it is counted here, once, when the body is
+/// written -- never measured from laid-out output, which is not available
+/// until the engine has done the work the rail exists to let you skip, and
+/// which answers differently at every window width.
+///
+/// Counted on the plain text rather than the markup: a one-line message
+/// wrapped in a template is one line to a person reading it, whatever the tag
+/// count says.
+///
+/// A trailing newline does not add a line -- "a\nb\n" is two lines, not
+/// three -- because a body that ends the way most bodies end should not read
+/// as one line longer than an identical one that does not.
+fn line_count(text: &str) -> i64 {
+    if text.is_empty() {
+        return 0;
+    }
+    text.lines().count() as i64
 }

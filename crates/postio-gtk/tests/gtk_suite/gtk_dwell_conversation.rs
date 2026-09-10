@@ -209,8 +209,9 @@ pub fn a_single_message_taking_the_pane_stops_the_conversations_clock() {
 
     window.show_conversation(vec![row(0), row(1), row(2)]);
 
-    // Opening focuses the first unread and starts *its* clock, so that one
-    // fires first and has nothing to do with what is under test. Waited out
+    // Opening focuses the most recent message and starts *its* clock, so
+    // that one fires first and has nothing to do with what is under test.
+    // This used to be the first unread; FR-015 moved it (#1385). Waited out
     // rather than ignored: `settle()` used to stand here, and 64 drains are
     // faster than the 60ms clock alone and slower than it inside the full
     // suite — so the control below read the opening message's id on a loaded
@@ -220,13 +221,13 @@ pub fn a_single_message_taking_the_pane_stops_the_conversations_clock() {
     // when nobody chose the row. Reaching `show_conversation` directly, as
     // both the drill-in and #755's open-from-the-list eventually do, leaves
     // it armed.)
-    settle_until(|| dwelled.borrow().contains(&MessageId::new(1)));
+    settle_until(|| dwelled.borrow().contains(&MessageId::new(3)));
     assert_eq!(
         *dwelled.borrow(),
-        vec![MessageId::new(1)],
-        "opening a conversation focuses its first unread and starts that \
-         message's clock; if this changes, the control below is measuring \
-         something else"
+        vec![MessageId::new(3)],
+        "opening a conversation focuses its most recent message and starts \
+         that message's clock; if this changes, the control below is \
+         measuring something else"
     );
     dwelled.borrow_mut().clear();
 

@@ -3354,6 +3354,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [Where 475 gigabytes went](notes/2026-09-09-where-475-gigabytes-went.md) — a full disk reports itself as a compile error; cargo never prunes `deps/`; and `git cherry`, not shas, is what tells a landed worktree from a live one (2026-09-09, #1428)
 - 2026-08-25 — [A slow query whose SQL is fast is measuring the machine (#500)](notes/2026-08-25-a-slow-query-whose-sql-is-fast-is-measuring-the-machine.md)
 - 2026-08-28 — [Encrypting the store, and the things it made visible (2026-08-28, #610/#300)](notes/2026-08-28-encrypting-the-store-and-the-things-it-made-visible.md)
 - 2026-08-28 — [Cross-platform dependencies and what a Linux box can prove (2026-08-28, #642)](notes/2026-08-28-cross-platform-dependencies-and-what-a-linux-box-can-prove.md)
@@ -3435,6 +3436,10 @@ Three things worth keeping:
 - 2026-09-05 — [The WAL is not the startup cost, and measuring it took ten minutes (2026-09-05, #1175)](notes/2026-09-05-the-wal-is-not-the-startup-cost.md)
 - 2026-09-05 — [The error log was never switched on (2026-09-05, #1184)](notes/2026-09-05-the-error-log-was-never-switched-on.md)
 - 2026-09-05 — [The app that ran, logged, and drew nothing (2026-09-05, #1156)](notes/2026-09-05-the-app-that-ran-logged-and-drew-nothing.md)
+- 2026-09-08 — [Building a reading pane on a WebView (2026-09-08, #1316)](notes/2026-09-08-building-a-reading-pane-on-a-webview.md)
+- 2026-09-08 — [What a thread costs, in both panes (2026-09-08, #1348)](notes/2026-09-08-what-a-thread-costs-in-two-panes.md) — ADR 0032's unanswered question, measured: one document is flat at ~101 MiB and 50-100 ms whatever the thread length, where a reader per message grows ~31 MiB of Pss and reaches 1.34 s at fifty.
+- 2026-09-09 — [The suite cannot see a laid-out page (2026-09-09, #1334)](notes/2026-09-09-the-suite-cannot-see-a-laid-out-page.md) — the test display renders nothing, so an assertion may read the cascade but never the layout; four CI rounds went to learning it, and `getComputedStyle(el).width` is the one that looks safe and is not.
+- 2026-09-09 — [Whose script runs in the reader (2026-09-09, #1367)](notes/2026-09-09-whose-script-runs-in-the-reader.md) — the reader's view runs Postio's injected script and refuses the sender's; `enable_javascript` and `enable_javascript_markup` are two settings, and the one that was off wholesale was blunter than ADR 0003's principle required.
 - 2026-09-07 — [What a list repaint actually costs (2026-09-07, #1216)](notes/2026-09-07-what-a-list-repaint-actually-costs.md)
 - 2026-09-06 — [Moving code out of a crate you cannot compile (2026-09-06, #1221)](notes/2026-09-06-moving-code-out-of-a-crate-you-cannot-compile.md)
 - 2026-09-06 — [Where a search and a store actually spend their time (2026-09-06, #1216)](notes/2026-09-06-where-a-search-and-a-store-actually-spend-their-time.md)

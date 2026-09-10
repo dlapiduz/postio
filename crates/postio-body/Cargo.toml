@@ -13,6 +13,9 @@ repository.workspace = true
 # postio-model: `ammonia` pulls html5ever, markup5ever and a generated tag
 # table, and postio-model is what the whole workspace waits on. See ADR 0004.
 ammonia = "4"
+# Already in the tree: `ammonia` parses `style` attributes with it, so the
+# sender-CSS work shares one parser rather than adding a second. See #1326.
+cssparser = "0.37"
 html5ever = "0.39.0"
 markup5ever_rcdom = "0.39.0"
 postio-model = { workspace = true }

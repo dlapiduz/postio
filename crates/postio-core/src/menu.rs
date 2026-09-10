@@ -158,6 +158,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
+        C::ToggleRail => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
         C::OpenParts | C::ViewOriginal => Some(M::View),
         C::CommandPalette => Some(M::View),

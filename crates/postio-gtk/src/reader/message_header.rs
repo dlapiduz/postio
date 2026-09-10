@@ -20,6 +20,20 @@ use postio_ui::reader::header::MessageHeader as HeaderLines;
 /// only the envelope, so a header-only message (backfill still pending, or
 /// genuinely bodyless) gets exactly the same header a message with a body
 /// does.
+/// One of the header's field names -- `From`, `To`, `Cc`.
+///
+/// A fixed width, which is the whole point: the three of them form a column
+/// and their values line up with each other (#1437). Mono, like every other
+/// label-ish thing in the interface.
+fn field_label(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_width_chars(4);
+    label.set_valign(gtk::Align::Baseline);
+    label.add_css_class("postio-message-header-field");
+    label
+}
+
 pub struct MessageHeader {
     root: gtk::Box,
     /// Subject and the sender/date row, grouped so they can be hidden
@@ -27,6 +41,10 @@ pub struct MessageHeader {
     /// three (#487), and only the recipients below belong to this widget
     /// there.
     identity: gtk::Box,
+    /// The `To` field name, hidden with its value when there is none.
+    to_label: gtk::Label,
+    /// Where the reader mounts its action bar (#1435).
+    verbs: gtk::Box,
     account_row: gtk::Box,
     account_swatch: gtk::Box,
     account_name: gtk::Label,
@@ -73,9 +91,29 @@ impl MessageHeader {
         subject.set_xalign(0.0);
         subject.set_ellipsize(pango::EllipsizeMode::End);
         subject.add_css_class("postio-message-header-subject");
-        identity.append(&subject);
+        // The subject shares its row with the reader's verbs (#1435). A row
+        // rather than `identity` directly, because the bar has to sit at the
+        // trailing end of the subject line -- which is where the conversation
+        // pane draws the same bar, and the whole point of this is that the
+        // two surfaces stop disagreeing.
+        let subject_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        subject.set_hexpand(true);
+        subject_row.append(&subject);
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        verbs.set_valign(gtk::Align::Start);
+        subject_row.append(&verbs);
+        identity.append(&subject_row);
 
+        // **From, To and Cc share a label column** (#1437). Each row is
+        // `label | value`, and every label is the same width, so the
+        // addresses begin at the same place down the header. Before this the
+        // sender had no label at all and `To:` carried its own inline one,
+        // which left the recipients reading as a stray line under the name
+        // rather than as the second row of a block.
         let top_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let from_label = field_label("From");
+        top_row.append(&from_label);
+
         let sender = gtk::Label::new(None);
         sender.set_xalign(0.0);
         sender.set_hexpand(true);
@@ -92,6 +130,10 @@ impl MessageHeader {
         // case costs exactly the one line, and `Cc` costs nothing at all
         // when the message has none — no toggle, no reserved space.
         let recipients_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let to_label = field_label("To");
+        to_label.set_visible(false);
+        recipients_row.append(&to_label);
+
         let to = gtk::Label::new(None);
         to.set_xalign(0.0);
         to.set_hexpand(true);
@@ -107,7 +149,12 @@ impl MessageHeader {
         recipients_row.append(&cc_toggle);
         root.append(&recipients_row);
 
+        let cc_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let cc_name = field_label("Cc");
+        cc_row.append(&cc_name);
+
         let cc_label = gtk::Label::new(None);
+        cc_label.set_hexpand(true);
         cc_label.set_xalign(0.0);
         cc_label.set_wrap(true);
         cc_label.add_css_class("postio-message-header-recipients");
@@ -116,7 +163,8 @@ impl MessageHeader {
         cc_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
         // Motion budget: ≤100ms or absent.
         cc_revealer.set_transition_duration(100);
-        cc_revealer.set_child(Some(&cc_label));
+        cc_row.append(&cc_label);
+        cc_revealer.set_child(Some(&cc_row));
         root.append(&cc_revealer);
 
         let revealer_for_toggle = cc_revealer.clone();
@@ -127,6 +175,8 @@ impl MessageHeader {
         Self {
             root,
             identity,
+            to_label,
+            verbs,
             account_row,
             account_swatch,
             account_name,
@@ -142,6 +192,24 @@ impl MessageHeader {
 
     /// The widget to place above the banner, per [`super::view::Reader`]'s
     /// container.
+    /// Mount the reader's action bar at the end of the subject line.
+    ///
+    /// The single-message reader used to append its bar last, under the
+    /// attachment chips -- #498's "canvas footer treatment". The
+    /// conversation pane puts the same bar in its header, so the same
+    /// message drew Reply in two different places depending on which surface
+    /// happened to open it. This is the header end of making them agree
+    /// (#1435).
+    ///
+    /// Takes a widget rather than an `ActionBar` so the header keeps knowing
+    /// nothing about commands: it owns a slot, not a vocabulary.
+    pub fn set_verbs(&self, widget: &gtk::Widget) {
+        if widget.parent().is_some() {
+            return;
+        }
+        self.verbs.append(widget);
+    }
+
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
@@ -185,10 +253,25 @@ impl MessageHeader {
 
         match lines.to_line() {
             Some(line) => {
+                self.to_label.set_visible(true);
                 self.to.set_visible(true);
                 self.to.set_label(&line);
+                // What is drawn shortens and says how many it hid; the full
+                // list stays reachable here, because "who exactly is on this"
+                // is what decides whether reply-all is a mistake (#1332).
+                // Only when they differ: a tooltip repeating the label is
+                // noise.
+                self.to.set_tooltip_text(
+                    lines
+                        .to
+                        .as_deref()
+                        .filter(|full| Some(*full) != lines.to_short.as_deref()),
+                );
             }
-            None => self.to.set_visible(false),
+            None => {
+                self.to_label.set_visible(false);
+                self.to.set_visible(false);
+            }
         }
 
         match (lines.cc_toggle_label(), lines.cc.as_deref()) {

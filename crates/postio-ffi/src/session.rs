@@ -2013,7 +2013,12 @@ impl Session {
                 // this frontend has no way to leave reader view -- which is
                 // the point of asking rather than assuming: the day it grows
                 // one, the sheet comes with it.
-                document_for(&drawn.html, remote, sheet_for(drawn.rendering, bulk))
+                document_for(
+                    &drawn.html,
+                    &drawn.styles,
+                    remote,
+                    sheet_for(drawn.rendering, bulk),
+                )
             }
             // A state plate is Postio's own words, so it is served with remote
             // images blocked whatever the caller asked for: there is nothing

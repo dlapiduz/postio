@@ -714,8 +714,77 @@ fn addresses(value: Option<&MpAddress<'_>>) -> Vec<EmailAddress> {
         .collect()
 }
 
+/// Drops anything that reads as an HTML tag, leaving everything else.
+///
+/// The preview is built from the sender's `text/plain` part, and some senders
+/// put markup there -- a real list row read
+///
+/// ```text
+/// Eventbrite <hr style="height: 1;border: none;border-top: 1px ...
+/// ```
+///
+/// **Not a general sanitizer, and not allowed to be one.** `postio-model` may
+/// not depend on `ammonia` or `html5ever` (`check-crate-boundaries.py`,
+/// ADR 0004): the whole workspace waits on this crate to compile. Nothing
+/// here is a security control either -- the preview is drawn as a GTK label,
+/// never as markup. It is a legibility fix.
+///
+/// A tag is `<`, an optional `/`, an ASCII letter, then name characters, then
+/// whitespace or `/` or `>`. That deliberately spares `<https://example.com>`
+/// and `<ada@example.com>`, which are ordinary plain text and appear in
+/// previews constantly: after `https` comes a colon, which ends no tag name.
+fn without_tags(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('<') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        if bytes[at] == b'<'
+            && let Some(end) = tag_ends_at(rest)
+        {
+            at += end;
+            continue;
+        }
+        let character = rest.chars().next().expect("in bounds");
+        out.push(character);
+        at += character.len_utf8();
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// How many bytes the tag starting at the front of `rest` occupies, if it is
+/// one.
+fn tag_ends_at(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut at = 1;
+    if bytes.get(at) == Some(&b'/') {
+        at += 1;
+    }
+    if !bytes.get(at)?.is_ascii_alphabetic() {
+        return None;
+    }
+    while bytes
+        .get(at)
+        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'-')
+    {
+        at += 1;
+    }
+    match bytes.get(at) {
+        Some(b'>') => Some(at + 1),
+        Some(b) if b.is_ascii_whitespace() || *b == b'/' => {
+            rest[at..].find('>').map(|close| at + close + 1)
+        }
+        _ => None,
+    }
+}
+
 /// Flattens body text into a single-line snippet of at most [`PREVIEW_CHARS`].
 fn preview(text: &str) -> Option<String> {
+    let text = without_tags(text);
+    let text = text.as_ref();
     let mut out = String::new();
     let mut truncated = false;
     for word in text.split_whitespace() {
@@ -900,5 +969,51 @@ fn disposition(part: &MessagePart<'_>) -> Disposition {
             PartType::InlineBinary(_) => Disposition::Inline,
             _ => Disposition::Attachment,
         },
+    }
+}
+
+#[cfg(test)]
+mod preview_is_not_markup {
+    use super::*;
+
+    /// A tag in the sender's text part does not reach the list (#1436).
+    ///
+    /// Both of these are real rows, from a real inbox.
+    #[test]
+    fn a_tag_in_the_text_part_never_reaches_the_list() {
+        let leaked = "<hr style=\"height: 1;border: none;border-top: 1px solid #ccc\">\
+                      Eventbrite Order Confirmation";
+        let snippet = preview(leaked).expect("a preview");
+        assert!(
+            !snippet.contains('<') && !snippet.contains("border-top"),
+            "markup reached the list row: {snippet:?}"
+        );
+        assert!(
+            snippet.contains("Eventbrite"),
+            "and the words survived: {snippet:?}"
+        );
+    }
+
+    /// The control, and the reason this is not a blunt `<`..`>` strip.
+    ///
+    /// A bracketed URL or address is ordinary plain text and appears in
+    /// previews constantly. Stripping it would lose the only content some
+    /// rows have.
+    #[test]
+    fn a_bracketed_url_or_address_is_not_a_tag() {
+        let cloudflare = "You can also view this email as a webpage \
+                          <[[https://content.example.com/registrations]]>";
+        let snippet = preview(cloudflare).expect("a preview");
+        assert!(
+            snippet.contains("https://content.example.com"),
+            "a bracketed URL was mistaken for markup: {snippet:?}"
+        );
+
+        let reply = "On Mon, Ada Lovelace <ada@example.com> wrote:";
+        let snippet = preview(reply).expect("a preview");
+        assert!(
+            snippet.contains("ada@example.com"),
+            "a bracketed address was mistaken for markup: {snippet:?}"
+        );
     }
 }

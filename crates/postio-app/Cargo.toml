@@ -34,6 +34,11 @@ postio-model.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-session.workspace = true
+# The render counters (#1328). Named here rather than reached through
+# postio-gtk's re-exports for postio-session's reason above: what
+# `render_dedup` asserts on is postio-ui's instrument, and the import should
+# say so.
+postio-ui.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }

@@ -36,6 +36,9 @@
 //! A panicking case can leave toolkit state behind that fails a later case:
 //! when several cases fail at once, trust the first.
 
+#[path = "../webkit_probe.rs"]
+mod webkit_probe;
+
 mod feed;
 mod feed_results;
 mod gtk_accelerators;
@@ -74,6 +77,7 @@ mod gtk_editor_profile;
 mod gtk_feeds;
 mod gtk_finder;
 mod gtk_finder_focus;
+mod gtk_first_frame;
 mod gtk_flagged;
 mod gtk_focus_visible;
 mod gtk_folder_reload_scope;
@@ -100,11 +104,13 @@ mod gtk_orientation;
 mod gtk_pane_cycle;
 mod gtk_parts;
 mod gtk_prev_view;
+mod gtk_rail;
 mod gtk_reader_account;
 mod gtk_reader_actions;
 mod gtk_reader_fonts;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
+mod gtk_reader_styles;
 mod gtk_reader_teardown;
 mod gtk_reading_pane;
 mod gtk_result_order;
@@ -138,6 +144,7 @@ mod gtk_sidebar_tree;
 mod gtk_signature_placement;
 mod gtk_style;
 mod gtk_toast;
+mod gtk_toggle_rail;
 mod gtk_toggle_sidebar;
 mod gtk_unavailable;
 mod gtk_undo_toast;
@@ -165,8 +172,28 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
     ),
     (
-        "gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies",
-        gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies as fn(),
+        "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
+        gtk_reader_styles::moving_between_messages_never_loads_an_error_page as fn(),
+    ),
+    (
+        "gtk_reader_styles::the_readers_verbs_live_in_its_header",
+        gtk_reader_styles::the_readers_verbs_live_in_its_header as fn(),
+    ),
+    (
+        "gtk_reader_styles::from_to_and_cc_share_a_column",
+        gtk_reader_styles::from_to_and_cc_share_a_column as fn(),
+    ),
+    (
+        "gtk_reader_styles::a_page_key_moves_the_document_itself",
+        gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
+    ),
+    (
+        "gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread",
+        gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread as fn(),
+    ),
+    (
+        "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",
+        gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message as fn(),
     ),
     (
         "gtk_settings_sync::the_pane_shows_the_files_values",
@@ -360,41 +387,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message",
-        gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
-    ),
-    (
-        "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
-        gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
-            as fn(),
-    ),
-    (
         "gtk_conversation::one_thread_offers_one_reply_however_long_it_is",
         gtk_conversation::one_thread_offers_one_reply_however_long_it_is as fn(),
-    ),
-    (
-        "gtk_conversation::moving_to_another_thread_does_not_build_every_reader_cold",
-        gtk_conversation::moving_to_another_thread_does_not_build_every_reader_cold as fn(),
-    ),
-    (
-        "gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand",
-        gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
-    ),
-    (
-        "gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply",
-        gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply as fn(),
-    ),
-    (
-        "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
-        gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
-    ),
-    (
-        "gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader",
-        gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
-    ),
-    (
-        "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
-        gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",
@@ -403,6 +397,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick",
         gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick as fn(),
+    ),
+    (
+        "gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up",
+        gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up as fn(),
     ),
     (
         "gtk_flagged::the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail",
@@ -544,6 +542,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time",
         gtk_reader_pane_owner::the_reading_pane_has_one_visible_occupant_at_a_time as fn(),
+    ),
+    (
+        "gtk_reader_pane_owner::a_page_key_with_no_conversation_open_builds_no_pane",
+        gtk_reader_pane_owner::a_page_key_with_no_conversation_open_builds_no_pane as fn(),
     ),
     (
         "gtk_reader_pane_owner::a_second_attach_leaves_two_children_in_the_pane",
@@ -817,6 +819,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_style::the_generated_stylesheet_works_in_gtk as fn(),
     ),
     (
+        "gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back",
+        gtk_toggle_rail::shift_i_puts_the_rail_away_and_brings_it_back as fn(),
+    ),
+    (
         "gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b",
         gtk_toggle_sidebar::toggle_sidebar_moves_the_sidebar_from_the_palette_and_from_ctrl_b
             as fn(),
@@ -1037,6 +1043,58 @@ const CASES: &[(&str, fn())] = &[
         "gtk_onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it",
         gtk_onboarding_sync_window::picking_a_window_updates_the_estimate_and_start_sync_fires_it
             as fn(),
+    ),
+    (
+        "gtk_rail::the_rail_lists_a_thread_and_marks_what_is_on_screen",
+        gtk_rail::the_rail_lists_a_thread_and_marks_what_is_on_screen as fn(),
+    ),
+    (
+        "gtk_rail::activating_a_row_reports_the_message_it_names",
+        gtk_rail::activating_a_row_reports_the_message_it_names as fn(),
+    ),
+    (
+        "gtk_rail::the_rail_takes_its_step_on_the_ladder",
+        gtk_rail::the_rail_takes_its_step_on_the_ladder as fn(),
+    ),
+    (
+        "gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width",
+        gtk_rail::hiding_the_rail_outlasts_the_conversation_and_the_width as fn(),
+    ),
+    (
+        "gtk_rail::a_single_message_conversation_has_no_rail",
+        gtk_rail::a_single_message_conversation_has_no_rail as fn(),
+    ),
+    (
+        "gtk_rail::below_the_floor_the_header_carries_the_index",
+        gtk_rail::below_the_floor_the_header_carries_the_index as fn(),
+    ),
+    (
+        "gtk_rail::a_conversation_with_no_rail_has_no_counter_either",
+        gtk_rail::a_conversation_with_no_rail_has_no_counter_either as fn(),
+    ),
+    (
+        "gtk_rail::opening_a_conversation_narrow_keeps_the_header_short",
+        gtk_rail::opening_a_conversation_narrow_keeps_the_header_short as fn(),
+    ),
+    (
+        "gtk_rail::a_conversation_opens_on_its_most_recent_message",
+        gtk_rail::a_conversation_opens_on_its_most_recent_message as fn(),
+    ),
+    (
+        "gtk_rail::the_rail_moves_the_focus_in_the_one_document_pane",
+        gtk_rail::the_rail_moves_the_focus_in_the_one_document_pane as fn(),
+    ),
+    (
+        "gtk_rail::the_one_document_pane_offers_nothing_to_expand",
+        gtk_rail::the_one_document_pane_offers_nothing_to_expand as fn(),
+    ),
+    (
+        "gtk_rail::marking_a_message_read_does_not_redraw_the_conversation",
+        gtk_rail::marking_a_message_read_does_not_redraw_the_conversation as fn(),
+    ),
+    (
+        "gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows",
+        gtk_rail::the_conversation_header_is_pinned_and_stays_two_rows as fn(),
     ),
     (
         "gtk_reader_account::the_header_names_the_account_only_when_there_is_more_than_one",

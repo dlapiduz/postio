@@ -128,7 +128,27 @@ that arrived in a message never executes, in either direction**, while Postio's
 own bundled editor script is not message content and is therefore permitted.
 
 That is a sharper rule than "the WebView has JS off", not a weaker one — it
-closes a gap the old wording missed entirely. The old rule said nothing about
+closes a gap the old wording missed entirely.
+
+**The reader followed it too, from 2026-09-09** (#1367). It had been stricter
+than this principle required: JavaScript off wholesale, which refuses the
+sender's script and Postio's own alike. That was affordable until the
+conversation became one document, where the rail has to know which message is
+on screen and only the engine holds those coordinates —
+`document::scroll_markers` can move a document to a position without script and
+nothing without script can ask where the reader stopped.
+
+So the reader now runs on the same two settings the principle describes:
+`enable_javascript_markup(false)` refuses a `<script>` element, an
+event-handler attribute and a `javascript:` href arriving in a message, and
+`enable_javascript(true)` lets the application evaluate its own. The document's
+`script-src 'none'` is unchanged, so a sender's script is refused twice; an
+injected script is exempt from the page's CSP, which is why one works and the
+other does not.
+
+Proved as a mechanism in #1323 and against the reader's shipped
+`hardened_settings` in #1367 — a posture proven only on a stand-in is a posture
+nobody has checked. The old rule said nothing about
 **outbound** script, so a reply or forward could have re-emitted a sender's
 markup to a third party while remaining technically compliant. The requirements
 below are what make the refined rule true rather than aspirational.

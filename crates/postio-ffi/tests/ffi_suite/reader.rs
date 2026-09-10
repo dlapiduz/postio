@@ -97,6 +97,7 @@ fn the_document_is_the_one_the_gtk_reader_would_render() {
     // `Theme` would stop noticing if the two frontends ever chose differently.
     let expected = shared::document_for(
         &drawn.html,
+        &drawn.styles,
         RemoteImages::Blocked,
         shared::sheet_for(drawn.rendering, shared::suits_reader_view(&body)),
     );

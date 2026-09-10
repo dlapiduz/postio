@@ -500,11 +500,57 @@ fn map_client_error(command: &str, account: &str, error: ImapClientError) -> Bac
             account: account.to_owned(),
             reason: inner.to_string(),
         },
-        other => BackendError::Rejected {
-            command: command.to_owned(),
-            reason: other.to_string(),
-        },
+        other => {
+            let reason = other.to_string();
+            // **A throttle is not a refusal.** `Rejected` is not transient,
+            // so the operation queue gives up on it; `RateLimited` is, and
+            // the backoff loop retries. Told apart by what the server said,
+            // because IMAP has no status code for "slow down" -- `NO` covers
+            // both "I will not" and "not just now".
+            //
+            // Met against iCloud, which answers a sustained body backfill
+            // with `NO Service temporarily unavailable` after about two
+            // minutes. Classified as a rejection, that ended the mailbox's
+            // sync for the session and left mail missing from the list with
+            // nothing retrying for it (#1438).
+            if reads_as_throttling(&reason) {
+                return BackendError::RateLimited {
+                    // No `retry_after`: iCloud names no interval, and
+                    // inventing one would be a claim the server did not make.
+                    // The backoff loop has its own schedule for that.
+                    retry_after: None,
+                    reason,
+                };
+            }
+            BackendError::Rejected {
+                command: command.to_owned(),
+                reason,
+            }
+        }
     }
+}
+
+/// Whether a server's refusal is really "not just now".
+///
+/// Matched on wording, which is unlovely and is what IMAP leaves available:
+/// there is no response code for throttling that these servers send. Kept
+/// deliberately narrow -- each phrase is one a real server sends, and a
+/// refusal that is genuinely permanent must not be retried for ever.
+fn reads_as_throttling(reason: &str) -> bool {
+    const PHRASES: &[&str] = &[
+        // iCloud, under a sustained backfill.
+        "service temporarily unavailable",
+        // Gmail, and several others.
+        "try again later",
+        "too many simultaneous connections",
+        "temporarily deferred",
+        // The RFC 5530 response code, when a server bothers to send it.
+        "[unavailable]",
+        "[inuse]",
+        "[limit]",
+    ];
+    let lowered = reason.to_ascii_lowercase();
+    PHRASES.iter().any(|phrase| lowered.contains(phrase))
 }
 
 /// Whether the server said "no" to the credentials, as opposed to the
@@ -720,5 +766,68 @@ mod tests {
         );
 
         assert!(!error.is_authentication_failure());
+    }
+}
+
+#[cfg(test)]
+mod throttling_is_not_refusal {
+    use super::*;
+
+    /// iCloud's throttle is retried, not given up on (#1438).
+    ///
+    /// Taken from a real session: a sustained body backfill against
+    /// `imap.mail.me.com` ran for two minutes and then got
+    ///
+    /// ```text
+    /// the server refused FETCH: IMAP FETCH failed:
+    ///   NO Service temporarily unavailable
+    /// ```
+    ///
+    /// Classified as `Rejected`, which `is_transient` says no to, so the
+    /// mailbox's sync ended for the session and the mail it had not reached
+    /// yet simply never arrived. Nothing retried, and the list was short with
+    /// no sign of why.
+    #[test]
+    fn a_server_asking_us_to_slow_down_is_transient() {
+        for reason in [
+            "NO Service temporarily unavailable",
+            "NO [UNAVAILABLE] System busy",
+            "NO Too many simultaneous connections",
+            "NO please try again later",
+            "NO [INUSE] Mailbox in use",
+        ] {
+            assert!(
+                reads_as_throttling(reason),
+                "{reason:?} should read as throttling"
+            );
+            let error = BackendError::RateLimited {
+                retry_after: None,
+                reason: reason.to_owned(),
+            };
+            assert!(
+                error.is_transient(),
+                "{reason:?} must be retried, or the sync ends for the session"
+            );
+        }
+    }
+
+    /// The control: a real refusal is still a refusal.
+    ///
+    /// Without this the fix could be "retry everything", which burns the
+    /// user's battery against a server that will never say yes -- the exact
+    /// thing `is_transient`'s doc comment warns about.
+    #[test]
+    fn a_permanent_refusal_is_not_retried() {
+        for reason in [
+            "NO Mailbox does not exist",
+            "NO Permission denied",
+            "NO Message not found",
+            "BAD Invalid command",
+        ] {
+            assert!(
+                !reads_as_throttling(reason),
+                "{reason:?} is permanent and must not be retried for ever"
+            );
+        }
     }
 }

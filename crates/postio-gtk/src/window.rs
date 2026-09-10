@@ -35,6 +35,7 @@ use crate::keymap::{self, ChordFromGdk, KeyContext, Outcome, Resolver};
 use crate::list_state::ListStateView;
 use crate::list_view::MessageListView;
 use crate::settings::SettingsPanel;
+use postio_ui::reader::rail::{NARROW_BELOW, UNMOUNT_BELOW};
 
 /// How big the settings window opens.
 ///
@@ -796,11 +797,13 @@ impl Window {
     /// Falls back to that one, which is what a folder row that is not a
     /// conversation puts on screen.
     fn reader_showing(&self) -> crate::reader::Reader {
+        // The conversation has *one* reader for the whole thread now (#1426),
+        // so there is no per-message one to ask for -- if the pane is up, its
+        // document is what is on screen.
         self.imp()
             .conversation
             .get()
-            .and_then(|pane| pane.focused())
-            .and_then(|message| self.conversation().reader_for(message))
+            .and_then(|pane| pane.document_reader())
             .unwrap_or_else(|| self.reader())
     }
 
@@ -1572,6 +1575,7 @@ impl Window {
         // fit.
         self.restore(&shell, &sidebar);
         shell.install_breakpoints(self);
+        self.install_rail_breakpoints();
         header.sidebar_toggle.set_active(shell.sidebar_visible());
 
         let _ = self.imp().shell.set(shell);
@@ -1876,6 +1880,91 @@ impl Window {
     /// Closing an overlay and moving the cursor are the window's own
     /// business: nothing outside it needs to hear about them, and there is
     /// nothing for a command bus to do with them.
+    /// Tell the conversation pane which side of the rail's two lines the
+    /// window is on.
+    ///
+    /// Breakpoints report the band; `postio_ui::reader::rail::presentation`
+    /// still decides what to draw, because the ladder is not only about width
+    /// -- a single-message thread and a rail put away with `⇧I` have no rail
+    /// at any width, and a breakpoint cannot know either. So these hand over a
+    /// width and nothing more, and the thresholds stay in one place.
+    fn install_rail_breakpoints(&self) {
+        for (line, below, at_or_above) in [
+            (NARROW_BELOW, NARROW_BELOW - 1, NARROW_BELOW),
+            (UNMOUNT_BELOW, UNMOUNT_BELOW - 1, UNMOUNT_BELOW),
+        ] {
+            let condition = adw::BreakpointCondition::new_length(
+                adw::BreakpointConditionLengthType::MaxWidth,
+                (line - 1) as f64,
+                adw::LengthUnit::Px,
+            );
+            let breakpoint = adw::Breakpoint::new(condition);
+            breakpoint.connect_apply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.tell_the_rail_the_width(below)
+            ));
+            breakpoint.connect_unapply(glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_| window.tell_the_rail_the_width(at_or_above)
+            ));
+            self.add_breakpoint(breakpoint);
+        }
+    }
+
+    /// Pass a width to the conversation pane **if there is one**.
+    ///
+    /// Never through `conversation()`, which builds the pane on first call and
+    /// appends it to the reading slot. A breakpoint applies while the window
+    /// is being presented, so asking that way built a conversation pane in
+    /// every window at startup -- before any conversation was opened, and
+    /// eventually a warm `WebView` with it. `gtk_reader_pane_owner` caught it
+    /// by counting the slot's children.
+    ///
+    /// Nothing is lost by staying quiet: a pane that does not exist has no
+    /// rail to place, and `ConversationView::open` reads the window's width
+    /// itself when it has not been told one.
+    fn tell_the_rail_the_width(&self, width: i32) {
+        if let Some(pane) = self.imp().conversation.get() {
+            pane.set_window_width(width);
+        }
+    }
+
+    /// Turn the page of whichever reading surface is up, and build neither.
+    ///
+    /// Both `conversation()` and `reader()` construct their surface on first
+    /// call and append it to the reading slot, so asking either one *whether*
+    /// it wants a page key is enough to mount it. In a window that has opened
+    /// nothing, that means a page key builds a `ConversationView` and a
+    /// `Reader` -- and the `Reader` carries a `WebView`, which is a web
+    /// process. #1374 met the same trap through a breakpoint and
+    /// `gtk_reader_pane_owner` counts the slot's children because of it.
+    ///
+    /// So both are reached through `imp()`, and a window with nothing open
+    /// does nothing at all -- which is also the right answer: there is no
+    /// page to turn.
+    ///
+    /// The conversation goes first because when its pane is up it is the one
+    /// on screen; `ConversationView::page` answers `false` when it is mounted
+    /// but not the surface being read, and then the single-message reader
+    /// takes it.
+    fn page_what_is_on_screen(&self, down: bool) {
+        if let Some(pane) = self.imp().conversation.get()
+            && pane.page(down)
+        {
+            return;
+        }
+        let Some(reader) = self.imp().reader.get() else {
+            return;
+        };
+        if down {
+            reader.page_down();
+        } else {
+            reader.page_up();
+        }
+    }
+
     fn handled_here(&self, id: CommandId) -> bool {
         match id {
             CommandId::CommandPalette => self.open_finder(Mode::Command),
@@ -1898,7 +1987,14 @@ impl Window {
             // when that reader is already showing the sender's own markup
             // (#1009).
             CommandId::ViewOriginal => {
-                self.reader_showing().view_original();
+                // The one-document pane holds several messages in one view, so
+                // the key has to name which one -- the focused message, which
+                // is the one the reader is looking at. `view_original` alone
+                // reads state only the single-message path fills, so it was a
+                // silent no-op there (#1398).
+                if !self.conversation().show_focused_message_whole() {
+                    self.reader_showing().view_original();
+                }
             }
 
             // The conversation's own, so it goes to the pane rather than out
@@ -1906,6 +2002,14 @@ impl Window {
             // how much of a conversation is open (#1004).
             CommandId::ExpandAll => {
                 self.conversation().expand_all();
+            }
+            // Same reasoning as `ExpandAll`: the rail belongs to the pane, so
+            // this goes straight there rather than out on the bus. Without
+            // this arm the command resolves, the palette lists it, and
+            // pressing the key does nothing at all -- which is #756's shape
+            // and what `gtk_toggle_rail` exists to catch.
+            CommandId::ToggleRail => {
+                self.conversation().toggle_rail();
             }
             CommandId::Settings => self.toggle_settings(),
             CommandId::Search => self.open_finder(Mode::Search),
@@ -2039,8 +2143,12 @@ impl Window {
             // (#438) is the reader's own business the same way the parts
             // panel's cursor is -- nothing outside this window needs to hear
             // about it.
-            CommandId::ScrollReaderDown => self.reader().page_down(),
-            CommandId::ScrollReaderUp => self.reader().page_up(),
+            // The conversation's own reader when that pane is up, the way
+            // `ViewOriginal` reaches it (#1398). `Window::reader()` is the
+            // single-message one, and paging it while a conversation is on
+            // screen scrolls a view nobody is looking at (#1402).
+            CommandId::ScrollReaderDown => self.page_what_is_on_screen(true),
+            CommandId::ScrollReaderUp => self.page_what_is_on_screen(false),
             _ => return false,
         }
         true

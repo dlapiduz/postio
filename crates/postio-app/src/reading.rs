@@ -404,7 +404,6 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
-        conversation_queued: RefCell::new(std::collections::HashSet::new()),
         aimed: Cell::new(None),
     });
     window.list().connect_cursor_moved(glib::clone!(
@@ -441,29 +440,34 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
     // window has the blob source and the allow-list path, and only this
     // module knows how a body is loaded. The pane decides *how many* to ask
     // for; this decides what one contains.
-    // The same two steps the factory below does, handed over separately so
-    // the pane can warm a reader before it knows which message it is for
-    // (#947). Building and hiding the duplicated parts depends on nothing;
-    // only `fill_reader` needs a message.
-    window.conversation().set_reader_warmer(
-        {
+    // ADR 0032, Accepted 2026-09-09 (#1316): a thread is one document in one
+    // `WebView`, not a stack of readers.
+    //
+    // This was `if std::env::var_os("POSTIO_ONE_DOCUMENT").is_some()` while
+    // the ADR was Proposed, and the variable's own comment said why: "an
+    // experiment with a decision still to be made, and `config.toml` is where
+    // settled choices live." The decision is made, so there is no variable and
+    // no second shape to fall back to -- there are no deployed installs to
+    // keep a fallback for, and a code path nothing exercises is a code path
+    // that rots.
+    //
+    // The ADR was accepted **without** its own screen-reader gate being met;
+    // that is recorded there and the pass is #1424. If Orca finds the HTML
+    // worse than the widget tree it replaced, the answer is to fix the HTML,
+    // not to reach for a stacked pane nobody has run in months.
+    {
+        window.conversation().set_one_document(true);
+        window.conversation().connect_thread_opened({
+            let fill = Rc::clone(&parts);
             let window = glib::object::ObjectExt::downgrade(window);
-            move || {
-                let window = window.upgrade()?;
-                let reader = window.new_reader();
-                reader.header().set_identity_visible(false);
-                reader.set_actions_visible(false);
-                reader.widget().set_visible(false);
-                Some(reader)
+            move |rows| {
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                fill.fill_thread(&window.conversation(), rows);
             }
-        },
-        {
-            let parts = Rc::clone(&parts);
-            move |reader: &postio_gtk::reader::Reader, message| {
-                parts.fill_reader(reader, message);
-            }
-        },
-    );
+        });
+    }
 
     window.conversation().set_reader_factory({
         // Weak, for the reason `install_run` states in `search.rs`: the
@@ -628,15 +632,6 @@ struct Fill {
     /// Whether a repaint of the *single* pane is already queued for this
     /// turn of the main loop — see [`Fill::body_arrived`].
     queued: Cell<bool>,
-    /// Which conversation entries have a repaint already queued for this
-    /// turn of the main loop — see [`Fill::body_arrived`].
-    ///
-    /// A set rather than a flag: a backfill can land bodies for several
-    /// expanded entries in the same burst, and each is its own coalescing
-    /// question — `queued` answers it for the one message the single pane
-    /// can be showing, and this answers it for however many the conversation
-    /// pane has open at once.
-    conversation_queued: RefCell<std::collections::HashSet<MessageId>>,
     /// Which message the *single* reading pane was last aimed at, and so
     /// which one asking again would be asking for twice — see [`Fill::fill`].
     ///
@@ -733,6 +728,56 @@ impl Fill {
                 })
             }
         })
+    }
+
+    /// Fetch every body in a thread, for one-document mode (ADR 0032, #1316).
+    ///
+    /// The stacked pane fetches a body when a message is expanded, and
+    /// `fill_reader` is where that lands. One document has no expansions to
+    /// hang it on: the whole thread is drawn at once, so the whole thread is
+    /// asked for at once and each body is handed to the pane as it arrives.
+    ///
+    /// Still one crossing per message, and still through `read`, so a body
+    /// that is not on this machine reports the same absence it would in the
+    /// stack — a message waiting for its body draws collapsed with its
+    /// preview rather than as an empty box.
+    fn fill_thread(
+        &self,
+        pane: &postio_gtk::conversation::ConversationView,
+        rows: Vec<postio_gtk::list::Row>,
+    ) {
+        for row in rows {
+            let answer = self.read(row.id);
+            glib::spawn_future_local({
+                let pane = pane.clone();
+                async move {
+                    let Ok(Some(loaded)) = answer.recv().await else {
+                        return;
+                    };
+                    // The envelope first, and separately from the body: a
+                    // message can have one without the other, and who it went
+                    // to should be drawn as soon as it is known rather than
+                    // waiting on a body that may still be fetching.
+                    //
+                    // `fill_reader` twenty lines below has always used
+                    // `loaded.envelope` to feed the stacked pane's per-entry
+                    // header. This dropped everything but the body, which is
+                    // why the one-document pane said nothing about
+                    // recipients (#1427) -- not because the data was not
+                    // there.
+                    if let Some(envelope) = &loaded.envelope {
+                        pane.set_thread_recipients(
+                            row.id,
+                            postio_ui::reader::header::recipient_line(&envelope.to),
+                            postio_ui::reader::header::recipient_line(&envelope.cc),
+                        );
+                    }
+                    if let crate::compose::Body::Ready { body, .. } = loaded.body {
+                        pane.set_thread_body(row.id, body);
+                    }
+                }
+            });
+        }
     }
 
     fn fill_reader(&self, reader: &postio_gtk::reader::Reader, message: MessageId) {
@@ -891,10 +936,11 @@ impl Fill {
     /// coalesced onto the next turn of the main loop: twenty arrivals for the
     /// same message are one store read and one repaint, not twenty of each.
     /// `Folders::reload` coalesces a resync's `MessagesChanged` the same way
-    /// and for the same reason. The conversation side coalesces *per
-    /// message*, via `conversation_queued`, because a burst can carry
-    /// arrivals for several expanded entries at once and each is its own
-    /// pane to redraw.
+    /// and for the same reason. The conversation used to coalesce *per
+    /// message*, because a burst could carry arrivals for several expanded
+    /// entries and each was its own pane to redraw; one document has one
+    /// pane, and `ConversationView::set_thread_body` does that coalescing
+    /// now (#1426).
     ///
     /// [`Event::BodyLoaded`]: postio_core::Event::BodyLoaded
     fn body_arrived(self: &Rc<Self>, window: &Window, message: MessageId) {
@@ -910,25 +956,12 @@ impl Fill {
             });
         }
 
-        if window.conversation().reader_for(message).is_some()
-            && self.conversation_queued.borrow_mut().insert(message)
-        {
-            let parts = Rc::clone(self);
-            let window = window.downgrade();
-            glib::idle_add_local_once(move || {
-                parts.conversation_queued.borrow_mut().remove(&message);
-                let Some(window) = window.upgrade() else {
-                    return;
-                };
-                // Asked again rather than trusted from above: the entry can
-                // have collapsed, or the conversation can have closed
-                // entirely, between the event landing and this turn of the
-                // main loop running.
-                if let Some(reader) = window.conversation().reader_for(message) {
-                    parts.fill_reader(&reader, message);
-                }
-            });
-        }
+        // The stacked pane's per-entry repaint used to live here: it asked
+        // `reader_for(message)` for that message's own `Reader` and refilled
+        // it when a body landed. One document has no per-message readers --
+        // the whole thread is one `WebView` (ADR 0032) -- and its arrivals go
+        // through `ConversationView::set_thread_body`, which coalesces them
+        // into one redraw. Removed with the pane itself (#1426).
     }
 
     /// Read whatever the pane is showing again and draw it.

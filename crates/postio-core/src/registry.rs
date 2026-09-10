@@ -347,8 +347,17 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ToggleFold,
+        // `z`, not the `space` canvas turn 8a gave it. That trade was made
+        // for a **stack**, where folding is the gesture the surface is for;
+        // FR-013 (#1389) leaves the one-document pane nothing to fold, so
+        // `space` there bought nothing and cost the key every reading surface
+        // turns pages with. The maintainer settled it the other way (#1402).
+        //
+        // Folding keeps a key rather than losing one: the stacked pane still
+        // folds. `z` is free across the table and is where a vim user already
+        // looks -- `za` toggles a fold, and the whole family lives under `z`.
         title: "Fold or unfold this message",
-        default_binding: "space",
+        default_binding: "z",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
@@ -390,6 +399,30 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         // Only where there is a conversation to expand. Offering it on the
         // list would be a key that does nothing most of the time.
+        contexts: ctx(&[Context::Conversation]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::ToggleRail,
+        title: "Hide or show the conversation rail",
+        // **Not the `\u{21e7}R` screen 28 draws.** `R` is `Refresh`'s alternate on
+        // every message surface, `MESSAGE_SURFACES` includes the conversation,
+        // and taking the retry key away inside a thread to gain a rail toggle
+        // is a bad trade -- so the drawing loses this one string and the
+        // registry keeps its key (#1375, maintainer's call).
+        //
+        // `I` for index, which is what the rail is: a column saying where you
+        // are in the thread. Shifted like `O` beside it, because it acts on
+        // the whole conversation rather than on the focused message, and free
+        // everywhere else in the table.
+        default_binding: "I",
+        alternate_bindings: &[],
+        // Only where there is a rail. On the list it would be a key that does
+        // nothing, and the choice it toggles is the window's rather than the
+        // conversation's (FR-047) only in the sense that it outlives any one
+        // thread -- there is still no rail to speak about outside one.
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
@@ -1174,7 +1207,13 @@ static SPECS: &[CommandSpec] = &[
         // and keeps `Page_Down`. The canvas is explicit, and folding is the
         // gesture a stack is *for* -- scrolling is what the scrollbar and
         // the wheel already do.
-        contexts: ctx(&[Context::List, Context::Reader]),
+        //
+        // The conversation is here now, and `space` with it (#1402).
+        // `ScrollReaderUp` always served `MESSAGE_SURFACES` while this row
+        // did not, so `Page_Up` resolved in a thread and `Page_Down` did
+        // not -- an asymmetry nothing ever argued for. The two directions
+        // serve the same surfaces.
+        contexts: ctx(&[Context::List, Context::Reader, Context::Conversation]),
         destructive: false,
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.
@@ -1582,6 +1621,47 @@ mod tests {
         assert_eq!(SPECS.len(), CommandId::ALL.len());
         for (spec, id) in SPECS.iter().zip(CommandId::ALL) {
             assert_eq!(spec.id, *id, "registry row out of order at `{id}`");
+        }
+    }
+
+    /// `space` turns the page in a conversation, and `z` folds (#1402).
+    ///
+    /// Canvas turn 8a gave `space` to folding, and that trade was made for a
+    /// **stack**, where folding is the gesture the surface is for. FR-013
+    /// (#1389) leaves the one-document pane nothing to fold, so `space` there
+    /// bought nothing and cost the key every reading surface turns pages
+    /// with. Maintainer settled it the other way on #1402: `space` pages, and
+    /// folding moves to `z` -- free across the table, and where a vim user
+    /// already looks for it.
+    ///
+    /// Asserted from the row that has to respect it, because
+    /// `bindings_do_not_collide_within_a_context` can only say the two do not
+    /// collide -- not which of them won.
+    #[test]
+    fn space_pages_in_a_conversation_and_z_folds() {
+        let keymap = crate::config::Keymap::defaults();
+        assert_eq!(
+            keymap.command_for(Context::Conversation, "space"),
+            Some(CommandId::ScrollReaderDown.into()),
+            "`space` must turn the page in a conversation -- the one-document \
+             pane has nothing to fold, and this is the key a reading surface \
+             is expected to page with"
+        );
+        assert_eq!(
+            keymap.command_for(Context::Conversation, "z"),
+            Some(CommandId::ToggleFold.into()),
+            "folding must keep a key: the stacked pane still folds, and \
+             taking `space` away without giving it somewhere else would lose \
+             a working gesture"
+        );
+        // `Page_Down` was the asymmetry that started #1402: `ScrollReaderUp`
+        // served the conversation and `ScrollReaderDown` did not.
+        for key in ["Page_Down", "Page_Up"] {
+            assert!(
+                keymap.command_for(Context::Conversation, key).is_some(),
+                "`{key}` must resolve in a conversation; the two directions \
+                 serving different surfaces is what this issue found"
+            );
         }
     }
 

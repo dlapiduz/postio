@@ -1,0 +1,259 @@
+:root {
+  /* Shared by the head's `From` and the `To`/`Cc` rows below it, so the three
+     labels are one column and their values start together (#1437). */
+  --postio-field-label: 2.6rem;
+  --postio-field-gap: 0.5rem;
+
+}
+
+/* The conversation, as one document (ADR 0032, #1316).
+ *
+ * Appended only to a conversation document, so a single-message reader's
+ * stylesheet is untouched -- though a single message *is* a thread of one
+ * here, and renders through these same rules.
+ *
+ * Every value comes from the token layer. Canvas 17 (conversation view) is
+ * what these are matched against: collapsed rows with a marker, a sender and
+ * a preview; an expanded message with an avatar chip, the address in mono and
+ * the time; a left accent edge on the message being read.
+ */
+
+.postio-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── a message ──────────────────────────────────────────────────────── */
+
+.postio-message {
+  border-bottom: 1px solid var(--r-hairline);
+}
+
+.postio-message:last-child {
+  border-bottom: none;
+}
+
+/* The disclosure triangle is the browser's, and it is not Postio's design
+   language. The marker in canvas 17 is a small square that reads as a state,
+   not as an affordance to twist. */
+.postio-message-head::-webkit-details-marker,
+.postio-message-head::marker {
+  display: none;
+  content: "";
+}
+
+.postio-message-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--postio-field-gap);
+  padding: 10px 16px;
+  cursor: default;
+  list-style: none;
+  /* The containing block for this message's own actions, which are taken out
+     of flow so they can appear without moving anything. */
+  position: relative;
+}
+
+/* Reply and forward for *this* message.
+
+   The brief asks for two things that sound contradictory — "reserve no space
+   when idle" and "nothing shifts when they appear" — and absolute positioning
+   is how both are true at once: out of flow, so the row is laid out as though
+   they were not there, and revealing them cannot reflow it.
+
+   `visibility` rather than `display`, because a `display: none` control is not
+   focusable, and these have to be reachable by keyboard as well as by pointer.
+   The `:focus-within` half is not a nicety: without it a keyboard user tabs to
+   a control nobody can see. */
+.postio-message-actions {
+  position: absolute;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  visibility: hidden;
+}
+
+.postio-message-head:hover .postio-message-actions,
+.postio-message-actions:focus-within {
+  visibility: visible;
+}
+
+.postio-message-action {
+  font-size: 0.8125rem;
+  color: var(--r-ink-secondary);
+  text-decoration: none;
+  padding: 2px 8px;
+  border: 1px solid var(--r-hairline);
+  border-radius: 6px;
+  background: var(--r-ground);
+}
+
+.postio-message-action:hover {
+  color: var(--r-ink);
+}
+
+/* The reader's own focus ring, on a control the reader drew -- never the
+   engine's default, which is a different shape from every other focusable
+   thing in the application. */
+.postio-message-action:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+}
+
+.postio-message-head:hover {
+  background: var(--r-quote-bg);
+}
+
+/* The square marker, drawn rather than typed so it cannot pick up a font. */
+.postio-message-head::before {
+  content: "";
+  flex: none;
+  /* `--postio-head-marker` is this plus its two 1px borders. */
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--r-ink-secondary);
+  transform: translateY(-1px);
+}
+
+.postio-message[open] > .postio-message-head::before {
+  background: var(--r-ink-secondary);
+}
+
+.postio-from {
+  flex: none;
+  color: var(--r-ink);
+  font-weight: 600;
+}
+
+.postio-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--r-dim);
+}
+
+/* Metadata is IBM Plex Mono, for the reason everything numeric in Postio is:
+   the mono face is what says "this is metadata". */
+.postio-when {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+}
+
+/* An open message hides its own preview: the body is right there, and a
+   truncated copy of its first line above it is noise. */
+.postio-message[open] > .postio-message-head > .postio-preview {
+  display: none;
+}
+
+/* ── the expanded header, canvas 17 ─────────────────────────────────── */
+
+.postio-message[open] {
+  border-left: 3px solid var(--r-accent);
+}
+
+.postio-message[open] > .postio-message-head,
+.postio-message[open] > .postio-message-recipients {
+  /* 16 less the accent edge, so nothing shifts. The recipient rows are on
+     this rule too, and had to be: they kept the full 16px while the head
+     gave up 3px to the border, so `To` sat three pixels right of `From` on
+     exactly the messages that are open -- which is every message anyone
+     reads. Two attempts to fix this by computing an indent missed it,
+     because the difference was never in the marker. */
+  padding-left: 13px;
+}
+
+.postio-message[open] > .postio-message-head {
+  flex-wrap: wrap;
+}
+
+.postio-address {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85em;
+  color: var(--r-dim);
+}
+
+/* Only an open message shows the address: a collapsed row is a name and a
+   line of the message, which is what canvas 17 draws. */
+.postio-message:not([open]) > .postio-message-head > .postio-address {
+  display: none;
+}
+
+.postio-latest {
+  flex: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75em;
+  color: var(--r-ink-secondary);
+  border: 1px solid var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+  padding: 1px 6px;
+}
+
+/* ── what was held back ─────────────────────────────────────────────── */
+
+/* Stated per message, because the decision it reports is per sender. The
+   experiment blocks every message's remote images (one document has one
+   Content-Security-Policy), so this says so rather than offering a Show
+   button it could not honour for one sender alone. */
+.postio-blocked {
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8em;
+  color: var(--r-ink-secondary);
+}
+
+.postio-message .postio-body {
+  padding: 0 16px 16px;
+}
+
+/* Who a message went to, under its header (#1427), labelled and aligned
+   (#1437). A flex row shaped exactly like `.postio-message-head` above it --
+   same gap, same leading box, same padding rule -- because that is what makes
+   `From`, `To` and `Cc` one column rather than three guesses at one. Drawn
+   bare, this read as a stray line of text floating under the sender. */
+.postio-message-recipients {
+  display: flex;
+  gap: var(--postio-field-gap);
+  align-items: baseline;
+  margin: 0 0 0.15rem 0;
+  padding: 0 16px;
+}
+
+/* **The same leading box the head has, drawn invisible.**
+   `.postio-message-head` begins with an 8px state square, and the recipient
+   rows do not -- so `To` sat left of `From` by exactly that square plus the
+   gap. Two attempts to compute that offset in a `calc` were wrong by 3px and
+   then by 1px, because the number depends on `box-sizing`, on the borders,
+   and on how the flex gap falls; both looked right on screen and the engine
+   said otherwise.
+   Matching the geometry instead of measuring it cannot drift: whatever the
+   marker's box turns out to be, this is the same box. */
+.postio-message-recipients::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1px solid transparent;
+}
+
+.postio-recipients-label {
+  width: var(--postio-field-label);
+  flex: 0 0 var(--postio-field-label);
+  color: var(--r-dim);
+  font-family: var(--r-mono);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.postio-recipients-value {
+  color: var(--r-ink-secondary);
+  overflow-wrap: anywhere;
+}

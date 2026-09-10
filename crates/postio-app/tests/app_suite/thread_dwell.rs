@@ -216,31 +216,35 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
         settle_until(|| window.conversation().rows().first().map(|row| row.id) == Some(members[0])),
         "`j` did not open the other conversation, so nothing below is about it"
     );
+    // FR-015 (#1385): the newest, whatever the read state of the rest.
+    let newest = *members.last().expect("a thread has messages");
     assert_eq!(
         window.conversation().focused(),
-        Some(members[0]),
-        "the conversation opens focused on the first unread"
+        Some(newest),
+        "the conversation opens focused on its most recent message"
     );
 
     // ── each message is read as focus rests on it, and only then ─────────
     assert!(
-        settle_until(|| is_read(&database, members[0])),
-        "resting on the first unread never marked it read"
+        settle_until(|| is_read(&database, newest)),
+        "resting on the message the pane opened on never marked it read"
     );
     assert!(
-        !is_read(&database, members[1]) && !is_read(&database, members[2]),
+        !is_read(&database, members[0]) && !is_read(&database, members[1]),
         "opening a conversation must not read messages focus never reached — \
          'opened the thread, all six read' is exactly what ADR 0015 Q4 forbids"
     );
 
-    // Newest first, then back to the middle — so the *last* message read is
-    // not the one whose id the list row carries. The row stands for its
-    // representative, which is the newest member (`feed::thread_row`), and a
-    // walk that happened to end there would flip the row on that message's
-    // own announcement and prove nothing about #754's repaint gap. Ending on
-    // a non-representative member is what makes the last assertion depend on
-    // the announcement naming the whole conversation.
-    for member in [members[2], members[1]] {
+    // The pane already opened on the newest (FR-015, #1385), so the walk
+    // covers the other two — oldest, then back to the middle. The *last*
+    // message read is still deliberately not the one whose id the list row
+    // carries: the row stands for its representative, which is the newest
+    // member (`feed::thread_row`), and a walk that ended there would flip the
+    // row on that message's own announcement and prove nothing about #754's
+    // repaint gap. Ending on a non-representative member is what makes the
+    // last assertion depend on the announcement naming the whole
+    // conversation.
+    for member in [members[0], members[1]] {
         window.conversation().focus_message(member);
         assert!(
             settle_until(|| is_read(&database, member)),
