@@ -89,6 +89,8 @@ fn thread(count: usize) -> Vec<ThreadMessage> {
                 // this is the shape it lands on for a read thread.
                 expanded: last,
                 latest: last,
+                draft: false,
+                mine: false,
                 body,
             }
         })

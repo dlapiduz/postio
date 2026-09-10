@@ -78,6 +78,8 @@ fn messages(count: usize) -> Vec<ThreadMessage> {
                 preview: format!("Message {index}"),
                 expanded: true,
                 latest: index + 1 == count,
+                draft: false,
+                mine: false,
                 body: body(index),
             }
         })
