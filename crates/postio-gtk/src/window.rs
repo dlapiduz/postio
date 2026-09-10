@@ -2085,6 +2085,18 @@ impl Window {
             // `close_finder` alone restores focus and the keymap context
             // without ever telling `Feed` the search is over.
             CommandId::Back if self.finder().is_open() => self.finder().press_escape(),
+            // The results outlive the box that made them (#1474). It closes
+            // when the keyboard moves onto the list to read a hit, and the
+            // arm above then cannot fire -- so `Escape` matched nothing at
+            // all and the list stayed on stale results with no box open to
+            // explain why. #1011 fixed the half where the box is still up;
+            // this is the other half.
+            //
+            // Through `press_escape` for the reason #1011 gives, and it is
+            // sound with the box shut: `dismiss` fires `on_dismissed`
+            // whether or not anything is open, and the handler that restores
+            // the folder already returns early when there are no results.
+            CommandId::Back if self.list().showing_results() => self.finder().press_escape(),
             CommandId::Back if self.settings().is_visible() => self.close_settings(),
             // Nearer than a selection made before the keyboard went to the
             // folders: `Esc` in the sidebar means "back to the messages".

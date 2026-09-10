@@ -430,6 +430,21 @@ impl MessageListView {
         imp.sort.set_text(&format!("{label} ▾"));
     }
 
+    /// Whether the rows on screen are a result set rather than a folder.
+    ///
+    /// The same `Option` [`set_result_order`](Self::set_result_order) keeps,
+    /// asked as a question. `Window` needs it for `Escape`: the search box
+    /// closes as soon as the keyboard moves onto the list, and until #1474
+    /// nothing downstream of the finder knew a result set was still up, so
+    /// `Escape` had no arm to match and did nothing at all.
+    ///
+    /// `postio-gtk` may hold no SQL, so this says what is *displayed* and
+    /// nothing about `Feed`. Acting on it is `postio-app`'s, through the
+    /// finder's `on_dismissed`.
+    pub fn showing_results(&self) -> bool {
+        self.imp().result_order.get().is_some()
+    }
+
     /// Where the list is scrolled to, in pixels.
     ///
     /// Exposed for the conversation drill-in, which has to put it back:
