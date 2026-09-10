@@ -1,12 +1,15 @@
 //! The two numbers #381 asks for: what the partial index saves, and what
 //! `cipher_page_size = 8192` would buy (ADR 0017 axis 3).
 //!
-//! Ignored by default: it seeds a realistic store and vacuums it three times,
-//! which is minutes, and its output is numbers for a person to read rather
-//! than an assertion. Run it with
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
+//!
+//! It seeds a realistic store and vacuums it three times, which is minutes.
+//! Run it with
 //!
 //! ```text
-//! cargo test -p postio-storage --test storage_suite page_size -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-storage -E 'test(/^measurements::/)'
 //! ```
 //!
 //! # Why it measures a `VACUUM` rather than two fresh stores
@@ -80,7 +83,6 @@ fn pages(connection: &rusqlite::Connection) -> (i64, i64, i64) {
 }
 
 #[test]
-#[ignore = "#381: a measurement, not an assertion -- minutes, and its output is numbers"]
 fn page_size_8192_against_4096_on_a_realistic_store() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("store.db");
@@ -221,7 +223,6 @@ fn keyed_at(connection: &rusqlite::Connection, key: &postio_storage::key::Subkey
 }
 
 #[test]
-#[ignore = "#381: a measurement, not an assertion -- its output is numbers"]
 fn what_the_partial_draft_index_saves() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("store.db");

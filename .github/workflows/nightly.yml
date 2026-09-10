@@ -175,8 +175,20 @@ jobs:
           mkdir -p "$runtime" && chmod 700 "$runtime"
           echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
 
-      # Every test in the workspace, integration binaries included -- the same
-      # thing the pull-request path runs, on a schedule as well.
+      # Keyed on the script rather than a version repeated here, exactly as
+      # `ci.yml`'s Tests job does it: the key then changes when the pin does
+      # and cannot go stale against it.
+      - name: Cache cargo-nextest
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      # Every test in the workspace, integration binaries included -- and the
+      # measurements, which is the part only this job does.
       #
       # It is here because the *local* landing gate stopped running it (#847):
       # several sessions share one workstation, and a postio-app integration
@@ -189,11 +201,27 @@ jobs:
       # reader, not the first: it catches what a branch-shaped view misses,
       # like two branches that are each green alone.
       #
-      # `--no-fail-fast` on purpose: plain cargo abandons the remaining targets
-      # at the first failure, and one red crate then hides a thousand passing
-      # tests -- which is exactly the wrong shape for a report nobody is
-      # watching live.
-      - name: cargo test --workspace
+      # `--profile nightly` is what makes it more than a second reading. Its
+      # `default-filter` is `all()`, so it runs the eight measurement files
+      # that `profile.default` holds off the merge path (#1450) -- six of which
+      # were `#[ignore]`d for a tier that did not exist and had therefore never
+      # run in CI at all. The profile also turns fail-fast off, for the reason
+      # the flag used to give here: one red crate hiding a thousand passing
+      # tests is the wrong shape for a report nobody is watching live.
+      #
+      # nextest rather than `cargo test` because this used to be the slow
+      # runner doing the fast runner's job: ~500s against ~200s for the same
+      # workspace, on the one job with no one waiting on it and therefore the
+      # least excuse.
+      - name: cargo nextest run --profile nightly
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- cargo test --workspace --no-fail-fast
+        run: dbus-run-session -- cargo nextest run --workspace --profile nightly
+
+      # nextest does not run doctests and does not say so, so switching this
+      # job to it would have silently dropped them -- `cargo test --workspace`
+      # ran them before. #1440 is about their only other home being CI.
+      - name: cargo test --doc
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- cargo test --workspace --doc

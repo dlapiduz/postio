@@ -11,12 +11,16 @@
 //! same DKIM shapes. Arithmetic cannot settle that. This builds a store,
 //! fills it from the corpus, trains the dictionary and asks `dbstat`.
 //!
-//! `#[ignore]` because it is a measurement rather than an assertion — the same
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
+//!
+//! It is a measurement rather than an assertion — the same
 //! reason `postio-index`'s `body_index_size.rs` is, whose shape this follows.
 //! Run it with:
 //!
 //! ```text
-//! cargo test -p postio-storage --test header_block_size -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-storage -E 'binary(header_block_size)'
 //! ```
 //!
 //! # What it said, and how far to trust it
@@ -76,7 +80,6 @@ fn stored_bytes(connection: &Connection, column: &str) -> i64 {
 }
 
 #[test]
-#[ignore = "a measurement, not an assertion; see the module docs"]
 fn what_the_header_blocks_cost_next_to_the_text() {
     // The corpus, repeated: real header blocks from real mail, which is the
     // whole point — a generated block would have exactly the repetition the

@@ -37,6 +37,15 @@
 //! on a shared machine under a headless compositor, and the point is to catch
 //! a transition that has become many seconds. The printed numbers are what to
 //! read.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, and it costs
+//! 21.3 s, so it runs on the nightly timer rather than the merge path
+//! (#1450). `.config/nextest.toml`'s `profile.default` filter is what holds
+//! it back; run it with
+//!
+//! ```text
+//! cargo nextest run --profile nightly -p postio-app -E 'test(/^navigation_cost::/)'
+//! ```
 
 #![allow(unsafe_code)]
 // `std::env::set_var` is unsafe since Rust 2024. Set as the first statement of

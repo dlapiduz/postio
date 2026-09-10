@@ -49,6 +49,15 @@
 //! is separate for the same reason and says so.
 //!
 //! Nothing here touches the network: the backend is `MockBackend`.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, and it costs
+//! 44.1 s, so it runs on the nightly timer rather than the merge path
+//! (#1450). `.config/nextest.toml`'s `profile.default` filter is what holds
+//! it back; run it with
+//!
+//! ```text
+//! cargo nextest run --profile nightly -p postio-runtime -E 'binary(idle_store_cpu)'
+//! ```
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

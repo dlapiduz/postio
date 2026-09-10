@@ -45,10 +45,14 @@
 //! * **That HMAC-SHA256 is weaker.** It is not, at these sizes, in any sense
 //!   that matters for authenticating a page.
 //!
-//! `#[ignore]`d: it writes two 253 MiB databases.
+//! It writes two 253 MiB databases.
+//!
+//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
+//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
+//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
 //!
 //! ```text
-//! cargo test -p postio-storage --test hmac_cost -- --ignored --nocapture
+//! cargo nextest run --profile nightly -p postio-storage -E 'binary(hmac_cost)'
 //! ```
 
 use std::time::Duration;
@@ -145,7 +149,6 @@ fn scan(path: &std::path::Path, hmac: Option<&str>) -> Duration {
 }
 
 #[test]
-#[ignore = "writes two 253 MiB databases; a bench, not a gate"]
 fn hmac_sha256_is_cheaper_than_sha512_on_this_cpu() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let mut costs = Vec::new();
