@@ -235,6 +235,12 @@ pub enum MessageVerb {
     Reply,
     /// Forward this message.
     Forward,
+    /// Resume the composer on this draft (#1212).
+    ///
+    /// The verb a draft offers instead of the other two, and the same command
+    /// activating the row raises -- `CommandId::OpenMessage` -- so a button
+    /// and `Return` cannot come to mean different things.
+    Continue,
 }
 
 /// What [`Reader::connect_parts_requested`] holds.
@@ -272,6 +278,18 @@ pub struct ThreadMessage {
     pub expanded: bool,
     /// Whether this is the newest message in the thread — canvas 17's badge.
     pub latest: bool,
+    /// Whether this is a draft: written here and never sent.
+    ///
+    /// Changes which verbs the message offers -- `Continue editing` alone
+    /// (#1212). The conversation knows it from `Row::draft`; the reader only
+    /// carries it through to the document.
+    pub draft: bool,
+    /// Whether it came from one of the account's own addresses (#1241).
+    ///
+    /// Folded by the conversation, which is the only layer that knows the
+    /// account's identities -- `postio-gtk`'s reader has no notion of who
+    /// the user is and should not grow one.
+    pub mine: bool,
     /// The message body, unsanitised — [`Reader::render_thread`] sanitises it
     /// under [`scope`](Self::scope), which is the only way the reference
     /// stamping can be guaranteed.
@@ -1607,6 +1625,8 @@ fn compose_thread_document(
             preview: &message.preview,
             expanded: message.expanded,
             latest: message.latest,
+            draft: message.draft,
+            mine: message.mine,
             blocked: rendered.held_back.remote_images,
             body: &rendered.html,
             styles: &rendered.styles,
@@ -1814,6 +1834,10 @@ fn message_verb(
         (
             postio_ui::reader::thread::FORWARD_SCHEME,
             MessageVerb::Forward,
+        ),
+        (
+            postio_ui::reader::thread::CONTINUE_SCHEME,
+            MessageVerb::Continue,
         ),
     ] {
         if let Some(scope) = uri.strip_prefix(&format!("{scheme}:")) {

@@ -519,6 +519,34 @@ pub const CONVERSATION_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::A
 /// `ArchiveThread` and not `Archive`. Labels and commands for the first three
 /// come from [`postio_ui::reader::header::ReaderAction`], so the two frontends
 /// name them identically.
+/// What the header carries when the message its verbs are scoped to is a
+/// draft (#1212, #1444).
+///
+/// The bar's reply verbs all aim at [`ConversationView::latest_message`], and
+/// a thread you are part-way through answering *ends* in your own unsent
+/// reply -- so the ordinary set offers, as its primary verb, a reply that
+/// would quote your own text back at you.
+///
+/// `CommandId::OpenMessage` is the verb that is right, and it is the same one
+/// activating the row raises, so the button and `Return` cannot come to mean
+/// different things and nothing new enters the registry. Archive stays
+/// because it is a conversation verb and true of a thread whatever its last
+/// message is.
+pub const DOCUMENT_DRAFT_ACTIONS: [crate::widgets::Action; 2] = [
+    crate::widgets::Action::new(
+        postio_core::CommandId::OpenMessage,
+        "Continue editing",
+        "conversation-document-continue",
+    )
+    .primary(),
+    crate::widgets::Action::new(
+        postio_core::CommandId::ArchiveThread,
+        "Archive",
+        "conversation-document-archive-draft",
+    )
+    .icon("postio-archive-symbolic"),
+];
+
 pub const DOCUMENT_ACTIONS: [crate::widgets::Action; 4] = [
     crate::widgets::Action::new(
         postio_ui::reader::header::ReaderAction::Reply.command(),
@@ -567,6 +595,14 @@ pub struct Header {
     expand_all: std::rc::Rc<crate::widgets::KeycapButton>,
     /// The conversation's verbs, at row one's trailing edge (canvas screen 30).
     actions: std::rc::Rc<crate::widgets::ActionBar>,
+    /// The same place, for a conversation whose verbs aim at a draft.
+    ///
+    /// A second bar rather than a swapped action set, because
+    /// [`crate::widgets::ActionBar`] builds its buttons once in `new` and has
+    /// no way to replace them -- and a bar that could be re-armed at runtime
+    /// is a bar whose keycaps, accessible names and handlers all have to be
+    /// rebuilt correctly every time, to save one hidden widget.
+    draft_actions: std::rc::Rc<crate::widgets::ActionBar>,
     /// Up to three participant chips, at row two's leading edge.
     avatars: gtk::Box,
     /// Row two's trailing note: `latest · all 6`.
@@ -664,6 +700,13 @@ impl Header {
         actions.set_visible(false);
         first.append(&actions.widget());
 
+        let draft_actions = crate::widgets::ActionBar::new(
+            &DOCUMENT_DRAFT_ACTIONS,
+            "conversation-header-draft-actions",
+        );
+        draft_actions.set_visible(false);
+        first.append(&draft_actions.widget());
+
         let scoping = gtk::Label::new(None);
         scoping.set_wrap(false);
         scoping.add_css_class("conversation-scoping");
@@ -687,6 +730,7 @@ impl Header {
             meta,
             expand_all,
             actions,
+            draft_actions,
             scoping,
             avatars,
             counter,
@@ -772,6 +816,20 @@ impl Header {
 
     pub fn actions(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
         std::rc::Rc::clone(&self.actions)
+    }
+
+    pub fn draft_actions(&self) -> std::rc::Rc<crate::widgets::ActionBar> {
+        std::rc::Rc::clone(&self.draft_actions)
+    }
+
+    /// Show the verbs that are true of what the bar is scoped to.
+    ///
+    /// One call rather than two setters, so there is no ordering in which
+    /// both bars are visible and `Reply` appears twice -- the shape of #1173,
+    /// which cost three issues in the pane this one replaced.
+    pub fn set_verbs_visible(&self, visible: bool, draft: bool) {
+        self.actions.set_visible(visible && !draft);
+        self.draft_actions.set_visible(visible && draft);
     }
 
     /// The faces on row two, at most three of them.
@@ -1190,6 +1248,21 @@ mod imp {
                 let view = view.clone();
                 move |command| view.emit_command(command)
             });
+            // The draft bar's `Continue editing` has to *name* the draft:
+            // the command reaches the application, which resolves a bare
+            // `OpenMessage` against whatever the list cursor is on -- and a
+            // draft inside a longer thread is not that row (#1212).
+            self.header.draft_actions().connect_command({
+                let view = view.clone();
+                move |command| match command {
+                    postio_core::Command::OpenMessage { .. } => {
+                        view.emit_command(postio_core::Command::OpenMessage {
+                            message: view.latest_message(),
+                        })
+                    }
+                    other => view.emit_command(other),
+                }
+            });
             // The one-document pane's verbs live in the header (canvas screen
             // 30), so the bar is the header's and the pane only wires it.
             self.header.actions().connect_command({
@@ -1468,6 +1541,10 @@ impl ConversationView {
                     preview: row.preview.clone().unwrap_or_default(),
                     expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
+                    draft: row.draft,
+                    // Folded here because this is the layer that knows the
+                    // account's addresses (#1241).
+                    mine: self.is_mine(row),
                     body: bodies.get(&row.id).cloned().unwrap_or_default(),
                 }
             })
@@ -1569,13 +1646,24 @@ impl ConversationView {
                             );
                             return;
                         };
-                        view.emit_action(
-                            MessageId::new(id),
-                            match verb {
-                                crate::reader::view::MessageVerb::Reply => ReplyKind::Reply,
-                                crate::reader::view::MessageVerb::Forward => ReplyKind::Forward,
-                            },
-                        );
+                        let message = MessageId::new(id);
+                        match verb {
+                            crate::reader::view::MessageVerb::Reply => {
+                                view.emit_action(message, ReplyKind::Reply)
+                            }
+                            crate::reader::view::MessageVerb::Forward => {
+                                view.emit_action(message, ReplyKind::Forward)
+                            }
+                            // Not a `ReplyKind`: resuming a draft is not a
+                            // way of answering anybody. It raises the command
+                            // activating the row raises, so the document's
+                            // verb and `Return` cannot drift (#1212).
+                            crate::reader::view::MessageVerb::Continue => {
+                                view.emit_command(postio_core::Command::OpenMessage {
+                                    message: Some(message),
+                                })
+                            }
+                        }
                     }
                 });
                 let widget = reader.widget();
@@ -1635,7 +1723,11 @@ impl ConversationView {
         let opening = opening_focus(&messages).map(|index| messages[index].id);
         imp.thread_rows.replace(messages.clone());
         imp.header.set_conversation(&messages, chrono::Local::now());
-        imp.header.actions().set_visible(true);
+        // Which bar, decided from the message the bar is scoped to: its
+        // verbs aim at the conversation's latest message, and a thread you
+        // are part-way through answering ends in your own draft (#1212).
+        let ends_in_a_draft = messages.last().is_some_and(|row| row.draft);
+        imp.header.set_verbs_visible(true, ends_in_a_draft);
         // Always, whatever the length -- unlike the stacked pane below.
         //
         // There, a single message stands its footer down because the
@@ -1718,6 +1810,8 @@ impl ConversationView {
         let imp = self.imp();
         if imp.header.actions().is_visible() {
             Some(imp.header.actions())
+        } else if imp.header.draft_actions().is_visible() {
+            Some(imp.header.draft_actions())
         } else if imp.footer.is_visible() {
             Some(std::rc::Rc::clone(&imp.footer))
         } else {
@@ -2212,6 +2306,7 @@ impl ConversationView {
         self.imp().header.set_keymap(keymap);
         self.imp().footer.set_keymap(keymap);
         self.imp().header.actions().set_keymap(keymap);
+        self.imp().header.draft_actions().set_keymap(keymap);
     }
 
     /// Shorten the dwell for a test that cannot wait a second.
