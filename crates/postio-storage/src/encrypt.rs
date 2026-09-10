@@ -107,7 +107,7 @@ pub struct Report {
 /// survivable.
 ///
 /// Ordered as the migration runs. Nothing in a shipping build takes one:
-/// [`stopping_after`], behind the `test-support` feature, is the only thing
+/// `stopping_after`, behind the `test-support` feature, is the only thing
 /// that does. It is spelled out here anyway because these are the points the
 /// ordering at the top of this module is *about*, and a reader looking for
 /// "what can this be interrupted between" should find the list rather than

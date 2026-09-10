@@ -327,7 +327,7 @@ pub struct Face {
 /// `static` has one address for the life of the binary, so `postio-gtk`
 /// referencing it costs a pointer, not 909 KB.
 ///
-/// Provenance — https://github.com/google/fonts, `main`, fetched 2026-08-22:
+/// Provenance — <https://github.com/google/fonts>, `main`, fetched 2026-08-22:
 ///   fonts/barlow/            ofl/barlow/            © 2017 The Barlow Project Authors
 ///   fonts/barlow-condensed/  ofl/barlowcondensed/   © 2017 The Barlow Project Authors
 ///   fonts/ibm-plex-mono/     ofl/ibmplexmono/       © 2017 IBM Corp. ("Plex")
