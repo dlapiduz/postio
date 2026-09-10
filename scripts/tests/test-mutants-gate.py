@@ -203,12 +203,99 @@ def test_no_new_survivors_passes() -> None:
             FAILURES.append(f"no new survivors past the baseline should pass:\n{report}")
 
 
+def test_a_subset_run_compares_only_that_subset() -> None:
+    """A matrix job over one crate must not see another crate's baseline
+    lines as missing (#1458).
+
+    Sharding `mutants.yml` into one job per crate is the fix for a run that
+    has never survived long enough to finish, and it only works if the
+    baseline -- one file, all four crates -- is read a crate at a time.
+    Without this, the `postio-config` job compares its own survivors against
+    every crate's baseline and reports the other three as fixed.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        repo = fake_repo(Path(directory) / "repo")
+        (repo / "docs" / "mutants-baseline.txt").write_text(
+            "crates/postio-config/src/lib.rs:1:1: replace a\n"
+            "crates/postio-sync/src/lib.rs:9:9: replace b\n",
+            encoding="utf-8",
+        )
+        result = with_stubbed_tool(
+            ["crates/postio-config/src/lib.rs:1:1: replace a"],
+            repo,
+            ["postio-config"],
+        )
+        report = f"exit={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+        if result.returncode != 0:
+            FAILURES.append(
+                f"a subset run whose own crate is unchanged should pass:\n{report}"
+            )
+
+
+def test_a_subset_update_leaves_other_crates_alone() -> None:
+    """`MUTANTS_UPDATE_BASELINE=1` over one crate rewrites that crate's lines
+    and no others -- otherwise the last matrix job to finish wins and the
+    baseline ends up holding one crate."""
+    with tempfile.TemporaryDirectory() as directory:
+        repo = fake_repo(Path(directory) / "repo")
+        baseline = repo / "docs" / "mutants-baseline.txt"
+        baseline.write_text(
+            "crates/postio-config/src/lib.rs:1:1: replace stale\n"
+            "crates/postio-sync/src/lib.rs:9:9: replace keep me\n",
+            encoding="utf-8",
+        )
+        result = with_stubbed_tool(
+            ["crates/postio-config/src/other.rs:2:2: replace fresh"],
+            repo,
+            ["postio-config"],
+            {"MUTANTS_UPDATE_BASELINE": "1"},
+        )
+        written = baseline.read_text(encoding="utf-8")
+        report = f"exit={result.returncode}\nbaseline={written!r}\nstderr={result.stderr}"
+        if result.returncode != 0:
+            FAILURES.append(f"seeding a subset should succeed:\n{report}")
+        if "postio-sync/src/lib.rs:9:9: replace keep me" not in written:
+            FAILURES.append(
+                f"a subset update dropped another crate's baseline lines:\n{report}"
+            )
+        if "replace stale" in written:
+            FAILURES.append(
+                f"a subset update kept its own crate's superseded line:\n{report}"
+            )
+        if "replace fresh" not in written:
+            FAILURES.append(f"a subset update did not record what survived:\n{report}")
+
+
+def test_a_subset_run_still_catches_its_own_new_survivor() -> None:
+    """Scoping must narrow what is compared, never what is enforced."""
+    with tempfile.TemporaryDirectory() as directory:
+        repo = fake_repo(Path(directory) / "repo")
+        (repo / "docs" / "mutants-baseline.txt").write_text(
+            "crates/postio-sync/src/lib.rs:9:9: replace b\n", encoding="utf-8"
+        )
+        result = with_stubbed_tool(
+            ["crates/postio-config/src/lib.rs:1:1: replace brand new"],
+            repo,
+            ["postio-config"],
+        )
+        report = f"exit={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}"
+        if result.returncode == 0:
+            FAILURES.append(
+                f"a new survivor in the crate under test must still fail:\n{report}"
+            )
+        if "replace brand new" not in result.stderr:
+            FAILURES.append(f"the new survivor should be named:\n{report}")
+
+
 def main() -> int:
     test_missing_tool_fails_before_touching_cargo()
     test_no_baseline_yet_reports_survivors_and_the_seed_command()
     test_update_baseline_writes_exactly_what_survived()
     test_a_new_survivor_past_the_baseline_fails_and_names_it()
     test_no_new_survivors_passes()
+    test_a_subset_run_compares_only_that_subset()
+    test_a_subset_update_leaves_other_crates_alone()
+    test_a_subset_run_still_catches_its_own_new_survivor()
 
     if FAILURES:
         print(f"{len(FAILURES)} case(s) failed:\n", file=sys.stderr)

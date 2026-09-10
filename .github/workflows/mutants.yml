@@ -36,8 +36,32 @@ env:
 
 jobs:
   mutants:
-    name: Mutation testing (pure crates)
+    name: Mutation testing (${{ matrix.crate }})
     runs-on: ubuntu-26.04
+    # One job per crate (#1458).
+    #
+    # This ran as a single job over all four crates eleven times and finished
+    # none of them. Every run died with "The runner has received a shutdown
+    # signal" between 96 and 141 minutes -- well inside the 360 below, so not
+    # this timeout -- after `--jobs 2` and then `--jobs 1` had each been tried
+    # against the same symptom. `scripts/mutants.sh`'s own header had already
+    # named this as the next thing to try if `--jobs 1` did not hold, and it
+    # did not.
+    #
+    # Four shorter jobs is the difference between a run that fits and one that
+    # does not: the 2026-09-10 attempt spent 416s on the unmutated baseline
+    # and then 86 minutes testing, and got through three of the four crates.
+    # It is also the difference between losing one crate's progress to a lost
+    # runner and losing all four's.
+    #
+    # `fail-fast: false` because the crates are independent questions: a
+    # survivor in postio-sync says nothing about postio-model, and stopping
+    # the others to report it would throw away the run this workflow exists
+    # to produce.
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [postio-model, postio-search, postio-config, postio-sync]
     # Generous, not infinite: a hung mutant should not run out the clock on
     # every job queued behind it, and cargo-mutants has its own per-mutant
     # timeout for the ordinary "this one loops" case.
@@ -105,7 +129,12 @@ jobs:
             cargo install cargo-mutants --locked --version 27.1.0 --force
           fi
 
-      - name: Mutation-test the pure crates
+      # `mutants.sh` already took crates as arguments, so the shard is the
+      # whole of the workflow-side change. The baseline is still one file for
+      # every crate; what changed there is that an update rewrites only the
+      # crates the run covered, so four jobs' updates compose instead of the
+      # last one to finish winning (#1458).
+      - name: Mutation-test ${{ matrix.crate }}
         run: |
           df -h /
-          scripts/mutants.sh
+          scripts/mutants.sh ${{ matrix.crate }}
