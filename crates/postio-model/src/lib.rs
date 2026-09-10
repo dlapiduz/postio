@@ -94,6 +94,6 @@ pub use outgoing::{BuiltMessage, OutgoingAttachment};
 pub use scope::{Arrival, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
-pub use thread::Thread;
+pub use thread::{ListOrder, Thread};
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};
 pub use unsubscribe::UnsubscribeActivation;

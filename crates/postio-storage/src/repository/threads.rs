@@ -25,6 +25,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use postio_model::thread::ListOrder;
 use postio_model::{
     AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
 };
@@ -48,55 +49,30 @@ pub enum ThreadOrder {
     Newest,
 }
 
-/// Which way the *list* is sorted, as opposed to a thread's own messages.
+/// The two halves of the keyset this order implies.
 ///
-/// Distinct from [`ThreadOrder`] deliberately: that one is the drill-in
-/// reading a conversation down the page, and it never pages. This is the
-/// folder, which is windowed over paged SQLite and must stay that way in
-/// both directions (#1475).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ListOrder {
-    /// Most recently active first — what a mail folder has always meant.
-    #[default]
-    Newest,
-    /// Least recently active first.
-    Oldest,
+/// Kept beside the query rather than on the model type: `ASC`/`DESC` and a
+/// comparison operator are SQL, and `postio-model` holds none. They are one
+/// trait because they must flip together — an `ORDER BY` reversed without its
+/// cursor comparison gives a second page that overlaps the first, and that is
+/// the bug this shape exists to make hard to write (#1475).
+trait Keyset {
+    fn direction(self) -> &'static str;
+    fn cursor_comparison(self) -> &'static str;
 }
 
-impl ListOrder {
-    /// `DESC` or `ASC`, for the one `ORDER BY` this decides.
+impl Keyset for ListOrder {
     fn direction(self) -> &'static str {
         match self {
-            Self::Newest => "DESC",
-            Self::Oldest => "ASC",
+            ListOrder::Newest => "DESC",
+            ListOrder::Oldest => "ASC",
         }
     }
 
-    /// How a keyset cursor compares against the row it resumes after.
-    ///
-    /// This flips with [`direction`](Self::direction) or the second page
-    /// overlaps the first: "everything below the last row I drew" is `<` when
-    /// reading down and `>` when reading up.
     fn cursor_comparison(self) -> &'static str {
         match self {
-            Self::Newest => "<",
-            Self::Oldest => ">",
-        }
-    }
-
-    /// The other one.
-    pub fn toggled(self) -> Self {
-        match self {
-            Self::Newest => Self::Oldest,
-            Self::Oldest => Self::Newest,
-        }
-    }
-
-    /// What the list header calls it.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Newest => "Newest",
-            Self::Oldest => "Oldest",
+            ListOrder::Newest => "<",
+            ListOrder::Oldest => ">",
         }
     }
 }

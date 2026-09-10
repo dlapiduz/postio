@@ -10,11 +10,12 @@ use std::cell::Cell;
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::Connection;
 
+use postio_model::ListOrder;
 use postio_model::{
     AccountId, EmailAddress, Flag, MailboxId, Message, MessageId, Thread, ThreadId,
 };
 use postio_storage::repository::{
-    ListOrder, MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
+    MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
 };
 use postio_storage::test_support;
 
@@ -502,7 +503,11 @@ fn the_thread_list_pages_oldest_first_too() {
     let oldest = walk(ListOrder::Oldest);
     let newest = walk(ListOrder::Newest);
 
-    assert_eq!(oldest.len(), 25, "every conversation is reached exactly once");
+    assert_eq!(
+        oldest.len(),
+        25,
+        "every conversation is reached exactly once"
+    );
     let mut unique = oldest.clone();
     unique.dedup();
     assert_eq!(unique.len(), 25, "no conversation appears twice");
