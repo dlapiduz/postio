@@ -263,6 +263,8 @@ pub struct ThreadMessage {
     /// stacked pane's per-entry header uses, so the two panes cannot start
     /// counting recipients differently (#1427).
     pub recipients: String,
+    /// Who else was copied, by the same rule. Empty when nobody was.
+    pub cc: String,
     /// The one line a collapsed message shows.
     pub preview: String,
     /// Whether it starts open.
@@ -354,8 +356,10 @@ impl Reader {
 
         // The header sits above the banner and does not scroll away with
         // the body (#319): it is a sibling in this native box, never markup
-        // inside the `WebView`'s document. The action bar (#498) sits last,
-        // under the attachment chips, matching the canvas' footer treatment.
+        // inside the `WebView`'s document. The action bar (#498) used to sit
+        // last, under the attachment chips; it is in the header now, with
+        // the subject, which is where the conversation pane has always put
+        // it (#1435).
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         container.append(&header.widget());
         container.append(&banner.widget());
@@ -364,7 +368,13 @@ impl Reader {
         container.append(&unsubscribe_banner.widget());
         container.append(&view);
         container.append(&chips.widget());
-        container.append(&actions.widget());
+        // **Not appended last any more.** #498 put the bar under the chips,
+        // "matching the canvas' footer treatment"; the conversation pane
+        // puts the same bar in its header, so the same message drew Reply in
+        // two different places depending on which surface opened it -- and
+        // for a one-message row that surface is this one, so the older
+        // placement was what most mail showed (#1435).
+        header.set_verbs(&actions.widget());
 
         let reader = Reader {
             container,
@@ -747,6 +757,12 @@ impl Reader {
 
     /// Whether the action bar is currently on screen. For tests.
     #[doc(hidden)]
+    /// The action bar's widget, so a test can ask where it is mounted.
+    #[doc(hidden)]
+    pub fn actions_widget(&self) -> gtk::Widget {
+        self.actions.widget()
+    }
+
     pub fn actions_visible(&self) -> bool {
         self.actions.widget().is_visible()
     }
@@ -1005,6 +1021,17 @@ impl Reader {
     /// choice the moment the rest of the thread loaded.
     pub fn forget_originals(&self) {
         self.originals.borrow_mut().clear();
+    }
+
+    /// Where the pane is scrolled to, as a marker index. Test-facing.
+    ///
+    /// The scroll itself is a fragment navigation and leaves nothing a test
+    /// can read back, so this is the only observable the page keys have.
+    /// Without it #1431 was invisible: the three scrolling methods returned
+    /// having done nothing and every caller reported success.
+    #[doc(hidden)]
+    pub fn page_for_test(&self) -> u32 {
+        self.page.get()
     }
 
     /// The document currently composed for the open thread. Test-facing.
@@ -1332,6 +1359,71 @@ impl Reader {
         }
     }
 
+    /// Move the document to `fragment`, by script rather than by navigating.
+    ///
+    /// **This used to be `load_uri("postio-reader:///#…")`, and that was a
+    /// latent error page.** A fragment-only `load_uri` is a same-document
+    /// scroll *only* while the view's current URI is exactly the base one.
+    /// `Reader::warm` does `load_html("", None)`, which leaves the URI empty,
+    /// and after that the same call is a real navigation to a scheme whose
+    /// own comment says "nothing is ever registered to handle this scheme" --
+    /// so WebKit answers with "The URL can't be shown" (#1433). Reported from
+    /// a real store, and caught in the end by asking WebKit which URI failed:
+    ///
+    ///     load started -> Some("postio-reader:///")
+    ///     load started -> Some("")
+    ///     LOAD FAILED [Started] postio-reader:///#m-82161
+    ///
+    /// Script is the right mechanism anyway: it moves the document without
+    /// touching the navigation machinery at all, so nothing can be refused,
+    /// no history entry is pushed, and the reader cannot be navigated out
+    /// from under the person reading it. `enable_javascript(true)` is
+    /// Postio's own script only -- `enable_javascript_markup(false)` still
+    /// refuses everything that arrives in a message (ADR 0003).
+    fn scroll_to_fragment(&self, fragment: &str) {
+        // `getElementById` takes a string and never parses a selector, so
+        // there is no selector syntax to escape against -- only the string
+        // literal this is interpolated into. The id is Postio's own
+        // (`message_anchor` escapes the scope, `pos-N` is a number), so this
+        // is belt and braces rather than the load-bearing control.
+        let quoted: String = fragment
+            .chars()
+            .map(|character| match character {
+                '\\' => "\\\\".to_owned(),
+                '"' => "\\\"".to_owned(),
+                '\n' | '\r' => String::new(),
+                other => other.to_string(),
+            })
+            .collect();
+        let script = format!(
+            "(() => {{ const target = document.getElementById(\"{quoted}\"); \
+             if (target) {{ target.scrollIntoView(); }} }})()"
+        );
+        self.view
+            .evaluate_javascript(&script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+    }
+
+    /// Whether there is anything on screen to scroll.
+    ///
+    /// **Two fields, because there are two panes.** `open` is set by
+    /// [`render`](Self::render) and describes a single message;
+    /// `thread` is set by [`render_thread`](Self::render_thread) and
+    /// describes a conversation. `render_thread` has never touched `open`.
+    ///
+    /// The three scrolling methods below all guarded on `open` alone, so
+    /// every one of them was a no-op in the one-document pane -- which is the
+    /// pane the application now opens conversations in. `scroll_to_message`
+    /// said in its own doc comment that it was "a no-op when the pane is not
+    /// showing a thread", and did exactly the opposite (#1431).
+    ///
+    /// It survived #1402's tests because they assert that
+    /// `ConversationView::page` *returned true*, which it did: it found a
+    /// document reader and called this. Nothing asked whether the page
+    /// turned.
+    fn showing(&self) -> bool {
+        self.open.borrow().is_some() || !self.thread.borrow().is_empty()
+    }
+
     /// Scroll the pane down by about a screenful, without moving the
     /// keyboard off wherever it already is (#438).
     ///
@@ -1339,13 +1431,12 @@ impl Reader {
     /// lays down — walking past the end of a message is a stop, not a
     /// wrap-around or an error.
     pub fn page_down(&self) {
-        if self.open.borrow().is_none() {
+        if !self.showing() {
             return;
         }
         let next = (self.page.get() + 1).min(SCROLL_MARKERS - 1);
         self.page.set(next);
-        self.view
-            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{next}"));
+        self.scroll_to_fragment(&format!("pos-{next}"));
     }
 
     /// Scroll a thread document to one of its messages.
@@ -1358,24 +1449,20 @@ impl Reader {
     /// A no-op when the pane is not showing a thread, so the caller does not
     /// have to ask which pane it is talking to.
     pub fn scroll_to_message(&self, scope: &str) {
-        if self.open.borrow().is_none() {
+        if !self.showing() {
             return;
         }
-        self.view.load_uri(&format!(
-            "{DOCUMENT_BASE_URI}#{}",
-            postio_ui::reader::thread::message_anchor(scope)
-        ));
+        self.scroll_to_fragment(&postio_ui::reader::thread::message_anchor(scope));
     }
 
     /// Scroll the pane up by about a screenful. See [`Reader::page_down`].
     pub fn page_up(&self) {
-        if self.open.borrow().is_none() {
+        if !self.showing() {
             return;
         }
         let previous = self.page.get().saturating_sub(1);
         self.page.set(previous);
-        self.view
-            .load_uri(&format!("{DOCUMENT_BASE_URI}#pos-{previous}"));
+        self.scroll_to_fragment(&format!("pos-{previous}"));
     }
 }
 
@@ -1521,6 +1608,7 @@ fn compose_thread_document(
             body: &rendered.html,
             styles: &rendered.styles,
             recipients: &message.recipients,
+            cc: &message.cc,
         })
         .collect();
 
