@@ -166,18 +166,51 @@ pub fn settle_until_within(
     mut condition: impl FnMut() -> bool,
 ) {
     let start = Instant::now();
-    loop {
+    // The longest single `pump()`, which is what tells an exhausted budget
+    // apart from a pump that stopped returning. See the panic below.
+    let mut longest_pump = Duration::ZERO;
+    let mut turn = |pump: &mut dyn FnMut()| {
+        let before = Instant::now();
         pump();
-        if condition() {
-            return;
-        }
+        longest_pump = longest_pump.max(before.elapsed());
+    };
+
+    loop {
+        // Checked here as well as implied by the loop, so a `pump` that
+        // overruns the deadline costs one overrun rather than one per
+        // iteration (#1452).
         if start.elapsed() >= limit {
             // One more turn and one more look: the deadline may have passed
             // while the loop was busy, and reporting a timeout for something
             // that is now true would be a lie.
-            pump();
+            turn(&mut pump);
             if condition() {
                 return;
+            }
+            // Which of the two things went wrong decides what to tell the
+            // reader, and getting this wrong costs a real investigation.
+            //
+            // #1452 is the case: `gtk_editor_format` reported "timed out after
+            // 120.003214519s ... (deadline is POSTIO_TEST_PATIENCE=1 x
+            // 5000ms; raise it for a slow machine)". The budget was five
+            // seconds and the failure arrived at a hundred and twenty, because
+            // one `pump()` had blocked on a WebKit process that had gone away.
+            // Raising the dial would have changed nothing, and the message
+            // said to raise the dial.
+            //
+            // A single pump that outlasts the whole budget is not a slow
+            // machine by any reading, so it gets its own sentence and does not
+            // offer the remedy that cannot work.
+            if longest_pump >= limit {
+                panic!(
+                    "timed out after {:?} waiting for {label}, but the deadline \
+                     was {limit:?}: a single pump took {longest_pump:?}, longer \
+                     than the whole budget.\n\
+                     (the budget was never the constraint, so {PATIENCE_VAR} \
+                     will not help — something the pump waits on stopped \
+                     answering)",
+                    start.elapsed(),
+                );
             }
             panic!(
                 "timed out after {:?} waiting for {label}\n\
@@ -186,6 +219,10 @@ pub fn settle_until_within(
                 start.elapsed(),
                 std::env::var(PATIENCE_VAR).unwrap_or_else(|_| "1".into()),
             );
+        }
+        turn(&mut pump);
+        if condition() {
+            return;
         }
         std::thread::sleep(BACKOFF);
     }
@@ -225,6 +262,65 @@ mod tests {
         // to every wait in the suite.
         let pumped = Cell::new(false);
         settle_until("a pumped condition", || pumped.set(true), || pumped.get());
+    }
+
+    #[test]
+    #[should_panic(expected = "a single pump")]
+    fn a_pump_that_blocks_past_the_deadline_says_so_instead_of_blaming_patience() {
+        // #1452, from a real run: `gtk_editor_format` reported
+        //
+        //   timed out after 120.003214519s waiting for italic to land as
+        //   Emphasis (deadline is POSTIO_TEST_PATIENCE=1 x 5000ms; raise it
+        //   for a slow machine rather than editing this test)
+        //
+        // A 5s deadline that fires at 120s. The pump had blocked on a WebKit
+        // process that had gone away, and the advice in the message -- raise
+        // the dial -- would have changed nothing at all. What the reader needs
+        // to know is that the budget was never the constraint.
+        settle_until_within(
+            Duration::from_millis(20),
+            "something behind a pump that stopped answering",
+            || std::thread::sleep(Duration::from_millis(300)),
+            || false,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "raise it for a slow machine")]
+    fn an_ordinary_timeout_still_points_at_the_dial() {
+        // The other half of the case above: when the pump is cheap and the
+        // budget genuinely ran out, the dial *is* the remedy and the message
+        // must go on saying so.
+        settle_until_within(
+            Duration::from_millis(20),
+            "something that never happens under a cheap pump",
+            || {},
+            || false,
+        );
+    }
+
+    #[test]
+    fn a_blocking_pump_is_not_given_a_second_turn() {
+        // The deadline is checked before pumping as well as after, so a pump
+        // that overruns costs one overrun rather than one per iteration.
+        let pumps = Cell::new(0);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            settle_until_within(
+                Duration::from_millis(20),
+                "a condition behind a slow pump",
+                || {
+                    pumps.set(pumps.get() + 1);
+                    std::thread::sleep(Duration::from_millis(120));
+                },
+                || false,
+            );
+        }));
+        assert!(outcome.is_err(), "it should still time out");
+        assert_eq!(
+            pumps.get(),
+            2,
+            "one turn, then the deadline check, then the final turn -- never a third"
+        );
     }
 
     #[test]
