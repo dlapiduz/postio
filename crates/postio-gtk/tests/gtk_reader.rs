@@ -755,6 +755,8 @@ fn view_original_reaches_one_message_of_a_thread() {
         preview: "preview".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: MessageBody {
             text: None,
             html: Some(html.clone()),
@@ -1252,6 +1254,8 @@ fn an_allowed_senders_images_survive_the_thread_document() {
         preview: "preview".to_owned(),
         expanded: true,
         latest,
+        draft: false,
+        mine: false,
         body: remote(address),
     };
 
@@ -1322,6 +1326,8 @@ fn the_show_verb_actually_grants_consent() {
         preview: "preview".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: remote(address),
     };
 
@@ -1407,6 +1413,8 @@ fn a_messages_own_verb_names_that_message() {
         preview: "preview".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: MessageBody {
             text: None,
             html: Some(format!("<p>from {sender}</p>")),
@@ -1585,6 +1593,8 @@ fn the_rail_hears_which_message_is_on_screen() {
         preview: "preview".to_owned(),
         expanded: true,
         latest: false,
+        draft: false,
+        mine: false,
         body: MessageBody {
             text: None,
             html: Some("<p>body</p>".to_owned()),
@@ -1820,6 +1830,8 @@ fn fifty_conversations_hold_what_one_holds() {
                 preview: format!("conversation {n}"),
                 expanded: true,
                 latest: index == 2,
+                draft: false,
+                mine: false,
                 body: MessageBody {
                     text: Some(format!("the body of message {index} in conversation {n}")),
                     html: None,
@@ -2224,6 +2236,8 @@ fn a_whole_thread_costs_one_web_process() {
                 preview: "the first line".into(),
                 expanded: index + 1 == count,
                 latest: index + 1 == count,
+                draft: false,
+                mine: false,
                 body: parsed.body.clone(),
             })
             .collect()
