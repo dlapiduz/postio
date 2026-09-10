@@ -34,7 +34,9 @@ pub enum Section {
     /// The remote-image allow-list (#871) and what has been unsubscribed
     /// from — never a `config.toml` table at all, unlike every other pane
     /// here: it is view state, kept in its own `$XDG_STATE_HOME` key-file
-    /// (see [`crate::reader::RemoteImageAllowList`]'s own module doc).
+    /// (see `postio_gtk::reader::RemoteImageAllowList`, which owns the file;
+    /// not linkable from here — this crate is below the frontends, not beside
+    /// them).
     Privacy,
     /// The file itself, as text — the raw `TextView` every pane used to
     /// share. It is not a fallback: `config.toml` *is* the settings store,

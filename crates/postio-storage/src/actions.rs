@@ -13,7 +13,7 @@
 //! presses `a`, and the rules pass, when a message arrives — and ADR 0028
 //! puts the shared half below both rather than beside either. The half that
 //! moves down is the one that touches SQLite; what stays up in
-//! [`postio_session::actions`] is everything that only a person's gesture
+//! `postio_session::actions` is everything that only a person's gesture
 //! has: resolving what the selection meant, pushing an undo entry, and
 //! emitting the events the panes repaint from.
 //!

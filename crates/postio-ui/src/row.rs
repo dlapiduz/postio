@@ -15,10 +15,12 @@ use postio_model::EmailAddress;
 
 /// Canvas 1b's row geometry for one density, in logical pixels.
 ///
-/// Type and colour come from the cascade ([`Palette`]); this is the layout
-/// the snapshot arranges them in, which a hand-drawn widget owns the way a
-/// `GtkBox` owns its spacing. The airy numbers are measured straight off the
-/// canvas; the other two tighten the same anatomy rather than changing it.
+/// Type and colour come from the cascade — `postio-gtk`'s own private
+/// `row::Palette` reads them off the style context, which is why there is
+/// nothing to link to from here. This is the layout the snapshot arranges
+/// them in, which a hand-drawn widget owns the way a `GtkBox` owns its
+/// spacing. The airy numbers are measured straight off the canvas; the other
+/// two tighten the same anatomy rather than changing it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     /// Space above and below the row's content.

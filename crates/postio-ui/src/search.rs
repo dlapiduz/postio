@@ -336,7 +336,7 @@ fn elapsed(elapsed: Duration) -> String {
 /// away instead of drawn.
 ///
 /// Every run gets a sequence number, and only the newest one's answer is
-/// accepted. This is the same generation rule [`crate::feed`] uses for message
+/// accepted. This is the same generation rule [`crate::list`] applies to message
 /// pages and for the same reason: superseding a query is the *normal* case
 /// when results follow every keystroke, and without it the readout flickers
 /// backwards through the answers to queries nobody is asking any more.
