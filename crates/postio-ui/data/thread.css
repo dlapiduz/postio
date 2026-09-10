@@ -1,3 +1,11 @@
+:root {
+  /* Shared by the head's `From` and the `To`/`Cc` rows below it, so the three
+     labels are one column and their values start together (#1437). */
+  --postio-field-label: 2.6rem;
+  --postio-field-gap: 0.5rem;
+
+}
+
 /* The conversation, as one document (ADR 0032, #1316).
  *
  * Appended only to a conversation document, so a single-message reader's
@@ -37,7 +45,7 @@
 .postio-message-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--postio-field-gap);
   padding: 10px 16px;
   cursor: default;
   list-style: none;
@@ -100,6 +108,7 @@
 .postio-message-head::before {
   content: "";
   flex: none;
+  /* `--postio-head-marker` is this plus its two 1px borders. */
   width: 8px;
   height: 8px;
   border: 1px solid var(--r-ink-secondary);
@@ -146,8 +155,18 @@
   border-left: 3px solid var(--r-accent);
 }
 
+.postio-message[open] > .postio-message-head,
+.postio-message[open] > .postio-message-recipients {
+  /* 16 less the accent edge, so nothing shifts. The recipient rows are on
+     this rule too, and had to be: they kept the full 16px while the head
+     gave up 3px to the border, so `To` sat three pixels right of `From` on
+     exactly the messages that are open -- which is every message anyone
+     reads. Two attempts to fix this by computing an indent missed it,
+     because the difference was never in the marker. */
+  padding-left: 13px;
+}
+
 .postio-message[open] > .postio-message-head {
-  padding-left: 13px; /* 16 less the accent edge, so nothing shifts */
   flex-wrap: wrap;
 }
 
@@ -192,4 +211,49 @@
 
 .postio-message .postio-body {
   padding: 0 16px 16px;
+}
+
+/* Who a message went to, under its header (#1427), labelled and aligned
+   (#1437). A flex row shaped exactly like `.postio-message-head` above it --
+   same gap, same leading box, same padding rule -- because that is what makes
+   `From`, `To` and `Cc` one column rather than three guesses at one. Drawn
+   bare, this read as a stray line of text floating under the sender. */
+.postio-message-recipients {
+  display: flex;
+  gap: var(--postio-field-gap);
+  align-items: baseline;
+  margin: 0 0 0.15rem 0;
+  padding: 0 16px;
+}
+
+/* **The same leading box the head has, drawn invisible.**
+   `.postio-message-head` begins with an 8px state square, and the recipient
+   rows do not -- so `To` sat left of `From` by exactly that square plus the
+   gap. Two attempts to compute that offset in a `calc` were wrong by 3px and
+   then by 1px, because the number depends on `box-sizing`, on the borders,
+   and on how the flex gap falls; both looked right on screen and the engine
+   said otherwise.
+   Matching the geometry instead of measuring it cannot drift: whatever the
+   marker's box turns out to be, this is the same box. */
+.postio-message-recipients::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 1px solid transparent;
+}
+
+.postio-recipients-label {
+  width: var(--postio-field-label);
+  flex: 0 0 var(--postio-field-label);
+  color: var(--r-dim);
+  font-family: var(--r-mono);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.postio-recipients-value {
+  color: var(--r-ink-secondary);
+  overflow-wrap: anywhere;
 }

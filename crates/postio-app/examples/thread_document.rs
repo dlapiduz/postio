@@ -79,6 +79,7 @@ fn thread(count: usize) -> Vec<ThreadMessage> {
                 address: address.to_string(),
                 when: format!("{:02}:{:02}", 9 + index / 6, (index * 7) % 60),
                 recipients: String::new(),
+                cc: String::new(),
                 preview: format!(
                     "Message {} of {count} \u{2014} the rebuild walks every file\u{2026}",
                     index + 1

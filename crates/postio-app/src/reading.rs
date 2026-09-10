@@ -779,6 +779,7 @@ impl Fill {
                         pane.set_thread_recipients(
                             row.id,
                             postio_ui::reader::header::recipient_line(&envelope.to),
+                            postio_ui::reader::header::recipient_line(&envelope.cc),
                         );
                     }
                     if let crate::compose::Body::Ready { body, .. } = loaded.body {

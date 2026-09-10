@@ -175,6 +175,26 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies as fn(),
     ),
     (
+        "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
+        gtk_reader_styles::moving_between_messages_never_loads_an_error_page as fn(),
+    ),
+    (
+        "gtk_reader_styles::the_readers_verbs_live_in_its_header",
+        gtk_reader_styles::the_readers_verbs_live_in_its_header as fn(),
+    ),
+    (
+        "gtk_reader_styles::from_to_and_cc_share_a_column",
+        gtk_reader_styles::from_to_and_cc_share_a_column as fn(),
+    ),
+    (
+        "gtk_reader_styles::a_page_key_moves_the_document_itself",
+        gtk_reader_styles::a_page_key_moves_the_document_itself as fn(),
+    ),
+    (
+        "gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread",
+        gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread as fn(),
+    ),
+    (
         "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",
         gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message as fn(),
     ),

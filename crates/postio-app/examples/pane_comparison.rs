@@ -74,6 +74,7 @@ fn messages(count: usize) -> Vec<ThreadMessage> {
                 address: address.to_owned(),
                 when: "24 Aug 09:41".to_owned(),
                 recipients: String::new(),
+                cc: String::new(),
                 preview: format!("Message {index}"),
                 expanded: true,
                 latest: index + 1 == count,
