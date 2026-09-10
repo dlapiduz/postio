@@ -76,6 +76,7 @@ fn read(runtime: &tokio::runtime::Runtime, store: &SqliteStore, mailbox: Mailbox
             scope: ListScope::Mailbox(mailbox),
             offset,
             limit: PAGE,
+            order: Default::default(),
         }))
         .expect("the page reads");
     black_box(page);

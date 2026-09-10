@@ -1662,6 +1662,7 @@ impl Session {
                 scope,
                 offset: page * postio_ui::list::PAGE_SIZE,
                 limit: postio_ui::list::PAGE_SIZE,
+                order: Default::default(),
             };
             if let Ok(fetched) = store.list_page(request).await {
                 let rows = crate::list::rows_of(fetched);

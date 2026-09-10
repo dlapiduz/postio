@@ -25,6 +25,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use postio_model::thread::ListOrder;
 use postio_model::{
     AccountId, EmailAddress, LabelId, MailboxId, MessageId, Thread, ThreadId, normalize_subject,
 };
@@ -46,6 +47,34 @@ pub enum ThreadOrder {
     Oldest,
     /// Newest first.
     Newest,
+}
+
+/// The two halves of the keyset this order implies.
+///
+/// Kept beside the query rather than on the model type: `ASC`/`DESC` and a
+/// comparison operator are SQL, and `postio-model` holds none. They are one
+/// trait because they must flip together — an `ORDER BY` reversed without its
+/// cursor comparison gives a second page that overlaps the first, and that is
+/// the bug this shape exists to make hard to write (#1475).
+trait Keyset {
+    fn direction(self) -> &'static str;
+    fn cursor_comparison(self) -> &'static str;
+}
+
+impl Keyset for ListOrder {
+    fn direction(self) -> &'static str {
+        match self {
+            ListOrder::Newest => "DESC",
+            ListOrder::Oldest => "ASC",
+        }
+    }
+
+    fn cursor_comparison(self) -> &'static str {
+        match self {
+            ListOrder::Newest => "<",
+            ListOrder::Oldest => ">",
+        }
+    }
 }
 
 /// A position in the thread list: the sort key of the last row already shown.
@@ -82,6 +111,8 @@ pub struct ThreadListQuery {
     pub limit: u32,
     /// Where to resume; `None` starts at the most recently active thread.
     pub after: Option<ThreadCursor>,
+    /// Which way round (#1475).
+    pub order: ListOrder,
 }
 
 /// One window of the unified list: every account, newest first.
@@ -154,6 +185,7 @@ impl ThreadListQuery {
             mailbox: None,
             limit: DEFAULT_THREAD_PAGE_SIZE,
             after: None,
+            order: ListOrder::default(),
         }
     }
 
@@ -164,12 +196,19 @@ impl ThreadListQuery {
             mailbox: Some(mailbox),
             limit: DEFAULT_THREAD_PAGE_SIZE,
             after: None,
+            order: ListOrder::default(),
         }
     }
 
     /// Sets the window size.
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = limit;
+        self
+    }
+
+    /// Reads it in `order`.
+    pub fn ordered(mut self, order: ListOrder) -> Self {
+        self.order = order;
         self
     }
 
@@ -948,26 +987,31 @@ impl<'a> ThreadRepository<'a> {
     /// of messages costs" means. `the_thread_list_plan_never_sorts` is the
     /// structural half of that claim and `store_reads` is the empirical half.
     pub fn explain(&self, query: &ThreadListQuery) -> String {
+        // Both halves of the keyset, from one place: an `ORDER BY` that flips
+        // without its cursor comparison flipping too gives a second page that
+        // overlaps the first (#1475).
+        let direction = query.order.direction();
+        let comparison = query.order.cursor_comparison();
         // `message_count > 0` hides a conversation whose messages have all been
         // hidden: an empty row is not something the user can act on.
         let Some(_) = query.mailbox else {
             let cursor = if query.after.is_some() {
-                " AND (last_at, id) < (?2, ?3)"
+                &format!(" AND (last_at, id) {comparison} (?2, ?3)")
             } else {
                 ""
             };
             return format!(
                 "SELECT {THREAD_COLUMNS} FROM threads
                   WHERE account_id = ?1 AND message_count > 0{cursor}
-                  ORDER BY last_at DESC, id DESC LIMIT {}",
+                  ORDER BY last_at {direction}, id {direction} LIMIT {}",
                 query.limit
             );
         };
 
         let cursor = if query.after.is_some() {
-            " AND (rep.received_at, rep.id) < (?3, ?4)"
+            format!(" AND (rep.received_at, rep.id) {comparison} (?3, ?4)")
         } else {
-            ""
+            String::new()
         };
         // The folder's slice of this row's conversation. Spelled once and
         // reused, so the aggregates cannot drift apart on what counts as a
@@ -994,7 +1038,7 @@ impl<'a> ThreadRepository<'a> {
                            AND newer.thread_id = rep.thread_id
                            AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
                     ){cursor}
-              ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
+              ORDER BY rep.received_at {direction}, rep.id {direction} LIMIT {}",
             query.limit
         )
     }

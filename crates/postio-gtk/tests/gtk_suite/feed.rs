@@ -146,6 +146,7 @@ pub fn the_message_list_is_fed_from_the_runtime() {
             page: 0,
             offset: 0,
             limit: PAGE_SIZE,
+            order: Default::default(),
         }],
         "opening asks for the first page and nothing else"
     );

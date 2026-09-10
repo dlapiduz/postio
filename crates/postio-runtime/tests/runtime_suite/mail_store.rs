@@ -121,6 +121,7 @@ async fn a_store_is_usable_behind_a_trait_object() {
             scope: ListScope::Mailbox(MailboxId::new(INBOX)),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the fake answers");
@@ -152,6 +153,7 @@ async fn asking_for_a_window_asks_for_a_window() {
             scope,
             offset,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the fake answers");

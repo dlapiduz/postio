@@ -132,3 +132,47 @@ mod tests {
         assert_eq!(thread.latest_message_id(), Some(MessageId::new(7)));
     }
 }
+
+/// Which way a list of conversations is sorted.
+///
+/// A folder had exactly one order and no way to say so, which is why the
+/// chevron on the list header was live over a result set and inert over a
+/// folder (#1475).
+///
+/// Here rather than in `postio-storage` because both halves of the
+/// application need to name it and they do not share a crate: the store
+/// builds the query, and the frontend draws the control and toggles it.
+/// `postio-gtk` may hold no SQL at all, so a storage type could not have
+/// reached it.
+///
+/// Distinct from `postio-storage`'s `ThreadOrder`, which is about a
+/// *conversation's own* messages: that is the drill-in reading down a page,
+/// and it never pages. (Not a link: it lives a crate above this one.)
+/// This is the list, which is windowed over paged SQLite and stays that way
+/// in both directions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListOrder {
+    /// Most recently active first — what a mail folder has always meant.
+    #[default]
+    Newest,
+    /// Least recently active first.
+    Oldest,
+}
+
+impl ListOrder {
+    /// The other one.
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Newest => Self::Oldest,
+            Self::Oldest => Self::Newest,
+        }
+    }
+
+    /// What the list header calls it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Newest => "Newest",
+            Self::Oldest => "Oldest",
+        }
+    }
+}

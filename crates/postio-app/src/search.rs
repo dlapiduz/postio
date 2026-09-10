@@ -280,13 +280,23 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
         let finder = finder.clone();
         let feeds = feeds.clone();
         move |id| {
-            if id != postio_core::CommandId::ToggleResultOrder || !feeds.messages.showing_results()
-            {
+            if id != postio_core::CommandId::ToggleResultOrder {
                 return;
             }
             let Some(window) = weak.upgrade() else {
                 return;
             };
+            // Over a folder the same key means the same idea about a
+            // different axis: newest or oldest rather than ranked or dated
+            // (#1475). The two orders are kept apart deliberately -- leaving
+            // a search restores the folder's own, and a search never inherits
+            // the folder's.
+            if !feeds.messages.showing_results() {
+                let next = window.list().list_order().toggled();
+                window.list().set_list_order(next);
+                feeds.messages.set_order(next);
+                return;
+            }
             let next = order.get().toggled();
             order.set(next);
             window.list().set_result_order(Some(next));

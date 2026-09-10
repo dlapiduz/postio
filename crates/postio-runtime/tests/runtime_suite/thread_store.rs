@@ -34,6 +34,7 @@ fn request(scope: ListScope, offset: u32, limit: u32) -> PageRequest {
         scope,
         offset,
         limit,
+        order: Default::default(),
     }
 }
 

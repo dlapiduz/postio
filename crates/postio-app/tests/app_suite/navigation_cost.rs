@@ -220,6 +220,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
                     mailbox: Some(mailbox),
                     limit: 50,
                     after: None,
+                    order: Default::default(),
                 })
                 .expect("a thread page");
             eprintln!(
