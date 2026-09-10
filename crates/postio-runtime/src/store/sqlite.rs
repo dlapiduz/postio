@@ -10,6 +10,7 @@ use postio_model::mailbox::Mailbox;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use postio_model::ListOrder;
 use postio_storage::repository::{
     ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository, ThreadCursor,
     ThreadListQuery, ThreadListRow, ThreadRepository, UnifiedThreadListQuery,
@@ -228,7 +229,7 @@ impl SqliteStore {
         }
         let marks = self.thread_marks.clone();
         self.read(move |connection| {
-            let query = thread_query(connection, request.scope, request.limit)?;
+            let query = thread_query(connection, request.scope, request.limit, request.order)?;
             let threads = ThreadRepository::new(connection);
             let total = threads.count_of(&query)?;
 
@@ -319,7 +320,9 @@ impl SqliteStore {
                 .await;
         }
         self.read(move |connection| {
-            let query = thread_query(connection, scope, 0)?;
+            // The order does not change what a folder *holds*, so a count
+            // asks in the default one and means the same thing.
+            let query = thread_query(connection, scope, 0, ListOrder::default())?;
             Ok(ThreadRepository::new(connection).count_of(&query)?)
         })
         .await
@@ -444,6 +447,7 @@ fn thread_query(
     connection: &postio_storage::PooledConnection,
     scope: ListScope,
     limit: u32,
+    order: postio_model::ListOrder,
 ) -> Result<ThreadListQuery, StoreError> {
     match scope {
         ListScope::Mailbox(mailbox) => {
@@ -455,9 +459,13 @@ fn thread_query(
                 .get(mailbox)?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?
                 .account_id;
-            Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
+            Ok(ThreadListQuery::in_mailbox(account, mailbox)
+                .limit(limit)
+                .ordered(order))
         }
-        ListScope::Account(account) => Ok(ThreadListQuery::account(account).limit(limit)),
+        ListScope::Account(account) => Ok(ThreadListQuery::account(account)
+            .limit(limit)
+            .ordered(order)),
         ListScope::Flagged(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => Err(
             StoreError::new("That view lists messages rather than conversations"),
         ),

@@ -122,6 +122,10 @@ pub struct PageRequest {
     pub offset: u32,
     /// How many rows to read.
     pub limit: u32,
+    /// Which way the list is sorted (#1475). `postio-gtk` holds no SQL, so
+    /// this is the domain word from `postio-model` and the store turns it
+    /// into a keyset.
+    pub order: postio_model::ListOrder,
 }
 
 /// The answer to a [`PageRequest`], awaited on the main thread.
@@ -187,6 +191,10 @@ struct Inner {
     mailbox_total: Cell<u32>,
     /// The hits in view, ranked, or `None` when a mailbox is in view.
     results: RefCell<Option<Rc<Vec<MessageId>>>>,
+    /// Which way the *folder* is read (#1475). Not the result set's order:
+    /// a search is ranked or dated and a folder is newest or oldest, and one
+    /// must never be carried into the other.
+    order: Cell<postio_model::ListOrder>,
     /// Where a result set's rows come from. `None` in a window that has no
     /// search wired to it, which is the only reason this is an `Option`.
     hits: RefCell<Option<Rc<dyn ResultSource>>>,
@@ -256,6 +264,7 @@ impl Inner {
             page,
             offset: page * PAGE_SIZE,
             limit: PAGE_SIZE,
+            order: self.order.get(),
         });
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: `MessageSource::fetch` is a trait method, and the trait's
@@ -389,6 +398,7 @@ impl Feed {
             total: Cell::new(0),
             mailbox_total: Cell::new(0),
             results: RefCell::new(None),
+            order: Cell::new(postio_model::ListOrder::default()),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
             opened: RefCell::new(Vec::new()),
@@ -505,6 +515,36 @@ impl Feed {
     /// were dropped when the result set took the list — but the list is the
     /// right length from this call, which is what lets the window restore a
     /// scroll offset without waiting for a read.
+    /// Read the folder the other way round (#1475).
+    ///
+    /// Re-reads from the top rather than reversing what is held: the list is
+    /// windowed over paged SQLite and the rows below the window were never
+    /// in memory to turn around. The cursor means the opposite thing in the
+    /// two directions, so a page already drawn cannot be reinterpreted --
+    /// only asked for again.
+    ///
+    /// A no-op while a result set is up: a search has its own order, and
+    /// `#1474`'s restore is what puts the folder's back.
+    pub fn set_order(&self, order: postio_model::ListOrder) {
+        let inner = &self.0;
+        if inner.results.borrow().is_some() || inner.order.get() == order {
+            return;
+        }
+        inner.order.set(order);
+        if let Some(list) = inner.list.upgrade() {
+            // The same door `close_results` uses: every cached position now
+            // stands for a different row, so the window is dropped and the
+            // generation moves on rather than the pages being reinterpreted.
+            list.set_source(Rc::new(Source(inner.clone())));
+        }
+        inner.clone().request(0);
+    }
+
+    /// Which way the folder is being read.
+    pub fn order(&self) -> postio_model::ListOrder {
+        self.0.order.get()
+    }
+
     pub fn close_results(&self) -> bool {
         let inner = &self.0;
         if inner.results.borrow().is_none() {

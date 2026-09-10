@@ -51,6 +51,8 @@ pub struct PageRequest {
     pub offset: u32,
     /// How many rows to read.
     pub limit: u32,
+    /// Which way the list is sorted (#1475).
+    pub order: postio_model::ListOrder,
 }
 
 /// One row of the message list, as a frontend needs it.

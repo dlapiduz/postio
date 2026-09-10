@@ -92,14 +92,46 @@ pub fn the_sort_control_tells_the_truth_over_results() {
     pump();
     assert_eq!(sort_text(&window), "Newest ▾");
 
-    // ...and with no result set on screen, the control is inert: there is
-    // no other order a mailbox can be in, so a click must not dispatch.
+    // -- and over a mailbox the control is live too, now (#1475) ----------
+    //
+    // This assertion used to be its opposite: "over a mailbox the control
+    // offers nothing to toggle", because a folder had exactly one order.
+    // It also drew a `▾` over that nothing, which is an interface making a
+    // promise it cannot keep -- reported from use as a sort option that
+    // does not sort. A folder has two orders now, so the chevron means the
+    // same thing everywhere and the click dispatches the same command.
     window.set_context(Context::List);
     click_sort(&window);
     assert_eq!(
         delivered.borrow().len(),
-        2,
-        "over a mailbox the control offers nothing to toggle"
+        3,
+        "over a mailbox the control has to toggle the folder's own order, \
+         not sit there with a chevron that does nothing"
+    );
+
+    // The folder's order and the result set's are separate axes: a mailbox
+    // is newest or oldest, a search is ranked or dated. Leaving a search
+    // must not leave `Relevance` on a folder, which is the other half of
+    // what #1475 reports.
+    list.set_list_order(postio_model::ListOrder::Oldest);
+    pump();
+    assert_eq!(sort_text(&window), "Oldest ▾");
+
+    list.set_result_order(Some(ResultOrder::Relevance));
+    pump();
+    assert_eq!(
+        sort_text(&window),
+        "Relevance ▾",
+        "a result set says its own order, whatever the folder underneath is in"
+    );
+
+    list.set_result_order(None);
+    pump();
+    assert_eq!(
+        sort_text(&window),
+        "Oldest ▾",
+        "leaving search puts the *folder's* order back -- carrying the \
+         search's out with it is how a mailbox came to be labelled Relevance"
     );
 
     window.destroy();

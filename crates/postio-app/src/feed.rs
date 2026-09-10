@@ -75,6 +75,10 @@ impl MessageSource for Sources {
             scope: request.scope,
             offset: request.offset,
             limit: request.limit,
+            // Carried, not defaulted: this is the one seam between the
+            // widget that knows which way the user asked for and the query
+            // that has to walk the keyset that way (#1475).
+            order: request.order,
         };
         // Which window answers is the store's decision, not this one's:
         // folders thread, query views list messages, and Drafts is a folder

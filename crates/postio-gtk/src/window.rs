@@ -455,6 +455,7 @@ impl Window {
             page: 0,
             offset: 0,
             limit: THREAD_PAGE,
+            order: postio_model::ListOrder::default(),
         });
         glib::spawn_future_local(glib::clone!(
             #[weak(rename_to = window)]

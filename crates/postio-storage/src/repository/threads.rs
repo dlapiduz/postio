@@ -206,12 +206,6 @@ impl ThreadListQuery {
         self
     }
 
-    /// Reads the folder least recently active first (#1475).
-    pub fn oldest_first(mut self) -> Self {
-        self.order = ListOrder::Oldest;
-        self
-    }
-
     /// Reads it in `order`.
     pub fn ordered(mut self, order: ListOrder) -> Self {
         self.order = order;

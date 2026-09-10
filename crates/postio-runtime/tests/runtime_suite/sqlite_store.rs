@@ -27,6 +27,7 @@ async fn a_page_carries_the_count_it_was_read_against() {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the inbox reads");
@@ -60,6 +61,7 @@ async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
                     scope: ListScope::Mailbox(inbox),
                     offset,
                     limit,
+                    order: Default::default(),
                 })
                 .await
                 .expect("the inbox reads")
@@ -105,6 +107,7 @@ async fn every_row_knows_how_long_its_thread_is() {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
             limit: 100,
+            order: Default::default(),
         })
         .await
         .expect("the inbox reads");
@@ -130,6 +133,7 @@ async fn a_page_past_the_end_is_empty_rather_than_an_error() {
             scope: ListScope::Mailbox(inbox),
             offset: 100_000,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("reading past the end is a short answer, not a failure");
@@ -176,6 +180,7 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
                     scope: ListScope::Mailbox(inbox),
                     offset,
                     limit: 5,
+                    order: Default::default(),
                 })
                 .await
         }
@@ -295,6 +300,7 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the inbox reads");
@@ -319,6 +325,7 @@ async fn page_ids(
             scope: ListScope::Mailbox(mailbox),
             offset,
             limit,
+            order: Default::default(),
         })
         .await
         .expect("the page reads")
@@ -341,6 +348,7 @@ async fn a_ranked_set_of_ids_reads_back_in_that_order() {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the inbox reads");
@@ -435,6 +443,7 @@ async fn a_thread_reads_across_every_folder_it_touches() {
             scope: ListScope::Thread(ThreadId::new(1)),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the thread reads");
@@ -457,6 +466,7 @@ async fn a_thread_reads_across_every_folder_it_touches() {
             scope: ListScope::Mailbox(inbox),
             offset: 0,
             limit: 50,
+            order: Default::default(),
         })
         .await
         .expect("the inbox reads");

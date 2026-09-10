@@ -93,6 +93,11 @@ mod imp {
         /// The order the result set on screen is in, or `None` over a
         /// mailbox — which is always, truthfully, `Newest ▾` (#499).
         pub(super) result_order: Cell<Option<postio_search::ResultOrder>>,
+        /// The folder's order, which a folder now has (#1475). Independent of
+        /// `result_order`: a result set is ranked or dated, a folder is
+        /// newest or oldest, and leaving a search must not carry one into the
+        /// other.
+        pub(super) list_order: Cell<postio_model::ListOrder>,
         /// "12 selected", and the bar of verbs beside it.
         pub(super) count: gtk::Label,
         pub(super) bulk: gtk::Box,
@@ -214,6 +219,7 @@ mod imp {
                 meta: gtk::Label::new(None),
                 sort: gtk::Label::new(Some("Newest ▾")),
                 result_order: Cell::new(None),
+                list_order: Cell::new(postio_model::ListOrder::default()),
                 count: gtk::Label::new(None),
                 bulk: gtk::Box::new(gtk::Orientation::Horizontal, 6),
                 view: gtk::ListView::new(Some(cursor.clone()), None::<gtk::ListItemFactory>),
@@ -425,9 +431,27 @@ impl MessageListView {
         imp.result_order.set(order);
         let label = match order {
             Some(order) => order.label(),
-            None => "Newest",
+            None => imp.list_order.get().label(),
         };
         imp.sort.set_text(&format!("{label} ▾"));
+    }
+
+    /// The folder's sort order (#1475).
+    ///
+    /// Separate from the result set's: a search is ranked or dated, a folder
+    /// is newest or oldest, and leaving a search must put the folder's own
+    /// order back rather than carry the search's out with it.
+    pub fn list_order(&self) -> postio_model::ListOrder {
+        self.imp().list_order.get()
+    }
+
+    /// Sets it, and redraws the chip when a folder is what is on screen.
+    pub fn set_list_order(&self, order: postio_model::ListOrder) {
+        self.imp().list_order.set(order);
+        if self.imp().result_order.get().is_none() {
+            // Re-renders the label through the one place that writes it.
+            self.set_result_order(None);
+        }
     }
 
     /// Where the list is scrolled to, in pixels.
@@ -1099,9 +1123,12 @@ impl MessageListView {
             #[weak(rename_to = pane)]
             self,
             move |_, _, _, _| {
-                if pane.imp().result_order.get().is_some() {
-                    pane.run(CommandId::ToggleResultOrder);
-                }
+                // Live in both states now (#1475). Over a result set this
+                // toggles the ranking; over a folder it toggles the date
+                // order. "The order of what I am looking at" is one idea, so
+                // it is one command and one key -- which is the same reason
+                // #499 gave for sharing `o` with the thread's own toggle.
+                pane.run(CommandId::ToggleResultOrder);
             }
         ));
         imp.sort.add_controller(toggle);
