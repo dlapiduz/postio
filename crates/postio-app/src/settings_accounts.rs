@@ -53,7 +53,47 @@ pub type Reindexing = Rc<RefCell<HashSet<AccountId>>>;
 /// and the secret store `wiring` carries alongside the database), and
 /// rebuild-index.
 pub fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing) {
+    // **Not on the startup path, and not merely deferred.**
+    //
+    // `refresh` reads every account's `footprint` -- `count(*)` and
+    // `sum(size)` over every message it has -- to fill in what an account's
+    // mail weighs. Measured on a real store that is 1.48s, and it was spent
+    // before the first frame, for a panel that is not on screen and may never
+    // be opened:
+    //
+    // ```text
+    // TIMING settings_accounts::install 1.47984176s
+    // TIMING feed_the_window            2.04421078s
+    // startup 2626.1ms (... first frame 2457.7ms) budget 500.0ms — OVER
+    // ```
+    //
+    // Moving it to `on_first_frame` was tried and is not enough: a tick
+    // callback runs before the frame is marked, so the same 1.5s landed
+    // inside the measurement and the total got *worse* (2474ms -> 2717ms,
+    // three runs each on a settled machine). Work deferred is not work
+    // removed, and a window that paints and then locks for a second and a
+    // half is not faster, it is janky.
+    //
+    // So it is read when the panel is *shown*, which is the same trade
+    // `Window::open_settings` already makes for the allow list and the
+    // viewport height: "read fresh on every open rather than cached" (#871).
+    // Nothing else needs these numbers -- they are drawn in this panel and
+    // nowhere else.
     refresh(window, wiring);
+
+    {
+        let weak = glib::object::ObjectExt::downgrade(window);
+        let wiring = wiring.clone();
+        let panel = window.settings();
+        gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
+            if !gtk::prelude::WidgetExt::is_visible(panel) {
+                return;
+            }
+            if let Some(window) = weak.upgrade() {
+                refresh(&window, &wiring);
+            }
+        });
+    }
 
     let panel = window.settings();
     // Weak throughout: the window owns the settings panel that owns every
@@ -404,9 +444,25 @@ pub(crate) fn refresh(window: &Window, wiring: &Wiring) {
             // opened at a moment that has nothing to do with one. The same
             // trade `sidebar_backfill::refresh` makes -- re-read rather than
             // wait for an event that may never come (#411).
+            // **Only when the panel is on screen.** `footprint` is
+            // `count(*)` and `sum(size)` over every message an account has,
+            // and on a real store that is 1.48s -- which at startup is spent
+            // before the first frame, for a figure drawn in a panel that may
+            // never be opened. Measured: startup 2474ms with it, ~1400ms
+            // without.
+            //
+            // The rows themselves stay unconditional: names, enabled state
+            // and token expiry are cheap, and several wirings read them
+            // without opening anything. It is the weights alone that cost,
+            // and `install` refreshes again when the panel is shown -- the
+            // same trade `Window::open_settings` already makes for the allow
+            // list and the viewport height, "read fresh on every open rather
+            // than cached" (#871).
+            let showing = gtk::prelude::WidgetExt::is_visible(&window.settings());
             let messages = MessageRepository::new(&connection);
             let weights: Vec<_> = accounts
                 .iter()
+                .filter(|_| showing)
                 .filter_map(|account| {
                     let footprint = messages
                         .footprint(account.id)
