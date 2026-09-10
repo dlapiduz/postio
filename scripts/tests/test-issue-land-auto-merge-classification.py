@@ -73,6 +73,27 @@ def lift_function(name: str) -> str:
     return source[match.start() : end]
 
 
+def driver_for(body: str, small: bool) -> str:
+    """The function's text with the top-level state it reads.
+
+    `arm_auto_merge` is lifted out of the script and run on its own, so
+    everything the script sets above it has to be set here instead. That was
+    `URL` and `ISSUE`; `SMALL` and `BRANCH` joined them when a small fix
+    became able to land without an issue, and the harness running under
+    `set -u` is what said so -- the case failed with `SMALL: unbound
+    variable` rather than quietly taking the wrong branch.
+    """
+    return (
+        "set -euo pipefail\n"
+        'URL="https://example.com/pull/1"\n'
+        'ISSUE="42"\n'
+        'BRANCH="fix/a-small-thing"\n'
+        f'SMALL="{1 if small else 0}"\n'
+        f"{body}\n"
+        "arm_auto_merge\n"
+    )
+
+
 def main() -> int:
     body = lift_function("arm_auto_merge")
     failures: list[str] = []
@@ -98,14 +119,7 @@ def main() -> int:
             gh.chmod(0o755)
 
             driver = Path(tmp) / "driver.sh"
-            driver.write_text(
-                "set -euo pipefail\n"
-                'URL="https://example.com/pull/1"\n'
-                'ISSUE="42"\n'
-                f"{body}\n"
-                "arm_auto_merge\n",
-                encoding="utf-8",
-            )
+            driver.write_text(driver_for(body, small=False), encoding="utf-8")
             result = subprocess.run(
                 ["bash", str(driver)],
                 capture_output=True,
@@ -123,6 +137,31 @@ def main() -> int:
                 )
             elif expected not in output:
                 failures.append(f"{label!r}: said nothing about {expected!r}.\n{output}")
+
+        # The two ways back to a branch whose checks went red, which is what
+        # these lines are for. An issue branch resumes through the claim
+        # script; a small fix has no issue to resume and the script has to
+        # name the branch instead, or the one route back is a command that
+        # takes an issue number the landing never had.
+        (stub_dir / "gh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        (stub_dir / "gh").chmod(0o755)
+        for small, expected in ((False, "issue-claim.sh --resume 42"),
+                                (True, "git checkout fix/a-small-thing")):
+            driver = Path(tmp) / "driver.sh"
+            driver.write_text(driver_for(body, small=small), encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(driver)],
+                capture_output=True,
+                text=True,
+                env={"PATH": f"{stub_dir}:/usr/bin:/bin"},
+                check=False,
+            )
+            output = result.stdout + result.stderr
+            if expected not in output:
+                failures.append(
+                    f"SMALL={int(small)}: the way back to the branch should be "
+                    f"{expected!r}, and the landing said:\n{output}"
+                )
 
     if failures:
         print(f"{len(failures)} case(s) failed:\n", file=sys.stderr)
