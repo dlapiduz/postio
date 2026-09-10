@@ -201,11 +201,12 @@ pub fn a_page_key_moves_the_document_itself() {
     });
     crate::pump();
 
-    let offset = || -> f64 {
+    // Any number the engine can compute, or NaN if it never answered.
+    let number = |script: &str| -> f64 {
         let answer = std::rc::Rc::new(std::cell::Cell::new(f64::NAN));
         let slot = std::rc::Rc::clone(&answer);
         reader.view().evaluate_javascript(
-            "String(window.scrollY)",
+            &format!("String({script})"),
             None,
             None,
             None::<&gtk::gio::Cancellable>,
@@ -223,6 +224,23 @@ pub fn a_page_key_moves_the_document_itself() {
         }
         answer.get()
     };
+    let offset = || number("window.scrollY");
+
+    // **Wait for a page there is room to scroll, not merely for markup.**
+    //
+    // `document_for_test()` is the source Postio composed; it says nothing
+    // about whether the engine has laid the page out. Pressing the key before
+    // it has scrolls a document with nowhere to go, and `window.scrollY` then
+    // answers 0 perfectly truthfully -- which is exactly what this case's
+    // assertion reads as "the key moved the marker and not the document".
+    //
+    // So the case failed intermittently in a whole-suite run and passed every
+    // time on its own, which is the signature of a test racing the thing it
+    // measures rather than of the bug it was written for (#1446).
+    crate::settle_until("the document to become scrollable", || {
+        let room = number("document.documentElement.scrollHeight - window.innerHeight");
+        room.is_finite() && room > 1.0
+    });
 
     let before = offset();
     if before.is_nan() {
