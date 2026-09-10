@@ -1069,9 +1069,9 @@ struct Loaded {
     list_identifier: Option<String>,
 }
 
-/// What [`Reader::set_unsubscribe`] shows for `message`, per #971's own
-/// doc comment: the `List-Id` header when there is one, the sender's domain
-/// otherwise.
+/// What [`postio_gtk::reader::Reader::set_unsubscribe`] shows for `message`,
+/// per #971's own doc comment: the `List-Id` header when there is one, the
+/// sender's domain otherwise.
 fn list_identifier(message: &Message) -> Option<String> {
     message.list_id.clone().or_else(|| {
         message

@@ -248,8 +248,8 @@ fn reindexing_covers(reindexing: &Reindexing, scope: AccountScope) -> bool {
 /// inside it: `Sidebar::connect_scope_selected` pushes, so both run, and the
 /// search's reaction stays in the module that owns searching.
 ///
-/// [`Live::rerun`] is a no-op when nothing has been asked, so this costs
-/// nothing while the box is closed.
+/// [`postio_gtk::search::Live::rerun`] is a no-op when nothing has been
+/// asked, so this costs nothing while the box is closed.
 fn install_scope_rerun(window: &Window, finder: &Finder) {
     window.sidebar().connect_scope_selected({
         let finder = finder.clone();
