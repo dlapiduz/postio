@@ -1,10 +1,24 @@
-//! What moving the bodies out of `search_documents` is worth, measured.
+//! What the two indexes cost next to the text they are built from, measured.
 //!
-//! #407 asks for the saving to be recorded, and a number arrived at by
-//! arithmetic would be worth nothing: the question is how many *pages* SQLite
-//! stops carrying, and that depends on the tokenizer, the b-tree fanout and
-//! how much of a mail corpus is repeated words. So this builds a store, fills
-//! it, and asks `dbstat`.
+//! #407 asked for the saving from moving bodies out of `search_documents` to
+//! be recorded, and a number arrived at by arithmetic would have been worth
+//! nothing: the question is how many *pages* SQLite stops carrying, and that
+//! depends on the tokenizer, the b-tree fanout and how much of a mail corpus
+//! is repeated words. So this builds a store, fills it, and asks `dbstat`.
+//!
+//! That saving has since been taken — `b4a54bfe` dropped
+//! `search_documents.body` and the bodies left SQLite — and this measured a
+//! `sum(length(body))` over that column until #1466. It went on doing so for
+//! two changes, broken, because it was `#[ignore]`d for being slow and
+//! nothing anywhere ran the ignored tests; the tier #1450 built is what
+//! finally executed it, and it failed on the first run.
+//!
+//! What is left is the live half, and it is the half worth keeping: what the
+//! metadata index and the body index each cost against the corpus that
+//! produced them. The corpus is measured at its source — the strings
+//! `a_body` builds — rather than from a column, which is both what the
+//! schema now permits and the better question: it compares an index against
+//! its input rather than against a second copy of it.
 //!
 //! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
 //! the nightly timer rather than the merge path. `.config/nextest.toml`'s
@@ -69,22 +83,17 @@ fn what_the_bodies_cost_in_each_place() {
     let (account, mailbox) = test_support::account_with_inbox(&connection);
     let messages = MessageRepository::new(&connection);
 
+    let mut text: i64 = 0;
     for n in 0..MESSAGES {
         let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
         message.subject = Some(format!("Re: engine notes {n}"));
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.sync.body_state = BodyState::Full;
         messages.create(&mut message).expect("create");
-        index_body(&connection, message.id.get(), Some(&a_body(n))).expect("index");
+        let body = a_body(n);
+        text += body.len() as i64;
+        index_body(&connection, message.id.get(), Some(&body)).expect("index");
     }
-
-    let text: i64 = connection
-        .query_row(
-            "SELECT sum(length(body)) FROM search_documents",
-            [],
-            |row| row.get(0),
-        )
-        .expect("sum");
     let documents = table_bytes(&connection, "search_documents");
     let metadata_index = table_bytes(&connection, "messages_fts");
     let body_index = table_bytes(&connection, "message_bodies_fts");
@@ -92,7 +101,7 @@ fn what_the_bodies_cost_in_each_place() {
     let mb = |bytes: i64| bytes as f64 / (1024.0 * 1024.0);
     println!("\n{MESSAGES} messages, {:.1} MB of body text\n", mb(text));
     println!(
-        "  search_documents (metadata + the body column)  {:>8.2} MB",
+        "  search_documents (the metadata)                {:>8.2} MB",
         mb(documents)
     );
     println!(
@@ -104,11 +113,11 @@ fn what_the_bodies_cost_in_each_place() {
         mb(body_index)
     );
     println!(
-        "\n  what dropping search_documents.body saves      {:>8.2} MB",
+        "\n  the body text these were built from           {:>8.2} MB",
         mb(text)
     );
     println!(
-        "  ... as a share of the three tables above       {:>8.1} %\n",
-        100.0 * text as f64 / (documents + metadata_index + body_index) as f64
+        "  ... what the three tables above cost of it     {:>8.1} %\n",
+        100.0 * (documents + metadata_index + body_index) as f64 / text as f64
     );
 }
