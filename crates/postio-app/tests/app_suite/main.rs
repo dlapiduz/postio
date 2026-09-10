@@ -29,6 +29,7 @@ mod drag_out_wiring;
 mod dwell_wiring;
 mod egress_wiring;
 mod event_fanout;
+mod focus_on_launch;
 mod keystroke;
 mod label_wiring;
 mod list_contract;
@@ -92,6 +93,10 @@ mod wiring;
 const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message",
+        focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message as fn(),
+    ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
