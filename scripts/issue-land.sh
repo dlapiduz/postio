@@ -205,8 +205,22 @@ fi
 # the empty string on macOS and the guard below reported "not an issue branch"
 # -- true-sounding, and about the wrong thing entirely. #559.
 ISSUE=$(printf '%s' "$BRANCH" | sed -n 's/^issue-\([0-9][0-9]*\)-.*/\1/p')
-if [ -z "$ISSUE" ]; then
-    echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)." >&2
+# A small fix does not have an issue, and should not have to invent one
+# (maintainer, 2026-09-10). CLAUDE.md now says to fix anything under about ten
+# minutes on the spot rather than file it -- and a change with no issue had no
+# way to land at all: this guard refused the branch, so the only route was to
+# file the issue the rule exists to avoid.
+#
+# `fix/`, `docs/` and `chore/` are that route. Everything else about the
+# landing is identical; what changes is that no issue is closed, because there
+# is none to close.
+SMALL=0
+if [ -z "$ISSUE" ] && printf '%s' "$BRANCH" | grep -qE '^(fix|docs|chore)/[a-z0-9._-]+$'; then
+    SMALL=1
+fi
+if [ -z "$ISSUE" ] && [ "$SMALL" != 1 ]; then
+    echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)," >&2
+    echo "and not a small fix (expected fix/<slug>, docs/<slug> or chore/<slug>)." >&2
     exit 2
 fi
 
@@ -236,7 +250,11 @@ CRATES=$(git diff --name-only "origin/$BASE...HEAD"; git status --porcelain \
          | sed 's/^...//') 
 CRATES=$(printf '%s\n' $CRATES | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
 
-echo "issue:  #$ISSUE"
+if [ "$SMALL" = 1 ]; then
+    echo "issue:  none (a small fix; CLAUDE.md's ten-minute rule)"
+else
+    echo "issue:  #$ISSUE"
+fi
 echo "branch: $BRANCH"
 echo "base:   $BASE"
 echo "crates: ${CRATES:-none}"
@@ -620,9 +638,16 @@ if [ -n "$(git status --porcelain)" ]; then
     # before it started.
     #
     # Already staged, above -- before the invariants ran rather than here.
-    git commit -m "$MSG
+    if [ "$SMALL" = 1 ]; then
+        # No `Refs:` line: a small fix has no issue to refer to, and a
+        # made-up number is worse than none -- the next reader follows it
+        # somewhere unrelated.
+        git commit -m "$MSG"
+    else
+        git commit -m "$MSG
 
 Refs: #$ISSUE"
+    fi
 else
     echo "no local changes to commit"
 fi
@@ -832,7 +857,11 @@ else
     # one that has to say so -- here, not by editing the PR after the fact
     # (#1189). Written out as "deliberately not `Closes`" rather than left
     # for a reader to guess whether it was an omission.
-    if [ "$REFS_ONLY" = 1 ]; then
+    if [ "$SMALL" = 1 ]; then
+        # Nothing to close. Said out loud so a reviewer does not go looking
+        # for the issue this PR forgot to name.
+        CLOSES_LINE="No issue: a small fix, made on the spot rather than filed (CLAUDE.md, \"Say it where it persists\")."
+    elif [ "$REFS_ONLY" = 1 ]; then
         CLOSES_LINE="Refs: #$ISSUE — deliberately not \`Closes\`: this PR does not meet #$ISSUE's acceptance criteria in full."
     else
         CLOSES_LINE="Closes #$ISSUE"
@@ -909,7 +938,11 @@ arm_auto_merge() {
         if output=$(gh pr merge --auto --rebase 2>&1); then
             echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
             echo "Nothing waits here. If a check fails, your next claim will say so, and"
-            echo "    scripts/issue-claim.sh --resume $ISSUE"
+            if [ "$SMALL" = 1 ]; then
+                echo "    git checkout $BRANCH   (no issue to resume; the branch is still here)"
+            else
+                echo "    scripts/issue-claim.sh --resume $ISSUE"
+            fi
             echo "comes back to this branch to fix it on the same PR."
             echo "Now claim the next issue -- finishing an issue is not finishing a session."
             return 0
@@ -1170,5 +1203,7 @@ else
     echo "already be gone. Not fatal: the merge above already succeeded." >&2
 fi
 echo "Next: scripts/issue-claim.sh   (from here: reuses this worktree, build and all)"
-echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+if [ "$SMALL" != 1 ]; then
+    echo "      scripts/issue-release.sh $ISSUE   only if you are stopping."
+fi
 echo "Finishing an issue is not finishing a session."
