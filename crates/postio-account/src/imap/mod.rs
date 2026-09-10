@@ -778,8 +778,10 @@ mod throttling_is_not_refusal {
     /// Taken from a real session: a sustained body backfill against
     /// `imap.mail.me.com` ran for two minutes and then got
     ///
-    ///     the server refused FETCH: IMAP FETCH failed:
-    ///       NO Service temporarily unavailable
+    /// ```text
+    /// the server refused FETCH: IMAP FETCH failed:
+    ///   NO Service temporarily unavailable
+    /// ```
     ///
     /// Classified as `Rejected`, which `is_transient` says no to, so the
     /// mailbox's sync ended for the session and the mail it had not reached
