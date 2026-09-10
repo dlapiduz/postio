@@ -14,7 +14,7 @@ use postio_model::{
     AccountId, EmailAddress, Flag, MailboxId, Message, MessageId, Thread, ThreadId,
 };
 use postio_storage::repository::{
-    MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
+    ListOrder, MessageRepository, ThreadListQuery, ThreadOrder, ThreadRepository,
 };
 use postio_storage::test_support;
 
@@ -464,6 +464,103 @@ fn the_thread_list_is_newest_first_and_pages_by_cursor() {
 }
 
 #[test]
+fn the_thread_list_pages_oldest_first_too() {
+    // #1475: a folder gets a sort it can toggle, so the chevron on the list
+    // header means something outside search. Both directions have to *page*,
+    // and a keyset walked the other way is not the same query with its rows
+    // reversed: the cursor comparison has to flip with the `ORDER BY`, or the
+    // second page overlaps the first.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let threads = ThreadRepository::new(&connection);
+
+    for index in 0..25 {
+        let thread = a_thread(&connection, account.id);
+        let message = message(&connection, account.id, inbox, "ada", index * 100);
+        threads.add_message(thread.id, message.id).expect("add");
+    }
+
+    let walk = |order: ListOrder| {
+        let mut seen: Vec<Option<ThreadId>> = Vec::new();
+        let mut cursor = None;
+        loop {
+            let mut query = ThreadListQuery::in_mailbox(account.id, inbox)
+                .limit(10)
+                .ordered(order);
+            if let Some(after) = cursor {
+                query = query.after(after);
+            }
+            let page = threads.page(&query).expect("page");
+            let Some(last) = page.last() else { break };
+            cursor = Some(last.cursor());
+            seen.extend(page.iter().map(|row| row.id));
+        }
+        seen
+    };
+
+    let oldest = walk(ListOrder::Oldest);
+    let newest = walk(ListOrder::Newest);
+
+    assert_eq!(oldest.len(), 25, "every conversation is reached exactly once");
+    let mut unique = oldest.clone();
+    unique.dedup();
+    assert_eq!(unique.len(), 25, "no conversation appears twice");
+
+    let mut reversed = oldest.clone();
+    reversed.reverse();
+    assert_eq!(
+        reversed, newest,
+        "the two directions disagree about which conversations are in the \
+         folder, so one of them is dropping or duplicating rows across a \
+         page boundary"
+    );
+}
+
+#[test]
+fn an_oldest_first_page_costs_what_a_newest_first_page_costs() {
+    // Counted rather than timed (#100), and worth counting at all because the
+    // cheap way to add a second direction is to read the folder and reverse
+    // it in memory. That passes every ordering assertion above and breaks the
+    // one rule the list has: never load a whole mailbox.
+    let database = test_support::memory();
+    let report = postio_storage::seed::seed_large(&database, 7, 20_000);
+    let inbox = report
+        .mailbox(postio_model::mailbox::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    let connection = database.connection().expect("checkout");
+    let threads = ThreadRepository::new(&connection);
+
+    postio_storage::test_support::counting::install(&connection);
+    let count = |order: ListOrder| {
+        let query = ThreadListQuery::in_mailbox(report.account.id, inbox)
+            .limit(50)
+            .ordered(order);
+        let mut rows = 0;
+        let counts = postio_storage::test_support::counting::counted(|| {
+            rows = threads.page(&query).expect("a page").len();
+        });
+        assert_eq!(rows, 50, "a page is a window, never the folder");
+        counts
+    };
+
+    let newest = count(ListOrder::Newest);
+    let oldest = count(ListOrder::Oldest);
+
+    assert_eq!(
+        oldest.rows, newest.rows,
+        "an oldest-first page reads a different number of rows than a \
+         newest-first one over the same folder, which is what reading the \
+         folder and reversing it looks like from here"
+    );
+    assert_eq!(
+        oldest.statements, newest.statements,
+        "the two directions issue different numbers of statements"
+    );
+}
+
+#[test]
 fn a_thread_whose_messages_are_all_hidden_drops_out_of_the_list() {
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
@@ -513,61 +610,68 @@ fn the_thread_list_plan_never_sorts() {
             ThreadListQuery::in_mailbox(AccountId::new(1), MailboxId::new(1)),
         ),
     ] {
-        for after in [false, true] {
-            let mut query = base.clone();
-            if after {
-                query = query.after(postio_storage::repository::ThreadCursor {
-                    last_at: at(0),
-                    id: 10,
-                });
-            }
-            let sql = threads.explain(&query);
-            let mut statement = connection
-                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-                .expect("prepare");
-            let arguments = vec![1i64; statement.parameter_count()];
-            let plan = statement
-                .query_map(rusqlite::params_from_iter(arguments), |row| {
-                    row.get::<_, String>(3)
-                })
-                .expect("plan")
-                .collect::<Result<Vec<String>, _>>()
-                .expect("collect")
-                .join("\n");
+        // Both directions (#1475). An index is walkable backwards, so
+        // `ORDER BY ... ASC` over a `DESC` index costs nothing extra -- but
+        // only while the cursor comparison flips with it. If it does not,
+        // SQLite materialises and sorts, which is the whole mailbox in
+        // memory and precisely what this test exists to forbid.
+        for order in [ListOrder::Newest, ListOrder::Oldest] {
+            for after in [false, true] {
+                let mut query = base.clone().ordered(order);
+                if after {
+                    query = query.after(postio_storage::repository::ThreadCursor {
+                        last_at: at(0),
+                        id: 10,
+                    });
+                }
+                let sql = threads.explain(&query);
+                let mut statement = connection
+                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                    .expect("prepare");
+                let arguments = vec![1i64; statement.parameter_count()];
+                let plan = statement
+                    .query_map(rusqlite::params_from_iter(arguments), |row| {
+                        row.get::<_, String>(3)
+                    })
+                    .expect("plan")
+                    .collect::<Result<Vec<String>, _>>()
+                    .expect("collect")
+                    .join("\n");
 
-            assert!(
-                !plan.contains("TEMP B-TREE"),
-                "{label} / cursor={after}: the thread list must never sort:\n{plan}"
-            );
-            assert!(
-                !plan.contains("SCAN threads") && !plan.contains("SCAN messages"),
-                "{label} / cursor={after}: the list must never scan a table:\n{plan}"
-            );
-            if base.mailbox.is_some() {
-                // The folder window is ordered over the *representative
-                // message*, on the very index the message list uses — which
-                // is what makes "page k of threads costs what page k of
-                // messages costs" true by construction rather than by
-                // measurement.
                 assert!(
-                    plan.contains("idx_messages_list"),
-                    "{label} / cursor={after}: the folder window must walk \
+                    !plan.contains("TEMP B-TREE"),
+                    "{label} / {order:?} / cursor={after}: the thread list must never sort:\n{plan}"
+                );
+                assert!(
+                    !plan.contains("SCAN threads") && !plan.contains("SCAN messages"),
+                    "{label} / {order:?} / cursor={after}: the list must never scan a table:\n{plan}"
+                );
+                if base.mailbox.is_some() {
+                    // The folder window is ordered over the *representative
+                    // message*, on the very index the message list uses — which
+                    // is what makes "page k of threads costs what page k of
+                    // messages costs" true by construction rather than by
+                    // measurement.
+                    assert!(
+                        plan.contains("idx_messages_list"),
+                        "{label} / {order:?} / cursor={after}: the folder window must walk \
                      the message list index:\n{plan}"
-                );
-                // Everything the conversation contributes is a correlated
-                // subquery, and each has to seek the index migration 0012
-                // added rather than walk a whole thread and filter.
-                assert!(
-                    plan.contains("idx_messages_thread_mailbox"),
-                    "{label} / cursor={after}: the folder slice must seek its \
+                    );
+                    // Everything the conversation contributes is a correlated
+                    // subquery, and each has to seek the index migration 0012
+                    // added rather than walk a whole thread and filter.
+                    assert!(
+                        plan.contains("idx_messages_thread_mailbox"),
+                        "{label} / {order:?} / cursor={after}: the folder slice must seek its \
                      own index:\n{plan}"
-                );
-            } else {
-                assert!(
-                    plan.contains("idx_threads_account_last_at"),
-                    "{label} / cursor={after}: expected the thread list \
+                    );
+                } else {
+                    assert!(
+                        plan.contains("idx_threads_account_last_at"),
+                        "{label} / {order:?} / cursor={after}: expected the thread list \
                      index:\n{plan}"
-                );
+                    );
+                }
             }
         }
     }

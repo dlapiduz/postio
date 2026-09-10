@@ -48,6 +48,59 @@ pub enum ThreadOrder {
     Newest,
 }
 
+/// Which way the *list* is sorted, as opposed to a thread's own messages.
+///
+/// Distinct from [`ThreadOrder`] deliberately: that one is the drill-in
+/// reading a conversation down the page, and it never pages. This is the
+/// folder, which is windowed over paged SQLite and must stay that way in
+/// both directions (#1475).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListOrder {
+    /// Most recently active first — what a mail folder has always meant.
+    #[default]
+    Newest,
+    /// Least recently active first.
+    Oldest,
+}
+
+impl ListOrder {
+    /// `DESC` or `ASC`, for the one `ORDER BY` this decides.
+    fn direction(self) -> &'static str {
+        match self {
+            Self::Newest => "DESC",
+            Self::Oldest => "ASC",
+        }
+    }
+
+    /// How a keyset cursor compares against the row it resumes after.
+    ///
+    /// This flips with [`direction`](Self::direction) or the second page
+    /// overlaps the first: "everything below the last row I drew" is `<` when
+    /// reading down and `>` when reading up.
+    fn cursor_comparison(self) -> &'static str {
+        match self {
+            Self::Newest => "<",
+            Self::Oldest => ">",
+        }
+    }
+
+    /// The other one.
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Newest => Self::Oldest,
+            Self::Oldest => Self::Newest,
+        }
+    }
+
+    /// What the list header calls it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Newest => "Newest",
+            Self::Oldest => "Oldest",
+        }
+    }
+}
+
 /// A position in the thread list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadCursor {
@@ -82,6 +135,8 @@ pub struct ThreadListQuery {
     pub limit: u32,
     /// Where to resume; `None` starts at the most recently active thread.
     pub after: Option<ThreadCursor>,
+    /// Which way round (#1475).
+    pub order: ListOrder,
 }
 
 /// One window of the unified list: every account, newest first.
@@ -154,6 +209,7 @@ impl ThreadListQuery {
             mailbox: None,
             limit: DEFAULT_THREAD_PAGE_SIZE,
             after: None,
+            order: ListOrder::default(),
         }
     }
 
@@ -164,12 +220,25 @@ impl ThreadListQuery {
             mailbox: Some(mailbox),
             limit: DEFAULT_THREAD_PAGE_SIZE,
             after: None,
+            order: ListOrder::default(),
         }
     }
 
     /// Sets the window size.
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = limit;
+        self
+    }
+
+    /// Reads the folder least recently active first (#1475).
+    pub fn oldest_first(mut self) -> Self {
+        self.order = ListOrder::Oldest;
+        self
+    }
+
+    /// Reads it in `order`.
+    pub fn ordered(mut self, order: ListOrder) -> Self {
+        self.order = order;
         self
     }
 
@@ -948,26 +1017,31 @@ impl<'a> ThreadRepository<'a> {
     /// of messages costs" means. `the_thread_list_plan_never_sorts` is the
     /// structural half of that claim and `store_reads` is the empirical half.
     pub fn explain(&self, query: &ThreadListQuery) -> String {
+        // Both halves of the keyset, from one place: an `ORDER BY` that flips
+        // without its cursor comparison flipping too gives a second page that
+        // overlaps the first (#1475).
+        let direction = query.order.direction();
+        let comparison = query.order.cursor_comparison();
         // `message_count > 0` hides a conversation whose messages have all been
         // hidden: an empty row is not something the user can act on.
         let Some(_) = query.mailbox else {
             let cursor = if query.after.is_some() {
-                " AND (last_at, id) < (?2, ?3)"
+                &format!(" AND (last_at, id) {comparison} (?2, ?3)")
             } else {
                 ""
             };
             return format!(
                 "SELECT {THREAD_COLUMNS} FROM threads
                   WHERE account_id = ?1 AND message_count > 0{cursor}
-                  ORDER BY last_at DESC, id DESC LIMIT {}",
+                  ORDER BY last_at {direction}, id {direction} LIMIT {}",
                 query.limit
             );
         };
 
         let cursor = if query.after.is_some() {
-            " AND (rep.received_at, rep.id) < (?3, ?4)"
+            format!(" AND (rep.received_at, rep.id) {comparison} (?3, ?4)")
         } else {
-            ""
+            String::new()
         };
         // The folder's slice of this row's conversation. Spelled once and
         // reused, so the aggregates cannot drift apart on what counts as a
@@ -994,7 +1068,7 @@ impl<'a> ThreadRepository<'a> {
                            AND newer.thread_id = rep.thread_id
                            AND (newer.received_at, newer.id) > (rep.received_at, rep.id)
                     ){cursor}
-              ORDER BY rep.received_at DESC, rep.id DESC LIMIT {}",
+              ORDER BY rep.received_at {direction}, rep.id {direction} LIMIT {}",
             query.limit
         )
     }
