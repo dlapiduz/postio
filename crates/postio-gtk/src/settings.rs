@@ -411,8 +411,8 @@ fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
 pub use postio_ui::account::badge as account_badge;
 
 /// One labeled field in the account detail view (#880) — a plain label over
-/// the control. Unlike [`SettingsPanel::sync_row`], there is no second
-/// description line: a host or a port names itself.
+/// the control. Unlike the settings rows that carry a second description
+/// line, there is none here: a host or a port names itself.
 fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
     let title = gtk::Label::new(Some(label));
     title.set_xalign(0.0);
@@ -637,7 +637,7 @@ mod imp {
         pub account_detail_signature_ids: RefCell<Vec<SignatureId>>,
         /// Set while [`super::SettingsPanel::open_account_detail`] is
         /// populating the fields above, so setting an `Entry`'s text does
-        /// not itself fire an edit — the same guard [`SettingsPanel::load`]
+        /// not itself fire an edit — the same guard [`super::SettingsPanel::load`]
         /// uses on the raw buffer, for the same reason.
         pub account_detail_loading: Cell<bool>,
         pub account_edited: RefCell<Vec<AccountEditHandler>>,
@@ -1244,7 +1244,7 @@ impl SettingsPanel {
 
     /// Hands the panel the current account's unsubscribe-activation log
     /// (#971), newest first — `window.rs` reads it fresh from
-    /// [`postio_storage::repository::UnsubscribeRepository`] every time the
+    /// `postio_storage`'s `UnsubscribeRepository` every time the
     /// pane opens, the same reason [`SettingsPanel::set_remote_image_allowlist`]
     /// is handed its list rather than reading one itself: `postio-gtk` has
     /// no SQL of its own.
@@ -1255,7 +1255,7 @@ impl SettingsPanel {
 
     /// Hands the panel how many messages have asked for a read receipt
     /// (#970) — `window.rs` reads the count fresh from
-    /// [`postio_storage::repository::MessageRepository::read_receipt_requested_count`]
+    /// `postio_storage`'s `MessageRepository::read_receipt_requested_count`
     /// every time the pane opens, the same reason the two lists above are
     /// handed their state rather than reading it themselves.
     ///

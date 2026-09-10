@@ -312,7 +312,7 @@ type NodeHandler = Box<dyn Fn(&Node)>;
 /// A part, and where the user chose to put it.
 /// What the panel needs a destination for.
 ///
-/// The argument to an [`Parts::connect_ask`] handler, which stands in for the
+/// The argument to a [`PartsPanel::connect_ask`] handler, which stands in for the
 /// `GtkFileDialog` the panel would otherwise open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ask {

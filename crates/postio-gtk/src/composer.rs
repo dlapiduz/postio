@@ -2820,7 +2820,7 @@ impl Composer {
     /// went on saying the same thing after the user rebound the command in
     /// `[keys]`. A hint that lies is worse than no hint, and the reading
     /// pane's own bar had solved this already
-    /// ([`crate::reader::actions::ReaderActions::set_keymap`]).
+    /// ([`crate::widgets::action_bar::ActionBar::set_keymap`]).
     ///
     /// A command whose binding the user cleared entirely loses its hint
     /// rather than showing a blank, which is the same rule that bar follows.

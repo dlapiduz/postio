@@ -432,10 +432,9 @@ impl MessageListView {
 
     /// Where the list is scrolled to, in pixels.
     ///
-    /// Exposed for the thread drill-in, which has to put it back: re-focusing
-    /// the list on the way out scrolls the cursor row into view, and "into
-    /// view" is not the same pixel offset the user left. See
-    /// [`crate::window::Window::close_thread`].
+    /// Exposed for the conversation drill-in, which has to put it back:
+    /// re-focusing the list on the way out scrolls the cursor row into view,
+    /// and "into view" is not the same pixel offset the user left.
     pub fn scroll_offset(&self) -> f64 {
         self.scroller()
             .map(|scroller| scroller.vadjustment().value())

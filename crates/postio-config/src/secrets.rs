@@ -2,7 +2,7 @@
 //!
 //! Postio stores passwords, app-specific passwords and tokens in the Secret
 //! Service keyring. `config.toml` only ever holds a *reference* to a keyring
-//! entry (see [`crate::accounts::ImapConfig::keyring_entry`]).
+//! entry, under the `keyring_entry` key.
 //!
 //! This module is the enforcement point, and it works in both directions:
 //!

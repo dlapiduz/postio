@@ -63,7 +63,8 @@ struct Open {
     /// Whether reader view had something to offer on this message.
     ///
     /// Recorded at `render` rather than asked again per draw:
-    /// [`suits_reader_view`] parses the markup, and the answer cannot change
+    /// [`postio_ui::reader::document::suits_reader_view`] parses the markup,
+    /// and the answer cannot change
     /// while one message is on screen. It is what tells `View original` apart
     /// from ordinary correspondence, which is also `Rendering::Original` and
     /// must keep following the theme.
