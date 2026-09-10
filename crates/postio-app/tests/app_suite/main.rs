@@ -28,6 +28,7 @@ mod drag_out_portal;
 mod drag_out_wiring;
 mod dwell_wiring;
 mod egress_wiring;
+mod escape_after_finder_closed;
 mod event_fanout;
 mod focus_on_launch;
 mod keystroke;
@@ -93,6 +94,10 @@ mod wiring;
 const IGNORED: &[&str] = &["parts_open_wiring::opening_and_open_with_ing_a_part_reach_the_desktop"];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed",
+        escape_after_finder_closed::escape_leaves_search_even_after_the_box_has_closed as fn(),
+    ),
     (
         "focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message",
         focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message as fn(),
