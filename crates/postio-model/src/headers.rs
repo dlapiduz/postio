@@ -135,7 +135,8 @@ pub fn normalize_name(name: &str) -> String {
 /// 1. **Unfold and decode encoded words.** RFC 5322 §2.2.3 splits a long field
 ///    across lines and the fold is not part of the value; RFC 2047 encodes
 ///    non-ASCII as `=?utf-8?q?...?=`. Both are the wire's business, not the
-///    reader's — nobody searches for the base64 of a word. [`decode_header_text`]
+///    reader's — nobody searches for the base64 of a word.
+///    [`crate::mime::decode_header_text`]
 ///    does both, and is already the hardened path for this: it is
 ///    `mail_parser` behind a `catch_unwind`, because these bytes are chosen by
 ///    whoever sent the mail (#277).

@@ -887,11 +887,12 @@ const REPAIR_HEADERS_BATCH: u32 = 256;
 ///
 /// Only messages that still have their raw source, which is already on disk —
 /// that is what makes this a repair rather than a re-download. Messages with
-/// no blob need a fetch and are
-/// [`MessageRepository::messages_needing_a_header_fetch`]'s, deliberately kept
-/// out of this pass's batches: it is windowed newest-first, so one batch of
-/// unfetchable rows would make no progress, trip the guard below, and stop the
-/// pass before it reached older messages it could have fixed.
+/// no blob need a fetch and belong to
+/// [`postio_storage::repository::MessageRepository::messages_needing_a_header_fetch`],
+/// deliberately kept out of this pass's batches: it is windowed newest-first,
+/// so one batch of unfetchable rows would make no progress, trip the guard
+/// below, and stop the pass before it reached older messages it could have
+/// fixed.
 ///
 /// # Not on the startup path
 ///

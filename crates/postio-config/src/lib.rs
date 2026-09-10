@@ -123,7 +123,8 @@ pub struct Config {
     /// `[ui]` — density, theme, hover actions, key hints.
     #[serde(default)]
     pub ui: UiConfig,
-    /// `[keys]` — command id to binding, overriding [`keys::DEFAULT_BINDINGS`].
+    /// `[keys]` — command id to binding, overriding the built-in defaults
+    /// `postio-core`'s command registry carries (#1227).
     #[serde(default)]
     pub keys: KeyBindings,
     /// `[sync]` — IDLE, polling, connection budget.

@@ -205,7 +205,7 @@ pub fn derive(
 ///
 /// [`ConnectionState::Connecting`] is deliberately *not* a reason to name an
 /// account. The single-account states fold it into
-/// [`State::Offline`](State::Offline) because from the user's chair both mean
+/// [`State::Offline`] because from the user's chair both mean
 /// "local mail still works", and that is right for a whole-pane statement
 /// about the one account they are looking at. A banner is a different act: it
 /// names an account, and one that appears for the two seconds an account
@@ -221,7 +221,7 @@ pub fn is_current(status: &SyncStatus) -> bool {
 /// Which state an *aggregate* view shows — the unified list, across accounts.
 ///
 /// ADR 0005 Q10's rule: **a view that cannot include an account says so,
-/// names the account, and stays usable.** [`derive`] answers for one account
+/// names the account, and stays usable.** [`fn@derive`] answers for one account
 /// and cannot express this; the difference is not the number of statuses but
 /// that a whole-pane "Offline" would be a claim about every account when only
 /// one of them is away.

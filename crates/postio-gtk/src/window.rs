@@ -477,7 +477,7 @@ impl Window {
 
     /// Put a conversation in the reading pane, and the reader aside.
     ///
-    /// The tail of [`Window::show_thread`] that is not about the column, so
+    /// The tail of [`Window::show_conversation`] that is not about the column, so
     /// [`Window::open_conversation`] can raise the pane without one. Expects
     /// `rows` oldest first — [`crate::conversation::arrange`]'s order — because
     /// Whether the conversation pane is the one on screen.
