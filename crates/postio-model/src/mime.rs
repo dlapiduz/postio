@@ -1007,10 +1007,10 @@ mod preview_is_not_markup {
             "a bracketed URL was mistaken for markup: {snippet:?}"
         );
 
-        let reply = "On Mon, Diego Lapiduz <diego@example.com> wrote:";
+        let reply = "On Mon, Ada Lovelace <ada@example.com> wrote:";
         let snippet = preview(reply).expect("a preview");
         assert!(
-            snippet.contains("diego@example.com"),
+            snippet.contains("ada@example.com"),
             "a bracketed address was mistaken for markup: {snippet:?}"
         );
     }
