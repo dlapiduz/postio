@@ -487,6 +487,34 @@ if [ "$GATES_GREEN" != 1 ]; then
             echo "[timing] suites $crate: $(( $(date +%s) - PHASE_START ))s"
         done
 
+        # Doctests, for the crates this branch changed (#1440).
+        #
+        # They used to run only under `--full`, and CLAUDE.md says to land on
+        # the default -- so in practice a broken doctest was found by CI,
+        # sixteen minutes later, on a branch whose landing had gone green.
+        #
+        # Met by three doc comments that quoted evidence as an indented
+        # block. rustdoc reads an indented block in a `///` comment as
+        # *Rust*, compiles it, and fails:
+        #
+        #     Reader::scroll_to_fragment (line 1373) ... FAILED
+        #     error: expected one of `!` or `::`, found `started`
+        #
+        # And the run aborts on the first error, so the other two were queued
+        # behind it, one round trip each.
+        #
+        # Cheap enough that the argument is one-sided: the three crates
+        # involved held 18 doctests and ran them in well under a second
+        # between them. This is #1047's argument again -- a gate that can
+        # only fail on CI costs a round trip every time it fires.
+        for crate in $CRATES; do
+            [ -d "$TREE/crates/$crate" ] || continue
+            echo "--- doctests: $crate ---"
+            PHASE_START=$(date +%s)
+            run_doctests -p "$crate"
+            echo "[timing] doctests $crate: $(( $(date +%s) - PHASE_START ))s"
+        done
+
         echo "--- test: workspace unit tests (sanity tier; --full for the rest) ---"
         PHASE_START=$(date +%s)
         # `cargo test` deliberately, not `run_tests`. This tier is ~1,459
@@ -496,8 +524,9 @@ if [ "$GATES_GREEN" != 1 ]; then
         # keep on the integration suites above, where 140 binaries are the
         # bottleneck rather than the tests inside them.
         #
-        # `--lib` excludes doctests under either runner, so this tier loses
-        # nothing by not calling run_doctests.
+        # `--lib` excludes doctests under either runner. The changed crates'
+        # doctests ran in their own pass above (#1440); this tier is the
+        # workspace's units and does not repeat them.
         #
         # Narrowed, not skipped, on a host missing the GTK libraries. The
         # workspace *check* below is skipped outright there and that is the
