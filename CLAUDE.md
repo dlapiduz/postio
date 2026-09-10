@@ -289,6 +289,13 @@ chore ci build revert`, scope the crate without prefix (or `workspace`, `ci`,
 72. Every commit ends with `Refs: #<issue>`; the PR body's `Closes: #<issue>`
 does the closing. Every commit is green for the crates it touches.
 
+**A small fix has no issue and does not invent one.** The ten-minute rule
+above means some changes have nothing to refer to, and a made-up number is
+worse than none — the next reader follows it somewhere unrelated. Branch it
+`fix/<slug>`, `docs/<slug>` or `chore/<slug>` and `issue-land.sh` lands it
+with no `Refs:` and no `Closes`, saying in the PR that there is deliberately
+no issue. Everything else about the landing is the same, gates included.
+
 **Never write a closing keyword in a commit body, not even to deny it.**
 GitHub acts on `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved
 #<n>` and does not read the negation in front of it, so *"this does not close
