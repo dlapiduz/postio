@@ -120,6 +120,40 @@ def main() -> int:
     case("the boundary crate", "pull_request", ["crates/postio-ffi/src/session.rs"],
          "yes", "no", "yes")
 
+    # ...and the crates on the far side of it. `postio-ffi`'s dependency
+    # closure is seventeen of the twenty crates; `postio-gtk`, `postio-app`
+    # and `postio-bench` are outside it, so no binding the Swift compiles
+    # against can change because one of them did. They are also the two
+    # most-changed crates in the repository, which is where the saving is.
+    case("the GTK frontend", "pull_request", ["crates/postio-gtk/src/window.rs"],
+         "yes", "no", "no")
+    case("the composition root", "pull_request", ["crates/postio-app/src/lib.rs"],
+         "yes", "no", "no")
+    case("the bench crate", "pull_request", ["crates/postio-bench/benches/search.rs"],
+         "yes", "no", "no")
+    case("an outside crate's own manifest", "pull_request", ["crates/postio-gtk/Cargo.toml"],
+         "yes", "no", "no")
+    case("two outside crates", "pull_request",
+         ["crates/postio-gtk/src/window.rs", "crates/postio-app/src/lib.rs"],
+         "yes", "no", "no")
+    # One file inside the closure is enough to oblige the macOS runner, however
+    # much of the diff cannot reach it.
+    case("an outside crate beside an inside one", "pull_request",
+         ["crates/postio-gtk/src/window.rs", "crates/postio-core/src/lib.rs"],
+         "yes", "no", "yes")
+    case("an outside crate beside Swift", "pull_request",
+         ["crates/postio-gtk/src/window.rs", "macos/Sources/Postio/Shell.swift"],
+         "yes", "no", "yes")
+    # The root manifest and the toolchain reach everything, so they still do.
+    case("the root manifest still obliges macOS", "pull_request", ["Cargo.toml"],
+         "yes", "no", "yes")
+    case("the toolchain still obliges macOS", "pull_request", ["rust-toolchain.toml"],
+         "yes", "no", "yes")
+    # A crate this script has never heard of is inside the closure until
+    # proven otherwise -- the direction that costs minutes, not merges.
+    case("an unknown crate fails safe", "pull_request", ["crates/postio-newthing/src/lib.rs"],
+         "yes", "no", "yes")
+
     # Mixed: the Rust file decides.
     case("docs plus a crate", "pull_request",
          ["docs/PRODUCT.md", "crates/postio-core/src/lib.rs"], "yes", "yes", "yes")
