@@ -465,85 +465,6 @@ pub const MESSAGE_ACTIONS: [crate::widgets::Action; 3] = [
 /// list is pointing at (#1212).
 type CommandHandler = Box<dyn Fn(postio_core::Command)>;
 
-/// What a message offers when it is the only one there is.
-///
-/// #1173: a one-message thread drew both bars, so `Reply` appeared twice
-/// with `e` printed on each. The question it raised — *is a single message a
-/// degenerate conversation with a footer, or its own view with its own bar?*
-/// — is answered by `Design/screens/19-threaded-view.png`, which draws
-/// one bar at the foot of a single message reading `Reply · Reply all ·
-/// Forward · Archive`, and by `17-conversation-view.png`, which draws the
-/// footer's conversation verbs only on a thread that has a conversation in
-/// it.
-///
-/// So: its own view, and `Archive` joins the three. That answers the
-/// objection the issue raised against simply hiding the footer — archive is
-/// the verb people reach for most, and hiding the footer alone would have
-/// taken it away. `ArchiveThread` rather than `Archive` because a
-/// one-message thread *is* the message: the two verbs mean the same act
-/// here, and using the thread's own command keeps the button on the same
-/// path `A` already takes.
-pub const LONE_MESSAGE_ACTIONS: [crate::widgets::Action; 4] = [
-    crate::widgets::Action::new(
-        postio_core::CommandId::Reply,
-        "Reply",
-        "conversation-action-reply",
-    )
-    .primary(),
-    crate::widgets::Action::new(
-        postio_core::CommandId::ReplyAll,
-        "Reply all",
-        "conversation-action-reply-all",
-    ),
-    crate::widgets::Action::new(
-        postio_core::CommandId::Forward,
-        "Forward",
-        "conversation-action-forward",
-    ),
-    crate::widgets::Action::new(
-        postio_core::CommandId::ArchiveThread,
-        "Archive",
-        "conversation-action-archive",
-    ),
-];
-
-/// What a draft offers: the one verb that is true of it.
-///
-/// #1212. A draft is a message you wrote and never sent, so reply, reply-all
-/// and forward are the correspondent's verbs and it has no correspondent yet
-/// — a `Reply` here would quote your own unsent text back at you. The verb
-/// that is right was already reachable and unannounced: activating the row
-/// resumes the composer on the draft, cancelling a queued send first.
-///
-/// `CommandId::OpenMessage` is that command, so the button and `Return`
-/// cannot come to mean different things and nothing new enters the registry.
-pub const DRAFT_ACTIONS: [crate::widgets::Action; 1] = [crate::widgets::Action::new(
-    postio_core::CommandId::OpenMessage,
-    "Continue editing",
-    "conversation-action-continue",
-)
-.primary()];
-
-/// A draft that is the whole thread — the Drafts folder, which is where
-/// nearly every draft is seen.
-///
-/// Archive joins it for the same reason it joins [`LONE_MESSAGE_ACTIONS`]:
-/// the footer stands down at n=1, and archive would otherwise have no control
-/// in the pane at all.
-pub const LONE_DRAFT_ACTIONS: [crate::widgets::Action; 2] = [
-    crate::widgets::Action::new(
-        postio_core::CommandId::OpenMessage,
-        "Continue editing",
-        "conversation-action-continue",
-    )
-    .primary(),
-    crate::widgets::Action::new(
-        postio_core::CommandId::ArchiveThread,
-        "Archive",
-        "conversation-action-archive",
-    ),
-];
-
 /// The thread's own verbs, drawn in the footer.
 ///
 /// Reply, reply-all and forward are per *message* and live inside each entry
@@ -1104,31 +1025,10 @@ mod imp {
         pub(super) rail_width: Cell<Option<i32>>,
         /// The stack itself, one [`Entry`] per message, oldest first.
         pub(super) stack: gtk::Box,
-        pub(super) entries: RefCell<Vec<Entry>>,
         /// The current message — the one both this pane and the drill-in
         /// column are showing, and the one a per-message verb aims at.
         pub(super) focused: Cell<Option<MessageId>>,
         pub(super) factory: RefCell<Option<ReaderFactory>>,
-        /// A reader built and started before anything asks for one.
-        ///
-        /// A `WebView` spawns its web process on the first *load*, not when
-        /// it is built, so a reader made at the moment a message expands
-        /// makes the person wait for a process to start, relocate and paint
-        /// -- and it composites black until it has. That is the flicker
-        /// moving between messages (#1216).
-        ///
-        /// So expansion takes this one, already warm, and a replacement is
-        /// warmed on the idle after. One spare, not a pool: the cost is a
-        /// resident web process, and one is enough to cover the gap between
-        /// two keystrokes.
-        ///
-        /// Held **with the message it was built for**. The factory binds a
-        /// reader to a message -- `fill_reader` starts the read for it -- so
-        /// a spare is not interchangeable, and the pane warms the one that is
-        /// about to be wanted: the next message down the stack, which is the
-        /// gesture this is for. Expanding anything else falls back to
-        /// building one, exactly as before.
-        pub(super) spare: RefCell<Option<(MessageId, crate::reader::Reader)>>,
         pub(super) on_reply: RefCell<Vec<ReplyHandler>>,
         pub(super) on_forward: RefCell<Vec<MessageHandler>>,
         pub(super) on_focus: RefCell<Vec<MessageHandler>>,
@@ -1139,14 +1039,6 @@ mod imp {
         /// passed over rather than looked at.
         pub(super) dwell: RefCell<Option<glib::SourceId>>,
         pub(super) dwell_delay: Cell<std::time::Duration>,
-        /// The dividers currently standing in for folded runs, in stack
-        /// order. Rebuilt whenever anything folds or unfolds, because
-        /// collapsing a message between two runs joins them (#1005).
-        /// Which entries a divider stands in for is not kept: `refold`
-        /// recomputes every run from the collapsed flags each time, so a
-        /// stored range would be a second source of truth that could only
-        /// ever disagree with the first.
-        pub(super) dividers: RefCell<Vec<gtk::Box>>,
         /// Whether this pane renders the thread as one document in one
         /// `WebView` (ADR 0032, #1316) rather than as a stack of readers.
         ///
@@ -1203,45 +1095,6 @@ mod imp {
         pub(super) on_thread_opened: RefCell<Vec<Box<dyn Fn(Vec<Row>)>>>,
     }
 
-    /// One message in the stack: its header, and the body when it has one.
-    pub struct Entry {
-        pub message: MessageId,
-        pub row: Row,
-        /// The collapsed line, which is always drawn. Expanding adds a body
-        /// beneath it rather than replacing it, so the header stays as the
-        /// thing you click and the thing focus is drawn on.
-        pub header: crate::thread_row::ThreadRowView,
-        /// Where the reader goes. Empty until this message is expanded, which
-        /// is what keeps a thirty-message conversation from costing thirty
-        /// web views.
-        pub body: gtk::Box,
-        /// The reader built for this entry, once it is expanded — kept
-        /// alongside `body` so an arrival for this message can be re-drawn
-        /// into the same `WebView` rather than rebuilding it (`reader_for`,
-        /// #739). `None` until `expand` fills it, and never cleared by
-        /// `collapse`: the widget itself stays parked in `body`, hidden, for
-        /// the same reason.
-        pub reader: RefCell<Option<crate::reader::Reader>>,
-        pub actions: std::rc::Rc<crate::widgets::ActionBar>,
-        pub expanded: Cell<bool>,
-        /// Whether a folded run this message was in has been shown.
-        ///
-        /// Distinct from `expanded`: `Show` on a divider puts the individual
-        /// *collapsed* rows back, it does not open them (#1005). Without this
-        /// the next `refold` would immediately fold the run again, because
-        /// the messages are still collapsed and still consecutive.
-        pub shown: Cell<bool>,
-        /// The box holding header, actions and body — what the stack owns.
-        pub container: gtk::Box,
-    }
-
-    impl Entry {
-        /// The widget the stack holds for this message.
-        pub fn container(&self) -> gtk::Box {
-            self.container.clone()
-        }
-    }
-
     impl Default for ConversationView {
         fn default() -> Self {
             ConversationView {
@@ -1256,9 +1109,7 @@ mod imp {
                 rail: crate::reader::rail::RailColumn::new(),
                 rail_hidden: Cell::new(false),
                 rail_width: Cell::new(None),
-                spare: RefCell::new(None),
                 stack: gtk::Box::new(gtk::Orientation::Vertical, 0),
-                entries: RefCell::new(Vec::new()),
                 focused: Cell::new(None),
                 factory: RefCell::new(None),
                 on_reply: RefCell::new(Vec::new()),
@@ -1267,7 +1118,6 @@ mod imp {
                 on_dwell: RefCell::new(Vec::new()),
                 dwell: RefCell::new(None),
                 dwell_delay: Cell::new(crate::list_view::DWELL_TO_READ),
-                dividers: RefCell::new(Vec::new()),
                 on_command: RefCell::new(Vec::new()),
                 own_addresses: RefCell::new(Vec::new()),
                 one_document: Cell::new(false),
@@ -1471,9 +1321,6 @@ impl ConversationView {
     /// WebKit one document per message on the way to the one it wants.
     pub fn set_thread_body(&self, message: MessageId, body: postio_model::MessageBody) {
         let imp = self.imp();
-        if !imp.one_document.get() {
-            return;
-        }
         imp.thread_bodies.borrow_mut().insert(message, body);
         self.queue_document_redraw();
     }
@@ -1490,9 +1337,6 @@ impl ConversationView {
     /// rather than an empty one.
     pub fn set_thread_recipients(&self, message: MessageId, recipients: String, cc: String) {
         let imp = self.imp();
-        if !imp.one_document.get() {
-            return;
-        }
         imp.thread_recipients
             .borrow_mut()
             .insert(message, recipients);
@@ -1785,232 +1629,78 @@ impl ConversationView {
     pub fn open(&self, messages: Vec<Row>) {
         let imp = self.imp();
         self.fill_rail(&messages);
-        for entry in imp.entries.borrow().iter() {
-            imp.stack.remove(&entry.container());
-        }
-        if imp.one_document.get() {
-            imp.entries.borrow_mut().clear();
-            for divider in imp.dividers.borrow_mut().drain(..) {
-                imp.stack.remove(&divider);
-            }
-            // FR-015: the most recent, through the same rule the stacked
-            // pane uses. This said `messages.first()` -- the *oldest* -- so
-            // the two panes gave opposite answers to one requirement.
-            let opening = opening_focus(&messages).map(|index| messages[index].id);
-            imp.thread_rows.replace(messages.clone());
-            imp.header.set_conversation(&messages, chrono::Local::now());
-            imp.header.actions().set_visible(true);
-            // Always, whatever the length -- unlike the stacked pane below.
-            //
-            // There, a single message stands its footer down because the
-            // message's own bar carries the verbs and drawing both put
-            // `Reply` on screen twice with `e` on each (#1173). Here the
-            // per-message chrome is HTML inside the document, so there is no
-            // second bar to collide with and nothing to fall back on: the
-            // footer standing down left a pane with no way to reply with the
-            // mouse at all, which is #1259 (#1349).
-            imp.footer.set_visible(false);
-            self.open_as_document(messages);
-            // **Through `focus_in_document`, not by setting the cell.** This
-            // path used to do `imp.focused.set(...)` and tell nobody, which
-            // cost three separate things before anyone connected them: the
-            // rail marked nothing (fixed here by hand), the dwell timer never
-            // started, and `on_focus` never fired -- so the `showing` cell
-            // `compose::install_reply_source` reads stayed empty and `e`
-            // answered nothing at all.
-            //
-            // The stacked pane has never had any of those bugs, because it
-            // calls `focus_message` and gets the whole opening movement in
-            // one place. This now does the same. After `open_as_document`,
-            // because part of that movement is scrolling the focused message
-            // into view and there is no document to scroll before it.
-            if let Some(message) = opening {
-                // **Without scrolling.** `load_html` starts a document at the
-                // top and the opening focus is about which message is
-                // *marked*, not about moving the page -- and scrolling here
-                // costs a second render of the same document, which is
-                // #749's flash and what `render_dedup` counts. A thread opens
-                // twice by design (the list's row, then the whole
-                // conversation), so a scroll on the first arrival lands on a
-                // document that is about to be replaced anyway.
-                self.focus_in_document_without_scrolling(message);
-            }
-            return;
-        }
-        imp.entries.borrow_mut().clear();
-        for divider in imp.dividers.borrow_mut().drain(..) {
-            imp.stack.remove(&divider);
-        }
-        imp.focused.set(None);
-        self.cancel_dwell();
-
+        // FR-015: the most recent, through the same rule the stacked
+        // pane uses. This said `messages.first()` -- the *oldest* -- so
+        // the two panes gave opposite answers to one requirement.
+        let opening = opening_focus(&messages).map(|index| messages[index].id);
+        imp.thread_rows.replace(messages.clone());
         imp.header.set_conversation(&messages, chrono::Local::now());
-        // A footer for a *conversation*. One message is not one, and drawing
-        // both bars put `Reply` on screen twice with `e` on each (#1173);
-        // the lone message carries `Archive` in its own bar instead, so
-        // nothing is lost by the footer standing down.
-        imp.footer.set_visible(messages.len() > 1);
-        imp.header.actions().set_visible(false);
-
-        let focus = opening_focus(&messages);
-        let expanded = match focus {
-            Some(focus) => expanded_on_open(&messages, focus, EAGER_EXPANSION_CAP),
-            None => Vec::new(),
-        };
-
-        for (index, row) in messages.iter().enumerate() {
-            // Numbered from one. Nothing draws the number since #1003 took
-            // the column away, but a screen reader still says "3 of 8", which
-            // is the position a sighted reader gets from the stack itself.
-            let entry = self.build_entry(row, index as u32 + 1, messages.len() == 1);
-            imp.stack.append(&entry.container());
-            imp.entries.borrow_mut().push(entry);
-            if expanded.get(index).copied().unwrap_or(false) {
-                self.expand(row.id);
-            }
+        imp.header.actions().set_visible(true);
+        // Always, whatever the length -- unlike the stacked pane below.
+        //
+        // There, a single message stands its footer down because the
+        // message's own bar carries the verbs and drawing both put
+        // `Reply` on screen twice with `e` on each (#1173). Here the
+        // per-message chrome is HTML inside the document, so there is no
+        // second bar to collide with and nothing to fall back on: the
+        // footer standing down left a pane with no way to reply with the
+        // mouse at all, which is #1259 (#1349).
+        imp.footer.set_visible(false);
+        self.open_as_document(messages);
+        // **Through `focus_in_document`, not by setting the cell.** This
+        // path used to do `imp.focused.set(...)` and tell nobody, which
+        // cost three separate things before anyone connected them: the
+        // rail marked nothing (fixed here by hand), the dwell timer never
+        // started, and `on_focus` never fired -- so the `showing` cell
+        // `compose::install_reply_source` reads stayed empty and `e`
+        // answered nothing at all.
+        //
+        // The stacked pane has never had any of those bugs, because it
+        // calls `focus_message` and gets the whole opening movement in
+        // one place. This now does the same. After `open_as_document`,
+        // because part of that movement is scrolling the focused message
+        // into view and there is no document to scroll before it.
+        if let Some(message) = opening {
+            // **Without scrolling.** `load_html` starts a document at the
+            // top and the opening focus is about which message is
+            // *marked*, not about moving the page -- and scrolling here
+            // costs a second render of the same document, which is
+            // #749's flash and what `render_dedup` counts. A thread opens
+            // twice by design (the list's row, then the whole
+            // conversation), so a scroll on the first arrival lands on a
+            // document that is about to be replaced anyway.
+            self.focus_in_document_without_scrolling(message);
         }
-        if let Some(focus) = focus.and_then(|index| messages.get(index)) {
-            self.focus_message(focus.id);
-        }
-        self.refold();
     }
 
-    /// Fold every run of three-or-more collapsed messages into one divider,
-    /// and unfold any that no longer qualifies.
+    /// The one reader the whole conversation is drawn into, if the pane has
+    /// built it yet (ADR 0032).
     ///
-    /// Recomputed from scratch rather than patched, because the runs are not
-    /// independent: collapsing the message between two runs joins them into
-    /// one, and expanding inside a run splits it in two. Patching that
-    /// correctly is harder than recounting, and the count is over a slice of
-    /// bools — [`postio_ui::conversation::collapsed_runs`] — which is cheap
-    /// and provable without a display.
-    fn refold(&self) {
-        let imp = self.imp();
-        for divider in imp.dividers.borrow_mut().drain(..) {
-            imp.stack.remove(&divider);
-        }
-
-        let collapsed: Vec<bool> = imp
-            .entries
-            .borrow()
-            .iter()
-            .map(|entry| !entry.expanded.get() && !entry.shown.get())
-            .collect();
-        let runs = postio_ui::conversation::collapsed_runs(
-            &collapsed,
-            postio_ui::conversation::RUN_MINIMUM,
-        );
-
-        for range in runs {
-            let (senders, first) = {
-                let entries = imp.entries.borrow();
-                let senders: Vec<postio_model::address::EmailAddress> = entries[range.clone()]
-                    .iter()
-                    .filter_map(|entry| entry.row.from.clone())
-                    .collect();
-                (senders, entries[range.start].container())
-            };
-            let divider = self.build_divider(range.clone(), &senders);
-            imp.stack
-                .insert_child_after(&divider, first.prev_sibling().as_ref());
-            for entry in imp.entries.borrow()[range.clone()].iter() {
-                entry.container().set_visible(false);
-            }
-            imp.dividers.borrow_mut().push(divider);
-        }
+    /// Replaces `reader_for(message)`, which answered with that message's own
+    /// `Reader` back when every expanded message had one (#1426).
+    pub fn document_reader(&self) -> Option<crate::reader::Reader> {
+        self.imp().document_reader.borrow().clone()
     }
 
-    /// The hairline row standing in for one folded run.
-    fn build_divider(
-        &self,
-        range: std::ops::Range<usize>,
-        senders: &[postio_model::address::EmailAddress],
-    ) -> gtk::Box {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.add_css_class("conversation-divider");
-
-        let rule = || {
-            let line = gtk::Separator::new(gtk::Orientation::Horizontal);
-            line.set_hexpand(true);
-            line.set_valign(gtk::Align::Center);
-            line
-        };
-        row.append(&rule());
-
-        let label = gtk::Label::new(Some(&postio_ui::conversation::run_summary(
-            range.len(),
-            senders,
-        )));
-        label.add_css_class("conversation-divider-label");
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        row.append(&label);
-
-        // `Show`, not `Expand`: it puts the individual collapsed rows back,
-        // it does not open them. One gesture, one step -- expanding five
-        // messages because you wanted to see who they were from is not what
-        // anybody asked for.
-        let show = gtk::Button::with_label("Show");
-        show.add_css_class("flat");
-        show.add_css_class("postio-ghost");
-        show.add_css_class("conversation-divider-show");
-        let view = self.clone();
-        let range_for_show = range.clone();
-        show.connect_clicked(move |_| view.show_run(range_for_show.clone()));
-        row.append(&show);
-        row.append(&rule());
-
-        row.update_property(&[gtk::accessible::Property::Label(&format!(
-            "{}, collapsed",
-            postio_ui::conversation::run_summary(range.len(), senders)
-        ))]);
-
-        row
-    }
-
-    /// Put a folded run's individual rows back, still collapsed.
-    pub fn show_run(&self, range: std::ops::Range<usize>) {
-        {
-            let imp = self.imp();
-            let entries = imp.entries.borrow();
-            for entry in entries.get(range.clone()).unwrap_or(&[]) {
-                entry.shown.set(true);
-                entry.container().set_visible(true);
-            }
-        }
-        self.refold();
-    }
-
-    /// Open every collapsed message, folded runs included — `O`.
+    /// Open every message a reader folded shut — `O`.
+    ///
+    /// FR-013 draws every body, so there is normally nothing to open. The
+    /// document is `<details>` elements, though, and clicking a message's
+    /// header folds that one: `expanded_in_document` remembers it precisely
+    /// so the model changing underneath cannot undo the gesture. This is the
+    /// way back.
+    ///
+    /// The stacked pane's version walked `entries` and also unfolded the "N
+    /// earlier messages" runs; neither exists now (#1426).
     pub fn expand_all(&self) {
-        let messages: Vec<MessageId> = self
-            .imp()
-            .entries
-            .borrow()
-            .iter()
-            .map(|entry| entry.message)
-            .collect();
-        for message in messages {
-            self.expand(message);
+        let imp = self.imp();
+        {
+            let mut decided = imp.expanded_in_document.borrow_mut();
+            for row in imp.thread_rows.borrow().iter() {
+                decided.insert(row.id, true);
+            }
         }
-        for entry in self.imp().entries.borrow().iter() {
-            entry.shown.set(true);
-            entry.container().set_visible(true);
-        }
-        self.refold();
-    }
-
-    /// How many messages are showing their bodies.
-    ///
-    /// Asks the entries rather than counting readers: a message can be
-    /// expanded before its body arrives, and "how much is open" is the
-    /// question `Expand all` and the fold rules are about.
-    pub fn expanded_count(&self) -> usize {
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .filter(|entry| entry.expanded.get())
-            .count()
+        self.queue_document_redraw();
     }
 
     /// The pane's header, for a test that wants to read what it says.
@@ -2039,29 +1729,9 @@ impl ConversationView {
         std::rc::Rc::clone(&self.imp().footer)
     }
 
-    /// What the folded-run dividers currently say, in stack order.
-    /// Test-facing.
-    pub fn divider_labels(&self) -> Vec<String> {
-        self.imp()
-            .dividers
-            .borrow()
-            .iter()
-            .filter_map(|divider| {
-                divider
-                    .first_child()
-                    .and_then(|child| child.next_sibling())
-                    .and_downcast::<gtk::Label>()
-                    .map(|label| label.label().to_string())
-            })
-            .collect()
-    }
-
     /// How many messages the pane is holding.
     pub fn len(&self) -> usize {
-        if self.imp().one_document.get() {
-            return self.imp().thread_rows.borrow().len();
-        }
-        self.imp().entries.borrow().len()
+        self.imp().thread_rows.borrow().len()
     }
 
     /// Whether the pane is holding nothing.
@@ -2083,11 +1753,11 @@ impl ConversationView {
     pub fn focused_row(&self) -> Option<Row> {
         let focused = self.imp().focused.get()?;
         self.imp()
-            .entries
+            .thread_rows
             .borrow()
             .iter()
-            .find(|entry| entry.message == focused)
-            .map(|entry| entry.row.clone())
+            .find(|row| row.id == focused)
+            .cloned()
     }
 
     /// Every message in the pane, in the order it is stacked.
@@ -2100,15 +1770,7 @@ impl ConversationView {
         // to decide whether a thread read is still wanted, so a pane that
         // answered nothing would drop the rest of every conversation it
         // opened and keep the one row the list gave it.
-        if self.imp().one_document.get() {
-            return self.imp().thread_rows.borrow().clone();
-        }
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .map(|entry| entry.row.clone())
-            .collect()
+        self.imp().thread_rows.borrow().clone()
     }
 
     /// Whether the focused message is drawn as focused.
@@ -2116,26 +1778,15 @@ impl ConversationView {
     /// Asks the widget rather than the field, because "there is a focused
     /// message" and "you can see which one" are different claims and only the
     /// second one matters to somebody about to press reply.
+    ///
+    /// The stacked pane answered with the entry header's selection; the one
+    /// document has no per-message widget, and what a person sees instead is
+    /// the rail's mark (#1426). Asking the rail keeps the claim about what is
+    /// drawn rather than about what was stored.
     pub fn is_focus_drawn(&self) -> bool {
-        let focused = self.imp().focused.get();
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .any(|entry| Some(entry.message) == focused && entry.header.is_selected())
-    }
-
-    /// Whether `message` is showing its body.
-    /// Press a verb in `message`'s own bar, without a pointer. Test-facing.
-    pub fn press_entry_command(&self, message: MessageId, command: postio_core::CommandId) {
-        if let Some(entry) = self
-            .imp()
-            .entries
-            .borrow()
-            .iter()
-            .find(|entry| entry.message == message)
-        {
-            entry.actions.press(command);
+        match self.focused_index() {
+            Some(index) => self.imp().rail.marked_position() == Some(index),
+            None => false,
         }
     }
 
@@ -2151,14 +1802,7 @@ impl ConversationView {
         // Before that every caller was a test that had turned the pane on
         // deliberately, and the ones that had not were driving the stacked
         // pane and were right.
-        if self.imp().one_document.get() {
-            return self.rows().iter().any(|row| row.id == message);
-        }
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .any(|entry| entry.message == message && entry.expanded.get())
+        self.rows().iter().any(|row| row.id == message)
     }
 
     /// Make `message` the current one: expand it, draw it as focused, and
@@ -2177,36 +1821,11 @@ impl ConversationView {
         //
         // Here the same gesture is a scroll of the one document to the
         // message's own anchor.
-        if self.imp().one_document.get() {
-            self.focus_in_document(message);
-            return;
-        }
-        if !self
-            .imp()
-            .entries
-            .borrow()
-            .iter()
-            .any(|e| e.message == message)
-        {
-            return;
-        }
-        // Focus first, then expand. `expand` releases the bodies furthest
-        // from the focus to stay under `LIVE_BODY_CAP`, and with the *old*
-        // focus still set it measured distance from where the reader used to
-        // be -- so opening a message at the far end of a long thread released
-        // the body it had just built, and scrolling back showed an expanded
-        // entry with nothing in it.
-        self.imp().focused.set(Some(message));
-        self.expand(message);
-        // After `focused` is set, and not in `expand`: opening a conversation
-        // expands several messages before focus exists, and "the next one"
-        // has no answer until it does. One warm per navigation, which is the
-        // gesture -- read this one, move down.
-        self.warm_the_next();
-        for entry in self.imp().entries.borrow().iter() {
-            entry.header.set_selected(entry.message == message);
-        }
-        self.scroll_to(message);
+        // `focus_in_document` scrolls the one document to the message's own
+        // anchor, so the stacked pane's separate `scroll_to` -- which walked
+        // to an entry widget and moved the scroller itself -- had nothing
+        // left to move and went with it (#1426).
+        self.focus_in_document(message);
         // The rail follows the focus rather than being set beside it, so
         // there is no path that moves one without the other.
         self.imp().rail.set_marked(self.focused_index());
@@ -2314,9 +1933,6 @@ impl ConversationView {
     /// conversation is up would scroll a view nobody is looking at.
     pub fn page(&self, down: bool) -> bool {
         let imp = self.imp();
-        if !imp.one_document.get() {
-            return false;
-        }
         let Some(reader) = imp.document_reader.borrow().clone() else {
             return false;
         };
@@ -2335,9 +1951,6 @@ impl ConversationView {
     /// single-message reader when this pane is not the one on screen.
     pub fn show_focused_message_whole(&self) -> bool {
         let imp = self.imp();
-        if !imp.one_document.get() {
-            return false;
-        }
         let Some(focused) = imp.focused.get() else {
             return false;
         };
@@ -2462,11 +2075,23 @@ impl ConversationView {
         let Some(focused) = self.focused() else {
             return;
         };
-        if self.is_expanded(focused) {
-            self.collapse(focused);
-        } else {
-            self.expand(focused);
-        }
+        // A `<details>` toggle, which is what folding is now: the document
+        // draws every message open (FR-013) and a reader can shut one by
+        // clicking its header. `expanded_in_document` is where that gesture
+        // is remembered, precisely so the model changing underneath cannot
+        // undo it, and this is the keyboard's way to the same thing.
+        //
+        // The stacked pane's version called `expand`/`collapse` on an entry
+        // widget; there are no entries (#1426).
+        let imp = self.imp();
+        let open = imp
+            .expanded_in_document
+            .borrow()
+            .get(&focused)
+            .copied()
+            .unwrap_or(true);
+        imp.expanded_in_document.borrow_mut().insert(focused, !open);
+        self.queue_document_redraw();
     }
 
     /// Where the focused message sits in the conversation.
@@ -2479,12 +2104,8 @@ impl ConversationView {
     /// started from the beginning.
     pub fn focused_index(&self) -> Option<usize> {
         let focused = self.focused()?;
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        if !entries.is_empty() {
-            return entries.iter().position(|entry| entry.message == focused);
-        }
-        imp.thread_rows
+        self.imp()
+            .thread_rows
             .borrow()
             .iter()
             .position(|row| row.id == focused)
@@ -2502,23 +2123,12 @@ impl ConversationView {
 
     /// The message at `index`, in whichever pane is drawing.
     fn message_at(&self, index: usize) -> Option<MessageId> {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        if !entries.is_empty() {
-            return entries.get(index).map(|entry| entry.message);
-        }
-        imp.thread_rows.borrow().get(index).map(|row| row.id)
+        self.imp().thread_rows.borrow().get(index).map(|row| row.id)
     }
 
     /// How many messages the conversation has, in whichever pane is drawing.
     fn message_count(&self) -> usize {
-        let imp = self.imp();
-        let entries = imp.entries.borrow().len();
-        if entries > 0 {
-            entries
-        } else {
-            imp.thread_rows.borrow().len()
-        }
+        self.imp().thread_rows.borrow().len()
     }
 
     /// One step through the stack, in draw order.
@@ -2555,214 +2165,13 @@ impl ConversationView {
         true
     }
 
-    /// Give `message` a body, if it has not got one.
-    ///
-    /// Idempotent, and the only place the factory is called — which is what
-    /// makes "one reader per expanded message, never per message" a property
-    /// of this function rather than of every caller.
-    pub fn expand(&self, message: MessageId) {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let Some(entry) = entries.iter().find(|entry| entry.message == message) else {
-            return;
-        };
-        // Expanded *and* still holding its reader. An entry whose body was
-        // released to stay under `LIVE_BODY_CAP` is expanded with nothing in
-        // it, and asking for it again has to rebuild rather than return.
-        if entry.expanded.get() && entry.reader.borrow().is_some() {
-            return;
-        }
-        entry.expanded.set(true);
-        entry.actions.set_visible(true);
-        // The spare, if it was built for *this* message, and that is the
-        // whole of the pre-warm: its web process has already started, so the
-        // body paints rather than flashing black while one boots (#1216).
-        let taken = match imp.spare.borrow_mut().take() {
-            Some((warmed, reader)) if warmed == message => Some(reader),
-            // Built for a different message: it cannot be used, and holding
-            // it would keep a process for a body nobody asked for.
-            Some(_) | None => None,
-        };
-        if let Some(reader) = taken.or_else(|| {
-            imp.factory
-                .borrow()
-                .as_ref()
-                .and_then(|factory| factory(message))
-        }) {
-            let widget = reader.widget();
-            widget.set_hexpand(true);
-            entry.body.append(&widget);
-            *entry.reader.borrow_mut() = Some(reader);
-        }
-        entry.body.set_visible(true);
-        drop(entries);
-        self.release_distant_bodies();
-    }
-
-    /// Drop the live bodies furthest from the focus, down to
-    /// [`LIVE_BODY_CAP`].
-    ///
-    /// Furthest rather than oldest: what a person is about to want is what is
-    /// near where they are reading, and a thread is navigated up and down
-    /// rather than in one direction. Released entries stay expanded, so
-    /// scrolling back rebuilds them.
-    fn release_distant_bodies(&self) {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let focus = imp
-            .focused
-            .get()
-            .and_then(|id| entries.iter().position(|entry| entry.message == id))
-            .unwrap_or(0);
-
-        let mut live: Vec<usize> = entries
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.reader.borrow().is_some())
-            .map(|(index, _)| index)
-            .collect();
-        if live.len() <= LIVE_BODY_CAP {
-            return;
-        }
-        // Furthest from the focus first, and release exactly the excess.
-        live.sort_by_key(|index| std::cmp::Reverse(index.abs_diff(focus)));
-        let excess = live.len() - LIVE_BODY_CAP;
-        for index in live.into_iter().take(excess) {
-            let entry = &entries[index];
-            let released = entry.reader.borrow_mut().take();
-            if let Some(reader) = released {
-                // Off the widget tree as well as out of the field: a parked
-                // widget keeps its `WebView`, and the `WebView` is the web
-                // process this exists to give back.
-                entry.body.remove(&reader.widget());
-            }
-        }
-    }
-
-    /// Build and start a reader for the message most likely to open next.
-    ///
-    /// A `WebView` spawns its web process on the first *load*, not when it is
-    /// built, so a reader made at the moment a message expands makes the
-    /// person wait for a process to start, relocate and paint -- and it
-    /// composites black until it has. That is the flicker moving through a
-    /// conversation (#1216).
-    ///
-    /// The next message *down the stack*, because that is the gesture: read
-    /// one, move to the next. Anything else falls back to building a reader
-    /// the old way, so this is an optimisation for the common path and never
-    /// a correctness question.
-    ///
-    /// On an idle callback rather than inline: the caller has just expanded a
-    /// message, and starting a second web process there would spend on this
-    /// keystroke exactly what the spare exists to save.
-    fn warm_the_next(&self) {
-        let Some(next) = self.next_unexpanded() else {
-            return;
-        };
-        if matches!(*self.imp().spare.borrow(), Some((held, _)) if held == next) {
-            return;
-        }
-        let pane = self.clone();
-        glib::idle_add_local_once(move || {
-            let imp = pane.imp();
-            if matches!(*imp.spare.borrow(), Some((held, _)) if held == next) {
-                return;
-            }
-            let built = imp
-                .factory
-                .borrow()
-                .as_ref()
-                .and_then(|factory| factory(next));
-            if let Some(reader) = built {
-                reader.warm();
-                *imp.spare.borrow_mut() = Some((next, reader));
-            }
-        });
-    }
-
-    /// The nearest message to the focused one that has no body yet.
-    ///
-    /// **Behind first, then ahead.** This looked only ahead, which was right
-    /// while the pane opened on the first unread and the gesture was "read
-    /// this one, move down". FR-015 opens it on the *newest* (#1385), where
-    /// there is nothing ahead at all — so the spare was never warmed on open
-    /// and #1216's black flash came back for the first `K`, which is now the
-    /// only way to go.
-    ///
-    /// Ahead is still checked, for the top of a thread and for a reader who
-    /// has walked back and is coming down again.
-    fn next_unexpanded(&self) -> Option<MessageId> {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let focused = imp.focused.get();
-        let at = focused.and_then(|id| entries.iter().position(|entry| entry.message == id));
-        let Some(at) = at else {
-            return entries
-                .iter()
-                .find(|entry| !entry.expanded.get())
-                .map(|entry| entry.message);
-        };
-        entries
-            .iter()
-            .take(at)
-            .rev()
-            .find(|entry| !entry.expanded.get())
-            .or_else(|| {
-                entries
-                    .iter()
-                    .skip(at + 1)
-                    .find(|entry| !entry.expanded.get())
-            })
-            .map(|entry| entry.message)
-    }
-
     /// How many message bodies are holding a live `WebKitWebView`.
     ///
-    /// The number [`LIVE_BODY_CAP`] bounds, and the one worth asserting on:
-    /// expanded entries and live bodies are no longer the same set, because a
-    /// released entry stays expanded with nothing in it.
+    /// One document is one view however long the thread is (ADR 0032), so
+    /// this is 0 or 1 — which is the whole reason the cap the stacked pane
+    /// needed went with it (#1426).
     pub fn live_body_count(&self) -> usize {
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .filter(|entry| entry.reader.borrow().is_some())
-            .count()
-    }
-
-    /// The reader already built for `message`'s entry, if it has one.
-    ///
-    /// The conversation pane's answer to a body or a payload landing for an
-    /// already-expanded entry (#739): `expand` only ever fills an *empty*
-    /// body, so nothing re-fills a full one without a caller that can find
-    /// the reader again and re-render into it — this is that seam. `None`
-    /// for a collapsed entry (there is no reader yet; that is `expand`'s
-    /// job) and for a message the pane is not holding at all.
-    pub fn reader_for(&self, message: MessageId) -> Option<crate::reader::Reader> {
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .find(|entry| entry.message == message && entry.expanded.get())
-            .and_then(|entry| entry.reader.borrow().clone())
-    }
-
-    /// Collapse `message` back to its one-line header.
-    pub fn collapse(&self, message: MessageId) {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let Some(entry) = entries.iter().find(|entry| entry.message == message) else {
-            return;
-        };
-        if !entry.expanded.get() {
-            return;
-        }
-        entry.expanded.set(false);
-        entry.body.set_visible(false);
-        entry.actions.set_visible(false);
-        // The body widget is kept rather than destroyed: a message collapsed
-        // and reopened is the common gesture, and rebuilding a `WebKitWebView`
-        // for it would make the cheap direction the expensive one.
+        usize::from(self.imp().document_reader.borrow().is_some())
     }
 
     /// Called when a message's reply button is used. `true` is reply-all.
@@ -2800,9 +2209,6 @@ impl ConversationView {
     /// same moment it reaches the keyboard, or the pane advertises a key
     /// that now runs something else.
     pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
-        for entry in self.imp().entries.borrow().iter() {
-            entry.actions.set_keymap(keymap);
-        }
         self.imp().header.set_keymap(keymap);
         self.imp().footer.set_keymap(keymap);
         self.imp().header.actions().set_keymap(keymap);
@@ -2853,127 +2259,7 @@ impl ConversationView {
         }
     }
 
-    /// The widget the reader factory built for `message`, if it has been
-    /// expanded — what a test downcasts to check what is actually on
-    /// screen inside an entry, rather than only what the pane's own state
-    /// says (#487).
-    #[doc(hidden)]
-    pub fn test_expanded_widget(&self, message: MessageId) -> Option<gtk::Widget> {
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .find(|entry| entry.message == message)
-            .and_then(|entry| entry.body.first_child())
-    }
-
     // -- internals ---------------------------------------------------------
-
-    fn scroll_to(&self, message: MessageId) {
-        let imp = self.imp();
-        let entries = imp.entries.borrow();
-        let Some(entry) = entries.iter().find(|entry| entry.message == message) else {
-            return;
-        };
-        // No animation: the motion budget says a jump is instant, and this is
-        // the same swap the drill-in itself makes.
-        let container = entry.container();
-        let Some(bounds) = container.compute_bounds(&imp.stack) else {
-            return;
-        };
-        imp.scroller.vadjustment().set_value(bounds.y() as f64);
-    }
-
-    /// One entry in the stack.
-    ///
-    /// `alone` is whether this message is the whole conversation, which
-    /// decides which verbs it carries: on its own it is a view in its own
-    /// right and takes `Archive` with it, because the footer that would
-    /// otherwise have carried that verb is not drawn (#1173).
-    fn build_entry(&self, row: &Row, index: u32, alone: bool) -> imp::Entry {
-        let header = crate::thread_row::ThreadRowView::new();
-        header.set_row(Some(row.clone()), index);
-        header.set_mine(self.is_mine(row));
-
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        body.set_visible(false);
-
-        // Reply, reply-all and forward only. Every other verb is the
-        // conversation's, in this pane exactly as in the list (ADR 0015 Q4),
-        // and a delete button on every message in a stack is how people
-        // delete the wrong one.
-        //
-        // The same `ActionBar` the reading pane's own bar is (#1002), so
-        // these three carry their keys — they were three bare buttons with
-        // no caps at all, in a pane whose whole point is that `e` acts on
-        // whichever message you are looking at.
-        let message = row.id;
-        let actions = crate::widgets::ActionBar::new(
-            match (row.draft, alone) {
-                (true, true) => &LONE_DRAFT_ACTIONS[..],
-                (true, false) => &DRAFT_ACTIONS[..],
-                (false, true) => &LONE_MESSAGE_ACTIONS[..],
-                (false, false) => &MESSAGE_ACTIONS[..],
-            },
-            "conversation-actions",
-        );
-        actions.set_visible(false);
-        let view = self.clone();
-        actions.connect_command(move |command| {
-            // `Archive` is only ever in this bar when the message is the
-            // whole thread, where archiving it and archiving the thread are
-            // the same act — so it goes out on the conversation's own path
-            // rather than growing a second one.
-            if command.id() == postio_core::CommandId::ArchiveThread {
-                view.emit_command(command);
-                return;
-            }
-            // Named, not left to the cursor: a draft inside a longer thread
-            // is not the row the list holds, and an untargeted open would
-            // resume whatever the list is pointing at instead (#1212).
-            if command.id() == postio_core::CommandId::OpenMessage {
-                view.emit_command(postio_core::Command::OpenMessage {
-                    message: Some(message),
-                });
-                return;
-            }
-            let kind = match command.id() {
-                postio_core::CommandId::Reply => ReplyKind::Reply,
-                postio_core::CommandId::ReplyAll => ReplyKind::ReplyAll,
-                postio_core::CommandId::Forward => ReplyKind::Forward,
-                _ => return,
-            };
-            view.emit_action(message, kind);
-        });
-
-        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        container.add_css_class("conversation-entry");
-        container.append(&header);
-        container.append(&body);
-        // Under the message, not under its header. Above the body they read
-        // as belonging to whatever comes next -- which for a stack of
-        // messages is somebody else's mail.
-        container.append(&actions.widget());
-
-        // A click anywhere on the header makes that message current, which is
-        // the mouse's half of what the column's cursor does.
-        let gesture = gtk::GestureClick::new();
-        let view = self.clone();
-        gesture.connect_released(move |_, _, _, _| view.focus_message(message));
-        header.add_controller(gesture);
-
-        imp::Entry {
-            message,
-            row: row.clone(),
-            header,
-            body,
-            reader: std::cell::RefCell::new(None),
-            actions,
-            expanded: std::cell::Cell::new(false),
-            shown: std::cell::Cell::new(false),
-            container,
-        }
-    }
 
     /// Tells whoever is listening to run `command`.
     ///
@@ -3006,27 +2292,11 @@ impl ConversationView {
             return;
         }
         *self.imp().own_addresses.borrow_mut() = folded;
-        for entry in self.imp().entries.borrow().iter() {
-            entry.header.set_mine(self.is_mine(&entry.row));
-        }
-    }
-
-    /// The collapsed header drawn for `message`, if the stack holds it.
-    ///
-    /// The same shape as `reader_for`, and for the same reason: what a row
-    /// draws is a fact about one entry, and the pane is what knows which
-    /// entry that is.
-    pub fn header_for(&self, message: MessageId) -> Option<crate::thread_row::ThreadRowView> {
-        self.imp()
-            .entries
-            .borrow()
-            .iter()
-            .find(|entry| entry.message == message)
-            .map(|entry| entry.header.clone())
+        self.queue_document_redraw();
     }
 
     /// Whether `row` came from one of the account's own addresses.
-    fn is_mine(&self, row: &Row) -> bool {
+    pub fn is_mine(&self, row: &Row) -> bool {
         let own = self.imp().own_addresses.borrow();
         row.from.as_ref().is_some_and(|from| {
             let from = from.address.to_lowercase();

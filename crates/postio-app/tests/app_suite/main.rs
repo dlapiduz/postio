@@ -18,9 +18,7 @@ mod command_wiring;
 mod compose_detach;
 mod compose_typing;
 mod composer_warm;
-mod conversation_body_arrives;
 mod conversation_by_default;
-mod conversation_recipients;
 mod conversation_reply_target;
 mod correlation;
 mod cursor_preview;
@@ -172,22 +170,12 @@ const CASES: &[(&str, fn())] = &[
         compose_typing::every_letter_can_be_typed_into_the_composer_body as fn(),
     ),
     (
-        "conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other",
-        conversation_body_arrives::a_body_that_lands_repaints_the_conversation_entry_waiting_for_it_and_no_other
-            as fn(),
-    ),
-    (
         "conversation_by_default::landing_on_a_thread_row_opens_the_conversation",
         conversation_by_default::landing_on_a_thread_row_opens_the_conversation as fn(),
     ),
     (
         "conversation_reply_target::the_conversations_verbs_answer_the_message_they_name",
         conversation_reply_target::the_conversations_verbs_answer_the_message_they_name as fn(),
-    ),
-    (
-        "conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header",
-        conversation_recipients::an_expanded_entry_shows_who_it_went_to_without_repeating_its_header
-            as fn(),
     ),
     (
         "cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing",

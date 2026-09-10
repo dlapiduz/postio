@@ -172,10 +172,6 @@ const CASES: &[(&str, fn())] = &[
         gtk_conversation::a_row_knows_whether_the_message_is_the_users_own as fn(),
     ),
     (
-        "gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies",
-        gtk_conversation::a_long_thread_keeps_a_bounded_number_of_bodies as fn(),
-    ),
-    (
         "gtk_reader_styles::moving_between_messages_never_loads_an_error_page",
         gtk_reader_styles::moving_between_messages_never_loads_an_error_page as fn(),
     ),
@@ -391,37 +387,8 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
-        "gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message",
-        gtk_conversation::the_conversation_pane_stacks_a_thread_and_acts_per_message as fn(),
-    ),
-    (
-        "gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs",
-        gtk_conversation::the_pane_names_its_conversation_folds_its_middle_and_offers_its_verbs
-            as fn(),
-    ),
-    (
         "gtk_conversation::one_thread_offers_one_reply_however_long_it_is",
         gtk_conversation::one_thread_offers_one_reply_however_long_it_is as fn(),
-    ),
-    (
-        "gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand",
-        gtk_conversation::expand_all_is_offered_only_when_there_is_something_to_expand as fn(),
-    ),
-    (
-        "gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply",
-        gtk_conversation::a_draft_is_offered_continue_editing_and_no_reply as fn(),
-    ),
-    (
-        "gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on",
-        gtk_conversation::the_keyboard_walks_the_stack_and_folds_what_it_lands_on as fn(),
-    ),
-    (
-        "gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader",
-        gtk_conversation::reader_for_finds_only_an_expanded_entrys_own_reader as fn(),
-    ),
-    (
-        "gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar",
-        gtk_conversation::an_expanded_entrys_reader_does_not_draw_its_own_action_bar as fn(),
     ),
     (
         "gtk_display_required::ci_has_a_display_to_run_the_gtk_suites_on",

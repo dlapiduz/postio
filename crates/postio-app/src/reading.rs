@@ -404,7 +404,6 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         named_accounts,
         offline: Rc::new(Cell::new(is_offline(&feeds.folders.status()))),
         queued: Cell::new(false),
-        conversation_queued: RefCell::new(std::collections::HashSet::new()),
         aimed: Cell::new(None),
     });
     window.list().connect_cursor_moved(glib::clone!(
@@ -633,15 +632,6 @@ struct Fill {
     /// Whether a repaint of the *single* pane is already queued for this
     /// turn of the main loop — see [`Fill::body_arrived`].
     queued: Cell<bool>,
-    /// Which conversation entries have a repaint already queued for this
-    /// turn of the main loop — see [`Fill::body_arrived`].
-    ///
-    /// A set rather than a flag: a backfill can land bodies for several
-    /// expanded entries in the same burst, and each is its own coalescing
-    /// question — `queued` answers it for the one message the single pane
-    /// can be showing, and this answers it for however many the conversation
-    /// pane has open at once.
-    conversation_queued: RefCell<std::collections::HashSet<MessageId>>,
     /// Which message the *single* reading pane was last aimed at, and so
     /// which one asking again would be asking for twice — see [`Fill::fill`].
     ///
@@ -946,10 +936,11 @@ impl Fill {
     /// coalesced onto the next turn of the main loop: twenty arrivals for the
     /// same message are one store read and one repaint, not twenty of each.
     /// `Folders::reload` coalesces a resync's `MessagesChanged` the same way
-    /// and for the same reason. The conversation side coalesces *per
-    /// message*, via `conversation_queued`, because a burst can carry
-    /// arrivals for several expanded entries at once and each is its own
-    /// pane to redraw.
+    /// and for the same reason. The conversation used to coalesce *per
+    /// message*, because a burst could carry arrivals for several expanded
+    /// entries and each was its own pane to redraw; one document has one
+    /// pane, and `ConversationView::set_thread_body` does that coalescing
+    /// now (#1426).
     ///
     /// [`Event::BodyLoaded`]: postio_core::Event::BodyLoaded
     fn body_arrived(self: &Rc<Self>, window: &Window, message: MessageId) {
@@ -965,25 +956,12 @@ impl Fill {
             });
         }
 
-        if window.conversation().reader_for(message).is_some()
-            && self.conversation_queued.borrow_mut().insert(message)
-        {
-            let parts = Rc::clone(self);
-            let window = window.downgrade();
-            glib::idle_add_local_once(move || {
-                parts.conversation_queued.borrow_mut().remove(&message);
-                let Some(window) = window.upgrade() else {
-                    return;
-                };
-                // Asked again rather than trusted from above: the entry can
-                // have collapsed, or the conversation can have closed
-                // entirely, between the event landing and this turn of the
-                // main loop running.
-                if let Some(reader) = window.conversation().reader_for(message) {
-                    parts.fill_reader(&reader, message);
-                }
-            });
-        }
+        // The stacked pane's per-entry repaint used to live here: it asked
+        // `reader_for(message)` for that message's own `Reader` and refilled
+        // it when a body landed. One document has no per-message readers --
+        // the whole thread is one `WebView` (ADR 0032) -- and its arrivals go
+        // through `ConversationView::set_thread_body`, which coalesces them
+        // into one redraw. Removed with the pane itself (#1426).
     }
 
     /// Read whatever the pane is showing again and draw it.
