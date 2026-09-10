@@ -1497,7 +1497,17 @@ impl ConversationView {
             .borrow_mut()
             .insert(message, recipients);
         imp.thread_cc.borrow_mut().insert(message, cc);
-        self.queue_document_redraw();
+        // **Deliberately no redraw.** The envelope and the body come out of
+        // the same `loaded` in `ReadingPane::fill_thread`, and this is called
+        // first: `set_thread_body` draws immediately after, with the
+        // recipients already in place. Drawing here as well is two full
+        // teardowns and reloads for one arrival, which is what a person sees
+        // as #749's flash -- `render_dedup` counts it as "one keystroke, 2
+        // renders".
+        //
+        // A message whose body never arrives keeps its recipients stored and
+        // shows them at the next redraw, which is the same thing its preview
+        // does.
     }
 
     /// Whether every message the pane is showing now has a body.
@@ -1815,7 +1825,15 @@ impl ConversationView {
             // because part of that movement is scrolling the focused message
             // into view and there is no document to scroll before it.
             if let Some(message) = opening {
-                self.focus_in_document(message);
+                // **Without scrolling.** `load_html` starts a document at the
+                // top and the opening focus is about which message is
+                // *marked*, not about moving the page -- and scrolling here
+                // costs a second render of the same document, which is
+                // #749's flash and what `render_dedup` counts. A thread opens
+                // twice by design (the list's row, then the whole
+                // conversation), so a scroll on the first arrival lands on a
+                // document that is about to be replaced anyway.
+                self.focus_in_document_without_scrolling(message);
             }
             return;
         }
@@ -2383,13 +2401,23 @@ impl ConversationView {
     /// arm does, with the scroll being a fragment navigation rather than a
     /// widget being brought into view.
     fn focus_in_document(&self, message: MessageId) {
+        self.focus_in_document_inner(message, true);
+    }
+
+    /// [`focus_in_document`](Self::focus_in_document), leaving the page where
+    /// it is. See the opening path for why.
+    fn focus_in_document_without_scrolling(&self, message: MessageId) {
+        self.focus_in_document_inner(message, false);
+    }
+
+    fn focus_in_document_inner(&self, message: MessageId, scroll: bool) {
         let imp = self.imp();
         if !imp.thread_rows.borrow().iter().any(|row| row.id == message) {
             return;
         }
         imp.focused.set(Some(message));
         imp.rail.set_marked(self.focused_index());
-        if let Some(reader) = imp.document_reader.borrow().as_ref() {
+        if scroll && let Some(reader) = imp.document_reader.borrow().as_ref() {
             reader.scroll_to_message(&message.get().to_string());
         }
         self.start_dwell(message);
