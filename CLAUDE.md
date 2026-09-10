@@ -361,11 +361,30 @@ for a stranger who can't ask follow-ups:
 |---|---|
 | Why the fix is shaped this way | the commit body |
 | What you discovered on the way | a comment on the issue |
-| Work this revealed | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Work this revealed, **if it is more than ~10 minutes** | `scripts/issue-file.sh` — **search first** (`ready` only if startable unattended; post-v1 → `roadmap`, under its epic) |
+| Work this revealed, if it is less | **just fix it**, here, as its own commit |
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
 | A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
+
+**Fix the small thing; file the large one** (maintainer, 2026-09-10: *"only
+file issues for work that is longer than 10 min and fix smaller things right
+away"*). A one-line guard, a stale comment, a lint, a wrong issue number in a
+doc comment — these cost less to fix than to describe, and an issue for one
+spends a queue entry, a claim, a worktree and a landing on something that was
+already in front of you. Fix it in the branch you are in, in its own commit
+that says what it is: the commit body is the record, and it is a better one
+than an issue nobody will read.
+
+The rule is about **effort, not importance**. Something small and urgent still
+gets fixed now. Something small you *cannot* fix here — it belongs to another
+crate's design, or it needs a decision — is still an issue, because the
+blocker is not its size.
+
+Unchanged: anything genuinely larger, anything needing a decision
+(`needs-maintainer`, `needs-architecture`), and anything you are **not** going
+to do. A bug you walked past and did not write down is lost.
 
 **File through the script, because you will not think to search.** One bug
 collected three issue numbers in two days (#332, #392, #406), both duplicates
