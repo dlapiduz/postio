@@ -1172,6 +1172,8 @@ mod imp {
         /// the other -- the document must be able to draw the recipients of a
         /// message whose body has not landed yet.
         pub(super) thread_recipients: RefCell<std::collections::HashMap<MessageId, String>>,
+        /// The `Cc` line, beside `thread_recipients` and for the same reason.
+        pub(super) thread_cc: RefCell<std::collections::HashMap<MessageId, String>>,
         /// Whether a redraw is already queued for the next idle turn.
         ///
         /// Bodies arrive one at a time and every one of them changes the
@@ -1273,6 +1275,7 @@ mod imp {
                 thread_rows: RefCell::new(Vec::new()),
                 thread_bodies: RefCell::new(std::collections::HashMap::new()),
                 thread_recipients: RefCell::new(std::collections::HashMap::new()),
+                thread_cc: RefCell::new(std::collections::HashMap::new()),
                 redraw_queued: Cell::new(false),
                 redraw_deadline: Cell::new(None),
                 thread_renders: Cell::new(0),
@@ -1485,7 +1488,7 @@ impl ConversationView {
     ///
     /// Empty is a real answer: a message with no recipients draws no line
     /// rather than an empty one.
-    pub fn set_thread_recipients(&self, message: MessageId, recipients: String) {
+    pub fn set_thread_recipients(&self, message: MessageId, recipients: String, cc: String) {
         let imp = self.imp();
         if !imp.one_document.get() {
             return;
@@ -1493,6 +1496,7 @@ impl ConversationView {
         imp.thread_recipients
             .borrow_mut()
             .insert(message, recipients);
+        imp.thread_cc.borrow_mut().insert(message, cc);
         self.queue_document_redraw();
     }
 
@@ -1601,6 +1605,12 @@ impl ConversationView {
                         .get(&row.id)
                         .cloned()
                         .unwrap_or_default(),
+                    cc: imp
+                        .thread_cc
+                        .borrow()
+                        .get(&row.id)
+                        .cloned()
+                        .unwrap_or_default(),
                     preview: row.preview.clone().unwrap_or_default(),
                     expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
@@ -1660,6 +1670,7 @@ impl ConversationView {
             imp.thread_id.set(opening);
             imp.thread_bodies.borrow_mut().clear();
             imp.thread_recipients.borrow_mut().clear();
+            imp.thread_cc.borrow_mut().clear();
             imp.expanded_in_document.borrow_mut().clear();
             // A different conversation, so "show this one whole" is answered
             // afresh. Cleared here rather than on every redraw: a body

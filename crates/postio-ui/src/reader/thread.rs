@@ -119,6 +119,8 @@ pub struct Entry<'a> {
     ///
     /// Empty when there are none, and then nothing is drawn.
     pub recipients: &'a str,
+    /// Who else was copied, drawn by the same rule. Empty when nobody was.
+    pub cc: &'a str,
     /// This message's own stylesheets, scoped to it
     /// (`postio_body::sanitize::Sanitized::styles`). Empty for most mail.
     ///
@@ -233,13 +235,14 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
-    let recipients = recipients_html(entry.recipients);
+    let recipients = recipients_html(entry.recipients, entry.cc);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
     // `the_markup_is_well_formed` caught.
     format!(
         "<details class=\"postio-message\" id=\"{anchor}\"{open}>\
          <summary class=\"postio-message-head\">\
+         <span class=\"postio-recipients-label\">From</span>\
          <span class=\"postio-from\">{sender}</span>\
          <span class=\"postio-address\">{address}</span>\
          <span class=\"postio-preview\">{preview}</span>\
@@ -256,14 +259,24 @@ fn entry_html(entry: &Entry<'_>) -> String {
 /// message shows, and it already carries sender, preview, date and the verbs.
 /// Who it went to belongs with the message you have opened, which is where
 /// the stacked pane drew it too.
-fn recipients_html(recipients: &str) -> String {
-    if recipients.trim().is_empty() {
-        return String::new();
+fn recipients_html(recipients: &str, cc: &str) -> String {
+    let mut rows = String::new();
+    for (label, value) in [("To", recipients), ("Cc", cc)] {
+        if value.trim().is_empty() {
+            continue;
+        }
+        // Label and value as two cells, so `To` and `Cc` line up with each
+        // other and their addresses start at the same column. Drawn bare,
+        // the recipients read as a stray line of text under the sender --
+        // which is exactly how it looked when this had no label at all.
+        rows.push_str(&format!(
+            "<div class=\"postio-message-recipients\">\
+             <span class=\"postio-recipients-label\">{label}</span>\
+             <span class=\"postio-recipients-value\">{}</span></div>",
+            escape(value)
+        ));
     }
-    format!(
-        "<div class=\"postio-message-recipients\">{}</div>",
-        escape(recipients)
-    )
+    rows
 }
 
 /// Postio's own chrome text, escaped.
@@ -355,6 +368,7 @@ mod tests {
             blocked: 0,
             styles: "",
             recipients: "",
+            cc: "",
             body,
         }
     }
