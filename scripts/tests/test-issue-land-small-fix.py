@@ -22,9 +22,12 @@ Exit status: 0 all cases behaved, 1 otherwise.
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "issue-land.sh"
 
@@ -37,9 +40,10 @@ LIFT = re.compile(
 
 def accepts(guard: str, branch: str) -> bool:
     probe = f'BRANCH="{branch}"\nISSUE=""\nSMALL=0\n{guard}\necho "$SMALL"\n'
-    out = subprocess.run(
-        ["bash", "-c", probe], capture_output=True, text=True, timeout=30
-    )
+    # `patience.run`, not `subprocess.run`: a hand-rolled deadline measures
+    # the process it runs in, and on a shared workstation that is a flake
+    # nobody can reproduce alone (#842, #957).
+    out = patience.run(["bash", "-c", probe], capture_output=True, text=True, timeout=30)
     return out.stdout.strip() == "1"
 
 
