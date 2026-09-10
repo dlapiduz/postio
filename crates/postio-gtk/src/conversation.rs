@@ -423,10 +423,11 @@ mod tests {
 ///
 /// Hands back the [`Reader`](crate::reader::Reader) itself, not just its
 /// widget: the pane keeps it, so an arrival for an already-expanded entry
-/// can be re-drawn into the reader already on screen ([`reader_for`],
-/// #739) instead of tearing the whole entry down to rebuild one.
-///
-/// [`reader_for`]: ConversationView::reader_for
+/// can be re-drawn into the reader already on screen instead of tearing the
+/// whole entry down to rebuild one (#739). The pane answers with
+/// [`ConversationView::document_reader`] now — one reader for the whole
+/// conversation — where it used to answer per message with `reader_for`
+/// (#1426).
 pub type ReaderFactory = Box<dyn Fn(MessageId) -> Option<crate::reader::Reader>>;
 
 /// The three verbs a single message in a stack offers.
@@ -1023,7 +1024,9 @@ mod imp {
         /// crossing a line, so between crossings this is the only record of
         /// which side we are on.
         pub(super) rail_width: Cell<Option<i32>>,
-        /// The stack itself, one [`Entry`] per message, oldest first.
+        /// The stack itself, one entry per message, oldest first. (`Entry`
+        /// was the widget each one used to be, before #1426 made the
+        /// conversation a single document.)
         pub(super) stack: gtk::Box,
         /// The current message — the one both this pane and the drill-in
         /// column are showing, and the one a per-message verb aims at.
