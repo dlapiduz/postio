@@ -16,7 +16,7 @@ use postio_ui::reader::header::MessageHeader as HeaderLines;
 /// Above the remote-image banner and the body: who this is from, who it was
 /// addressed to, what it is about, and when it arrived.
 ///
-/// Independent of whether a body is on screen — [`Self::set_message`] takes
+/// Independent of whether a body is on screen — [`MessageHeader::set_message`] takes
 /// only the envelope, so a header-only message (backfill still pending, or
 /// genuinely bodyless) gets exactly the same header a message with a body
 /// does.

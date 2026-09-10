@@ -193,8 +193,8 @@ struct DarkNotify {
 }
 
 impl Drop for Reader {
-    /// Balances [`cost::note_surface_created`] so that `surfaces_held` means
-    /// what it says.
+    /// Balances [`postio_ui::reader::cost::note_surface_created`] so that
+    /// `surfaces_held` means what it says.
     ///
     /// Dropping the `Reader` is what lets its `WebView` go, and the web
     /// process with it. A conversation that keeps every surface it ever
@@ -998,7 +998,7 @@ impl Reader {
 
     /// Draw one message of a thread as its sender wrote it — `⌃O`.
     ///
-    /// Per message, which is what the single-message [`view_original`] has
+    /// Per message, which is what the single-message [`Reader::view_original`] has
     /// always promised and what a pane holding several has to mean: showing
     /// one newsletter whole says nothing about the message below it.
     ///

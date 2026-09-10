@@ -21,8 +21,9 @@
 //! * **documents built** and **bytes** — a document carrying bulk that is
 //!   identical between messages. #749 measured ~1.2 MB of `@font-face` data
 //!   URIs in *every* document, re-parsed by the engine on every switch; ADR
-//!   0023 moved the bytes behind a scheme, and [`largest_document`] is what
-//!   notices if anything like them comes back.
+//!   0023 moved the bytes behind a scheme, and `test_support::largest_document`
+//!   is what notices if anything like them comes back — behind `cfg(test)`, so
+//!   there is nothing to link to from a doc build.
 //! * **renders** — one gesture, at most one render, and none at all for
 //!   re-selecting what is already displayed.
 //! * **surfaces** — a rendering surface per message is what ADR 0032 measured

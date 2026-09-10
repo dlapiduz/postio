@@ -96,6 +96,34 @@ run_doctests() {
     cargo test --doc "$@"
 }
 
+# Build one crate's rustdoc under the same flags `nightly.yml`'s `doc` job
+# uses, so a broken intra-doc link fails the branch that wrote it (#1463).
+#
+# Nothing on the merge path used to build rustdoc at all. Not this gate, and
+# not CI either -- `ci.yml`'s "Docs site build" is `mdbook`, gated on prose
+# paths, and a pull request that changes only Rust never ran rustdoc
+# anywhere. The only thing that did was the nightly, hours later, on a job
+# that had never once been green.
+#
+# Per crate, not the workspace, and that is the whole reason #833's trade
+# does not have to be reopened: the workspace doc build was 23m35s and the
+# longest job on every pull request, while one crate is seconds. The changed
+# -crate list is already computed here for clippy and the suites.
+#
+# After the rebase, like everything else in this chain. #1448 is the worked
+# example of why: it left the workspace documenting cleanly, was rebased onto
+# a `main` that had gained the conversation pane, and merged six broken links
+# nothing had looked at -- because the rebase is where the combination first
+# exists, which CLAUDE.md already says about a shared type's new callers.
+#
+# `private_intra_doc_links` is allowed for the reason `nightly.yml` gives:
+# these docs cross-reference internals deliberately and the build passes
+# --document-private-items, so those links do resolve.
+run_rustdoc() {
+    RUSTDOCFLAGS="-D warnings -A rustdoc::private_intra_doc_links" \
+        cargo doc --no-deps --document-private-items "$@"
+}
+
 TREE=$(git rev-parse --show-toplevel)
 
 # --detach: run this very script in a session of its own and return (#1129).
@@ -443,6 +471,11 @@ if [ "$GATES_GREEN" != 1 ]; then
         PHASE_START=$(date +%s)
         cargo clippy -p "$crate" --all-targets -- -D warnings
         echo "[timing] clippy $crate: $(( $(date +%s) - PHASE_START ))s"
+
+        echo "--- rustdoc: $crate ---"
+        PHASE_START=$(date +%s)
+        run_rustdoc -p "$crate"
+        echo "[timing] rustdoc $crate: $(( $(date +%s) - PHASE_START ))s"
     done
 
     # The test tier. Default is the whole workspace's *unit* tests: 1,313
