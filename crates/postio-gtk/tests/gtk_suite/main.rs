@@ -77,6 +77,7 @@ mod gtk_editor_profile;
 mod gtk_feeds;
 mod gtk_finder;
 mod gtk_finder_focus;
+mod gtk_first_frame;
 mod gtk_flagged;
 mod gtk_focus_visible;
 mod gtk_folder_reload_scope;
@@ -429,6 +430,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick",
         gtk_feeds::the_panes_follow_the_account_the_sync_and_the_folder_you_pick as fn(),
+    ),
+    (
+        "gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up",
+        gtk_first_frame::work_deferred_to_the_first_frame_runs_even_if_the_window_is_up as fn(),
     ),
     (
         "gtk_flagged::the_sidebar_offers_flagged_and_opening_it_lists_the_flagged_mail",

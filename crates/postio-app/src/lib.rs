@@ -359,10 +359,41 @@ fn open_account(
     events: &Rc<std::cell::RefCell<Option<EventStream>>>,
     notifier: &notifications::Notifier,
 ) {
-    start_syncing(window, wiring);
+    // **Storage first, and the network only once there is something to look
+    // at.** This read `start_syncing` then `feed_the_window`, so opening the
+    // account connected to the server, authenticated and listed its folders
+    // before a single stored message reached the list. Measured on a real
+    // account: the first frame was 2282ms of a 2474ms startup, against a
+    // 500ms budget, and the log says plainly what it was waiting for:
+    //
+    //     56.558  opening account
+    //     57.085  connected and authenticated      <- a round trip
+    //     57.258  listed the server's folders      <- another
+    //     58.713  first frame
+    //
+    // `docs/PRODUCT.md` §18 budgets startup at 500ms and the architecture
+    // note says the UI never awaits the network. Startup was the one place
+    // that did, and it awaited it before drawing anything.
+    //
+    // A profile with no account painted in 104ms, which looked like the
+    // store's size and was not: it had no server to call.
+    //
+    // The mail is already on disk. Everything below this line reads it, and
+    // none of it needs a connection.
     let Some(Wired { feeds, .. }) = feed_the_window(window, wiring) else {
         return;
     };
+
+    // And the network, after the frame the stored mail is drawn in.
+    //
+    // `on_first_frame` and not an idle callback: idle means "when the loop is
+    // free", which is a promise about the loop; this needs to mean "once the
+    // person can see their mail", which is a promise about the screen.
+    postio_gtk::startup::on_first_frame(window, {
+        let window = window.clone();
+        let wiring = wiring.clone();
+        move || start_syncing(&window, &wiring)
+    });
     // Every gesture the window produces from here on reaches a real handler.
     // Before this line the keymap, the palette and the selection model all
     // resolved correctly and then handed off to nothing.

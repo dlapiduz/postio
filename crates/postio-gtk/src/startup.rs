@@ -191,8 +191,15 @@ impl Timeline {
 /// first shows the window — as close to "the user can see it" as the frame
 /// clock can say.
 pub fn on_first_frame<W: IsA<gtk::Widget>>(widget: &W, f: impl Fn() + 'static) {
-    let pending = RefCell::new(Some(f));
-    widget.connect_map(move |widget| {
+    let pending = Rc::new(RefCell::new(Some(f)));
+    // **A widget that is already mapped never emits `map` again.** The
+    // measurement path registers this while building the window, so it never
+    // met that; a caller that hangs real work off the first frame does --
+    // `activate` handlers run in registration order, and the one that
+    // presents the window runs first. Hooked that way, the work would simply
+    // never run, and the failure is silent: no account opens and nothing says
+    // why.
+    fn arm<F: Fn() + 'static>(widget: &gtk::Widget, pending: &Rc<RefCell<Option<F>>>) {
         let Some(f) = pending.borrow_mut().take() else {
             return;
         };
@@ -200,7 +207,12 @@ pub fn on_first_frame<W: IsA<gtk::Widget>>(widget: &W, f: impl Fn() + 'static) {
             f();
             glib::ControlFlow::Break
         });
-    });
+    }
+    if widget.is_mapped() {
+        arm(widget.as_ref(), &pending);
+        return;
+    }
+    widget.connect_map(move |widget| arm(widget.as_ref(), &pending));
 }
 
 fn millis(d: Duration) -> String {
