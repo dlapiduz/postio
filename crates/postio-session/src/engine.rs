@@ -65,14 +65,14 @@ pub fn start(
     let connector = match RustlsConnector::new() {
         Ok(connector) => Arc::new(connector.with_egress(egress.clone())),
         Err(error) => {
-            tracing::error!(%error, "no IMAP transport, so no sync");
+            tracing::error!(%error, "no IMAP transport, so no sync: {error}");
             return None;
         }
     };
     let smtp = match postio_smtp::transport::RustlsConnector::new() {
         Ok(connector) => Arc::new(connector.with_egress(egress)),
         Err(error) => {
-            tracing::error!(%error, "no SMTP transport, so nothing can be sent");
+            tracing::error!(%error, "no SMTP transport, so nothing can be sent: {error}");
             return None;
         }
     };
@@ -108,7 +108,7 @@ pub fn start(
     }) {
         Ok(engine) => Some(engine),
         Err(error) => {
-            tracing::error!(%error, "the sync engine did not start");
+            tracing::error!(%error, "the sync engine did not start: {error}");
             None
         }
     }
@@ -136,7 +136,7 @@ fn backend_for(
                 tracing::error!(
                     account = account.id.get(),
                     %error,
-                    "the stored JMAP session URL does not parse; falling back to IMAP"
+                    "the stored JMAP session URL does not parse; falling back to IMAP: {error}"
                 );
             }
         },
@@ -200,7 +200,7 @@ pub(crate) fn token_source(
                 tracing::error!(
                     %error,
                     "the account's stored OAuth token endpoint is not a URL; \
-                     falling back to the stored credential"
+                     falling back to the stored credential: {error}"
                 );
             }
         }

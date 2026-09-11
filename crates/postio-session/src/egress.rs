@@ -83,7 +83,7 @@ impl EgressRecorder {
             Err(error) => {
                 // The sink still swallows events; the log just stays empty —
                 // failing to audit must not cost the user their sync.
-                tracing::error!(%error, "the egress writer thread did not start");
+                tracing::error!(%error, "the egress writer thread did not start: {error}");
                 None
             }
         };

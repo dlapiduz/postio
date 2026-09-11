@@ -380,7 +380,7 @@ fn install_autosave(
         let last_id = Rc::clone(&last_id);
         move |draft| match save_draft(&database, draft) {
             Ok(()) => last_id.set(Some(draft.id)),
-            Err(error) => tracing::error!(%error, "could not autosave the draft"),
+            Err(error) => tracing::error!(%error, "could not autosave the draft: {error}"),
         }
     });
 
@@ -478,7 +478,7 @@ fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option
             // The draft is still in the store, unsent and unqueued. Not a
             // status line: `Composer::send` closes straight after this, so
             // there is nothing on screen left to read it.
-            tracing::error!(%error, "could not queue the draft for sending");
+            tracing::error!(%error, "could not queue the draft for sending: {error}");
         }
     });
 }
@@ -504,7 +504,7 @@ fn install_send_later(composer: &Composer, database: Database, last_id: Rc<Cell<
         let mut draft = draft.clone();
         last_id.set(None);
         if let Err(error) = queue_send_at(&database, &mut draft, send_at) {
-            tracing::error!(%error, "could not schedule the draft for sending");
+            tracing::error!(%error, "could not schedule the draft for sending: {error}");
         }
     });
 }
@@ -547,7 +547,7 @@ fn recover(
     let drafts = match DraftRepository::new(&connection).list_for_account(account) {
         Ok(drafts) => drafts,
         Err(error) => {
-            tracing::error!(%error, "could not read drafts to recover");
+            tracing::error!(%error, "could not read drafts to recover: {error}");
             return;
         }
     };

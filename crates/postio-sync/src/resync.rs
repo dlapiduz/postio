@@ -253,7 +253,7 @@ pub async fn resync_mailbox(
                     tracing::error!(
                         mailbox = mailbox.id.get(),
                         %error,
-                        "the incremental pull cannot be trusted; rebuilding"
+                        "the incremental pull cannot be trusted; rebuilding: {error}"
                     );
                     rebuild(
                         connection,

@@ -952,7 +952,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
             // A sentence, not a hang. Starting some of the engines would
             // leave the rest of the accounts looking permanently offline
             // with nothing explaining why (#183).
-            tracing::error!(%refusal, "not starting the sync engines");
+            tracing::error!(%refusal, "not starting the sync engines: {refusal}");
             return;
         }
     };
@@ -1049,7 +1049,7 @@ fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
     postio_storage::repository::AccountRepository::new(&connection)
         .list_enabled()
         .unwrap_or_else(|error| {
-            tracing::error!(%error, "cannot read the accounts");
+            tracing::error!(%error, "cannot read the accounts: {error}");
             Vec::new()
         })
 }
@@ -1097,7 +1097,7 @@ fn seed_the_backfill(
     {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
-            tracing::error!(%error, "cannot read the account's folders");
+            tracing::error!(%error, "cannot read the account's folders: {error}");
             return;
         }
     };
@@ -1207,7 +1207,7 @@ fn open_with(
     let bridge = Bridge::builder()
         .build_with_events(bus, hub.sink())
         .map_err(|error| {
-            tracing::error!(%error, "no runtime, so no mail");
+            tracing::error!(%error, "no runtime, so no mail: {error}");
             format!("Postio could not start its runtime: {error}")
         })?;
 
@@ -1379,7 +1379,7 @@ fn reap_pending_accounts(database: &Database) {
     if let Err(error) =
         postio_storage::repository::AccountRepository::new(&connection).reap_pending_deletions()
     {
-        tracing::error!(%error, "could not reap an account marked for removal");
+        tracing::error!(%error, "could not reap an account marked for removal: {error}");
     }
 }
 

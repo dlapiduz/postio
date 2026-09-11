@@ -506,14 +506,14 @@ pub fn open_store_at(
         // rather than deciding for somebody. The sentence has to say what to
         // do next, because "drain first" is an instruction to a person.
         Err(error @ postio_storage::Error::QueueNotDrained { .. }) => {
-            tracing::error!(path = %path.display(), %error, "the store cannot be encrypted yet");
+            tracing::error!(path = %path.display(), %error, "the store cannot be encrypted yet: {error}");
             return Err(format!(
                 "Postio could not encrypt its local store. {error} Open the previous \
                  version, let it finish syncing, and start this one again."
             ));
         }
         Err(error) => {
-            tracing::error!(path = %path.display(), %error, "the store could not be encrypted");
+            tracing::error!(path = %path.display(), %error, "the store could not be encrypted: {error}");
             return Err(format!(
                 "Postio could not encrypt its local store: {error}. Nothing was \
                  changed; the store is exactly as it was."
@@ -533,7 +533,7 @@ pub fn open_store_at(
             return Err(format!("Postio could not unlock its local store. {error}"));
         }
         Err(error) => {
-            tracing::error!(path = %path.display(), %error, "cannot open the store");
+            tracing::error!(path = %path.display(), %error, "cannot open the store: {error}");
             // The sentence goes back to the caller as well as to the log,
             // because the caller is what puts it on screen (#404). A window
             // that will not open and does not say why is the one thing worse
@@ -549,7 +549,7 @@ pub fn open_store_at(
     ) {
         Ok(blobs) => blobs,
         Err(error) => {
-            tracing::error!(%error, "cannot open the blob store");
+            tracing::error!(%error, "cannot open the blob store: {error}");
             return Err(format!(
                 "Postio could not open the store that holds message bodies \
                  and attachments: {error}"
@@ -560,7 +560,7 @@ pub fn open_store_at(
         // Recoverable: everything except search still works, and refusing to
         // open a mail client because its index would not build would be a
         // worse answer than opening one you cannot search.
-        tracing::error!(%error, "the search index is unavailable");
+        tracing::error!(%error, "the search index is unavailable: {error}");
     }
 
     Ok((database, blobs))
@@ -1553,11 +1553,11 @@ pub fn reindex_account(
 pub fn first_account(database: &Database) -> Option<postio_model::Account> {
     let connection = database
         .connection()
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?;
     AccountRepository::new(&connection)
         .list_enabled()
-        .map_err(|error| tracing::error!(%error, "cannot read the accounts"))
+        .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?
         .into_iter()
         .next()

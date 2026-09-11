@@ -1194,7 +1194,7 @@ impl SettingsPanel {
         };
         list.revoke(sender);
         if let Err(error) = list.save_to(path) {
-            tracing::error!(%error, "could not save the remote-image allow-list");
+            tracing::error!(%error, "could not save the remote-image allow-list: {error}");
         }
         drop(guard);
         self.redraw_privacy();
@@ -2536,7 +2536,7 @@ impl SettingsPanel {
         mutate(&mut config);
         match patch_filters(&original, &config.filters) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [filters]"),
+            Err(error) => tracing::error!(%error, "could not patch [filters]: {error}"),
         }
     }
 
@@ -2634,7 +2634,7 @@ impl SettingsPanel {
         mutate(&mut config.sync);
         match patch_sync(&original, &config.sync) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [sync]"),
+            Err(error) => tracing::error!(%error, "could not patch [sync]: {error}"),
         }
     }
 
@@ -2907,7 +2907,7 @@ impl SettingsPanel {
         *config.keys.overrides_mut() = overrides.clone();
         match patch_keys(&original, &overrides) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [keys]"),
+            Err(error) => tracing::error!(%error, "could not patch [keys]: {error}"),
         }
     }
 
@@ -3283,7 +3283,7 @@ impl SettingsPanel {
         mutate(&mut config.ui);
         match patch_ui(&original, &config.ui) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [ui]"),
+            Err(error) => tracing::error!(%error, "could not patch [ui]: {error}"),
         }
     }
 
@@ -3376,7 +3376,7 @@ impl SettingsPanel {
         mutate(&mut config.compose);
         match patch_compose(&original, &config.compose) {
             Ok(patched) => self.imp().buffer.set_text(&patched),
-            Err(error) => tracing::error!(%error, "could not patch [compose]"),
+            Err(error) => tracing::error!(%error, "could not patch [compose]: {error}"),
         }
     }
 
@@ -3559,7 +3559,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &text) {
-            tracing::error!(path = %path.display(), %error, "cannot revert the config file");
+            tracing::error!(path = %path.display(), %error, "cannot revert the config file: {error}");
             return;
         }
         imp.loading.set(true);
@@ -3605,7 +3605,7 @@ impl SettingsPanel {
             return;
         };
         if let Err(error) = write_atomically(&path, &self.text()) {
-            tracing::error!(path = %path.display(), %error, "cannot save the config file");
+            tracing::error!(path = %path.display(), %error, "cannot save the config file: {error}");
         }
     }
 
