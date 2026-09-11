@@ -1481,3 +1481,159 @@ fn set_state_leaves_the_reservation_alone_for_every_other_state() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// What it costs (Constitution V, spec 002 T055)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
+    // Autosave runs on a debounce while somebody types, so this is a write
+    // path that repeats for the life of every draft -- and loading one is
+    // what stands between pressing Return on a Drafts row and seeing the
+    // composer. Both are budgeted as *counts* rather than timings, because a
+    // shared runner cannot defend 16 ms and these numbers are the same on any
+    // machine (`bench.yml` deliberately times nothing).
+    //
+    // What the numbers are guarding is shape, not speed: an N+1 over
+    // recipients or attachments does not show up as a slow test on a draft
+    // with two of each, it shows up here as a count that grew with the data.
+    // That is why the second half adds parts and asserts the cost did *not*
+    // move with them.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+
+    postio_storage::test_support::counting::install(&connection);
+
+    let mut small = a_draft(account.id);
+    let saving = postio_storage::test_support::counting::counted(|| {
+        drafts.save(&mut small).expect("save");
+    });
+    let loading = postio_storage::test_support::counting::counted(|| {
+        drafts.get(small.id).expect("get").expect("still here");
+    });
+
+    // Loading is pinned exactly, because 3 is a number with a meaning -- the
+    // draft row, its recipients, its attachments -- and any fourth statement
+    // is a question worth answering rather than drift to absorb.
+    assert_eq!(
+        loading.statements, 3,
+        "loading a draft is the row, its recipients and its parts: {loading:?}"
+    );
+    // Saving is a ceiling, not an equality. It writes several tables inside a
+    // transaction and the exact count moves for reasons that teach nobody
+    // anything; what must not happen is that it doubles unnoticed, because
+    // autosave runs this on a debounce for the life of every draft.
+    assert!(
+        saving.statements <= 32,
+        "saving an almost-empty draft took {} statements: {saving:?}",
+        saving.statements
+    );
+
+    // ── And the cost does not grow with the draft's contents ─────────────
+    let mut large = a_draft(account.id);
+    large.to = (0..8)
+        .map(|n| EmailAddress::new(None::<String>, format!("to{n}@example.net")))
+        .collect();
+    large.cc = (0..8)
+        .map(|n| EmailAddress::new(None::<String>, format!("cc{n}@example.org")))
+        .collect();
+    large.attachments = (0..8)
+        .map(|n| {
+            let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 1_024);
+            part.filename = Some(format!("report-{n}.pdf"));
+            part
+        })
+        .collect();
+
+    let saving_large = postio_storage::test_support::counting::counted(|| {
+        drafts.save(&mut large).expect("save");
+    });
+    let loading_large = postio_storage::test_support::counting::counted(|| {
+        drafts.get(large.id).expect("get").expect("still here");
+    });
+
+    // Writing more rows is more statements and that is honest work. Reading
+    // is where an N+1 hides, because one query per attachment looks exactly
+    // like one query for all of them until the draft has eight.
+    assert_eq!(
+        loading_large.statements, loading.statements,
+        "loading a draft with sixteen recipients and eight attachments cost \
+         {} statements against {} for an almost empty one, which is a query \
+         per part rather than a query for all of them",
+        loading_large.statements, loading.statements
+    );
+    // Writing more rows is more statements and that is honest work; what is
+    // budgeted is the rate. Measured at about four per row -- a delete, an
+    // insert and the bookkeeping around them -- so six per row leaves room
+    // for an incidental change and none for a doubling.
+    let extra_rows = (16 - 1) + 8;
+    assert!(
+        saving_large.statements <= saving.statements + extra_rows * 6,
+        "saving grew faster than six statements per row written: \
+         {saving_large:?} against {saving:?} for {extra_rows} more rows"
+    );
+}
+
+#[test]
+fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found() {
+    // FR-066, in the two thirds that are built. A send that fails must leave
+    // something a person can act on: the draft still theirs to edit, still in
+    // the Drafts folder, and the reason recorded rather than discarded with
+    // the attempt.
+    //
+    // The third part -- that the reason is *named* to the user -- is not
+    // asserted here because nothing shows it (#1487). It is computed, written
+    // to `last_error`, and carried all the way up the engine's drain report,
+    // and then no surface reads it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_drafts(&connection);
+    let drafts = DraftRepository::new(&connection);
+    let queue = OperationQueueRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, at(1))
+        .expect("queue the send");
+
+    queue
+        .mark_failed(queued.id, at(2), "550 mailbox unavailable")
+        .expect("mark failed");
+    drafts
+        .set_state(draft.id, DraftState::Failed)
+        .expect("the draft learns the send failed");
+
+    // ── Still editable ───────────────────────────────────────────────────
+    let after = drafts.get(draft.id).expect("get").expect("still here");
+    assert_eq!(after.state, DraftState::Failed);
+    assert!(
+        after.is_sendable(),
+        "a failed draft must be sendable again once it is fixed, or the only \
+         way out is to retype it"
+    );
+    assert_eq!(
+        after.to, draft.to,
+        "the recipients did not survive the failure"
+    );
+    assert_eq!(
+        after.body.text, draft.body.text,
+        "the text did not survive the failure, which is the one outcome worse \
+         than the send failing"
+    );
+
+    // ── And the reason is still somewhere ────────────────────────────────
+    let row = queue
+        .get(queued.id)
+        .expect("get")
+        .expect("a failed operation stays on the queue to be looked at");
+    assert_eq!(
+        row.last_error.as_deref(),
+        Some("550 mailbox unavailable"),
+        "the reason went with the attempt, so nothing can ever tell the \
+         person why"
+    );
+}

@@ -183,10 +183,10 @@ appearance and quote work depend on.
 - [ ] T049 [P] [US5] Assert unsent work is saved without being asked, and survives navigating away, closing the window and an unexpected stop — FR-063
 - [ ] T050 [P] [US5] Assert reopening restores text, formatting, recipients and attachments — FR-064
 - [ ] T051 [P] [US5] Assert discarding asks first — FR-061
-- [ ] T052 [P] [US5] Assert a failed send stays editable and findable and names what went wrong — FR-066
+- [X] T052 [P] [US5] Assert a failed send stays editable and findable and names what went wrong — FR-066. **Two thirds hold and are asserted** (`storage_suite/drafts.rs`): the draft stays editable with its recipients and text, stays in Drafts, and the reason is kept on the queue row. **The third does not reach any surface** — the reason is built by `drain`, written to `last_error`, and carried up through the engine's report, whose own doc says "the reason the user should see", and then nothing reads it. Filed as #1487; the third instance in this spec of a thing computed by one layer and consumed by none
 - [ ] T053 [P] [US5] **Red first**: assert the reading pane holds at most one draft and that starting another detaches the first rather than refusing or discarding — FR-010, FR-011
 - [ ] T054 [P] [US5] **Red first**: assert a draft is editable in exactly one surface, and asking for an open one brings it forward — FR-013
-- [ ] T055 [P] [US5] Assert draft save and load carry `postio_storage::test_support::counting` assertions on statements and rows — Constitution V
+- [X] T055 [P] [US5] Assert draft save and load carry `postio_storage::test_support::counting` assertions on statements and rows — Constitution V. **Loading is 3 statements flat** — the row, its recipients, its parts — and stays 3 for a draft with sixteen recipients and eight attachments, which is the N+1 this exists to catch. Saving is ~4 statements per row written and is budgeted as a rate, since autosave runs it on a debounce for the life of every draft
 
 ### Implementation for User Story 5
 
