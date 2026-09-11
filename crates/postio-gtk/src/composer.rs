@@ -1758,7 +1758,7 @@ impl Composer {
         self.release_pane();
 
         let host = adw::Window::builder()
-            .title(heading(self.imp().draft.borrow().kind))
+            .title(self.window_title())
             .transient_for(&window)
             // Not modal, and this is the criterion rather than a default:
             // the point of detaching is to read something else while you
@@ -1815,6 +1815,41 @@ impl Composer {
         sync_detach_button(&self.imp().detach, true);
         host.present();
         self.restore_focus(field);
+    }
+
+    /// What a detached window calls itself (FR-014).
+    ///
+    /// The subject, because the requirement is that a detached window be
+    /// identifiable *without being focused* — and with several open, the
+    /// draft's kind is not identification: two replies would both say
+    /// "Reply" and the window list would offer no way to tell them apart.
+    /// The kind is the fallback for a draft that has no subject yet, which is
+    /// the one case where there is nothing better to say.
+    fn window_title(&self) -> String {
+        let draft = self.imp().draft.borrow();
+        let subject = draft.subject.trim();
+        if subject.is_empty() {
+            heading(draft.kind).to_owned()
+        } else {
+            subject.to_owned()
+        }
+    }
+
+    /// Brings this composition forward, wherever it is (FR-013).
+    ///
+    /// A detached one raises its window; the pane's takes the pane and the
+    /// keyboard. Asking for a draft that is already open means "show me it",
+    /// never "start another" — and never a second view of the same draft,
+    /// which is the thing that lets two surfaces disagree about one message.
+    pub fn present_surface(&self) {
+        match self.detached_window() {
+            Some(host) => host.present(),
+            None => {
+                self.take_pane();
+                self.set_visible(true);
+            }
+        }
+        self.focus_first();
     }
 
     /// Puts the composition back in the reading pane, window and all.
@@ -1890,7 +1925,18 @@ impl Composer {
         let Some(host) = self.detached_window() else {
             return glib::Propagation::Proceed;
         };
-        window.handle_key_in(key, state, &host, Context::Composer)
+        // Resolved by the window, dispatched by *this* composer. Going
+        // through `handle_key_in` would broadcast to every subscriber, and
+        // once there are several composers open that means `Send` sends every
+        // open draft (ADR 0034). The keymap is still the window's, so
+        // `[keys]` reaches both containers.
+        match window.command_for_key_in(key, state, &host, Context::Composer) {
+            Some(id) => {
+                self.dispatch(id);
+                glib::Propagation::Stop
+            }
+            None => window.handle_key_in(key, state, &host, Context::Composer),
+        }
     }
 
     // -- Mounting -------------------------------------------------------------
@@ -1939,10 +1985,19 @@ impl Composer {
         ));
         window.add_action(&action);
 
+        // The broadcast belongs to whichever composer has the pane. A
+        // detached one hears its own keys through its own controller, above,
+        // and must not also hear this -- with two open, `Send` would
+        // otherwise send both drafts (ADR 0034).
         window.connect_command(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |id| composer.dispatch(id)
+            move |id| {
+                if composer.is_detached() {
+                    return;
+                }
+                composer.dispatch(id);
+            }
         ));
 
         if let Some(button) = window.compose_button() {
@@ -2612,6 +2667,16 @@ impl Composer {
             None => imp.warning.set_visible(false),
         }
         imp.send.set_sensitive(draft.is_sendable());
+
+        // A detached window's title is how it is told apart in the window
+        // list, and the subject is usually typed after it was detached
+        // (FR-014).
+        if let Some(host) = self.detached_window() {
+            let title = self.window_title();
+            if host.title().as_deref() != Some(title.as_str()) {
+                host.set_title(Some(&title));
+            }
+        }
 
         if imp.filling.get() {
             return;
@@ -3461,6 +3526,12 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_insert_image_file(&self, path: &std::path::Path) {
         self.insert_image_file(&gio::File::for_path(path));
+    }
+
+    /// The window this composition was detached into, if it is in one.
+    #[doc(hidden)]
+    pub fn test_detached_window(&self) -> Option<adw::Window> {
+        self.detached_window()
     }
 
     /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.

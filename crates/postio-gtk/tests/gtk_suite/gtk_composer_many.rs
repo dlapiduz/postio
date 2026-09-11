@@ -98,6 +98,21 @@ pub fn a_second_draft_moves_the_first_into_a_window_of_its_own() {
          the one thing this whole arrangement exists to prevent"
     );
 
+    // ── FR-014: and the window says which draft it is ────────────────────
+    //
+    // "Identifiable without being focused" is the requirement, and with
+    // several open the draft's *kind* is not identification -- two replies
+    // would both say "Reply" and the window list would offer no way to tell
+    // them apart.
+    let host = first
+        .test_detached_window()
+        .expect("the first draft is in a window");
+    assert_eq!(
+        gtk::prelude::GtkWindowExt::title(&host).as_deref(),
+        Some("the weir gauge"),
+        "the detached window does not name the draft it holds"
+    );
+
     // ── FR-013: asking for one already open brings it forward ────────────
     let again = window.open_draft(a_draft(1, "the weir gauge"));
     settle();

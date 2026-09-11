@@ -106,7 +106,7 @@ enum Showing {
 }
 
 mod imp {
-    use std::cell::OnceCell;
+    use std::cell::{OnceCell, RefCell};
 
     use super::*;
 
@@ -141,7 +141,16 @@ mod imp {
         /// Installed lazily, on first [`Window::composer`] — nothing before
         /// that call needs it, and the composition root is the one place
         /// that both installs and wires it.
-        pub composer: OnceCell<crate::composer::Composer>,
+        /// The composer in the reading pane, when there is one.
+        ///
+        /// Replaceable rather than a `OnceCell` since ADR 0034: starting a
+        /// second draft moves this one into a window of its own and builds a
+        /// fresh one here, so "the composer" is a role rather than an object.
+        pub composer: RefCell<Option<crate::composer::Composer>>,
+        /// The ones that have been pushed out, kept alive because nothing
+        /// else owns them -- their windows hold their widgets, and a window
+        /// with no owning reference is a window that closes on its own.
+        pub detached_composers: RefCell<Vec<crate::composer::Composer>>,
         /// The hardened reader, built into the reading pane on first use.
         ///
         /// Lazy for the reason the composer is: a `WebKitWebView` is the most
@@ -625,7 +634,7 @@ impl Window {
     /// test suite timing out rather than as anything obviously wrong.
     #[doc(hidden)]
     pub fn has_composer(&self) -> bool {
-        self.imp().composer.get().is_some()
+        self.imp().composer.borrow().is_some()
     }
 
     /// The composer, installing it into the reading pane the first time
@@ -637,28 +646,73 @@ impl Window {
     /// composition root — is the one place that needs this at all.
     /// Opens `draft` for editing and answers the composer holding it.
     ///
-    /// The surface this window offers for "edit this draft", and the one
-    /// ADR 0034 gives its meaning to: the reading pane holds at most one
-    /// composition, any other open draft is a window of its own, and asking
-    /// for a draft that is already open brings its surface forward instead of
-    /// opening a second view of it.
+    /// ADR 0034's rule, and the three cases it names. A draft that is already
+    /// open is brought forward rather than opened twice (FR-013). Otherwise
+    /// the reading pane takes it — and if the pane already holds a different
+    /// draft, that one moves into a window of its own first (FR-010, FR-011)
+    /// rather than being refused, discarded, or asked about.
     ///
-    /// **Not yet what that says.** Today there is exactly one composer, so a
-    /// second draft displaces the first rather than moving it aside, and
-    /// nothing is ever detached on its own account. The acceptance is written
-    /// down and red — `gtk_composer_many.rs`, held out of the default run by
-    /// `IGNORED` — and `specs/002-compose-editor` T056 is the task that makes
-    /// it pass. The method exists now so that the gap is a failing assertion
-    /// rather than a missing name.
+    /// What makes the move lossless is not the widget surviving, which it no
+    /// longer does: it is that the draft is the record (ADR 0004), so moving
+    /// one surface to another is a save and a resume. `gtk_composer_resume.rs`
+    /// is what proves that path carries text, formatting, recipients and
+    /// attachments.
     pub fn open_draft(&self, draft: postio_model::Draft) -> crate::composer::Composer {
-        let composer = self.composer();
-        composer.open(draft);
-        composer
+        if let Some(open) = self.composer_holding(draft.id) {
+            open.present_surface();
+            return open;
+        }
+
+        let pane = self.composer();
+        if pane.is_open() && pane.draft().id != draft.id {
+            pane.detach();
+            self.imp().detached_composers.borrow_mut().push(pane);
+            // A fresh one for the pane. `install` registers it as the pane's
+            // occupant and adds the compose action, both of which *replace*
+            // the outgoing composer's — which is right, since that one is in
+            // a window now and has no business being shown or hidden by the
+            // pane.
+            let fresh = crate::composer::install(self);
+            *self.imp().composer.borrow_mut() = Some(fresh.clone());
+            fresh.open(draft);
+            return fresh;
+        }
+
+        pane.open(draft);
+        pane
+    }
+
+    /// Whichever open composer is holding `draft`, if any.
+    ///
+    /// `DraftId::UNASSIGNED` matches nothing: an unsaved draft has no
+    /// identity to be the same as, and treating two of them as one would
+    /// hand somebody else's half-written message back to them.
+    fn composer_holding(&self, draft: postio_model::DraftId) -> Option<crate::composer::Composer> {
+        if !draft.is_assigned() {
+            return None;
+        }
+        let held = |composer: &crate::composer::Composer| {
+            composer.is_open() && composer.draft().id == draft
+        };
+        self.imp()
+            .composer
+            .borrow()
+            .as_ref()
+            .filter(|composer| held(composer))
+            .cloned()
+            .or_else(|| {
+                self.imp()
+                    .detached_composers
+                    .borrow()
+                    .iter()
+                    .find(|composer| held(composer))
+                    .cloned()
+            })
     }
 
     pub fn composer(&self) -> crate::composer::Composer {
-        if let Some(composer) = self.imp().composer.get() {
-            return composer.clone();
+        if let Some(composer) = self.imp().composer.borrow().clone() {
+            return composer;
         }
         let composer = crate::composer::install(self);
         // The two share the reading pane, so each hand-over is a swap. Wired
@@ -693,7 +747,7 @@ impl Window {
         if let Some(keymap) = self.imp().keymap.borrow().as_ref() {
             composer.set_keymap(keymap);
         }
-        let _ = self.imp().composer.set(composer.clone());
+        *self.imp().composer.borrow_mut() = Some(composer.clone());
         composer
     }
 
@@ -1002,7 +1056,8 @@ impl Window {
     fn composing(&self) -> bool {
         self.imp()
             .composer
-            .get()
+            .borrow()
+            .as_ref()
             .is_some_and(|composer| composer.is_open())
     }
 
@@ -1754,6 +1809,42 @@ impl Window {
     /// the caller — `context`, because this window has gone back to its own,
     /// and whether the user is typing, which is a fact about the *satellite's*
     /// focus and would otherwise be read off a widget nobody is looking at.
+    /// Resolves a key for a satellite window that will act on it itself.
+    ///
+    /// [`handle_key_in`](Self::handle_key_in) resolves *and* dispatches,
+    /// which broadcasts to every `connect_command` subscriber — right while
+    /// there is one composer and wrong the moment there are several, since
+    /// `Send` would then send every open draft (ADR 0034). A surface that
+    /// knows which composition it is holding asks for the id and acts on it
+    /// alone.
+    ///
+    /// The keymap is still this window's, so `[keys]` reaches both containers
+    /// and there is only ever one binding table to keep in step.
+    pub fn command_for_key_in(
+        &self,
+        key: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+        source: &impl IsA<gtk::Window>,
+        context: Context,
+    ) -> Option<CommandId> {
+        let typing = gtk::prelude::GtkWindowExt::focus(source.as_ref())
+            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>());
+        let chord = keymap::Chord::from_key_event(key, state)?;
+        let outcome = self.imp().resolver.get()?.borrow_mut().press(
+            &chord,
+            KeyContext::from(context),
+            typing,
+            std::time::Instant::now(),
+        );
+        match outcome {
+            Outcome::Command(id) => match id.parse::<ActionId>() {
+                Ok(ActionId::Builtin(id)) => Some(id),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn handle_key_in(
         &self,
         key: gtk::gdk::Key,
@@ -2321,7 +2412,8 @@ impl Window {
     fn composer_body_has_keyboard(&self) -> bool {
         self.imp()
             .composer
-            .get()
+            .borrow()
+            .as_ref()
             .is_some_and(|composer| composer.focused_field() == Some(crate::composer::Field::Body))
     }
 
@@ -2891,7 +2983,7 @@ impl Window {
         // WebKit editor in every window that ever applies a keymap. A
         // composer made later picks the keymap up from `imp().keymap` at
         // construction instead.
-        if let Some(composer) = self.imp().composer.get() {
+        if let Some(composer) = self.imp().composer.borrow().as_ref() {
             composer.set_keymap(&keymap);
         }
         for handler in self.imp().keymaps.borrow().iter() {

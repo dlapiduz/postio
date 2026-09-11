@@ -165,13 +165,7 @@ mod no_stray_prints;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
-const IGNORED: &[&str] = &[
-    // Red on purpose, and the acceptance for a build that has not happened:
-    // ADR 0034 decided one composer in the pane and many in windows, and
-    // `Window` still memoises exactly one. `specs/002-compose-editor` T056 is
-    // the task that implements it and takes this line back out.
-    "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",
-];
+const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
 
 const CASES: &[(&str, fn())] = &[
     (
