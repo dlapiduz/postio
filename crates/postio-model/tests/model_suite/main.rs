@@ -19,6 +19,7 @@
 mod corpus_loader;
 mod invariants;
 mod malformed_mime;
+mod mention;
 mod mime;
 mod purity;
 mod reply;

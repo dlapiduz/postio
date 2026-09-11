@@ -1402,12 +1402,62 @@ impl Composer {
             self.set_status(&refusal.to_string());
             return;
         }
+        // FR-057. Asked rather than refused: the person may well mean it --
+        // "attached to the bracket" is a sentence -- so this is the one place
+        // in the composer where a dialog is right, and `Send anyway` is the
+        // default response because the common case is that they meant it.
+        if postio_model::mention::mentions_an_attachment(&draft) {
+            self.ask_about_the_missing_attachment();
+            return;
+        }
+        self.hand_off(draft);
+    }
+
+    /// Gives the draft to the send handlers and closes. The tail of
+    /// [`Self::send`], split out so the missing-attachment dialog can reach
+    /// it after the person says to go ahead.
+    fn hand_off(&self, draft: Draft) {
         for handler in self.imp().sent.borrow().iter() {
             handler(&draft);
         }
         let account = draft.account_id;
         self.fill(Draft::new(account));
         self.shut(Closing::Drop);
+    }
+
+    /// Asks before sending a message that says it carries something it does
+    /// not.
+    ///
+    /// The second dialog in the composer, and it earns it the same way
+    /// `request_discard` does: what is on the other side is irreversible
+    /// enough to be worth an interruption, and there is no undo that would
+    /// serve instead -- the recipient has already read "please find attached"
+    /// and found nothing.
+    fn ask_about_the_missing_attachment(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Send without an attachment?"),
+            Some(
+                "This message mentions an attachment and does not carry one. \
+                 Esc keeps the composer open so you can add it.",
+            ),
+        );
+        dialog.add_responses(&[("attach", "Go back"), ("send", "Send anyway")]);
+        dialog.set_default_response(Some("attach"));
+        dialog.set_close_response("attach");
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |_, response| {
+                    if response == "send" {
+                        let draft = composer.draft();
+                        composer.hand_off(draft);
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
     }
 
     /// Hands the draft to the send-later handlers with `when`, and closes.

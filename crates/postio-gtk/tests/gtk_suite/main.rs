@@ -54,6 +54,7 @@ mod gtk_composer_focus;
 mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
+mod gtk_composer_mention;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -945,6 +946,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler",
         gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler as fn(),
+    ),
+    (
+        "gtk_composer_mention::a_message_claiming_an_attachment_it_lacks_does_not_just_send",
+        gtk_composer_mention::a_message_claiming_an_attachment_it_lacks_does_not_just_send as fn(),
     ),
     (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",

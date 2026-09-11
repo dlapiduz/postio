@@ -53,6 +53,7 @@ pub mod headers;
 pub mod ids;
 pub mod label;
 pub mod mailbox;
+pub mod mention;
 pub mod message;
 pub mod mime;
 pub mod operation;

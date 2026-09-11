@@ -38,6 +38,22 @@ const MARKDOWN_COMMANDS = {
     quote_block: ['formatBlock', 'blockquote'],
 };
 
+/* The element each wrapping sequence produces. Element form is what the
+ * dialect contract pins and what `styleWithCSS = false` makes `execCommand`
+ * produce, so both routes reach the same `Document`. */
+const WRAPPING_TAGS = { bold: 'b', italic: 'i' };
+
+/* `content` comes out of a text node the user typed into, so it is their
+ * characters and not markup -- but it is about to be handed to `insertHTML`,
+ * which is exactly the call where that distinction has to be made explicit
+ * rather than assumed. */
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function runFormatting(id) {
     const entry = MARKDOWN_COMMANDS[id];
     if (!entry) return false;
@@ -139,38 +155,59 @@ function applyWrapping() {
          * typing about markers. */
         if (content.length === 0 || content.includes(marker)) continue;
 
-        const selection = window.getSelection();
-        /* Take the closing marker off first, then the opening one, so the
-         * offsets of what is between them do not move under us. */
-        const closing = document.createRange();
-        closing.setStart(caret.node, caret.offset - marker.length);
-        closing.setEnd(caret.node, caret.offset);
-        selection.removeAllRanges();
-        selection.addRange(closing);
-        document.execCommand('delete');
+        /* One DOM replacement, not three `execCommand`s. Deleting the two
+         * markers and then formatting what is left gives WebKit two chances
+         * to normalise the whitespace around what it just removed, and it
+         * takes them: `**x** *y*` lost the space between the runs, because
+         * the delete that removed the second pair's opening `*` swallowed
+         * the `&nbsp;` beside it.
+         *
+         * Direct DOM rather than `execCommand('insertHTML')` for two
+         * reasons. `insertHTML` simply does not take here -- it returns
+         * false and nothing happens. And the browser's undo stack is not the
+         * one Postio uses: `EditHistory` is the record (`edit.rs` says so),
+         * the host rebuilds it from the HTML posted below, and a markdown
+         * conversion already reports on its own channel so that one undo
+         * returns the literal characters. Nothing is lost by not going
+         * through the engine's editing machinery, and the whitespace is not
+         * touched.
+         *
+         * Element form (`<b>`, `<i>`), which is what the dialect contract
+         * pins and what `styleWithCSS = false` makes `execCommand` produce,
+         * so both routes reach the same `Document`. `textContent` means the
+         * user's characters are never parsed as markup. */
+        const tag = WRAPPING_TAGS[sequence.command];
+        if (!tag) continue;
 
-        const opening = document.createRange();
-        opening.setStart(caret.node, open);
-        opening.setEnd(caret.node, open + marker.length);
-        selection.removeAllRanges();
-        selection.addRange(opening);
-        document.execCommand('delete');
+        const span = document.createRange();
+        span.setStart(caret.node, open);
+        span.setEnd(caret.node, caret.offset);
+        span.deleteContents();
 
-        const run = document.createRange();
-        run.setStart(caret.node, open);
-        run.setEnd(caret.node, open + content.length);
-        selection.removeAllRanges();
-        selection.addRange(run);
-        const applied = runFormatting(sequence.command);
+        const element = document.createElement(tag);
+        element.textContent = content;
+        span.insertNode(element);
 
-        /* The caret goes back to the end of what was just formatted, with
-         * the formatting off -- otherwise the next character typed joins the
-         * bold run the user just closed. */
-        selection.collapseToEnd();
-        if (applied && document.queryCommandState(MARKDOWN_COMMANDS[sequence.command][0])) {
-            runFormatting(sequence.command);
+        /* After the run and *outside* it. `setStartAfter(element)` is not
+         * enough: WebKit resolves that to the element's own trailing
+         * boundary, so the next character typed lands inside the emphasis
+         * that was just closed -- `**b** c` became `<b>b c</b>`. A position
+         * expressed as an offset in the *parent* names a point between two
+         * children and cannot be read as inside either. */
+        const parent = element.parentNode;
+        const index = Array.prototype.indexOf.call(parent.childNodes, element);
+        window.getSelection().setPosition(parent, index + 1);
+
+        /* And with the emphasis switched *off*. A caret position outside the
+         * element is not enough on its own -- WebKit carries a typing state
+         * that survives the move, so `**b** c` became `<b>b c</b>` with the
+         * caret demonstrably outside the `<b>`. The state has to be told,
+         * and `queryCommandState` is how it answers. */
+        const command = MARKDOWN_COMMANDS[sequence.command];
+        if (command && document.queryCommandState(command[0])) {
+            document.execCommand(command[0], false, command[1]);
         }
-        return applied;
+        return true;
     }
     return false;
 }

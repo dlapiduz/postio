@@ -136,7 +136,7 @@ appearance and quote work depend on.
 - [ ] T034 [P] [US3] Assert attachments are listed with name and size and are removable — FR-053, FR-054
 - [X] T035 [P] [US3] **Red first**: assert inline images and attached files count against one size total — FR-055
 - [X] T036 [P] [US3] **Red first**: assert an oversize message is refused before queueing, naming the limit, the overage and the largest items — FR-056
-- [ ] T037 [P] [US3] Assert a message whose text mentions an attachment with none present asks first — FR-057
+- [X] T037 [P] [US3] Assert a message whose text mentions an attachment with none present asks first — FR-057
 
 ### Implementation for User Story 3
 
