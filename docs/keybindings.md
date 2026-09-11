@@ -74,7 +74,7 @@ command from inside a text field.
 | `/` | Search | List, conversation, reader |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+Return` | Send | Composer | Undoable | `send` |
+| `ctrl+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |

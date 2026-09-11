@@ -43,7 +43,31 @@ pub enum Recovery {
     None,
     /// Reversible from the undo stack, and worth an "— Undo" toast
     /// (docs/PRODUCT.md §16: *Archived 12 messages — Undo*).
+    ///
+    /// `u` works, and that is the load-bearing half: a command claiming this
+    /// must be something [`postio_core::undo::UndoStack`] can actually hold,
+    /// which means a `UndoKind` exists for it.
     Undo,
+    /// Reversible for a limited time, through its own affordance rather than
+    /// the undo stack (#1481).
+    ///
+    /// A send is the case this exists for. It *is* reversible — the draft
+    /// sits in the queue and opening it cancels the send — and it is not
+    /// reversible from the undo stack, which takes message operations with a
+    /// ten-minute expiry.
+    ///
+    /// Those two numbers are why this is a separate answer rather than
+    /// `Undo`. A send's window is however long the drainer takes, which is
+    /// seconds; the stack's is ten minutes. An entry recorded there would
+    /// outlive what it can act on, sit at the top of the stack shadowing the
+    /// archive beneath it, and answer `u` with "too late" — leaving the
+    /// person unsure whether the archive they meant to undo had been
+    /// consumed. `Recovery::Undo` for a send was not merely unimplemented; it
+    /// was the wrong promise.
+    ///
+    /// The affordance is the toast's own "Undo", live only while the window
+    /// is, which is what every client that offers undo-send does.
+    Window,
     /// Irreversible enough to ask first.
     Confirm,
 }
@@ -605,7 +629,7 @@ static SPECS: &[CommandSpec] = &[
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
-        recovery: Recovery::Undo,
+        recovery: Recovery::Window,
         requires: None,
     },
     CommandSpec {
