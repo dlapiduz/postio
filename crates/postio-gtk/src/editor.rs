@@ -29,16 +29,16 @@ use postio_body::{Document, EditHistory, parse};
 use webkit6::prelude::*;
 
 use crate::reader::scheme::{self, BlobSource};
+use postio_ui::editor::document as editor_document;
 
 /// A fixed, non-`http(s)` base for the editing shell, so edited content is
 /// never same-origin with anything real — the same reasoning as the
 /// reader's `postio-reader:///`.
-pub const EDITOR_BASE_URI: &str = "postio-editor:///";
-
-/// The CSP the editing shell carries: no remote origin can be named, styles
-/// stay inline (the shell's own), and images resolve only through the local
-/// blob scheme.
-const EDITOR_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src postio-cid:";
+///
+/// Re-exported from `postio-ui` rather than restated: the document that
+/// declares the policy and the view that loads it must agree, and two copies
+/// of a security-relevant string are two that can drift (#567).
+pub use postio_ui::editor::document::EDITOR_BASE_URI;
 
 /// The bridge script — profile settings plus edit reporting.
 ///
@@ -102,6 +102,14 @@ fn view_with(
     view.add_css_class("postio-editor-view");
     view.set_accessible_role(gtk::AccessibleRole::TextBox);
     view.connect_decide_policy(handle_decide_policy);
+    paint_ground(&view);
+    // The scheme can change while a draft is open, and the only right answer
+    // is a new sheet rather than a new document: reloading would take the
+    // caret and the undo history with it (FR-075).
+    adw::StyleManager::default().connect_dark_notify({
+        let view = view.clone();
+        move |_| restyle(&view)
+    });
     view
 }
 
@@ -113,12 +121,84 @@ fn view_with(
 /// what makes running script beside it acceptable at all (ADR 0003,
 /// hardening requirement 2).
 pub fn seed(view: &webkit6::WebView, inner_html: &str) {
-    let shell = format!(
-        "<!doctype html><html><head>\
-         <meta http-equiv=\"Content-Security-Policy\" content=\"{EDITOR_CSP}\">\
-         </head><body contenteditable=\"true\">{inner_html}</body></html>"
-    );
+    let shell = editor_document::wrap_document(inner_html, presentation());
     view.load_html(&shell, Some(EDITOR_BASE_URI));
+}
+
+/// How the surface should be drawn right now.
+///
+/// The scheme comes from libadwaita rather than from the engine: a web view
+/// resolves `prefers-color-scheme` from its own settings, which is how the
+/// editing surface managed to be white inside a dark application.
+fn presentation() -> editor_document::Presentation {
+    editor_document::Presentation {
+        dark: adw::StyleManager::default().is_dark(),
+        ..editor_document::Presentation::default()
+    }
+}
+
+/// Paints the ground on the widget as well as the document.
+///
+/// The document paints `--r-ground` on `body`, but only once it has parsed,
+/// and a web view between one document and the next has nothing to paint
+/// from. That interval is the white flash — the reader's `paint_ground`
+/// exists for the same reason and is where this was learned.
+fn paint_ground(view: &webkit6::WebView) {
+    let dark = adw::StyleManager::default().is_dark();
+    match editor_document::editor_ground(dark).parse::<gtk::gdk::RGBA>() {
+        Ok(ground) => view.set_background_color(&ground),
+        Err(error) => glib::g_warning!(
+            "postio",
+            "could not parse the editor ground colour: {error}"
+        ),
+    }
+}
+
+/// Re-applies the sheet for the current scheme **without reloading**.
+///
+/// A reload would take the caret and the undo history with it (FR-075), so
+/// the sheet is replaced in place: the document keeps its DOM and its
+/// selection, and only the `<style>` element's text changes.
+pub fn restyle(view: &webkit6::WebView) {
+    paint_ground(view);
+    let css = editor_document::editor_css(presentation());
+    // `textContent`, not `innerHTML`: a stylesheet is text, and the engine
+    // would otherwise be parsing our own CSS as markup looking for entities.
+    let script = format!(
+        "(() => {{ const s = document.querySelector('style'); \
+         if (s) s.textContent = {}; }})()",
+        json_string(&css)
+    );
+    view.evaluate_javascript(&script, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+}
+
+/// `value` as a JavaScript string literal.
+///
+/// Hand-rolled rather than pulled from a JSON crate: this crate has no JSON
+/// dependency and wants none for one function, and what has to be escaped in
+/// a double-quoted literal is a short, closed list.
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            // U+2028 and U+2029 terminate a line in JavaScript but not in
+            // JSON, which is the classic way a valid string becomes a syntax
+            // error. CSS can hold them inside a `content:` value.
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            other if (other as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The reader's lockdown list with exactly one line changed.

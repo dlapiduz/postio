@@ -70,6 +70,7 @@ mod gtk_display_required;
 mod gtk_dwell;
 mod gtk_dwell_conversation;
 mod gtk_editable_dialect;
+mod gtk_editor_appearance;
 mod gtk_editor_bridge;
 mod gtk_editor_format;
 mod gtk_editor_images;
@@ -986,6 +987,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs",
         gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs as fn(),
+    ),
+    (
+        "gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white",
+        gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white as fn(),
     ),
     (
         "gtk_editor_format::every_formatting_command_lands_as_canonical_structure",
