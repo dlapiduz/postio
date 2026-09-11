@@ -3542,6 +3542,34 @@ impl Composer {
         self.imp().more.is_visible()
     }
 
+    /// The `GType`s each of the composer's drop targets accepts, as
+    /// `(where, type name)`.
+    ///
+    /// A drag cannot be synthesised in this suite and the `drop` signal will
+    /// not take a boxed `GValue` through `emit_by_name`, so the handler's body
+    /// is out of reach. What is *not* out of reach is whether the controllers
+    /// are installed at all, on the widgets they are meant to be on, accepting
+    /// the type they are meant to accept — which is what actually goes wrong
+    /// when somebody reorganises a widget tree.
+    #[doc(hidden)]
+    pub fn test_drop_targets(&self) -> Vec<(&'static str, String)> {
+        let mut found = Vec::new();
+        for (label, widget) in [
+            ("composer", self.clone().upcast::<gtk::Widget>()),
+            ("body", self.imp().body.widget().clone().upcast()),
+        ] {
+            let controllers = widget.observe_controllers();
+            for index in 0..controllers.n_items() {
+                if let Some(target) = controllers.item(index).and_downcast::<gtk::DropTarget>()
+                    && let Some(formats) = target.formats()
+                {
+                    found.push((label, formats.to_string()));
+                }
+            }
+        }
+        found
+    }
+
     /// Pastes from the clipboard, as `ctrl+v` on the body does.
     ///
     /// One step nearer the gesture than [`Self::test_paste_image_bytes`],
