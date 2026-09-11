@@ -110,7 +110,7 @@ pub const DEFAULT_BATCH_SIZE: usize = 200;
 /// This does not change how much a pass fetches, how it batches its `FETCH`es,
 /// or where an interrupted pass resumes — `uids_in` counts what committed, so
 /// a finer unit resumes at a finer grain.
-const WRITE_UNIT: usize = 25;
+pub(crate) const WRITE_UNIT: usize = 25;
 
 /// What one committed batch reports, so the caller can drive a progress bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
