@@ -48,13 +48,13 @@ mod gtk_checkrow;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
 mod gtk_composer_autosave;
+mod gtk_composer_confirms;
 mod gtk_composer_detach;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
-mod gtk_composer_mention;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -170,6 +170,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
         gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
+    ),
+    (
+        "gtk_composer_resume::reopening_restores_the_formatting_and_the_attachments_too",
+        gtk_composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
     ),
     (
         "gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing",
@@ -948,8 +952,8 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler as fn(),
     ),
     (
-        "gtk_composer_mention::a_message_claiming_an_attachment_it_lacks_does_not_just_send",
-        gtk_composer_mention::a_message_claiming_an_attachment_it_lacks_does_not_just_send as fn(),
+        "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
+        gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
     ),
     (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",
