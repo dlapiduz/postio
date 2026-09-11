@@ -217,15 +217,105 @@ pub fn closing(draft: &Draft) -> Closing {
 /// the only thing that changes. Refusing the keystroke would lose what was
 /// typed and explain nothing.
 pub fn recipient_warning(draft: &Draft) -> Option<String> {
-    let wrong = draft
-        .all_recipients()
-        .filter(|address| !address.is_plausible())
-        .count();
-    match wrong {
+    let wrong: Vec<String> = fields(draft)
+        .into_iter()
+        .flat_map(|(name, addresses)| {
+            addresses
+                .iter()
+                .filter(|address| !address.is_plausible())
+                .map(move |address| format!("{} in {name}", address.address))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    match wrong.len() {
         0 => None,
-        1 => Some("1 address does not look like an address".to_owned()),
-        many => Some(format!("{many} addresses do not look like addresses")),
+        // Named, not counted (FR-024). A count alone tells somebody with nine
+        // recipients across three fields that one of them is wrong and leaves
+        // them to find it, which is exactly the work the message exists to
+        // do.
+        _ => {
+            let shown: Vec<&str> = wrong
+                .iter()
+                .take(NAMED_ADDRESSES)
+                .map(String::as_str)
+                .collect();
+            let listed = shown.join(", ");
+            if wrong.len() <= NAMED_ADDRESSES {
+                Some(format!("{listed} does not look like an address"))
+            } else {
+                // Past a few this stops being a sentence and becomes a wall.
+                Some(format!(
+                    "{listed} and {} more do not look like addresses ({} in all)",
+                    wrong.len() - shown.len(),
+                    wrong.len()
+                ))
+            }
+        }
     }
+}
+
+/// What is odd about this message, in the words the dialog uses.
+///
+/// Empty for a message with nothing odd about it, which is almost all of
+/// them. Each entry is a clause rather than a sentence, because they are
+/// joined into one.
+fn send_concerns(draft: &Draft) -> Vec<String> {
+    let mut concerns = Vec::new();
+    // FR-018. Asked, never refused: a message with no subject is a perfectly
+    // ordinary thing to send on purpose, and refusing it would be the app
+    // having an opinion about someone else's correspondence.
+    if draft.subject.trim().is_empty() {
+        concerns.push("this message has no subject".to_owned());
+    }
+    // FR-057.
+    if postio_model::mention::mentions_an_attachment(draft) {
+        concerns.push("it mentions an attachment and does not carry one".to_owned());
+    }
+    concerns
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn join_with_and(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// How many wrong addresses a warning names before it starts counting.
+const NAMED_ADDRESSES: usize = 3;
+
+/// How many recipients this message has, and on which field.
+///
+/// FR-023, and the surprise it exists to prevent: a reply-to-all to a large
+/// list looks exactly like a reply until it is sent. The count says *which
+/// field* because "42 recipients" reads very differently from "1 To, 41 Cc".
+///
+/// `None` for the ordinary case, deliberately. A banner that is always there
+/// is a banner nobody reads, so this says nothing until there is more than
+/// one person on the message.
+pub fn recipient_summary(draft: &Draft) -> Option<String> {
+    let counted: Vec<String> = fields(draft)
+        .into_iter()
+        .filter(|(_, addresses)| !addresses.is_empty())
+        .map(|(name, addresses)| format!("{} {name}", addresses.len()))
+        .collect();
+
+    if draft.all_recipients().count() <= 1 {
+        return None;
+    }
+    Some(counted.join(", "))
+}
+
+/// The three recipient fields, in the order they appear on screen.
+fn fields(draft: &Draft) -> [(&'static str, &[EmailAddress]); 3] {
+    [
+        ("To", draft.to.as_slice()),
+        ("Cc", draft.cc.as_slice()),
+        ("Bcc", draft.bcc.as_slice()),
+    ]
 }
 
 /// Whether `host` belongs to a different organisation than `sender_domain`.
@@ -1402,12 +1492,13 @@ impl Composer {
             self.set_status(&refusal.to_string());
             return;
         }
-        // FR-057. Asked rather than refused: the person may well mean it --
-        // "attached to the bracket" is a sentence -- so this is the one place
-        // in the composer where a dialog is right, and `Send anyway` is the
-        // default response because the common case is that they meant it.
-        if postio_model::mention::mentions_an_attachment(&draft) {
-            self.ask_about_the_missing_attachment();
+        // Asked rather than refused (FR-018, FR-057): the person may well
+        // mean it -- a message can have no subject, and "attached to the
+        // bracket" is a sentence. One question for however many apply, so
+        // two odd things about one message do not become two dialogs.
+        let concerns = send_concerns(&draft);
+        if !concerns.is_empty() {
+            self.ask_before_sending(&concerns);
             return;
         }
         self.hand_off(draft);
@@ -1425,25 +1516,23 @@ impl Composer {
         self.shut(Closing::Drop);
     }
 
-    /// Asks before sending a message that says it carries something it does
-    /// not.
+    /// Asks before sending, naming everything odd about the message.
     ///
     /// The second dialog in the composer, and it earns it the same way
     /// `request_discard` does: what is on the other side is irreversible
     /// enough to be worth an interruption, and there is no undo that would
     /// serve instead -- the recipient has already read "please find attached"
     /// and found nothing.
-    fn ask_about_the_missing_attachment(&self) {
-        let dialog = adw::AlertDialog::new(
-            Some("Send without an attachment?"),
-            Some(
-                "This message mentions an attachment and does not carry one. \
-                 Esc keeps the composer open so you can add it.",
-            ),
-        );
-        dialog.add_responses(&[("attach", "Go back"), ("send", "Send anyway")]);
-        dialog.set_default_response(Some("attach"));
-        dialog.set_close_response("attach");
+    ///
+    /// One dialog for however many concerns there are. Two questions in a row
+    /// about one message is how somebody learns to answer the second without
+    /// reading it, which costs the first one its value too.
+    fn ask_before_sending(&self, concerns: &[String]) {
+        let body = format!("{}. Esc keeps the composer open.", join_with_and(concerns));
+        let dialog = adw::AlertDialog::new(Some("Send it anyway?"), Some(&body));
+        dialog.add_responses(&[("back", "Go back"), ("send", "Send anyway")]);
+        dialog.set_default_response(Some("back"));
+        dialog.set_close_response("back");
         dialog.connect_response(
             None,
             glib::clone!(
@@ -2441,7 +2530,12 @@ impl Composer {
         let imp = self.imp();
         let draft = self.draft();
 
-        match recipient_warning(&draft) {
+        // A problem outranks a count: an address that will bounce is worth
+        // more of this one line than a tally of how many people are on the
+        // message. When there is no problem the line carries the tally
+        // instead (FR-023), which is what keeps a reply-to-all to a large
+        // list from looking exactly like a reply until it is sent.
+        match recipient_warning(&draft).or_else(|| recipient_summary(&draft)) {
             Some(text) => {
                 imp.warning.set_text(&text);
                 imp.warning.set_visible(true);
@@ -3935,26 +4029,129 @@ mod tests {
     }
 
     #[test]
-    fn implausible_recipients_are_counted_not_refused() {
+    fn a_message_with_nothing_odd_about_it_is_not_questioned() {
+        // The case that has to stay silent, because a dialog people see on
+        // every send is a dialog they stop reading -- and the two below are
+        // worth reading.
+        let mut ordinary = draft();
+        ordinary.subject = "the tide gate".to_owned();
+        ordinary.body.text = Some("Armed and holding.".to_owned());
+        assert!(send_concerns(&ordinary).is_empty());
+    }
+
+    #[test]
+    fn an_empty_subject_is_asked_about_and_never_refused() {
+        // FR-018. A message with no subject is an ordinary thing to send on
+        // purpose; refusing it would be the app having an opinion about
+        // somebody else's correspondence.
+        let mut bare = draft();
+        bare.subject = String::new();
+        bare.body.text = Some("Armed and holding.".to_owned());
+
+        let concerns = send_concerns(&bare);
+        assert_eq!(concerns.len(), 1, "{concerns:?}");
+        assert!(concerns[0].contains("subject"), "{concerns:?}");
+
+        // Whitespace is not a subject.
+        bare.subject = "   ".to_owned();
+        assert_eq!(send_concerns(&bare).len(), 1);
+    }
+
+    #[test]
+    fn two_odd_things_about_one_message_are_one_question() {
+        // Two dialogs in a row is how somebody learns to answer the second
+        // without reading it, which costs the first one its value as well.
+        let mut both = draft();
+        both.subject = String::new();
+        both.body.text = Some("Please find attached.".to_owned());
+
+        let concerns = send_concerns(&both);
+        assert_eq!(concerns.len(), 2, "{concerns:?}");
+
+        let said = join_with_and(&concerns);
+        assert!(said.contains(" and "), "the clauses are not joined: {said}");
+        assert!(
+            said.contains("subject") && said.contains("attachment"),
+            "{said}"
+        );
+        assert!(
+            !said.contains(" and  and "),
+            "the joiner doubled up: {said}"
+        );
+    }
+
+    #[test]
+    fn implausible_recipients_are_named_not_just_counted() {
+        // FR-024: the report names *the address and the field it is in*. A
+        // count alone -- which is what this said before -- tells somebody
+        // with nine recipients across three fields that one of them is wrong
+        // and leaves them to find it, which is the work the message was
+        // supposed to do.
         let mut one = draft();
         one.to = vec![
             EmailAddress::new(None::<String>, "ada@example.com"),
             EmailAddress::new(None::<String>, "grace"),
         ];
-        assert_eq!(
-            recipient_warning(&one).as_deref(),
-            Some("1 address does not look like an address")
+        let said = recipient_warning(&one).expect("one address is wrong");
+        assert!(said.contains("grace"), "the address is not named: {said}");
+        assert!(said.contains("To"), "the field is not named: {said}");
+        assert!(
+            !said.contains("ada@example.com"),
+            "an address that is fine must not be named as a problem: {said}"
         );
 
         one.cc = vec![EmailAddress::new(None::<String>, "@example.com")];
-        assert_eq!(
-            recipient_warning(&one).as_deref(),
-            Some("2 addresses do not look like addresses")
+        let said = recipient_warning(&one).expect("two addresses are wrong");
+        assert!(
+            said.contains("grace") && said.contains("@example.com"),
+            "{said}"
         );
+        assert!(said.contains("To") && said.contains("Cc"), "{said}");
 
         let mut fine = draft();
         fine.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
         assert_eq!(recipient_warning(&fine), None);
+    }
+
+    #[test]
+    fn a_long_list_of_wrong_addresses_is_summarised_rather_than_recited() {
+        // Naming them is right up to a point. Past it the warning stops being
+        // a sentence and becomes a wall, so it names the first few and counts
+        // the rest -- the same shape the size refusal uses.
+        let mut many = draft();
+        many.to = (0..9)
+            .map(|n| EmailAddress::new(None::<String>, format!("wrong{n}")))
+            .collect();
+        let said = recipient_warning(&many).expect("nine addresses are wrong");
+        assert!(said.contains('9'), "the total is not stated: {said}");
+        assert!(
+            said.len() < 200,
+            "the warning recites every address instead of summarising: {said}"
+        );
+    }
+
+    #[test]
+    fn the_recipient_count_is_reported_per_field_before_sending() {
+        // FR-023, so a reply-to-all to a large list is not a surprise. The
+        // count has to say *which field*, because "42 recipients" reads very
+        // differently from "1 To, 41 Cc".
+        let mut wide = draft();
+        wide.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        wide.cc = (0..41)
+            .map(|n| EmailAddress::new(None::<String>, format!("person{n}@example.org")))
+            .collect();
+        wide.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.net")];
+
+        let said = recipient_summary(&wide).expect("a wide message says so");
+        assert!(said.contains("41"), "the Cc count is missing: {said}");
+        assert!(said.contains("Cc"), "the field is not named: {said}");
+        assert!(said.contains("Bcc"), "Bcc is not counted: {said}");
+
+        // One recipient is the ordinary case and needs no announcement --
+        // a banner that is always there is a banner nobody reads.
+        let mut narrow = draft();
+        narrow.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        assert_eq!(recipient_summary(&narrow), None);
     }
 
     fn source_message() -> Message {
