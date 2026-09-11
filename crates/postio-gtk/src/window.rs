@@ -635,6 +635,27 @@ impl Window {
     /// window used only for a test of, say, the sidebar has no reason to pay
     /// for a composer nobody opens. Whoever wires storage to it — the
     /// composition root — is the one place that needs this at all.
+    /// Opens `draft` for editing and answers the composer holding it.
+    ///
+    /// The surface this window offers for "edit this draft", and the one
+    /// ADR 0034 gives its meaning to: the reading pane holds at most one
+    /// composition, any other open draft is a window of its own, and asking
+    /// for a draft that is already open brings its surface forward instead of
+    /// opening a second view of it.
+    ///
+    /// **Not yet what that says.** Today there is exactly one composer, so a
+    /// second draft displaces the first rather than moving it aside, and
+    /// nothing is ever detached on its own account. The acceptance is written
+    /// down and red — `gtk_composer_many.rs`, held out of the default run by
+    /// `IGNORED` — and `specs/002-compose-editor` T056 is the task that makes
+    /// it pass. The method exists now so that the gap is a failing assertion
+    /// rather than a missing name.
+    pub fn open_draft(&self, draft: postio_model::Draft) -> crate::composer::Composer {
+        let composer = self.composer();
+        composer.open(draft);
+        composer
+    }
+
     pub fn composer(&self) -> crate::composer::Composer {
         if let Some(composer) = self.imp().composer.get() {
             return composer.clone();

@@ -55,6 +55,7 @@ mod gtk_composer_focus;
 mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
+mod gtk_composer_many;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
@@ -164,7 +165,13 @@ mod no_stray_prints;
 
 /// Cases held out of a default run, by name. See `app_suite`'s copy for what
 /// this is for; nothing here is held out today.
-const IGNORED: &[&str] = &[]; // nothing held out; see app_suite's copy
+const IGNORED: &[&str] = &[
+    // Red on purpose, and the acceptance for a build that has not happened:
+    // ADR 0034 decided one composer in the pane and many in windows, and
+    // `Window` still memoises exactly one. `specs/002-compose-editor` T056 is
+    // the task that implements it and takes this line back out.
+    "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",
+];
 
 const CASES: &[(&str, fn())] = &[
     (
@@ -954,6 +961,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
         gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
+    ),
+    (
+        "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",
+        gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own as fn(),
     ),
     (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",
