@@ -442,6 +442,45 @@ mod tests {
     }
 
     #[test]
+    fn reply_all_drops_an_alias_of_ours_as_readily_as_the_primary_address() {
+        // FR-040. `owns_address` already walks `identities`, so this passes
+        // today -- and nothing proved it, because every other test here gives
+        // the account exactly one address that is also its primary. That is
+        // the shape of assertion this whole conformance pass exists for: the
+        // `identities` arm could be deleted and the suite would stay green
+        // while every alias holder started Cc-ing themselves on every reply.
+        let mut account = account("grace@example.com");
+        let mut alias = Identity::new(
+            account.id,
+            EmailAddress::new(Some("Grace Hopper"), "g.hopper@example.net"),
+        );
+        alias.id = IdentityId::new(2);
+        account.identities.push(alias);
+
+        let mut source = a_message();
+        source.to = vec![
+            EmailAddress::new(None::<String>, "turing@example.org"),
+            // Addressed to the alias, which is how mail to an alias actually
+            // arrives -- the primary address is nowhere in this header block.
+            EmailAddress::new(None::<String>, "G.Hopper@Example.NET"),
+        ];
+
+        let draft = reply_all(&source, &account, plain_quote(&source));
+
+        assert_eq!(
+            draft.cc,
+            vec![EmailAddress::new(None::<String>, "turing@example.org")],
+            "an address this account sends as is ours however it is cased, \
+             and replying to all must not put us on our own reply"
+        );
+        assert!(
+            draft.all_recipients().all(|address| !address
+                .same_address(&EmailAddress::new(None::<String>, "g.hopper@example.net"))),
+            "the alias survived into the recipients somewhere other than Cc"
+        );
+    }
+
+    #[test]
     fn reply_all_never_lists_the_same_address_in_to_and_cc() {
         let mut source = a_message();
         // The sender's own address turns up again in Cc, as a "reply to all"
