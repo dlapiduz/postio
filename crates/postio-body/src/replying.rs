@@ -47,6 +47,26 @@ pub struct Quoted {
     html: String,
     styles: String,
     text: String,
+    presentation: Presentation,
+}
+
+/// How carried content is shown: as somebody else's words, or as the message
+/// itself.
+///
+/// The distinction this crate already made in prose and now makes in a type.
+/// A reply answers a fragment and marks what it is answering; a forward
+/// presents the whole message and does not, which is why
+/// `a_forward_carries_the_header_block_and_the_source_unquoted` has always
+/// asserted that a forward is not a quote. #1483 changed what is carried —
+/// the sender's markup rather than a flattening — and deliberately did not
+/// change that.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Presentation {
+    /// A `<blockquote>`: somebody else's words, inside yours.
+    #[default]
+    Quote,
+    /// Plain: the message being forwarded, under its header block.
+    Carried,
 }
 
 impl Quoted {
@@ -67,6 +87,29 @@ impl Quoted {
     /// The plain-text rendering, for the `text/plain` half of the reply.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// How this should be shown.
+    pub fn presentation(&self) -> Presentation {
+        self.presentation
+    }
+
+    /// What the marker attribute says, so `parse` can rebuild the same
+    /// presentation it emitted.
+    pub fn presentation_id(&self) -> &'static str {
+        match self.presentation {
+            Presentation::Quote => "1",
+            Presentation::Carried => "carried",
+        }
+    }
+
+    /// The same content, presented as the message rather than as a quote.
+    ///
+    /// What a forward carries. The bytes are identical — it went through the
+    /// same gate — and only the wrapper differs.
+    pub fn carried(mut self) -> Self {
+        self.presentation = Presentation::Carried;
+        self
     }
 
     /// Whether there is anything to quote at all.
@@ -119,6 +162,7 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
                 html: sanitized.html,
                 styles: sanitized.styles,
                 text,
+                presentation: Presentation::Quote,
             };
         }
     }
@@ -137,6 +181,7 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
         html: escaped.html,
         styles: String::new(),
         text: text.to_owned(),
+        presentation: Presentation::Quote,
     }
 }
 
@@ -214,10 +259,20 @@ pub fn quoted_reply(source: &Quoted, attribution: &str) -> Document {
 }
 
 /// The document a forward starts from: a blank line for the caret, the
-/// conventional header block as one paragraph of `header_lines`, then
-/// `source` as itself — a forward presents the whole message rather than
-/// answering a fragment of it, so nothing is wrapped in a quote.
-pub fn forwarded(source: &Document, header_lines: &[String]) -> Document {
+/// conventional header block as one paragraph of `header_lines`, then the
+/// original as the reader rendered it.
+///
+/// The same [`Quoted`] a reply carries, and for the same reason (#1483). A
+/// forward flattened its content while a reply no longer did, so forwarding a
+/// table-based newsletter reduced it to a column of text while replying to
+/// the same message kept it — an asymmetry with no reason behind it beyond
+/// which of the two ADR 0033 happened to be about.
+///
+/// It is carried content, not frozen content. `parse` rebuilds a `Quoted`
+/// from whatever is in the editor's DOM, so trimming a forward — which is
+/// most of what people do to one — survives the round trip. That was the
+/// objection to doing this, and it does not hold.
+pub fn forwarded(source: &Quoted, header_lines: &[String]) -> Document {
     let mut header = Vec::new();
     for (index, line) in header_lines.iter().enumerate() {
         if index > 0 {
@@ -229,7 +284,9 @@ pub fn forwarded(source: &Document, header_lines: &[String]) -> Document {
     if !header.is_empty() {
         blocks.push(Block::Paragraph(header));
     }
-    blocks.extend(source.blocks.iter().cloned());
+    if !source.is_empty() {
+        blocks.push(Block::Quoted(source.clone().carried()));
+    }
     Document { blocks }
 }
 

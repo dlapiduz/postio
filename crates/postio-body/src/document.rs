@@ -623,11 +623,21 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
         // so a round trip through the editor's DOM returns a `Quoted` rather
         // than collapsing to the authoring subset (FR-046).
         Block::Quoted(quoted) => {
-            out.push_str("<blockquote ");
-            out.push_str(QUOTED_MARKER);
-            out.push_str("=\"1\">");
+            // A reply's quote is a `<blockquote>`; a forward's carried body is
+            // not (#1483). Both went through the same gate and carry the same
+            // bytes -- what differs is whether this is somebody else's words
+            // inside yours, or the message itself.
+            let tag = match quoted.presentation() {
+                crate::Presentation::Quote => "blockquote",
+                crate::Presentation::Carried => "div",
+            };
+            let _ = write!(
+                out,
+                "<{tag} {QUOTED_MARKER}=\"{}\">",
+                quoted.presentation_id()
+            );
             out.push_str(quoted.html());
-            out.push_str("</blockquote>");
+            let _ = write!(out, "</{tag}>");
         }
         Block::Pre(text) => {
             out.push_str("<pre>");

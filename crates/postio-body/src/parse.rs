@@ -244,6 +244,12 @@ fn block_for(handle: &Handle, name: &str) -> Option<Block> {
         // than collapsed the way flowing text is.
         "pre" => Some(Block::Pre(raw_text(handle))),
         "hr" => Some(Block::Rule),
+        // A forward's carried body, which is a `div` rather than a
+        // `blockquote` because a forward is not a quote (#1483). Only when it
+        // carries the marker: an ordinary `div` is somebody's layout and its
+        // children are the content.
+        "div" => attribute(handle, crate::document::QUOTED_MARKER)
+            .map(|marker| carried_block(handle, &marker)),
         _ => None,
     }
 }
@@ -255,6 +261,21 @@ fn block_for(handle: &Handle, name: &str) -> Option<Block> {
 /// quote. Carrying the original message's id here would put a database id in
 /// markup that goes out on the wire for no gain.
 const QUOTE_SCOPE: &str = "quote";
+
+/// A marked element back into the block it was emitted from.
+///
+/// Rebuilt through `quote_of` rather than trusted, for the reason `block_for`
+/// gives: the content was sanitised when it was made and has been through a
+/// `contenteditable` DOM since.
+fn carried_block(handle: &Handle, marker: &str) -> Block {
+    let (html, text) = quoted_halves(handle);
+    let quoted = crate::quote_of(Some(&html), &text, QUOTE_SCOPE);
+    Block::Quoted(if marker == "carried" {
+        quoted.carried()
+    } else {
+        quoted
+    })
+}
 
 /// A marked blockquote's two renderings: its markup verbatim, and its text.
 ///

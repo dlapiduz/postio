@@ -603,7 +603,18 @@ fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Dra
 /// two together is #1483.
 fn quoted_body(source: &Message, forward: bool) -> MessageBody {
     let rich = if forward {
-        postio_body::forwarded(&source_document(source), &reply::forward_header(source))
+        // The same carried content a reply gets (#1483). The asymmetry was
+        // never decided -- a forward flattened its content only because ADR
+        // 0033 happened to be about replies -- so forwarding a table-based
+        // newsletter reduced it to a column of text while replying to the
+        // same message kept it. What stays different is the presentation: a
+        // forward is not a quote and is not wrapped as one.
+        let carried = postio_body::quote_of(
+            source.body.html.as_deref(),
+            &forward_text(source),
+            QUOTE_SCOPE,
+        );
+        postio_body::forwarded(&carried, &reply::forward_header(source))
     } else {
         // The text half still goes through `source_document` when there is
         // no markup, because that is where `format=flowed` is unwrapped
@@ -631,6 +642,19 @@ fn quoted_body(source: &Message, forward: bool) -> MessageBody {
 /// rather than globally — and `postio_body::parse` uses the same word coming
 /// back, so a round trip through the editor does not renumber anything.
 const QUOTE_SCOPE: &str = "quote";
+
+/// The plain half a forward carries.
+///
+/// The same rule a reply's uses: the sender's own text alternative when there
+/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
+/// `format=flowed` message is not quoted back with breaks nobody typed
+/// (#456).
+fn forward_text(source: &Message) -> String {
+    match source.body.html {
+        Some(_) => source.body.text.clone().unwrap_or_default(),
+        None => source_document(source).to_text(),
+    }
+}
 
 /// The document `source`'s body means — the markup the reader showed when
 /// there is markup, the plain text otherwise.

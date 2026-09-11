@@ -8,28 +8,11 @@
 //! exactly as `outgoing.rs` does for the hand-assembled shape.
 
 use postio_body::document::{Block, Document, Inline};
-use postio_body::{Placement, apply_signature, forwarded, parse, quoted_reply};
+use postio_body::{Placement, apply_signature, forwarded, quoted_reply};
 use postio_model::account::Signature;
 
 /// See `outgoing.rs`: every remote-reference trick at once.
 const HOSTILE: &str = "html-tracking-pixel-remote-images.eml";
-
-/// The fixture's HTML body through the real MIME parser, as `outgoing.rs`
-/// reads it — the path a real message takes.
-fn hostile_document() -> Document {
-    let fixture = postio_model::test_corpus::get(HOSTILE)
-        .unwrap_or_else(|| panic!("{HOSTILE} is not in the corpus"));
-    let html = fixture
-        .parse()
-        .body
-        .html
-        .expect("the fixture is a text/html message");
-    assert!(
-        html.contains("pixel.tracker.example.org"),
-        "the fixture arrived without its beacon, so this test cannot fail"
-    );
-    parse(&html)
-}
 
 /// The same fixture as a quote, which is the production path for a reply now
 /// (ADR 0033): the reply carries the reader's sanitised rendering, so what
@@ -111,9 +94,7 @@ fn quoting_nothing_still_leaves_the_attribution_but_no_empty_quote() {
 
 #[test]
 fn a_forward_carries_the_header_block_and_the_source_unquoted() {
-    let source = Document {
-        blocks: vec![Block::Paragraph(vec![text("Original words.")])],
-    };
+    let source = postio_body::quote_of(Some("<p>Original words.</p>"), "Original words.", "q1");
     let header = [
         "---------- Forwarded message ----------".to_owned(),
         "From: Ada Lovelace <ada@example.com>".to_owned(),
@@ -124,13 +105,21 @@ fn a_forward_carries_the_header_block_and_the_source_unquoted() {
     let forward = forwarded(&source, &header);
 
     // The source arrives as itself — a forward presents the whole message,
-    // not an answer to a fragment of it — so no Quote block wraps it.
+    // not an answer to a fragment of it — so nothing marks it as quoted.
+    // Since #1483 it is carried rather than flattened, which changed *what*
+    // arrives and deliberately not *how it is shown*: the rendering is a
+    // plain `div`, never a `<blockquote>`.
     assert!(
         !forward
             .blocks
             .iter()
-            .any(|block| matches!(block, Block::Quote(_) | Block::Quoted(_))),
+            .any(|block| matches!(block, Block::Quote(_))),
         "a forward is not a quote"
+    );
+    assert!(
+        !forward.to_html().contains("<blockquote"),
+        "a forward was wrapped as a quotation: {}",
+        forward.to_html()
     );
     let rendered = forward.to_text();
     for line in &header {
@@ -207,7 +196,7 @@ fn a_reply_built_by_the_production_path_carries_no_load_and_no_script() {
 #[test]
 fn a_forward_built_by_the_production_path_carries_no_load_and_no_script() {
     let header = ["---------- Forwarded message ----------".to_owned()];
-    let forward = forwarded(&hostile_document(), &header);
+    let forward = forwarded(&hostile_quote(), &header);
     let (rendered_text, rendered_html) = postio_body::render(&forward);
 
     for leak in LOADS {
@@ -847,4 +836,50 @@ fn an_image_with_nothing_to_say_leaves_nothing_behind() {
         quoted.html()
     );
     assert!(quoted.html().contains("Morning."), "{}", quoted.html());
+}
+
+#[test]
+fn a_forward_carries_the_originals_structure_the_way_a_reply_does() {
+    // #1483. A reply stopped flattening when ADR 0033 landed; a forward kept
+    // doing it, so forwarding a table-based newsletter reduced it to a column
+    // of text while replying to the same message preserved it. There was no
+    // reason for the asymmetry beyond which one the ADR happened to be about.
+    //
+    // The concern that kept it open was that `Block::Quoted` is opaque and a
+    // forward must stay editable -- people trim forwards constantly. That
+    // turns out to be false: `parse` rebuilds a `Quoted` from whatever is in
+    // the DOM, so deleting half of one survives the round trip. It is carried
+    // content, not frozen content.
+    let source = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
+    let forwarded = postio_body::forwarded(
+        &source,
+        &["---------- Forwarded message ----------".to_owned()],
+    );
+
+    let carried = forwarded
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Quoted(quoted) => Some(quoted),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the forward carries nothing: {forwarded:?}"));
+
+    assert!(
+        carried.html().contains("<table"),
+        "the forward flattened the table the reply keeps: {}",
+        carried.html()
+    );
+    assert!(
+        carried.html().contains("font-weight:bold"),
+        "the inline declaration was dropped: {}",
+        carried.html()
+    );
+    assert!(
+        forwarded
+            .to_text()
+            .contains("---------- Forwarded message ----------"),
+        "the forwarding header block went missing: {:?}",
+        forwarded.to_text()
+    );
 }
