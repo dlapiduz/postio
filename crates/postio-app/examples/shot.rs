@@ -16,6 +16,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/rows.png settings weights
 //! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
+//! cargo run -p postio-app --example shot -- /tmp/reply.png demo reply 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-app --example shot -- /tmp/large.png demo text2
@@ -1190,6 +1191,38 @@ fn main() -> glib::ExitCode {
             // opposite of what the per-account hue is for.
             window.reader().set_account(Some("Work"), 0);
             while context.iteration(false) {}
+        }
+    }
+
+    if flag("reply") {
+        // The composer as a *reply* actually produces it, which `compose`
+        // cannot show and was never meant to: `show_composer` hands the
+        // composer a body with `> ` typed into it, so what it renders is a
+        // draft the tool wrote rather than a quote the code built. That is
+        // the #596 trap this file warns about, and the quote is exactly where
+        // it bites -- ADR 0033 changed what a reply carries, and a picture of
+        // a hand-written body could not have shown it either way.
+        //
+        // So: click a real row, let the reader load it out of the blob store,
+        // then press the key. Everything between the store and the editor's
+        // WebView is in the picture -- `quote_of`, the sanitiser, the styles,
+        // `postio-ui`'s editor document, the folded `<details>`.
+        window.list().click_row(0);
+        let context = glib::MainContext::default();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        window.handle_key(gtk::gdk::Key::e, gtk::gdk::ModifierType::empty());
+
+        // WebKit loads the quote on its own clock, which the frame-counting
+        // `settle` does not wait on. Wall time, as `open` does for the reader.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 

@@ -174,7 +174,7 @@ appearance and quote work depend on.
 - [X] T045 [US4] Build `postio-ui/src/editor/document.rs` against [contracts/editor-document.md](./contracts/editor-document.md): stylesheet, ground colour, scheme, quote treatment, density — sharing the reader's tokens, keeping its own CSP
 - [X] T046 [US4] Replace the inline shell in `crates/postio-gtk/src/editor.rs::seed` with the new assembly, and apply the ground to the view as well as the document, as `paint_ground` does for the reader
 - [X] T047 [US4] Re-apply on a scheme change **without reloading** — a reload loses the caret and undo history — FR-075
-- [ ] T048 [US4] **Not done — needs a person at a display.** Look at it: `cargo run -p postio-app`, press `c`, compare with a message body, switch schemes with a draft open. No test here runs on the accelerated path (#1307), so this step is the evidence
+- [ ] T048 [US4] **Half of it is automated now, and half is still a person.** `scripts/appearance.sh` renders the composer through the paths somebody drives — a row clicked, the reader loading from the blob store, `e` pressed, the quote built by `quote_of` — and then reads the pixels back, so the colour claims have a verdict rather than an impression. Both schemes: the editing surface and the reader's message body are both exactly `--r-ground` (245,245,248 light, 43,43,45 dark), which is FR-073 and FR-074 measured. It is deliberately not a test and not in `check.sh`: it needs a compositor, and what is left is looking. Look at it: `cargo run -p postio-app`, press `c`, compare with a message body, switch schemes with a draft open. No test here runs on the accelerated path (#1307), so this step is the evidence
 
 **Checkpoint**: the composer reads as part of Postio in both schemes.
 
