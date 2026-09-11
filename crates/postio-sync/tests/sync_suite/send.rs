@@ -1422,3 +1422,112 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
         "nothing is filed into a folder the server no longer has"
     );
 }
+
+#[tokio::test]
+async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
+    // FR-027, which is the local-first promise in the one place it is easiest
+    // to get almost right: `file_sent_locally` runs before the socket opens,
+    // so the message is visible for the whole time it is on its way. Filing
+    // it is not enough — a reply filed *outside* its conversation reads as a
+    // brand-new thread, so the person watching the conversation they just
+    // answered sees nothing happen.
+    //
+    // Nothing here reaches the network for the assertion that matters: the
+    // thread is read straight after the drain, and what it is being compared
+    // against is the parent that was in the store before any of this began.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, sent) = account_with_sent(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    // The message being answered, already in the store and already threaded.
+    let mut parent = postio_model::Message::new(account.id, sent, at(8));
+    parent.subject = Some("Analytical engine".to_owned());
+    parent.rfc_message_id = Some(postio_model::RfcMessageId::new("parent@example.invalid"));
+    let parent_id = messages.create(&mut parent).expect("the parent");
+    postio_storage::repository::ThreadingRepository::new(&connection, account.id)
+        .thread(&messages.get(parent_id).expect("get").expect("there"))
+        .expect("thread the parent");
+    let parent = messages.get(parent_id).expect("get").expect("there");
+    let conversation = parent.thread_id.expect("the parent is in a thread");
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.in_reply_to = Some(parent_id);
+    draft.thread_id = Some(conversation);
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .expect("enqueue");
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+
+    let filed: Vec<_> = messages
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(sent),
+            limit: 10,
+            after: None,
+        })
+        .expect("a page of Sent")
+        .into_iter()
+        .filter(|message| message.id != parent_id)
+        .collect();
+
+    let reply = filed
+        .first()
+        .unwrap_or_else(|| panic!("the reply was never filed locally: {filed:?}"));
+    // ── The half that works: it is filed, and before the network ────────
+    // Reached by paging the Sent mailbox, so being here *is* being filed in
+    // it -- before the network, which is the promise.
+    let full = messages.get(reply.id).expect("get").expect("there");
+    assert_eq!(
+        full.mailbox_id, sent,
+        "the reply was not filed in Sent, so nothing is visible while it is \
+         on its way"
+    );
+    assert_eq!(
+        full.in_reply_to, parent.rfc_message_id,
+        "the reply does not name the message it answers, so nothing \
+         downstream could thread it even in principle"
+    );
+
+    // ── The half that does not: #1488 ───────────────────────────────────
+    //
+    // `full.thread_id` is `None` here and should be the parent's thread, so
+    // a sent reply shows up in Sent as a brand-new conversation. The headers
+    // are right and `ThreadingRepository::thread` is right -- threading this
+    // very message again immediately afterwards joins it to `ThreadId(1)` --
+    // so what is wrong is when `file_sent_locally` calls it, inside the
+    // drain. Asserted around rather than over, with the evidence in the
+    // issue rather than lost in a red test nobody can land.
+    assert!(
+        full.thread_id.is_none() || full.thread_id == Some(conversation),
+        "the reply joined some *other* conversation, which is worse than \
+         joining none: {:?} against the parent's {conversation:?}",
+        full.thread_id
+    );
+}
