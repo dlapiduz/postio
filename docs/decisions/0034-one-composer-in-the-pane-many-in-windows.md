@@ -96,10 +96,30 @@ session to pick it up should not have to rediscover it:
 - The shell owns the reading pane through one occupant (#502). A composer
   leaving the pane has to hand it back before the next one takes it, in that
   order, or the pane briefly has two claimants.
-- Command dispatch currently reaches `window.composer()`. With several open,
-  `CommandId::Send` has to reach the one the keyboard is in — which is the
-  focused window's, not the pane's. This is the part with no existing answer
-  and is worth settling before the widget work starts.
+- Command dispatch. Looked at properly after this ADR was first written, and
+  the problem is sharper than "it reaches `window.composer()`": every composer
+  subscribes to the window's commands itself, in `mount`, with
+
+  ```rust
+  window.connect_command(move |id| composer.dispatch(id));
+  ```
+
+  so **N composers means every command fires on all N of them**. `Send` would
+  send every open draft. That is the thing to fix first, and it is a guard
+  rather than a rewrite: a composer acts on a command only when it holds the
+  keyboard, which for the pane's one means the main window is active and for a
+  detached one means its own window is. `handle_key_in` already reads focus
+  off the source window rather than the main one, so the notion exists.
+
+  Two cases need deciding rather than guarding. `CommandId::Compose` pressed
+  while a *detached* window has focus should still open the new draft in the
+  pane — FR-010 says the pane is where composition happens — so that one is
+  routed rather than filtered. And a command from the palette arrives with the
+  main window active, which makes it the pane's, which is right.
+
+- The detached window's own key controller already calls `handle_key` on *its*
+  composer instance, so per-window key routing needs nothing. Only the
+  `connect_command` broadcast above does.
 
 ## The cost, stated
 
