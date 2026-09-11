@@ -121,6 +121,41 @@ session to pick it up should not have to rediscover it:
   composer instance, so per-window key routing needs nothing. Only the
   `connect_command` broadcast above does.
 
+### Two obstacles that turned out not to be
+
+Checked rather than assumed, because both looked like blockers and neither is.
+
+`Shell::register_reader_occupant` **replaces** the previous registration for
+its occupant kind (`occupants.retain(|(existing, _)| *existing != occupant)`),
+so a second composer mounting displaces the first from the pane's arbiter
+rather than fighting it. That is the right outcome: by then the first is in a
+window and has no business being shown or hidden by the pane.
+
+The `"compose"` `GAction` each composer adds is likewise replaced by name, so
+the header button follows the new pane composer. Also right, by FR-010: the
+pane is where composition happens.
+
+### The one that is
+
+`Window::connect_command` is a broadcast with no notion of *where the command
+came from*, and a composer subscribes to it on mount and never unsubscribes.
+So with two open, `Send` sends both drafts — and a detached window's keys do
+not avoid this, because its controller forwards to `Window::handle_key_in`,
+which resolves and dispatches through the same broadcast.
+
+A focus test inside `dispatch` is the obvious guard and is a trap: windows are
+not reliably active under the headless runner, so "act only when my window is
+active" would disable the composer in most of the suite while looking correct
+in the code.
+
+**So the routing has to be carried rather than inferred**: `connect_command`
+needs to say which surface resolved the key, and a composer acts when it is
+that surface. That is a signature change reaching every subscriber, which is
+why it belongs at the front of the build and not inside it. Until then, the
+state half must not be built alone — a `Window` that can hold several
+composers while dispatch still broadcasts is strictly worse than today, since
+`Send` would send drafts the person never asked to send.
+
 ## The cost, stated
 
 Every composer is a `WebView`, and `gtk_suite` is already short of them
