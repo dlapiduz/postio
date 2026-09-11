@@ -205,17 +205,17 @@ appearance and quote work depend on.
 
 ### Tests for User Story 6
 
-- [ ] T058 [P] [US6] **Red first**: assert each supported sequence produces the formatting its command produces, in `crates/postio-gtk/tests/gtk_suite/gtk_editor_format.rs` — FR-067
-- [ ] T059 [P] [US6] Assert no sequence produces structure unreachable from an existing command — FR-068
-- [ ] T060 [P] [US6] Assert the literal markers do not appear in the sent message — FR-069
-- [ ] T061 [P] [US6] Assert one undo restores the literal characters and leaves them unconverted — FR-070
-- [ ] T062 [P] [US6] Assert markdown-looking text that was not converted is sent as shown — FR-071
-- [ ] T063 [P] [US6] Assert the plain-text alternative carries no doubled or stray markers — FR-072
+- [X] T058 [P] [US6] **Red first**: assert each supported sequence produces the formatting its command produces, in `crates/postio-gtk/tests/gtk_suite/gtk_editor_format.rs` — FR-067
+- [X] T059 [P] [US6] Assert no sequence produces structure unreachable from an existing command — FR-068
+- [X] T060 [P] [US6] Assert the literal markers do not appear in the sent message — FR-069
+- [X] T061 [P] [US6] Assert one undo restores the literal characters and leaves them unconverted — FR-070
+- [X] T062 [P] [US6] Assert markdown-looking text that was not converted is sent as shown — FR-071
+- [X] T063 [P] [US6] Assert the plain-text alternative carries no doubled or stray markers — FR-072
 
 ### Implementation for User Story 6
 
-- [ ] T064 [US6] State the supported sequence → command mapping in `postio-ui`, so both frontends implement the same set even though the mechanism differs (see [research.md](./research.md) §4)
-- [ ] T065 [US6] Implement the input transformation in `crates/postio-gtk/data/editor.js`, reaching the existing commands only; add no registry entry — see [contracts/commands.md](./contracts/commands.md)
+- [X] T064 [US6] State the supported sequence → command mapping in `postio-ui`, so both frontends implement the same set even though the mechanism differs (see [research.md](./research.md) §4). `postio_ui::editor::markdown::SEQUENCES`, and the GTK table is **generated** from it at script-assembly time rather than restated in JavaScript — a hand-written copy is a copy that drifts, and what it would drift from is the contract both frontends implement. **No `# ` sequence**: there is no heading command, and FR-068 forbids a sequence producing structure no command can make. Filed as #1485
+- [X] T065 [US6] Implement the input transformation in `crates/postio-gtk/data/editor.js`, reaching the existing commands only; add no registry entry — see [contracts/commands.md](./contracts/commands.md)
 
 **Checkpoint**: markdown input works and has changed nothing about what a draft is.
 

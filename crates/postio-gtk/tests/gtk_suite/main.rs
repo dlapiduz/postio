@@ -74,6 +74,7 @@ mod gtk_editor_appearance;
 mod gtk_editor_bridge;
 mod gtk_editor_format;
 mod gtk_editor_images;
+mod gtk_editor_markdown;
 mod gtk_editor_profile;
 mod gtk_feeds;
 mod gtk_finder;
@@ -999,6 +1000,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_editor_images::inline_images_render_from_the_blob_store_and_remote_ones_never_load",
         gtk_editor_images::inline_images_render_from_the_blob_store_and_remote_ones_never_load as fn(),
+    ),
+    (
+        "gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces",
+        gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces as fn(),
     ),
     (
         "gtk_editor_profile::the_editing_profile_runs_our_script_and_nothing_else",

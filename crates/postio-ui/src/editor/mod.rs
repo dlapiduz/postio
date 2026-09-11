@@ -20,3 +20,4 @@
 //! either loosen the reader or break the editor.
 
 pub mod document;
+pub mod markdown;

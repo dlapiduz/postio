@@ -47,10 +47,57 @@ pub use postio_ui::editor::document::EDITOR_BASE_URI;
 /// and it removes a registration-order dependency from every test that
 /// builds an editor. The file lives beside the other bundled assets in
 /// `data/`.
-const EDITOR_SCRIPT: &str = include_str!("../data/editor.js");
+const EDITOR_SCRIPT_BODY: &str = include_str!("../data/editor.js");
+
+/// The whole script, table and all.
+///
+/// The markdown table is *generated* from `postio_ui::editor::markdown`
+/// rather than restated in JavaScript, so the set of supported sequences has
+/// one source. A hand-written copy in `editor.js` is a copy that drifts, and
+/// the thing it would drift from is the contract both frontends implement.
+fn editor_script() -> &'static str {
+    static SCRIPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SCRIPT.get_or_init(|| format!("{}{EDITOR_SCRIPT_BODY}", markdown_table_js()))
+}
+
+/// `POSTIO_MARKDOWN`, as a JavaScript literal.
+fn markdown_table_js() -> String {
+    use postio_ui::editor::markdown::{SEQUENCES, Trigger};
+    use std::fmt::Write as _;
+
+    let mut out = String::from("const POSTIO_MARKDOWN = [\n");
+    for sequence in SEQUENCES {
+        let trigger = match sequence.trigger {
+            Trigger::LinePrefix => "line_prefix",
+            Trigger::Wrapping => "wrapping",
+        };
+        // The markers are `&'static str` from a table in this workspace, not
+        // anybody's input, and every one of them is punctuation -- but they
+        // are being written into source, so they are escaped rather than
+        // trusted to stay that way.
+        let _ = writeln!(
+            out,
+            "    {{ marker: \"{}\", command: \"{}\", trigger: \"{trigger}\" }},",
+            sequence.marker.replace('\\', "\\\\").replace('"', "\\\""),
+            sequence.command,
+        );
+    }
+    out.push_str("];\n");
+    out
+}
 
 /// The script-message channel the bridge reports edits on.
 const EDITED_MESSAGE: &str = "postioEdited";
+
+/// The channel a markdown conversion reports on.
+///
+/// Separate from [`EDITED_MESSAGE`] because it means something the ordinary
+/// channel cannot say: *this edit begins a new undo step*. A conversion
+/// arrives in the middle of a typing run, and `absorb`'s coalescing would
+/// fold it into that run -- so one undo would take back the whole sentence
+/// rather than the conversion, and the literal characters the user meant
+/// would be gone with it (FR-070).
+const CONVERTED_MESSAGE: &str = "postioConverted";
 
 /// The channel the bridge reports the caret's formatting on — what a
 /// toolbar toggle reflects, named after the same registry ids it serves.
@@ -71,7 +118,7 @@ const COALESCE: Duration = Duration::from_millis(700);
 pub fn editing_view(source: Rc<dyn BlobSource>) -> webkit6::WebView {
     let content = webkit6::UserContentManager::new();
     content.add_script(&webkit6::UserScript::new(
-        EDITOR_SCRIPT,
+        editor_script(),
         webkit6::UserContentInjectedFrames::TopFrame,
         webkit6::UserScriptInjectionTime::End,
         &[],
@@ -322,13 +369,14 @@ impl Editor {
     pub fn with_coalesce(source: Rc<dyn BlobSource>, coalesce: Duration) -> Self {
         let content = webkit6::UserContentManager::new();
         content.add_script(&webkit6::UserScript::new(
-            EDITOR_SCRIPT,
+            editor_script(),
             webkit6::UserContentInjectedFrames::TopFrame,
             webkit6::UserScriptInjectionTime::End,
             &[],
             &[],
         ));
         content.register_script_message_handler(EDITED_MESSAGE, None);
+        content.register_script_message_handler(CONVERTED_MESSAGE, None);
         content.register_script_message_handler(FORMAT_MESSAGE, None);
 
         let view = view_with(&content, source);
@@ -350,6 +398,16 @@ impl Editor {
                     return;
                 }
                 absorb(&state, &value.to_str());
+            }
+        });
+
+        content.connect_script_message_received(Some(CONVERTED_MESSAGE), {
+            let state = state.clone();
+            move |_, value| {
+                if !value.is_string() {
+                    return;
+                }
+                absorb_as_new_step(&state, &value.to_str());
             }
         });
 
@@ -484,24 +542,39 @@ impl Editor {
 /// handler holds only the `Rc`, never a whole `Editor`, so dropping the
 /// editor drops the state as soon as WebKit lets go of the closure.
 fn absorb(state: &Rc<EditorState>, html: &str) {
+    let now = Instant::now();
+    let within_run = state
+        .last_edit
+        .get()
+        .is_some_and(|last| now.duration_since(last) < state.coalesce);
+    absorb_with(state, html, within_run);
+}
+
+/// [`absorb`], but this edit always starts its own undo step.
+///
+/// What a markdown conversion needs. The edit before it is the literal text
+/// the user typed — `**loudly**`, markers and all — and that state has to be
+/// something one undo can return to (FR-070). Coalescing it into the typing
+/// run would make undo take back the sentence instead, and the escape hatch
+/// that makes an automatic conversion tolerable would not be there.
+fn absorb_as_new_step(state: &Rc<EditorState>, html: &str) {
+    absorb_with(state, html, false);
+}
+
+fn absorb_with(state: &Rc<EditorState>, html: &str, within_run: bool) {
     let after = parse(html);
     let before = state.document.borrow().clone();
     if after == before {
         return;
     }
 
-    let now = Instant::now();
-    let within_run = state
-        .last_edit
-        .get()
-        .is_some_and(|last| now.duration_since(last) < state.coalesce);
     {
         let mut history = state.history.borrow_mut();
         if !(within_run && history.amend(after.clone())) {
             history.record(before, after.clone());
         }
     }
-    state.last_edit.set(Some(now));
+    state.last_edit.set(Some(Instant::now()));
 
     *state.document.borrow_mut() = after;
     let current = state.document.borrow();
