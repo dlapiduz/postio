@@ -388,9 +388,14 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "an absolute date and time must be on screen"
     );
     assert!(
-        header.to_visible() && header.to_label().contains("bob@example.com"),
-        "the one recipient must be reachable in one line: {}",
-        header.to_label()
+        header.to_visible(),
+        "the one recipient must be reachable in one line"
+    );
+    assert_eq!(
+        header.to_label(),
+        "Bob <bob@example.com>",
+        "the label column already draws \"To\" (#1437), so the value beside it \
+         must be the bare recipients -- `contains` could not see a doubled prefix"
     );
     assert!(
         header.cc_toggle_visible(),
@@ -411,9 +416,13 @@ fn the_reader_renders_and_hardens_the_corpus() {
         "hiding identity has to be observable, not just asserted"
     );
     assert!(
-        header.to_visible() && header.to_label().contains("bob@example.com"),
-        "recipients must stay reachable with sender/subject/date hidden: {}",
-        header.to_label()
+        header.to_visible(),
+        "recipients must stay reachable with sender/subject/date hidden"
+    );
+    assert_eq!(
+        header.to_label(),
+        "Bob <bob@example.com>",
+        "and still without the label column's word repeated into the value"
     );
     assert!(header.cc_toggle_visible(), "so must the Cc disclosure");
     header.set_identity_visible(true);

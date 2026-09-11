@@ -70,14 +70,18 @@ impl MessageHeader {
         }
     }
 
-    /// The `To:` line as a header writes it, label included and shortened.
+    /// The recipients as the header draws them, shortened — without a label.
+    ///
+    /// The word is the view's to draw, not this string's to carry: the header
+    /// gives `From`, `To` and `Cc` one shared label column (#1437), and an
+    /// inline `To: ` here puts the word on the row twice.
     ///
     /// [`Self::to`] keeps the full list. That split is the whole of spec
     /// Story 1 scenario 3: what is *drawn* shortens and says how many it hid,
     /// and what is *kept* is everything, so a disclosure or a tooltip can
     /// still answer "who exactly".
     pub fn to_line(&self) -> Option<String> {
-        self.to_short.as_ref().map(|to| format!("To: {to}"))
+        self.to_short.clone()
     }
 
     /// What the `Cc` disclosure is called while it is offered — `Cc (2)`.
@@ -509,7 +513,7 @@ mod tests {
 
         assert_eq!(header.subject, "Dinner Friday?");
         assert_eq!(header.from, "Ada Lovelace <ada@example.com>");
-        assert_eq!(header.to_line().as_deref(), Some("To: bob@example.com"));
+        assert_eq!(header.to_line().as_deref(), Some("bob@example.com"));
         assert_eq!(header.cc_toggle_label().as_deref(), Some("Cc (2)"));
         assert_eq!(
             header.cc.as_deref(),
