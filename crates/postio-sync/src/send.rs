@@ -522,7 +522,21 @@ fn file_sent_locally(
     if messages.create(&mut message).is_err() {
         return None;
     }
-    let _ = ThreadingRepository::new(connection, job.account).thread(&message);
+    // The thread id comes back onto the struct, and that is the whole of
+    // #1488. Threading writes it to the row; this function then *returns*
+    // `message`, and `confirm_sent_copy` later sets the server's coordinates
+    // on that same struct and calls `update`, which writes the row from it.
+    // A copy captured before the threading write and written back after it
+    // silently undid the assignment -- so a sent reply was filed correctly,
+    // threaded correctly, and then un-threaded by the confirmation, showing
+    // up in Sent as a conversation of its own.
+    match ThreadingRepository::new(connection, job.account).thread(&message) {
+        Ok(threaded) => message.thread_id = Some(threaded.thread_id),
+        // Not fatal: an unthreaded Sent copy is worse than a threaded one and
+        // better than no copy at all. Said out loud rather than swallowed,
+        // because the silence is what let the bug above go unnoticed.
+        Err(error) => tracing::warn!(%error, "could not thread the sent copy"),
+    }
     // No recount needed: `messages_count_insert` already moved Sent's cached
     // counts when `create` inserted the row.
 

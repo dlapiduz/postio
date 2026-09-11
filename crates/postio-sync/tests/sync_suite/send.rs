@@ -1515,19 +1515,12 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
          downstream could thread it even in principle"
     );
 
-    // ── The half that does not: #1488 ───────────────────────────────────
-    //
-    // `full.thread_id` is `None` here and should be the parent's thread, so
-    // a sent reply shows up in Sent as a brand-new conversation. The headers
-    // are right and `ThreadingRepository::thread` is right -- threading this
-    // very message again immediately afterwards joins it to `ThreadId(1)` --
-    // so what is wrong is when `file_sent_locally` calls it, inside the
-    // drain. Asserted around rather than over, with the evidence in the
-    // issue rather than lost in a red test nobody can land.
-    assert!(
-        full.thread_id.is_none() || full.thread_id == Some(conversation),
-        "the reply joined some *other* conversation, which is worse than \
-         joining none: {:?} against the parent's {conversation:?}",
-        full.thread_id
+    // ── And the half that is the whole point (#1488) ────────────────────
+    assert_eq!(
+        full.thread_id,
+        Some(conversation),
+        "the reply was filed outside the conversation it answers, so it reads \
+         as a new thread and the person watching that conversation sees \
+         nothing arrive"
     );
 }
