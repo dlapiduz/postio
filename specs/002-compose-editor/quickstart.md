@@ -34,7 +34,7 @@ No display needed for most of it — that is the point of putting it in
 `postio-ui`:
 
 ```bash
-cargo test -p postio-ui editor::document
+cargo test -p postio-ui editor::document   # 8 tests
 ```
 
 Expect: the generated document carries a stylesheet; the ground resolves in both
@@ -76,8 +76,8 @@ formatting.
 ## 3. The quote (Story 2, FR-044 to FR-047) — after the ADR
 
 ```bash
-cargo test -p postio-body replying
-cargo test -p postio-body -- --include-ignored sanitize
+cargo test -p postio-body replying          # 25 tests
+cargo test -p postio-body -- --include-ignored sanitize   # 42 tests
 ```
 
 Expect: an HTML original's structure survives into the quote; an original
@@ -87,12 +87,19 @@ falls back rather than producing an empty quote.
 The security assertion, which is the one that matters:
 
 ```bash
-cargo test -p postio-body corpus_quote
+cargo test -p postio-body re_emits          # 1 test
 ```
 
 Expect **zero** scripts, **zero** remote-loading references and **zero**
 tracking pixels re-emitted, across every HTML message in
 `crates/postio-model/tests/corpus/`.
+
+> This said `corpus_quote` when it was written, which matches no test. It
+> reported `test result: ok` and ran nothing — a security check that passes by
+> selecting an empty set, which is the same failure `list_contract.rs` exists
+> to catch in the suite runner. Every command in this file now carries the
+> count it should select, because `ok. 0 passed` and `ok. 1 passed` look alike
+> at a glance and mean opposite things.
 
 ## 4. The conformance pass (most of the spec)
 
@@ -101,8 +108,8 @@ worth running on their own because both fail silently and both are visible to a
 recipient:
 
 ```bash
-cargo test -p postio-model outgoing::   # FR-021, FR-022: Bcc is never disclosed
-cargo test -p postio-model draft::      # FR-030 to FR-032: never two signatures
+cargo test -p postio-model outgoing::   # 23 tests — FR-021/022, Bcc is never disclosed
+cargo test -p postio-model draft::      # 5 tests — FR-030 to FR-032, never two signatures
 ```
 
 Then the rest:
