@@ -28,6 +28,7 @@ mod drain;
 mod initial;
 mod loopback;
 mod resync;
+mod resync_interactive_write;
 mod send;
 mod status;
 mod watch;

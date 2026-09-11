@@ -73,10 +73,10 @@ use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
 };
-use postio_storage::PooledConnection;
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
+use postio_storage::{PooledConnection, WritePriority};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::drain::SyncError;
@@ -348,7 +348,10 @@ async fn rebuild(
 /// See the module docs for why vanish detection is conditional on the
 /// arithmetic rather than always run, and why arrivals get a second witness.
 async fn incremental(
-    connection: &Connection,
+    // A pooled connection rather than a bare one, because this is where the
+    // write gate lives: the units below take a background permit, and only
+    // the pool knows the gate they take it from.
+    connection: &PooledConnection,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     selected: &ServerStatus,
@@ -385,53 +388,72 @@ async fn incremental(
 
     let mut arrived: Vec<MessageId> = Vec::new();
     if !changed.is_empty() {
-        let mut batch: Vec<Message> = changed
+        let batch: Vec<Message> = changed
             .into_iter()
             .map(|message| message.into_message(mailbox.account_id, mailbox.id))
             .collect();
-        // One commit for the whole batch, for the reason `initial.rs` spells
-        // out at its own version of this loop: every repository call below
-        // releases a savepoint, and a release with nothing enclosing it is an
-        // fsync. Unenclosed, this wrote once for the upserts and then twice
-        // more per message. This is the path that runs on every start, for
-        // every folder, so it pays that on the ordinary case and not only on
-        // a first sync.
-        //
-        // IMMEDIATE for the reason `initial.rs` gives at its own transaction
-        // (#79): the first statement here is a SELECT, and a deferred
-        // transaction that has to promote a read lock to a write lock is told
-        // SQLITE_BUSY without the busy handler ever running. This path runs on
-        // every start for every folder, so it meets the UI thread's local-first
-        // writes more often than the first-sync one does.
-        let committed = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-            .map_err(postio_storage::Error::from)?;
-        let connection: &Connection = &committed;
+        // Read once rather than per unit: the account does not change under
+        // this loop, and the lookup is a statement that would otherwise
+        // repeat for every twenty-five messages.
+        let account = AccountRepository::new(connection).get(mailbox.account_id)?;
 
-        MessageRepository::new(connection).upsert_batch(&mut batch)?;
+        // `initial::WRITE_UNIT` at a time, the same size and for the same two
+        // reasons its own loop gives. A *unit* rather than a message, because
+        // every repository call below releases a savepoint and a release with
+        // nothing enclosing it is an fsync — unenclosed, this wrote once for
+        // the upserts and then twice more per message. A unit rather than the
+        // whole batch, because the lock this holds is the one a person's own
+        // write needs (#425): unchunked and ungated, a draft autosaving as it
+        // was typed waited out every changed message in the folder, ran past
+        // `busy_timeout`, and was lost. This is the path that runs on every
+        // start, for every folder, so it meets the UI thread's local-first
+        // writes more often than the first-sync one does — which is the
+        // argument for taking the permit here, not against it.
+        for slice in batch.chunks(initial::WRITE_UNIT) {
+            // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
+            // stands this aside for a keystroke's write, and standing aside
+            // after taking SQLite's lock would be standing aside too late.
+            let permit = connection.write_gate().acquire(WritePriority::Background);
 
-        let threading = ThreadingRepository::new(connection, mailbox.account_id);
-        for message in &batch {
-            threading.thread(message)?;
-        }
+            // IMMEDIATE for the reason `initial.rs` gives at its own
+            // transaction (#79): the first statement here is a SELECT, and a
+            // deferred transaction that has to promote a read lock to a write
+            // lock is told SQLITE_BUSY without the busy handler ever running.
+            let committed = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+                .map_err(postio_storage::Error::from)?;
+            let connection: &Connection = &committed;
 
-        // Only the arrivals, by the same test twice over: `known_set` was
-        // read before this fetch, so a message already in it is a flag
-        // change or similar, not a new correspondent sighting and not new
-        // mail to notify about. See `contacts::record`'s docs for the
-        // double-counting this also avoids.
-        if let Some(account) = AccountRepository::new(connection).get(mailbox.account_id)? {
-            for message in &batch {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known_set.contains(uid));
-                if is_new {
-                    crate::contacts::record(connection, &account, message)?;
-                    arrived.push(message.id);
+            // `upsert_batch` assigns the ids, and takes a `Vec`, so the unit
+            // is copied out and read back from — the same shape `initial.rs`
+            // uses at its own version of this.
+            let mut written: Vec<Message> = slice.to_vec();
+            MessageRepository::new(connection).upsert_batch(&mut written)?;
+
+            let threading = ThreadingRepository::new(connection, mailbox.account_id);
+            for message in &written {
+                threading.thread(message)?;
+            }
+
+            // Only the arrivals, by the same test twice over: `known_set` was
+            // read before this fetch, so a message already in it is a flag
+            // change or similar, not a new correspondent sighting and not new
+            // mail to notify about. See `contacts::record`'s docs for the
+            // double-counting this also avoids.
+            if let Some(account) = &account {
+                for message in &written {
+                    let is_new = message
+                        .server
+                        .uid
+                        .is_some_and(|uid| !known_set.contains(uid));
+                    if is_new {
+                        crate::contacts::record(connection, account, message)?;
+                        arrived.push(message.id);
+                    }
                 }
             }
+            committed.commit().map_err(postio_storage::Error::from)?;
+            drop(permit);
         }
-        committed.commit().map_err(postio_storage::Error::from)?;
     }
 
     let mut vanished_count = 0;
