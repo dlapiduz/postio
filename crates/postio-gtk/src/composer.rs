@@ -83,15 +83,27 @@ use postio_model::{reply, signature};
 use crate::shell::Pane;
 use crate::window::Window;
 
-/// The field the keyboard lands in when the composer opens.
+/// A field of the composer the keyboard can be in.
 ///
-/// Two rules, from the bead: a reply focuses the body, because the recipients
-/// and the subject are already decided; new mail focuses `To`, because nothing
-/// is.
+/// Two rules decide where it *lands* when the composer opens, from the bead: a
+/// reply focuses the body, because the recipients and the subject are already
+/// decided; new mail focuses `To`, because nothing is.
+///
+/// The rest of the fields are here so the focus *order* can be asserted rather
+/// than looked at (FR-003). With only `To` and `Body`, "focus moves between
+/// recipient, subject and body in a defined, reversible order" was a claim
+/// about widgets nothing could name — a test could watch the keyboard leave
+/// `To` and had no way to say where it went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     /// The `To` field.
     To,
+    /// The `Cc` field, when it is showing.
+    Cc,
+    /// The `Bcc` field, when it is showing.
+    Bcc,
+    /// The subject.
+    Subject,
     /// The body.
     Body,
 }
@@ -884,8 +896,16 @@ impl Composer {
         let imp = self.imp();
         // An entry hands the keyboard to the `GtkText` inside it, so the
         // focused widget is a descendant of the field rather than the field.
+        // Order matters only for readability here: the fields are siblings, so
+        // no widget is inside another and at most one arm can match.
         if holds(&focus, imp.to.upcast_ref()) {
             Some(Field::To)
+        } else if holds(&focus, imp.cc.upcast_ref()) {
+            Some(Field::Cc)
+        } else if holds(&focus, imp.bcc.upcast_ref()) {
+            Some(Field::Bcc)
+        } else if holds(&focus, imp.subject.upcast_ref()) {
+            Some(Field::Subject)
         } else if holds(&focus, imp.body.widget().upcast_ref()) {
             Some(Field::Body)
         } else {
@@ -1589,13 +1609,9 @@ impl Composer {
     /// back to the field a fresh composition would start in, which is only
     /// reached when the keyboard was somewhere else entirely.
     fn restore_focus(&self, field: Option<Field>) {
-        let imp = self.imp();
         match field {
-            Some(Field::Body) => {
-                imp.body.widget().grab_focus();
-            }
-            Some(Field::To) => {
-                imp.to.grab_focus();
+            Some(field) => {
+                self.widget_for(field).grab_focus();
             }
             None => self.focus_first(),
         }
@@ -2223,10 +2239,7 @@ impl Composer {
     /// tick can be the one the mapping happens in.
     fn focus_first(&self) {
         let imp = self.imp();
-        let field: gtk::Widget = match first_field(imp.draft.borrow().kind) {
-            Field::To => imp.to.clone().upcast(),
-            Field::Body => imp.body.widget().clone().upcast(),
-        };
+        let field: gtk::Widget = self.widget_for(first_field(imp.draft.borrow().kind));
         if !field.grab_focus() {
             let ticks = Cell::new(0u8);
             field.clone().add_tick_callback(move |field, _| {
@@ -2894,9 +2907,22 @@ impl Composer {
     /// composition would have left it. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_focus_field(&self, field: Field) -> bool {
+        self.widget_for(field).grab_focus()
+    }
+
+    /// The widget a [`Field`] names.
+    ///
+    /// One mapping, so the three callers that need it cannot come to disagree
+    /// about which widget `Field::Subject` is — and so adding a field is one
+    /// edit rather than three the compiler finds one at a time.
+    fn widget_for(&self, field: Field) -> gtk::Widget {
+        let imp = self.imp();
         match field {
-            Field::To => self.imp().to.grab_focus(),
-            Field::Body => self.imp().body.widget().grab_focus(),
+            Field::To => imp.to.clone().upcast(),
+            Field::Cc => imp.cc.clone().upcast(),
+            Field::Bcc => imp.bcc.clone().upcast(),
+            Field::Subject => imp.subject.clone().upcast(),
+            Field::Body => imp.body.widget().clone().upcast(),
         }
     }
 

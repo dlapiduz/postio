@@ -368,6 +368,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order",
+        gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order as fn(),
+    ),
+    (
         "gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
         gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field as fn(),
     ),
