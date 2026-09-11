@@ -924,6 +924,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_keymap::a_composer_built_after_a_rebind_starts_on_the_rebound_key as fn(),
     ),
     (
+        "gtk_composer_keymap::a_single_key_binding_does_not_fire_while_typing",
+        gtk_composer_keymap::a_single_key_binding_does_not_fire_while_typing as fn(),
+    ),
+    (
         "gtk_composer_recipients::typing_a_prefix_offers_suggestions_and_accepting_one_completes_it",
         gtk_composer_recipients::typing_a_prefix_offers_suggestions_and_accepting_one_completes_it as fn(),
     ),
