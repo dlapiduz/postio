@@ -569,4 +569,53 @@ mod tests {
         );
         assert!(!carried.message_id.is_assigned());
     }
+
+    #[test]
+    fn a_forward_carries_an_inline_image_as_an_inline_part() {
+        // FR-043's other half, and the one a forward is most likely to drop.
+        // An inline image is not an attachment in the ordinary sense -- it is
+        // referenced from the body by `Content-ID` -- so a carry that filtered
+        // on `Disposition::Attachment`, or that reassigned content ids the way
+        // it reassigns row ids, would forward a message whose pictures are all
+        // broken while every test about attachments still passed.
+        let mut source = a_message();
+        let mut logo = Attachment::new(MessageId::new(42), "image/png", 2048);
+        logo.id = AttachmentId::new(9);
+        logo.filename = Some("logo.png".to_owned());
+        logo.content_id = Some("logo@example.invalid".to_owned());
+        logo.disposition = crate::attachment::Disposition::Inline;
+        logo.blob_id = Some(crate::ids::BlobId::new("c".repeat(64)));
+        source.attachments = vec![logo];
+
+        let draft = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        );
+
+        let carried = draft
+            .attachments
+            .first()
+            .expect("the inline image was dropped from the forward");
+        assert_eq!(
+            carried.content_id.as_deref(),
+            Some("logo@example.invalid"),
+            "the Content-ID was rewritten, so the body's `cid:` reference now \
+             points at nothing"
+        );
+        assert_eq!(
+            carried.disposition,
+            crate::attachment::Disposition::Inline,
+            "an inline part carried as an ordinary attachment shows up as a \
+             file to download where a picture used to be"
+        );
+        assert!(
+            carried.blob_id.is_some(),
+            "the bytes do not need re-uploading"
+        );
+        assert!(
+            !carried.id.is_assigned(),
+            "a copy of another message's attachment row is not that row"
+        );
+    }
 }

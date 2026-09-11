@@ -1590,11 +1590,21 @@ fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found(
     // and then no surface reads it.
     let database = test_support::memory();
     let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_drafts(&connection);
+    let (account, mailbox) = account_with_drafts(&connection);
     let drafts = DraftRepository::new(&connection);
     let queue = OperationQueueRepository::new(&connection);
 
+    // A reply to a real message, so the threading assertion below has
+    // something to lose rather than comparing two `None`s.
+    let mut parent = Message::new(account.id, mailbox, at(0));
+    parent.subject = Some("Tide gate interlock".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut parent)
+        .expect("create the parent");
+
     let mut draft = a_draft(account.id);
+    draft.kind = DraftKind::Reply;
+    draft.in_reply_to = Some(parent.id);
     drafts.save(&mut draft).expect("save");
     let queued = drafts
         .queue_send(&mut draft, at(1))
@@ -1623,6 +1633,19 @@ fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found(
         after.body.text, draft.body.text,
         "the text did not survive the failure, which is the one outcome worse \
          than the send failing"
+    );
+
+    // ── FR-028: and it still knows which conversation it belongs to ──────
+    //
+    // A retry rebuilds the outgoing bytes from this row, so this field is
+    // the whole of what makes the second attempt land where the first would
+    // have. Losing it would show up only as a reply that started its own
+    // thread, later, with nothing left to connect it back to the failure.
+    assert_eq!(
+        after.in_reply_to,
+        Some(parent.id),
+        "the draft forgot the message it answers, so a retry would start its \
+         own conversation"
     );
 
     // ── And the reason is still somewhere ────────────────────────────────
