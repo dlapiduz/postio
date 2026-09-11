@@ -120,3 +120,61 @@ pub fn typing_a_prefix_offers_suggestions_and_accepting_one_completes_it() {
         "the first address survived typing the start of a second"
     );
 }
+
+/// Revealing Cc and Bcc keeps the draft and the keyboard's place (FR-020).
+///
+/// The `+ Cc` button rebuilds nothing, but nothing said so. What it must not
+/// do is what a naive "rebuild the header" would: lose a half-typed `To`, or
+/// drop the keyboard somewhere the person did not put it.
+///
+/// Cc taking the keyboard afterwards *is* the behaviour — `show_copy_fields`
+/// grabs it deliberately, because a field revealed and not focused is a field
+/// the user must then reach for. What is asserted is that the address already
+/// typed survives, and that the keyboard lands somewhere nameable rather than
+/// nowhere.
+pub fn revealing_cc_and_bcc_keeps_what_was_already_typed() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display");
+        return;
+    }
+    let display = gdk::Display::default().expect("a display");
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let composer = window.composer();
+    composer.open(postio_model::Draft::new(
+        postio_model::AccountId::UNASSIGNED,
+    ));
+    window.present();
+    settle();
+
+    composer.test_set_to("ada@example.com");
+    composer.test_set_subject("the tide gate interlock");
+    settle();
+
+    composer.show_copy_fields();
+    settle();
+
+    assert_eq!(
+        composer.draft().to.len(),
+        1,
+        "revealing Cc dropped the address already in To"
+    );
+    assert_eq!(
+        composer.draft().to[0].address,
+        "ada@example.com",
+        "revealing Cc rewrote the address already in To"
+    );
+    assert_eq!(
+        composer.test_subject(),
+        "the tide gate interlock",
+        "revealing Cc disturbed the subject"
+    );
+    assert_eq!(
+        composer.focused_field(),
+        Some(composer::Field::Cc),
+        "the revealed field takes the keyboard, so the person can type into \
+         the thing they just asked for"
+    );
+}
