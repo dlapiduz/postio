@@ -72,7 +72,7 @@ fn a_draft(account: &Account, subject: &str) -> Draft {
     draft.to = vec![EmailAddress::new(None::<String>, "grace@example.net")];
     draft.subject = subject.to_owned();
     draft.body.text = Some("Half a thought, still being had.".to_owned());
-    draft.use_identity(&account.identities[0]);
+    draft.start_as(&account.identities[0]);
     draft
 }
 

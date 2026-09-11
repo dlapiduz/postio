@@ -219,7 +219,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
                 .expect("give the account an identity");
         }
         let mut draft = postio_model::draft::Draft::new(account.id);
-        draft.use_identity(&account.identities[0]);
+        draft.start_as(&account.identities[0]);
         draft.to = vec![postio_model::address::EmailAddress::new(
             None::<String>,
             "grace@example.net",

@@ -135,6 +135,10 @@ command_ids! {
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
     DetachComposer => "detach_composer",
+    /// Raise the draft's Cc and Bcc rows, or put them away again.
+    CopyFields => "copy_fields",
+    /// Put a picture in the body, where it is written rather than beside it.
+    InsertImage => "insert_image",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
     /// Make the selection italic, or straighten it.
@@ -571,6 +575,23 @@ pub enum Command {
     /// step. Purely a view concern -- nothing downstream of the frontend can
     /// tell which container the draft is being typed into.
     DetachComposer,
+    /// Raise the draft's Cc and Bcc rows, or put them away again.
+    ///
+    /// A toggle with an asymmetric half. Raising always works; putting away
+    /// only works while both fields are empty, because a hidden row that still
+    /// held addresses would keep those recipients on the draft and still send
+    /// to them, under a sender who could no longer see them. When it will not
+    /// put them away it moves the keyboard to `Cc` instead, so the refusal is
+    /// visible rather than silent.
+    CopyFields,
+    /// Put a picture in the body, at the caret.
+    ///
+    /// The third of the three outcomes FR-049 asks the composer to keep
+    /// distinct — a link on text, an image *inside* the body, a file attached
+    /// alongside — and the only one that had no command. Pasting and dropping
+    /// reached it, which meant it was absent from the palette and the `?`
+    /// sheet and unreachable by anyone who does neither.
+    InsertImage,
     /// Make the selection bold, or un-bold it.
     Bold,
     /// Make the selection italic, or straighten it.
@@ -781,6 +802,8 @@ impl Command {
             Command::MarkSent { .. } => CommandId::MarkSent,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
+            Command::CopyFields => CommandId::CopyFields,
+            Command::InsertImage => CommandId::InsertImage,
             Command::Bold => CommandId::Bold,
             Command::Italic => CommandId::Italic,
             Command::BulletList => CommandId::BulletList,
@@ -892,6 +915,8 @@ impl Command {
             CommandId::MarkSent => Command::MarkSent { draft: None },
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
+            CommandId::CopyFields => Command::CopyFields,
+            CommandId::InsertImage => Command::InsertImage,
             CommandId::Bold => Command::Bold,
             CommandId::Italic => Command::Italic,
             CommandId::BulletList => Command::BulletList,

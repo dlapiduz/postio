@@ -279,6 +279,17 @@ pub struct Account {
     /// rest so a draft can sign differently without changing who it is from.
     #[serde(default)]
     pub signatures: Vec<Signature>,
+    /// The largest message this account's provider will accept, in bytes.
+    ///
+    /// `None` means no configured limit, and then nothing is checked — see
+    /// [`crate::size::check`]. Inventing a number would refuse mail the
+    /// provider would have taken, with no way for the person to tell Postio's
+    /// guess from their provider's rule.
+    ///
+    /// Never read from the SMTP `SIZE` capability: `postio-smtp` holds that
+    /// Postio announces nothing and relies on nothing, and a refusal
+    /// conditional on a capability list is how that erodes.
+    pub max_message_size: Option<u64>,
     /// An account-wide override of what a new draft starts signed with
     /// (#12's last item, #394) — see [`crate::signature_default::resolve`] for the
     /// full precedence this participates in, alongside a mailbox's own
@@ -349,6 +360,7 @@ impl Account {
             enabled: true,
             identities: Vec::new(),
             signatures: Vec::new(),
+            max_message_size: None,
             default_signature_id: None,
             is_default: false,
             created_at: Utc::now(),

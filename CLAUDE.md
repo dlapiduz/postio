@@ -35,6 +35,33 @@ feature/<x> <n>` cuts the worktree from it and lands back onto it (details
 in `/issue`); rebase the feature branch onto `main` regularly, merge it when
 it is whole.
 
+**Spec-driven work has no issues at all.** A feature under `specs/<nnn>-<name>/`
+that has been through `/speckit-specify` and `/speckit-plan` is not broken into
+one issue per task — the constitution says so (Development Workflow), and this
+is the whole shape:
+
+```bash
+git worktree add ~/src/postio-worktrees/<name> -b feature/<name> origin/main
+printf 'main\n' > ~/src/postio-worktrees/<name>/.git/postio-base   # or see below
+cd ~/src/postio-worktrees/<name>
+# work tasks.md top to bottom, one commit per task
+scripts/issue-land.sh --detach          # lands the branch; closes nothing
+```
+
+`tasks.md` is the queue and `spec.md` is the acceptance — both are in the
+repository and reviewable, which is what the issue was providing. So: **do not
+file an issue per task, and do not claim one.** Commits end
+`Refs: specs/<nnn>-<name>` and the task id rather than `Refs: #<issue>`.
+
+Two things still hold. Test-first is not relaxed — a task's test is observed
+red first, exactly as an issue's would be. And work *discovered* on the way
+that is not in the spec is still filed through `scripts/issue-file.sh`: the
+exemption is for the planned work, not for everything the branch touches.
+
+The branch lands to `main` once, as one pull request reviewed against the spec.
+If it grows long enough that `main` moves under it, rebase it as you go, the
+same as an initiative branch.
+
 **Finishing an issue is not finishing a session** — claim the next one and
 keep going. Never ask whether to continue; the answer is yes, and asking
 costs a round trip that may not come back for hours. Stop only when:

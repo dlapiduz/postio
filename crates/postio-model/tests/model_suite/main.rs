@@ -19,9 +19,11 @@
 mod corpus_loader;
 mod invariants;
 mod malformed_mime;
+mod mention;
 mod mime;
 mod purity;
 mod reply;
 mod rfc2045;
 mod rfc5322;
 mod serde_roundtrip;
+mod size;

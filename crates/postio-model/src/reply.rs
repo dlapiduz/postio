@@ -15,7 +15,7 @@
 //! # What is not here
 //!
 //! Nothing here sends anything or resolves an identity's signature bytes —
-//! [`Draft::use_identity`] already does the signature, and does it correctly
+//! [`Draft::start_as`] already does the signature, and does it correctly
 //! against text this module has already quoted (see its doc for why quoting
 //! first and signing after never doubles up). Attaching this to the reading
 //! pane, and deciding which `Message` a reply's `in_reply_to` local id points
@@ -61,7 +61,7 @@ pub fn forward(source: &Message, account: &Account, body: MessageBody) -> Draft 
     draft.attachments = carried_attachments(source);
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
-        draft.use_identity(identity);
+        draft.start_as(identity);
     }
     draft
 }
@@ -85,7 +85,7 @@ fn build_reply(source: &Message, account: &Account, all: bool, quote: MessageBod
     draft.body = quote;
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
-        draft.use_identity(identity);
+        draft.start_as(identity);
     }
     draft
 }
@@ -442,6 +442,45 @@ mod tests {
     }
 
     #[test]
+    fn reply_all_drops_an_alias_of_ours_as_readily_as_the_primary_address() {
+        // FR-040. `owns_address` already walks `identities`, so this passes
+        // today -- and nothing proved it, because every other test here gives
+        // the account exactly one address that is also its primary. That is
+        // the shape of assertion this whole conformance pass exists for: the
+        // `identities` arm could be deleted and the suite would stay green
+        // while every alias holder started Cc-ing themselves on every reply.
+        let mut account = account("grace@example.com");
+        let mut alias = Identity::new(
+            account.id,
+            EmailAddress::new(Some("Grace Hopper"), "g.hopper@example.net"),
+        );
+        alias.id = IdentityId::new(2);
+        account.identities.push(alias);
+
+        let mut source = a_message();
+        source.to = vec![
+            EmailAddress::new(None::<String>, "turing@example.org"),
+            // Addressed to the alias, which is how mail to an alias actually
+            // arrives -- the primary address is nowhere in this header block.
+            EmailAddress::new(None::<String>, "G.Hopper@Example.NET"),
+        ];
+
+        let draft = reply_all(&source, &account, plain_quote(&source));
+
+        assert_eq!(
+            draft.cc,
+            vec![EmailAddress::new(None::<String>, "turing@example.org")],
+            "an address this account sends as is ours however it is cased, \
+             and replying to all must not put us on our own reply"
+        );
+        assert!(
+            draft.all_recipients().all(|address| !address
+                .same_address(&EmailAddress::new(None::<String>, "g.hopper@example.net"))),
+            "the alias survived into the recipients somewhere other than Cc"
+        );
+    }
+
+    #[test]
     fn reply_all_never_lists_the_same_address_in_to_and_cc() {
         let mut source = a_message();
         // The sender's own address turns up again in Cc, as a "reply to all"
@@ -529,5 +568,54 @@ mod tests {
             "a copy of another message's attachment row is not that row"
         );
         assert!(!carried.message_id.is_assigned());
+    }
+
+    #[test]
+    fn a_forward_carries_an_inline_image_as_an_inline_part() {
+        // FR-043's other half, and the one a forward is most likely to drop.
+        // An inline image is not an attachment in the ordinary sense -- it is
+        // referenced from the body by `Content-ID` -- so a carry that filtered
+        // on `Disposition::Attachment`, or that reassigned content ids the way
+        // it reassigns row ids, would forward a message whose pictures are all
+        // broken while every test about attachments still passed.
+        let mut source = a_message();
+        let mut logo = Attachment::new(MessageId::new(42), "image/png", 2048);
+        logo.id = AttachmentId::new(9);
+        logo.filename = Some("logo.png".to_owned());
+        logo.content_id = Some("logo@example.invalid".to_owned());
+        logo.disposition = crate::attachment::Disposition::Inline;
+        logo.blob_id = Some(crate::ids::BlobId::new("c".repeat(64)));
+        source.attachments = vec![logo];
+
+        let draft = forward(
+            &source,
+            &account("grace@example.com"),
+            plain_forward(&source),
+        );
+
+        let carried = draft
+            .attachments
+            .first()
+            .expect("the inline image was dropped from the forward");
+        assert_eq!(
+            carried.content_id.as_deref(),
+            Some("logo@example.invalid"),
+            "the Content-ID was rewritten, so the body's `cid:` reference now \
+             points at nothing"
+        );
+        assert_eq!(
+            carried.disposition,
+            crate::attachment::Disposition::Inline,
+            "an inline part carried as an ordinary attachment shows up as a \
+             file to download where a picture used to be"
+        );
+        assert!(
+            carried.blob_id.is_some(),
+            "the bytes do not need re-uploading"
+        );
+        assert!(
+            !carried.id.is_assigned(),
+            "a copy of another message's attachment row is not that row"
+        );
     }
 }

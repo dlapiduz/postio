@@ -39,8 +39,21 @@ use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
 /// Elements whose *contents* go with them.
 ///
 /// Everything else unknown is unwrapped, keeping its text.
-const DROPPED: [&str; 9] = [
+const DROPPED: [&str; 10] = [
     "script", "style", "iframe", "object", "embed", "svg", "math", "noscript", "template",
+    // Not a hazard like the rest of this list — chrome. A reply's quote is
+    // wrapped in `<details><summary>Quoted message</summary>` by
+    // `postio_ui::editor::document::fold_quotes` so it opens folded, and that
+    // wrapper is in the editor's DOM, which the bridge posts straight back
+    // here on every edit. Without this the summary's text was collected as
+    // ordinary content: typing one character into a reply put a line saying
+    // "Quoted message" in the draft, and the recipient got it.
+    //
+    // Tag *and* contents, which is what this list means and what is wanted: a
+    // `<summary>` is never something a person wrote. A sender's own
+    // `<details>` inside a quote is untouched, because a quote's markup is
+    // carried opaquely (`Block::Quoted`) and never walked here.
+    "summary",
 ];
 
 /// Narrow `html` to the subset Postio can hold.
@@ -115,6 +128,19 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                 let text = contents.borrow().to_string();
                 if !text.trim().is_empty() {
                     loose.push(Inline::Text(collapse(&text)));
+                } else if !ends_with_space(loose) {
+                    // Whitespace-only, and whether that is content depends on
+                    // what is beside it (#1486). Between two inlines --
+                    // `<b>x</b> <i>y</i>` -- it is the space somebody typed,
+                    // and dropping it joins two words. Before anything, or
+                    // between two blocks, it is the newline and indent of
+                    // someone's markup and means nothing.
+                    //
+                    // `ends_with_space` answers both: an empty run is the
+                    // leading case, and `flush` empties the run at every
+                    // block boundary, so only a genuine gap between inlines
+                    // reaches this.
+                    loose.push(Inline::Text(" ".to_owned()));
                 }
             }
             NodeData::Element { .. } => {
@@ -141,12 +167,53 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                     // container whose children are the author's content.
                     None => match inline_for(child, &name) {
                         Some(inline) => loose.push(inline),
-                        None => walk_blocks(child, blocks, loose),
+                        None => {
+                            walk_blocks(child, blocks, loose);
+                            separate_table_part(&name, blocks, loose);
+                        }
                     },
                 }
             }
             _ => walk_blocks(child, blocks, loose),
         }
+    }
+}
+
+/// Keeps a table's parts from running into each other (#1482).
+///
+/// A table has no [`Block`] — that is the authoring subset working as
+/// designed, and this is not a step towards giving it one. What it fixes is
+/// that narrowing concatenated the cells with *nothing* between them, so
+/// `<td>Gate</td><td>Interlock</td>` became `GateInterlock` and a row ran
+/// straight into the row below.
+///
+/// Where that shows is the `text/plain` half of a reply to a table-based
+/// message, which is most commercial mail: a recipient whose client prefers
+/// plain text got the quote as one run-on word.
+///
+/// A cell ends with a space and a row ends the run, which is as close to a
+/// table as a document with no table can come.
+fn separate_table_part(name: &str, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) {
+    match name {
+        "td" | "th" => {
+            // Only where something was actually collected, and only once: a
+            // cell that already ends in whitespace needs no help, and an
+            // empty one would otherwise pad the row for nothing.
+            if !ends_with_space(loose) {
+                loose.push(Inline::Text(" ".to_owned()));
+            }
+        }
+        "tr" => flush(blocks, loose),
+        _ => {}
+    }
+}
+
+/// Whether the run so far already ends in whitespace, or is empty.
+fn ends_with_space(loose: &[Inline]) -> bool {
+    match loose.last() {
+        None => true,
+        Some(Inline::Text(text)) => text.ends_with(char::is_whitespace),
+        Some(_) => false,
     }
 }
 
@@ -165,13 +232,96 @@ fn block_for(handle: &Handle, name: &str) -> Option<Block> {
             ordered: name == "ol",
             items: items_of(handle),
         }),
-        "blockquote" => Some(Block::Quote(blocks_of(handle))),
+        "blockquote" => {
+            // A reply quote comes back as one (ADR 0033, FR-046): what is in
+            // the editor is what is sent, and narrowing it here would mean
+            // the fidelity survived until the user typed a character.
+            //
+            // Rebuilt through `quote_of` rather than trusted, so the gate
+            // holds on the way back in as well as on the way out. The content
+            // was sanitised when the quote was made, but it has since been
+            // through a `contenteditable` DOM, and "it was safe when we put it
+            // there" is exactly the assumption worth not making.
+            if attribute(handle, crate::document::QUOTED_MARKER).is_some() {
+                let (html, text) = quoted_halves(handle);
+                Some(Block::Quoted(crate::quote_of(
+                    Some(&html),
+                    &text,
+                    QUOTE_SCOPE,
+                )))
+            } else {
+                Some(Block::Quote(blocks_of(handle)))
+            }
+        }
         // Whitespace is the content of a `<pre>`, so it is taken raw rather
         // than collapsed the way flowing text is.
         "pre" => Some(Block::Pre(raw_text(handle))),
         "hr" => Some(Block::Rule),
+        // A forward's carried body, which is a `div` rather than a
+        // `blockquote` because a forward is not a quote (#1483). Only when it
+        // carries the marker: an ordinary `div` is somebody's layout and its
+        // children are the content.
+        "div" => attribute(handle, crate::document::QUOTED_MARKER)
+            .map(|marker| carried_block(handle, &marker)),
         _ => None,
     }
+}
+
+/// The scope a re-parsed quote is rewritten under.
+///
+/// Fixed rather than carried through the round trip: the scope only has to be
+/// unique within the document it is emitted into, and a draft holds one reply
+/// quote. Carrying the original message's id here would put a database id in
+/// markup that goes out on the wire for no gain.
+const QUOTE_SCOPE: &str = "quote";
+
+/// A marked element back into the block it was emitted from.
+///
+/// Rebuilt through `quote_of` rather than trusted, for the reason `block_for`
+/// gives: the content was sanitised when it was made and has been through a
+/// `contenteditable` DOM since.
+fn carried_block(handle: &Handle, marker: &str) -> Block {
+    let (html, text) = quoted_halves(handle);
+    let quoted = crate::quote_of(Some(&html), &text, QUOTE_SCOPE);
+    Block::Quoted(if marker == "carried" {
+        quoted.carried()
+    } else {
+        quoted
+    })
+}
+
+/// A marked blockquote's two renderings: its markup verbatim, and its text.
+///
+/// Both are taken from the same nodes rather than the text being remembered
+/// separately, because the editor's DOM is the only thing that knows what the
+/// user did to the quote — deleting half of it, most commonly — and a
+/// remembered text alternative would still describe the whole of it.
+///
+/// The text half goes through the ordinary narrowing, and that is the right
+/// place for it: `text/plain` *is* a reduction, so the subset that loses a
+/// table costs nothing here, while `raw_text` would run the cells together
+/// with no separator at all. The HTML half is what must not be narrowed.
+fn quoted_halves(handle: &Handle) -> (String, String) {
+    let mut html = String::new();
+    for child in handle.children.borrow().iter() {
+        let mut buffer = Vec::new();
+        let node = markup5ever_rcdom::SerializableHandle::from(child.clone());
+        // `IncludeNode`, not the default `ChildrenOnly`: the child's own tag
+        // is the part that carries the structure, and serializing only its
+        // children hands back a table's text with the table gone.
+        let options = html5ever::serialize::SerializeOpts {
+            traversal_scope: html5ever::serialize::TraversalScope::IncludeNode,
+            ..Default::default()
+        };
+        if html5ever::serialize::serialize(&mut buffer, &node, options).is_ok() {
+            html.push_str(&String::from_utf8_lossy(&buffer));
+        }
+    }
+    let text = crate::Document {
+        blocks: blocks_of(handle),
+    }
+    .to_text();
+    (html, text)
 }
 
 /// The inline this element is, if it is one.

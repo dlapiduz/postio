@@ -74,13 +74,15 @@ command from inside a text field.
 | `/` | Search | List, conversation, reader |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, conversation, reader |  | `compose` |
-| `ctrl+Return` | Send | Composer | Undoable | `send` |
+| `ctrl+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` | Schedule send… | Composer |  | `schedule_send` |
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
+| `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |
+| `ctrl+shift+g` | Insert image… | Composer |  | `insert_image` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` | Italic | Composer |  | `italic` |
 | `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |

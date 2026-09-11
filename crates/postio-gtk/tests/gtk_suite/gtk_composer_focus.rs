@@ -89,3 +89,73 @@ pub fn focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped() {
         "a reply starts in the body, once the retry has had real frames to land in"
     );
 }
+
+/// Tab walks the composer in a defined order, and Shift+Tab walks back.
+///
+/// FR-003. `focused_field` is what answers this, which is why the enum had to
+/// grow: it named `To` and `Body` and nothing between them, so "the focus
+/// order is defined" was a claim about four widgets nobody could ask about.
+/// Its own doc already said the focus rules are "an acceptance criterion …
+/// worth being able to assert on rather than to look at" — this takes that
+/// literally.
+///
+/// Driven with `child_focus`, which is what GTK runs for a Tab press, rather
+/// than a helper written for this test: the order under test is the one the
+/// toolkit derives from the layout, and a bespoke `focus_next()` would assert
+/// that the helper agrees with itself.
+pub fn the_keyboard_walks_the_composer_in_a_defined_order() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let composer = composer::install(&window);
+    composer.open(started(DraftKind::New));
+    window.present();
+    settle_until(|| composer.focused_field().is_some());
+
+    // Cc and Bcc join the order only once they are showing: a hidden field
+    // that took the keyboard would be a stop nobody can see. `show_copy_fields`
+    // leaves the keyboard in Cc, so the walk is restarted from To.
+    composer.show_copy_fields();
+    settle_until(|| composer.focused_field() == Some(Field::Cc));
+
+    let tab = |direction| {
+        gtk::prelude::WidgetExt::child_focus(&window, direction);
+    };
+
+    // Back up to the top, then forward through every field in turn.
+    tab(gtk::DirectionType::TabBackward);
+    settle_until(|| composer.focused_field() == Some(Field::To));
+    assert_eq!(
+        composer.focused_field(),
+        Some(Field::To),
+        "shift-tabbing out of Cc reaches To, so To is the field above it"
+    );
+
+    for expected in [Field::Cc, Field::Bcc, Field::Subject] {
+        tab(gtk::DirectionType::TabForward);
+        settle_until(|| composer.focused_field() == Some(expected));
+        assert_eq!(
+            composer.focused_field(),
+            Some(expected),
+            "tabbing forward should reach {expected:?}"
+        );
+    }
+
+    // And back the way it came. A one-way order is half an order: a person who
+    // tabs past the field they wanted has no way home but the mouse.
+    for expected in [Field::Bcc, Field::Cc, Field::To] {
+        tab(gtk::DirectionType::TabBackward);
+        settle_until(|| composer.focused_field() == Some(expected));
+        assert_eq!(
+            composer.focused_field(),
+            Some(expected),
+            "shift-tabbing back should reach {expected:?}"
+        );
+    }
+}

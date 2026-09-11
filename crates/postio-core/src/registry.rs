@@ -43,7 +43,31 @@ pub enum Recovery {
     None,
     /// Reversible from the undo stack, and worth an "— Undo" toast
     /// (docs/PRODUCT.md §16: *Archived 12 messages — Undo*).
+    ///
+    /// `u` works, and that is the load-bearing half: a command claiming this
+    /// must be something [`postio_core::undo::UndoStack`] can actually hold,
+    /// which means a `UndoKind` exists for it.
     Undo,
+    /// Reversible for a limited time, through its own affordance rather than
+    /// the undo stack (#1481).
+    ///
+    /// A send is the case this exists for. It *is* reversible — the draft
+    /// sits in the queue and opening it cancels the send — and it is not
+    /// reversible from the undo stack, which takes message operations with a
+    /// ten-minute expiry.
+    ///
+    /// Those two numbers are why this is a separate answer rather than
+    /// `Undo`. A send's window is however long the drainer takes, which is
+    /// seconds; the stack's is ten minutes. An entry recorded there would
+    /// outlive what it can act on, sit at the top of the stack shadowing the
+    /// archive beneath it, and answer `u` with "too late" — leaving the
+    /// person unsure whether the archive they meant to undo had been
+    /// consumed. `Recovery::Undo` for a send was not merely unimplemented; it
+    /// was the wrong promise.
+    ///
+    /// The affordance is the toast's own "Undo", live only while the window
+    /// is, which is what every client that offers undo-send does.
+    Window,
     /// Irreversible enough to ask first.
     Confirm,
 }
@@ -605,7 +629,7 @@ static SPECS: &[CommandSpec] = &[
         // Not destructive — but it is externally visible and irreversible once
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
-        recovery: Recovery::Undo,
+        recovery: Recovery::Window,
         requires: None,
     },
     CommandSpec {
@@ -700,6 +724,41 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         contexts: Context::Composer.as_set(),
         destructive: false,
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::CopyFields,
+        // Named for the pair rather than for `+ Cc`, because the button is
+        // only the way in and this verb is also the way out. "Cc and Bcc" is
+        // what someone hunting the palette for a Bcc field will type.
+        title: "Cc and Bcc",
+        // The `mod+shift+<letter>` shelf every secondary composer verb sits
+        // on, and `c` for the field it names -- which is also what other mail
+        // clients bind. `mod+c` is copy and stays copy.
+        default_binding: "mod+shift+c",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // Nothing durable changes: this raises and lowers two rows, and it
+        // refuses to lower them while they hold anything. There is nothing to
+        // take back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::InsertImage,
+        // "Insert image…" rather than "Attach image": the ellipsis says a
+        // chooser opens, and the verb is what keeps it distinct from
+        // `attach_file` in a palette where both are one search away (FR-049).
+        title: "Insert image…",
+        // Beside `insert_link` on the `mod+shift+<letter>` shelf, because
+        // they are the two verbs that put something *into* the text.
+        default_binding: "mod+shift+g",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // The editor's own undo takes it back out, like any other edit.
         recovery: Recovery::None,
         requires: None,
     },

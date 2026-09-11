@@ -25,7 +25,7 @@ id, display_name, address, address_name, incoming_host, incoming_port, incoming_
 incoming_username, outgoing_host, outgoing_port, outgoing_security, outgoing_username,
 auth_method, enabled, created_at, default_signature_id, pending_deletion,
 oauth_client_id, oauth_token_url, oauth_authorize_url, oauth_scopes, backend,
-jmap_session_url, oauth_refresh_lifetime_days, is_default";
+jmap_session_url, oauth_refresh_lifetime_days, is_default, max_message_size";
 
 impl<'a> AccountRepository<'a> {
     /// Borrows a connection.
@@ -48,9 +48,10 @@ impl<'a> AccountRepository<'a> {
                                    outgoing_username, auth_method, enabled, created_at,
                                    default_signature_id, oauth_client_id, oauth_token_url,
                                    oauth_authorize_url, oauth_scopes, backend,
-                                   jmap_session_url, oauth_refresh_lifetime_days)
+                                   jmap_session_url, oauth_refresh_lifetime_days,
+                                   max_message_size)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                     ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 account.display_name,
                 account.address.address,
@@ -85,6 +86,9 @@ impl<'a> AccountRepository<'a> {
                     .oauth
                     .as_ref()
                     .and_then(|oauth| oauth.refresh_token_lifetime_days),
+                // SQLite integers are signed, and a limit large enough to
+                // overflow `i64` is not a limit any provider has.
+                account.max_message_size.and_then(|n| i64::try_from(n).ok()),
             ],
         )?;
 
@@ -131,7 +135,8 @@ impl<'a> AccountRepository<'a> {
                     oauth_client_id = ?17, oauth_token_url = ?18,
                     oauth_authorize_url = ?19, oauth_scopes = ?20, backend = ?21,
                     jmap_session_url = ?22,
-                    oauth_refresh_lifetime_days = ?23
+                    oauth_refresh_lifetime_days = ?23,
+                    max_message_size = ?24
               WHERE id = ?1",
             params![
                 id,
@@ -168,6 +173,9 @@ impl<'a> AccountRepository<'a> {
                     .oauth
                     .as_ref()
                     .and_then(|oauth| oauth.refresh_token_lifetime_days),
+                // SQLite integers are signed, and a limit large enough to
+                // overflow `i64` is not a limit any provider has.
+                account.max_message_size.and_then(|n| i64::try_from(n).ok()),
             ],
         )?;
         if changed == 0 {
@@ -636,6 +644,12 @@ fn read_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         created_at: from_millis(row.get(14)?),
         pending_deletion: row.get(16)?,
         is_default: row.get(24)?,
+        // A negative ceiling is not a small one, it is a corrupt row --
+        // reading it as "no limit" is the reading that cannot refuse mail
+        // the provider would have taken.
+        max_message_size: row
+            .get::<_, Option<i64>>(25)?
+            .and_then(|n| u64::try_from(n).ok()),
         oauth: match (
             row.get::<_, Option<String>>(17)?,
             row.get::<_, Option<String>>(18)?,

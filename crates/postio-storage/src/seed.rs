@@ -146,9 +146,42 @@ pub fn seed_small_with_bodies(database: &Database, seed: u64) -> SeedReport {
     seed_small_into(database, true, seed)
 }
 
+/// The seeded account: `test_support::account` plus the identity a real one
+/// always has.
+///
+/// Onboarding gives every account it creates an identity
+/// (`postio_app::onboarding`), so a seed without one describes a state the
+/// application cannot produce — and anything resting on it rests on a state
+/// that does not occur. The cost was visible rather than theoretical: a reply
+/// driven through the real path rendered "no identity configured" in its
+/// `From` row, so every picture of the composer looked broken in a way the
+/// running application never is.
+///
+/// Here rather than in `test_support::account`, which is the minimal building
+/// block tests compose their own identities onto. Several add a default of
+/// their own and `idx_identities_one_default` allows exactly one, so putting
+/// it there makes three suites collide over a fixture they did not ask to
+/// change.
+fn seeded_account(connection: &rusqlite::Connection) -> Account {
+    let mut account = test_support::account(connection);
+    // Not marked default, which is the one concession to the fixtures around
+    // it. `idx_identities_one_default` allows a single default per account and
+    // several suites add a default of their own to a seeded account; claiming
+    // it here makes three of them collide over a fixture they did not ask to
+    // change. Nothing is lost by not claiming it — `Account::identity_for`
+    // falls back to the first identity, so this is still the one a reply sends
+    // as.
+    let identity = postio_model::Identity::new(account.id, account.address.clone());
+    account.identities = vec![identity];
+    crate::repository::AccountRepository::new(connection)
+        .update(&mut account)
+        .expect("give the seeded account its identity");
+    account
+}
+
 fn seed_small_into(database: &Database, with_bodies: bool, seed: u64) -> SeedReport {
     let connection = database.connection().expect("a checked-out connection");
-    let account = test_support::account(&connection);
+    let account = seeded_account(&connection);
     let folders = create_folders(&connection, &account);
     let mut rng = Rng::new(seed);
 
@@ -204,6 +237,16 @@ pub fn seed_extra_account(
     let mut account = Account::new(display, EmailAddress::new(Some(display), address));
     account.incoming.host = "imap.example.net".to_owned();
     account.outgoing.host = "smtp.example.net".to_owned();
+    // An identity, because onboarding gives every real account one
+    // (`postio_app::onboarding`) and a seed that does not builds an account
+    // the application itself cannot produce. What that costs is not
+    // hypothetical: a reply driven through the real path renders "no identity
+    // configured" in its `From` row, so every picture of the composer looks
+    // broken in a way the running application never is.
+    let mut identity =
+        postio_model::Identity::new(account.id, EmailAddress::new(Some(display), address));
+    identity.is_default = true;
+    account.identities = vec![identity];
     crate::repository::AccountRepository::new(&connection)
         .create(&mut account)
         .expect("create a seeded account");
@@ -249,7 +292,7 @@ pub fn seed_extra_account(
 /// If a write fails.
 pub fn seed_large(database: &Database, seed: u64, message_count: usize) -> SeedReport {
     let connection = database.connection().expect("a checked-out connection");
-    let account = test_support::account(&connection);
+    let account = seeded_account(&connection);
     let folders = create_folders(&connection, &account);
     let mut rng = Rng::new(seed);
 

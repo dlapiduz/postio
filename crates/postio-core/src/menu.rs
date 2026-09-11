@@ -159,6 +159,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
         C::ToggleRail => Some(M::View),
+        // With the other two show/hide toggles rather than under File
+        // beside the composer's verbs: this raises and lowers rows, it
+        // does not do anything to the draft.
+        C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
         C::OpenParts | C::ViewOriginal => Some(M::View),
         C::CommandPalette => Some(M::View),
@@ -191,6 +195,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),
+        // With the other thing you put into the text, not under File with
+        // the attachment it is deliberately not.
+        C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
     }
 }

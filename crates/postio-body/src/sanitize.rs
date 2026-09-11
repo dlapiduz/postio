@@ -168,7 +168,7 @@ pub enum Refusal {
 /// say, for a stated containment or privacy reason. This is what an
 /// *attribute* may say, and nothing here reaches beyond the message's own
 /// block or the network.
-const TABLE_LAYOUT: &[&str] = &[
+pub(crate) const TABLE_LAYOUT: &[&str] = &[
     "width",
     "height",
     "align",

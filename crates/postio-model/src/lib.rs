@@ -53,6 +53,7 @@ pub mod headers;
 pub mod ids;
 pub mod label;
 pub mod mailbox;
+pub mod mention;
 pub mod message;
 pub mod mime;
 pub mod operation;
@@ -61,6 +62,7 @@ pub mod reply;
 pub mod scope;
 pub mod signature;
 pub mod signature_default;
+pub mod size;
 pub mod subject;
 pub mod sync;
 #[cfg(feature = "test-corpus")]

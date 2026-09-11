@@ -162,6 +162,38 @@ fn destructive_commands_offer_a_way_back() {
 }
 
 #[test]
+fn recovery_undo_means_the_undo_stack_and_nothing_else_claims_it() {
+    // #1481. `Recovery::Undo` has one meaning -- "reversible from the undo
+    // stack, and `u` works" -- and `Send` claimed it while nothing recorded a
+    // send there: `UndoKind` has no variant for one. So the registry promised
+    // a key that did nothing, and worse than nothing, since `u` after a send
+    // reverses whatever unrelated archive was underneath.
+    //
+    // A send *is* reversible, until the drainer takes it. It is simply not
+    // reversible from that stack, which is what `Recovery::Window` says.
+    assert_eq!(
+        registry::get(CommandId::Send).recovery,
+        Recovery::Window,
+        "a send is reversible for a window, not from the undo stack"
+    );
+
+    // And the rule that makes the distinction worth having: every command
+    // claiming `Undo` must be a thing the undo stack can actually hold, which
+    // means a `UndoKind` exists for it. Stated as a list because the stack
+    // takes message operations and the check cannot see across crates.
+    for spec in registry::every_action() {
+        if spec.recovery != Recovery::Undo {
+            continue;
+        }
+        let id = spec.id.to_string();
+        assert!(
+            id != "send" && id != "schedule_send",
+            "{id} reaches no undo stack and must not claim `Recovery::Undo`"
+        );
+    }
+}
+
+#[test]
 fn context_filtering_drives_the_palette_and_cheat_sheet() {
     let list: Vec<CommandId> = registry::for_context(Context::List).map(|s| s.id).collect();
     assert!(list.contains(&CommandId::Archive));

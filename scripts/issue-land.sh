@@ -242,13 +242,21 @@ ISSUE=$(printf '%s' "$BRANCH" | sed -n 's/^issue-\([0-9][0-9]*\)-.*/\1/p')
 # `fix/`, `docs/` and `chore/` are that route. Everything else about the
 # landing is identical; what changes is that no issue is closed, because there
 # is none to close.
+#
+# `feature/` is the same route for the opposite size of work: a feature under
+# `specs/<nnn>-<name>/` that has been through `/speckit-specify` and
+# `/speckit-plan` is not decomposed into one issue per task (constitution
+# 1.1.0, Development Workflow). Its `tasks.md` is the queue and its `spec.md`
+# is the acceptance, both in the repository, so there is no issue to reference
+# and none to close -- and without this the branch could not land at all.
 SMALL=0
-if [ -z "$ISSUE" ] && printf '%s' "$BRANCH" | grep -qE '^(fix|docs|chore)/[a-z0-9._-]+$'; then
+if [ -z "$ISSUE" ] && printf '%s' "$BRANCH" | grep -qE '^(fix|docs|chore|feature)/[a-z0-9._-]+$'; then
     SMALL=1
 fi
 if [ -z "$ISSUE" ] && [ "$SMALL" != 1 ]; then
     echo "Branch '$BRANCH' is not an issue branch (expected issue-<n>-<slug>)," >&2
-    echo "and not a small fix (expected fix/<slug>, docs/<slug> or chore/<slug>)." >&2
+    echo "not a small fix (expected fix/<slug>, docs/<slug> or chore/<slug>)," >&2
+    echo "and not a spec feature branch (expected feature/<slug>)." >&2
     exit 2
 fi
 

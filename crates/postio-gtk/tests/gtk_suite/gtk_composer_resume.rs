@@ -228,3 +228,85 @@ pub fn resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it() {
         "resuming the draft already open must not throw away an edit"
     );
 }
+
+/// FR-064: reopening restores text, formatting, recipients **and
+/// attachments**.
+///
+/// The two the existing cases above do not cover, and the two most worth
+/// covering. `postio-storage` round-trips both through the database, and the
+/// composer round-trips the body through a WebView and a parse — so a draft
+/// can survive the disk perfectly and still come back to the person with its
+/// emphasis flattened and its files gone, with every storage test green.
+/// That is the join, and it is what this asserts.
+pub fn reopening_restores_the_formatting_and_the_attachments_too() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display");
+        return;
+    }
+    let display = gdk::Display::default().expect("a display");
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let composer = window.composer();
+    window.present();
+
+    let mut draft = Draft::new(AccountId::new(1));
+    draft.id = DraftId::new(41);
+    draft.subject = "the weir gauge".to_owned();
+    draft.to = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
+    draft.cc = vec![EmailAddress::new(None::<String>, "list@example.org")];
+    draft.body = postio_model::MessageBody {
+        text: Some("The reading is high.".to_owned()),
+        html: Some("<p>The reading is <strong>high</strong>.</p>".to_owned()),
+    };
+    let mut part = postio_model::Attachment::new(
+        postio_model::ids::MessageId::UNASSIGNED,
+        "application/pdf",
+        4_096,
+    );
+    part.filename = Some("gauge.pdf".to_owned());
+    draft.attachments = vec![part];
+
+    composer.resume(draft.clone());
+    settle();
+
+    // ── On screen ────────────────────────────────────────────────────────
+    assert_eq!(composer.test_subject(), "the weir gauge");
+    assert_eq!(
+        composer.test_attachment_count(),
+        1,
+        "the attachment row is not showing, so the person cannot tell the \
+         file is still on the draft"
+    );
+    assert!(
+        composer.test_attachments_visible(),
+        "the attachment list is hidden on a draft that has one"
+    );
+
+    // ── And in what would be sent ────────────────────────────────────────
+    let reopened = composer.draft();
+    assert_eq!(
+        reopened.attachments.len(),
+        1,
+        "the attachment survived the row and not the draft: {:?}",
+        reopened.attachments
+    );
+    assert_eq!(
+        reopened.attachments[0].filename.as_deref(),
+        Some("gauge.pdf")
+    );
+    assert_eq!(reopened.to.len(), 1, "a recipient was lost");
+    assert_eq!(reopened.cc.len(), 1, "a Cc was lost");
+
+    let html = reopened.body.html.unwrap_or_default();
+    assert!(
+        html.contains("<strong>") || html.contains("<b>"),
+        "the emphasis was flattened by the round trip through the editor, so \
+         reopening a draft quietly rewrites it: {html:?}"
+    );
+    assert!(
+        html.contains("high"),
+        "the emphasised words did not survive at all: {html:?}"
+    );
+}

@@ -47,6 +47,9 @@ fn sample_account() -> Account {
         enabled: true,
         identities: vec![sample_identity()],
         signatures: Vec::new(),
+        // A real number rather than `None`, so the round trip exercises the
+        // field instead of proving `None` survives serialisation.
+        max_message_size: Some(25_000_000),
         default_signature_id: Some(SignatureId::new(4)),
         backend: postio_model::account::Backend::Imap,
         created_at: at(1_000),

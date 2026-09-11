@@ -313,8 +313,13 @@ produce identical bytes on the wire. Rich text is
 text over that model** — which is a perfectly good v1, and is the point of
 deciding the model first.
 
-Outgoing HTML is *generated* from that document, never passed through, so
-nothing a sender wrote is ever re-emitted to a third party (§21).
+Outgoing HTML is *generated* from that document for everything the user
+writes, and for a forward. A **reply's quote** is the exception, decided in
+[ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md): it carries
+the original as the reader rendered it, because a quote rebuilt from the
+closed type does not look like the message being answered. What the sender
+wrote is therefore re-emitted — as the reader's own sanitiser permits it, and
+never more than that (§21).
 
 ---
 
@@ -519,10 +524,18 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
   own script runs there, which is how the conversation rail knows which message
   is on screen (ADR 0003, #1367); `cid:` images resolve from the
   local blob store.
-- Replies and forwards carry nothing outward: quoted content is sanitised on
-  the way in and the outgoing body is generated from Postio's own types, so a
-  forwarded phishing mail cannot make a recipient run what its own user was
-  protected from.
+- Replies and forwards carry nothing outward, and since
+  [ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md) they rest
+  on different mechanisms for it. A **forward** is still generated from
+  Postio's own types, where a script has no representation at all. A **reply**
+  carries the sender's markup as the reader sanitised it, so the gate is the
+  sanitiser rather than the closed type — the same policy the reader defends
+  its own user with, with remote images blocked regardless of what the reader
+  was allowed to show. Either way a forwarded phishing mail cannot make a
+  recipient run what its own user was protected from, and the corpus-wide
+  assertion in `postio-body` is what keeps that true: zero scripts, zero
+  remote-loading references, zero tracking pixels, and not one broken image
+  element, across every HTML message in the corpus.
 - No telemetry, no crash reporting, no update ping.
 - **The local store holds the whole mailbox, and it is encrypted.** §14's
   backfill means this machine ends up with a complete copy of the user's mail

@@ -6,7 +6,10 @@ file it. That left a change with no way to land: `issue-land.sh` refused any
 branch not named `issue-<n>-<slug>`, so the only route was to file the issue
 the rule exists to avoid.
 
-`fix/`, `docs/` and `chore/` branches are that route. What this asserts is the
+`fix/`, `docs/` and `chore/` branches are that route, and `feature/` is the
+same route for the opposite size of work — spec-driven work is not decomposed
+into one issue per task (constitution 1.1.0), so its branch has no issue to
+name. What this asserts is the
 shape of the guard and of what depends on it -- that such a branch is
 accepted, that a real issue branch still is, that something clearly wrong is
 still refused, and that no `Closes` or `Refs:` is written when there is no
@@ -66,13 +69,26 @@ def main() -> int:
             print(f"FAIL: {branch!r} should land as a small fix", file=sys.stderr)
             problems += 1
 
+    # `feature/` is the same route for the opposite size of work: spec-driven
+    # work is not decomposed into one issue per task (constitution 1.1.0), so
+    # its branch has no issue to name and could not otherwise land at all.
+    for branch in ["feature/compose-editor", "feature/mailbox-roles"]:
+        if not accepts(guard, branch):
+            print(
+                f"FAIL: {branch!r} should land as a spec feature branch",
+                file=sys.stderr,
+            )
+            problems += 1
+
     # The control. Without these the guard could be `SMALL=1` unconditionally
     # and every case above would pass.
-    for branch in ["main", "feature/something", "wip", "fix/", "fix/a/b", "random-branch"]:
+    for branch in ["main", "wip", "fix/", "fix/a/b", "feature/", "feature/a/b",
+                   "random-branch"]:
         if accepts(guard, branch):
             print(
-                f"FAIL: {branch!r} was accepted as a small fix; only "
-                "fix/<slug>, docs/<slug> and chore/<slug> may skip the issue",
+                f"FAIL: {branch!r} was accepted without an issue; only "
+                "fix/<slug>, docs/<slug>, chore/<slug> and feature/<slug> may "
+                "skip it",
                 file=sys.stderr,
             )
             problems += 1

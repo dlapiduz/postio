@@ -83,15 +83,27 @@ use postio_model::{reply, signature};
 use crate::shell::Pane;
 use crate::window::Window;
 
-/// The field the keyboard lands in when the composer opens.
+/// A field of the composer the keyboard can be in.
 ///
-/// Two rules, from the bead: a reply focuses the body, because the recipients
-/// and the subject are already decided; new mail focuses `To`, because nothing
-/// is.
+/// Two rules decide where it *lands* when the composer opens, from the bead: a
+/// reply focuses the body, because the recipients and the subject are already
+/// decided; new mail focuses `To`, because nothing is.
+///
+/// The rest of the fields are here so the focus *order* can be asserted rather
+/// than looked at (FR-003). With only `To` and `Body`, "focus moves between
+/// recipient, subject and body in a defined, reversible order" was a claim
+/// about widgets nothing could name — a test could watch the keyboard leave
+/// `To` and had no way to say where it went.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     /// The `To` field.
     To,
+    /// The `Cc` field, when it is showing.
+    Cc,
+    /// The `Bcc` field, when it is showing.
+    Bcc,
+    /// The subject.
+    Subject,
     /// The body.
     Body,
 }
@@ -205,15 +217,105 @@ pub fn closing(draft: &Draft) -> Closing {
 /// the only thing that changes. Refusing the keystroke would lose what was
 /// typed and explain nothing.
 pub fn recipient_warning(draft: &Draft) -> Option<String> {
-    let wrong = draft
-        .all_recipients()
-        .filter(|address| !address.is_plausible())
-        .count();
-    match wrong {
+    let wrong: Vec<String> = fields(draft)
+        .into_iter()
+        .flat_map(|(name, addresses)| {
+            addresses
+                .iter()
+                .filter(|address| !address.is_plausible())
+                .map(move |address| format!("{} in {name}", address.address))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    match wrong.len() {
         0 => None,
-        1 => Some("1 address does not look like an address".to_owned()),
-        many => Some(format!("{many} addresses do not look like addresses")),
+        // Named, not counted (FR-024). A count alone tells somebody with nine
+        // recipients across three fields that one of them is wrong and leaves
+        // them to find it, which is exactly the work the message exists to
+        // do.
+        _ => {
+            let shown: Vec<&str> = wrong
+                .iter()
+                .take(NAMED_ADDRESSES)
+                .map(String::as_str)
+                .collect();
+            let listed = shown.join(", ");
+            if wrong.len() <= NAMED_ADDRESSES {
+                Some(format!("{listed} does not look like an address"))
+            } else {
+                // Past a few this stops being a sentence and becomes a wall.
+                Some(format!(
+                    "{listed} and {} more do not look like addresses ({} in all)",
+                    wrong.len() - shown.len(),
+                    wrong.len()
+                ))
+            }
+        }
     }
+}
+
+/// What is odd about this message, in the words the dialog uses.
+///
+/// Empty for a message with nothing odd about it, which is almost all of
+/// them. Each entry is a clause rather than a sentence, because they are
+/// joined into one.
+fn send_concerns(draft: &Draft) -> Vec<String> {
+    let mut concerns = Vec::new();
+    // FR-018. Asked, never refused: a message with no subject is a perfectly
+    // ordinary thing to send on purpose, and refusing it would be the app
+    // having an opinion about someone else's correspondence.
+    if draft.subject.trim().is_empty() {
+        concerns.push("this message has no subject".to_owned());
+    }
+    // FR-057.
+    if postio_model::mention::mentions_an_attachment(draft) {
+        concerns.push("it mentions an attachment and does not carry one".to_owned());
+    }
+    concerns
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn join_with_and(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// How many wrong addresses a warning names before it starts counting.
+const NAMED_ADDRESSES: usize = 3;
+
+/// How many recipients this message has, and on which field.
+///
+/// FR-023, and the surprise it exists to prevent: a reply-to-all to a large
+/// list looks exactly like a reply until it is sent. The count says *which
+/// field* because "42 recipients" reads very differently from "1 To, 41 Cc".
+///
+/// `None` for the ordinary case, deliberately. A banner that is always there
+/// is a banner nobody reads, so this says nothing until there is more than
+/// one person on the message.
+pub fn recipient_summary(draft: &Draft) -> Option<String> {
+    let counted: Vec<String> = fields(draft)
+        .into_iter()
+        .filter(|(_, addresses)| !addresses.is_empty())
+        .map(|(name, addresses)| format!("{} {name}", addresses.len()))
+        .collect();
+
+    if draft.all_recipients().count() <= 1 {
+        return None;
+    }
+    Some(counted.join(", "))
+}
+
+/// The three recipient fields, in the order they appear on screen.
+fn fields(draft: &Draft) -> [(&'static str, &[EmailAddress]); 3] {
+    [
+        ("To", draft.to.as_slice()),
+        ("Cc", draft.cc.as_slice()),
+        ("Bcc", draft.bcc.as_slice()),
+    ]
 }
 
 /// Whether `host` belongs to a different organisation than `sender_domain`.
@@ -480,27 +582,77 @@ fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Dra
     }
 }
 
-/// The body a reply or forward starts from, built from the parsed document —
-/// ADR 0003 Q3's inversion, done in the crate that has both halves.
+/// The body a reply or forward starts from, done in the crate that has both
+/// halves.
 ///
-/// Rich, in both renderings: the HTML half is what the editor opens
-/// (`document_of` prefers it), and the text half is the same document's
-/// `to_text`, whose `> ` convention keeps the plain form every mail client
-/// expects. Building both from one [`postio_body::Document`] is the
-/// security property (hardening requirement 6): a script or a tracking
-/// pixel in the source has no representation in the document, so neither
-/// rendering can carry one.
+/// Rich in both renderings: the HTML half is what the editor opens
+/// (`document_of` prefers it), and the text half keeps the `> ` convention
+/// every mail client expects.
+///
+/// A **reply** quotes what the reader showed (ADR 0033): the original's
+/// sanitised markup, through [`postio_body::quote_of`], so a table and a
+/// colour reach the quote instead of being narrowed away. The security
+/// property is unchanged and lives in that constructor — remote images
+/// blocked whatever the reader was allowed, and the reader's own permitted
+/// set rather than a second one.
+///
+/// A **forward** still goes through the parsed [`postio_body::Document`].
+/// It presents the whole message as the body of a new one rather than as a
+/// quotation inside a reply, so it is the *user's* content once sent, and
+/// `Block::Quoted` is specifically the thing that is not that. Bringing the
+/// two together is #1483.
 fn quoted_body(source: &Message, forward: bool) -> MessageBody {
-    let document = source_document(source);
     let rich = if forward {
-        postio_body::forwarded(&document, &reply::forward_header(source))
+        // The same carried content a reply gets (#1483). The asymmetry was
+        // never decided -- a forward flattened its content only because ADR
+        // 0033 happened to be about replies -- so forwarding a table-based
+        // newsletter reduced it to a column of text while replying to the
+        // same message kept it. What stays different is the presentation: a
+        // forward is not a quote and is not wrapped as one.
+        let carried = postio_body::quote_of(
+            source.body.html.as_deref(),
+            &forward_text(source),
+            QUOTE_SCOPE,
+        );
+        postio_body::forwarded(&carried, &reply::forward_header(source))
     } else {
-        postio_body::quoted_reply(&document, &reply::attribution(source))
+        // The text half still goes through `source_document` when there is
+        // no markup, because that is where `format=flowed` is unwrapped
+        // (#456): handing `quote_of` the raw `text/plain` would quote a
+        // sender's soft wrap back at them as line breaks they never typed.
+        // With markup present the text part is the sender's own alternative
+        // and is taken as written.
+        let text = match source.body.html {
+            Some(_) => source.body.text.clone().unwrap_or_default(),
+            None => source_document(source).to_text(),
+        };
+        let quoted = postio_body::quote_of(source.body.html.as_deref(), &text, QUOTE_SCOPE);
+        postio_body::quoted_reply(&quoted, &reply::attribution(source))
     };
     let (text, html) = postio_body::render(&rich);
     MessageBody {
         text: Some(text),
         html: Some(html),
+    }
+}
+
+/// The scope a reply's quoted styles are rewritten under.
+///
+/// One reply holds one quote, so this only has to be unique within the draft
+/// rather than globally — and `postio_body::parse` uses the same word coming
+/// back, so a round trip through the editor does not renumber anything.
+const QUOTE_SCOPE: &str = "quote";
+
+/// The plain half a forward carries.
+///
+/// The same rule a reply's uses: the sender's own text alternative when there
+/// is one, and otherwise the flowed-aware narrowing of what they sent, so a
+/// `format=flowed` message is not quoted back with breaks nobody typed
+/// (#456).
+fn forward_text(source: &Message) -> String {
+    match source.body.html {
+        Some(_) => source.body.text.clone().unwrap_or_default(),
+        None => source_document(source).to_text(),
     }
 }
 
@@ -534,6 +686,11 @@ mod imp {
         pub heading: gtk::Label,
         pub status: gtk::Label,
         pub to: gtk::Entry,
+        /// The account's send-size ceiling, when it has one.
+        ///
+        /// `None` is not "unknown", it is "no limit configured", and it means
+        /// nothing is checked -- see `postio_model::size::check`.
+        pub size_limit: Cell<Option<u64>>,
         pub cc: gtk::Entry,
         pub bcc: gtk::Entry,
         pub subject: gtk::Entry,
@@ -572,6 +729,7 @@ mod imp {
         /// The link button: a plain button, because a link is a dialog to
         /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
+        pub image_button: gtk::Button,
         /// The paperclip. Held like `link_button` rather than built inline,
         /// so a test can press the control a person presses.
         pub attach_button: gtk::Button,
@@ -662,6 +820,7 @@ mod imp {
                 heading: gtk::Label::new(None),
                 status: gtk::Label::new(Some(UNSAVED)),
                 to: gtk::Entry::new(),
+                size_limit: Cell::new(None),
                 cc: gtk::Entry::new(),
                 bcc: gtk::Entry::new(),
                 subject: gtk::Entry::new(),
@@ -686,6 +845,7 @@ mod imp {
                 },
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
+                image_button: gtk::Button::new(),
                 attach_button: gtk::Button::new(),
                 send: gtk::Button::new(),
                 schedule_send: gtk::MenuButton::new(),
@@ -884,8 +1044,16 @@ impl Composer {
         let imp = self.imp();
         // An entry hands the keyboard to the `GtkText` inside it, so the
         // focused widget is a descendant of the field rather than the field.
+        // Order matters only for readability here: the fields are siblings, so
+        // no widget is inside another and at most one arm can match.
         if holds(&focus, imp.to.upcast_ref()) {
             Some(Field::To)
+        } else if holds(&focus, imp.cc.upcast_ref()) {
+            Some(Field::Cc)
+        } else if holds(&focus, imp.bcc.upcast_ref()) {
+            Some(Field::Bcc)
+        } else if holds(&focus, imp.subject.upcast_ref()) {
+            Some(Field::Subject)
         } else if holds(&focus, imp.body.widget().upcast_ref()) {
             Some(Field::Body)
         } else {
@@ -1095,6 +1263,7 @@ impl Composer {
         *imp.identities.borrow_mut() = identities;
         imp.identity.set_selected(default.unwrap_or(0) as u32);
         self.apply_identity();
+        self.apply_signature();
     }
 
     /// Sends this draft as the identity with `id`, if the account has it.
@@ -1115,7 +1284,28 @@ impl Composer {
         };
         self.imp().identity.set_selected(index as u32);
         self.apply_identity();
+        self.apply_signature();
         true
+    }
+
+    /// The largest message this account may send, in bytes.
+    ///
+    /// `None` when the account carries no configured limit, and then nothing
+    /// is checked: a guessed ceiling refuses mail the provider would have
+    /// taken, and the person cannot tell Postio's opinion from their
+    /// provider's rule.
+    pub fn set_size_limit(&self, limit: Option<u64>) {
+        self.imp().size_limit.set(limit);
+    }
+
+    /// The refusal this draft would earn, if any.
+    ///
+    /// Checked here rather than left to the server, which is the whole point
+    /// of FR-056: a server's rejection arrives after the composer has closed,
+    /// and what the person is left holding is a `Failed` draft and the job of
+    /// working out which of six attachments to remove.
+    fn too_large(&self) -> Option<postio_model::size::TooLarge> {
+        postio_model::size::check(&self.draft(), self.imp().size_limit.get())
     }
 
     /// Offers `signatures` in the picker, alongside the identity's own.
@@ -1133,6 +1323,7 @@ impl Composer {
         *imp.signatures.borrow_mut() = signatures;
         imp.signature.set_selected(0);
         self.apply_identity();
+        self.apply_signature();
     }
 
     /// Selects the named signature with `id` in the picker, if the account
@@ -1209,12 +1400,18 @@ impl Composer {
         }
     }
 
-    /// Puts the selected identity, and its signature, into the draft.
+    /// Puts the selected identity into the draft. Does not touch the body.
     ///
-    /// Idempotent, because [`Draft::use_identity`] replaces the signature
-    /// block rather than appending one: switching identity mid-compose swaps
-    /// signatures, and re-running this over an unchanged draft changes
-    /// nothing.
+    /// FR-031: changing who a draft is from is a header change and nothing
+    /// else. It used to swap the signature block too, which meant the `From`
+    /// dropdown rewrote a signature the user had edited by hand -- and
+    /// `postio_body::apply_signature` cannot tell an edited signature from an
+    /// untouched one, because it matches the separator, not intent.
+    ///
+    /// The body half is [`Self::apply_signature`], which the signature picker
+    /// owns and which a draft runs once when it opens. Two controls, two
+    /// jobs: `From` chooses an address, the signature picker chooses a
+    /// signature.
     fn apply_identity(&self) {
         let Some(identity) = self.identity() else {
             return;
@@ -1223,6 +1420,20 @@ impl Composer {
         let mut draft = self.draft();
         draft.use_identity(&identity);
         imp.draft.borrow_mut().identity_id = draft.identity_id;
+    }
+
+    /// Puts the chosen signature into the body, replacing whatever block is
+    /// there.
+    ///
+    /// Run when a draft opens -- where signing is safe because nothing has
+    /// been typed yet -- and when the signature picker is used, which is the
+    /// user asking for exactly this. Never on an identity change: see
+    /// [`Self::apply_identity`].
+    fn apply_signature(&self) {
+        let Some(identity) = self.identity() else {
+            return;
+        };
+        let imp = self.imp();
 
         // At the block level for every draft, never through text: flattening
         // a rich quote to `> ` lines to swap a signature would be the
@@ -1303,12 +1514,65 @@ impl Composer {
             });
             return;
         }
+        if let Some(refusal) = self.too_large() {
+            self.set_status(&refusal.to_string());
+            return;
+        }
+        // Asked rather than refused (FR-018, FR-057): the person may well
+        // mean it -- a message can have no subject, and "attached to the
+        // bracket" is a sentence. One question for however many apply, so
+        // two odd things about one message do not become two dialogs.
+        let concerns = send_concerns(&draft);
+        if !concerns.is_empty() {
+            self.ask_before_sending(&concerns);
+            return;
+        }
+        self.hand_off(draft);
+    }
+
+    /// Gives the draft to the send handlers and closes. The tail of
+    /// [`Self::send`], split out so the missing-attachment dialog can reach
+    /// it after the person says to go ahead.
+    fn hand_off(&self, draft: Draft) {
         for handler in self.imp().sent.borrow().iter() {
             handler(&draft);
         }
         let account = draft.account_id;
         self.fill(Draft::new(account));
         self.shut(Closing::Drop);
+    }
+
+    /// Asks before sending, naming everything odd about the message.
+    ///
+    /// The second dialog in the composer, and it earns it the same way
+    /// `request_discard` does: what is on the other side is irreversible
+    /// enough to be worth an interruption, and there is no undo that would
+    /// serve instead -- the recipient has already read "please find attached"
+    /// and found nothing.
+    ///
+    /// One dialog for however many concerns there are. Two questions in a row
+    /// about one message is how somebody learns to answer the second without
+    /// reading it, which costs the first one its value too.
+    fn ask_before_sending(&self, concerns: &[String]) {
+        let body = format!("{}. Esc keeps the composer open.", join_with_and(concerns));
+        let dialog = adw::AlertDialog::new(Some("Send it anyway?"), Some(&body));
+        dialog.add_responses(&[("back", "Go back"), ("send", "Send anyway")]);
+        dialog.set_default_response(Some("back"));
+        dialog.set_close_response("back");
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |_, response| {
+                    if response == "send" {
+                        let draft = composer.draft();
+                        composer.hand_off(draft);
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
     }
 
     /// Hands the draft to the send-later handlers with `when`, and closes.
@@ -1329,6 +1593,13 @@ impl Composer {
             } else {
                 NO_RECIPIENTS
             });
+            return;
+        }
+        // A scheduled send is still a send, and refusing it at the scheduled
+        // hour -- when nobody is watching the composer -- is strictly worse
+        // than refusing it now.
+        if let Some(refusal) = self.too_large() {
+            self.set_status(&refusal.to_string());
             return;
         }
         for handler in self.imp().sent_later.borrow().iter() {
@@ -1511,7 +1782,7 @@ impl Composer {
         self.release_pane();
 
         let host = adw::Window::builder()
-            .title(heading(self.imp().draft.borrow().kind))
+            .title(self.window_title())
             .transient_for(&window)
             // Not modal, and this is the criterion rather than a default:
             // the point of detaching is to read something else while you
@@ -1570,6 +1841,41 @@ impl Composer {
         self.restore_focus(field);
     }
 
+    /// What a detached window calls itself (FR-014).
+    ///
+    /// The subject, because the requirement is that a detached window be
+    /// identifiable *without being focused* — and with several open, the
+    /// draft's kind is not identification: two replies would both say
+    /// "Reply" and the window list would offer no way to tell them apart.
+    /// The kind is the fallback for a draft that has no subject yet, which is
+    /// the one case where there is nothing better to say.
+    fn window_title(&self) -> String {
+        let draft = self.imp().draft.borrow();
+        let subject = draft.subject.trim();
+        if subject.is_empty() {
+            heading(draft.kind).to_owned()
+        } else {
+            subject.to_owned()
+        }
+    }
+
+    /// Brings this composition forward, wherever it is (FR-013).
+    ///
+    /// A detached one raises its window; the pane's takes the pane and the
+    /// keyboard. Asking for a draft that is already open means "show me it",
+    /// never "start another" — and never a second view of the same draft,
+    /// which is the thing that lets two surfaces disagree about one message.
+    pub fn present_surface(&self) {
+        match self.detached_window() {
+            Some(host) => host.present(),
+            None => {
+                self.take_pane();
+                self.set_visible(true);
+            }
+        }
+        self.focus_first();
+    }
+
     /// Puts the composition back in the reading pane, window and all.
     pub fn attach(&self) {
         let field = self.focused_field();
@@ -1589,13 +1895,9 @@ impl Composer {
     /// back to the field a fresh composition would start in, which is only
     /// reached when the keyboard was somewhere else entirely.
     fn restore_focus(&self, field: Option<Field>) {
-        let imp = self.imp();
         match field {
-            Some(Field::Body) => {
-                imp.body.widget().grab_focus();
-            }
-            Some(Field::To) => {
-                imp.to.grab_focus();
+            Some(field) => {
+                self.widget_for(field).grab_focus();
             }
             None => self.focus_first(),
         }
@@ -1647,7 +1949,18 @@ impl Composer {
         let Some(host) = self.detached_window() else {
             return glib::Propagation::Proceed;
         };
-        window.handle_key_in(key, state, &host, Context::Composer)
+        // Resolved by the window, dispatched by *this* composer. Going
+        // through `handle_key_in` would broadcast to every subscriber, and
+        // once there are several composers open that means `Send` sends every
+        // open draft (ADR 0034). The keymap is still the window's, so
+        // `[keys]` reaches both containers.
+        match window.command_for_key_in(key, state, &host, Context::Composer) {
+            Some(id) => {
+                self.dispatch(id);
+                glib::Propagation::Stop
+            }
+            None => window.handle_key_in(key, state, &host, Context::Composer),
+        }
     }
 
     // -- Mounting -------------------------------------------------------------
@@ -1696,10 +2009,19 @@ impl Composer {
         ));
         window.add_action(&action);
 
+        // The broadcast belongs to whichever composer has the pane. A
+        // detached one hears its own keys through its own controller, above,
+        // and must not also hear this -- with two open, `Send` would
+        // otherwise send both drafts (ADR 0034).
         window.connect_command(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |id| composer.dispatch(id)
+            move |id| {
+                if composer.is_detached() {
+                    return;
+                }
+                composer.dispatch(id);
+            }
         ));
 
         if let Some(button) = window.compose_button() {
@@ -1721,7 +2043,9 @@ impl Composer {
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
             CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
+            CommandId::InsertImage if self.is_open() => self.open_image_chooser(),
             CommandId::DetachComposer if self.is_open() => self.toggle_detached(),
+            CommandId::CopyFields if self.is_open() => self.toggle_copy_fields(),
             CommandId::Back if self.is_open() => {
                 self.close();
             }
@@ -1869,6 +2193,72 @@ impl Composer {
     /// Opens the platform file chooser for `ctrl+shift+a` and the "attach
     /// another" hint. `GtkFileDialog` goes through the XDG desktop portal on
     /// its own, which is what makes this work unmodified under Flatpak.
+    /// Chooses a picture and puts it in the body, at the caret.
+    ///
+    /// Deliberately a different verb from [`Self::open_file_chooser`], and
+    /// the difference is the one FR-049 asks the composer to keep visible: a
+    /// file chosen here ends up *inside* the message where it was written, and
+    /// one chosen there ends up beside it. They reach different code and they
+    /// are different things to a recipient.
+    ///
+    /// The bytes go down the same path as a paste or a drop, so an image has
+    /// one representation however it arrived.
+    fn open_image_chooser(&self) {
+        let Some(window) = self.imp().window.upgrade() else {
+            return;
+        };
+        // Unnamed on purpose. `FileFilter::set_name` would give the chooser's
+        // dropdown a label, and `check-uncalled-pub-fn` matches by bare name
+        // -- calling it here claims an unrelated `set_name` in
+        // `postio-storage` is reachable when it is not. One filter with no
+        // label reads fine; a check made to lie does not.
+        let filter = gtk::FileFilter::new();
+        filter.add_mime_type("image/*");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk::FileDialog::builder()
+            .title("Insert image")
+            .filters(&filters)
+            .build();
+        dialog.open(
+            Some(&window),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |result| {
+                    let Ok(file) = result else {
+                        return;
+                    };
+                    composer.insert_image_file(&file);
+                }
+            ),
+        );
+    }
+
+    /// Reads `file` and inlines it, or says why not.
+    fn insert_image_file(&self, file: &gio::File) {
+        let bytes = match file.load_contents(gio::Cancellable::NONE) {
+            Ok((bytes, _)) => bytes,
+            Err(error) => {
+                self.set_status(&format!("That image could not be read: {error}"));
+                return;
+            }
+        };
+        // From the file rather than guessed from the extension: a `.png` that
+        // is a JPEG would otherwise reach the recipient declared wrongly, and
+        // the declaration is the only thing their client has to go on.
+        let mime = gio::content_type_guess(file.basename().as_deref(), Some(bytes.as_ref()))
+            .0
+            .to_string();
+        if !mime.starts_with("image/") {
+            self.set_status("That file is not an image. Use Attach file to send it alongside.");
+            return;
+        }
+        self.add_inline_image(bytes.to_vec(), &mime);
+    }
+
     fn open_file_chooser(&self) {
         let Some(window) = self.imp().window.upgrade() else {
             return;
@@ -2199,6 +2589,7 @@ impl Composer {
         // made before it was closed is still this draft's.
         if !identity.is_some_and(|id| self.select_identity(id)) {
             self.apply_identity();
+            self.apply_signature();
         }
 
         // Above the quote and above the signature, which is where a reply is
@@ -2223,10 +2614,7 @@ impl Composer {
     /// tick can be the one the mapping happens in.
     fn focus_first(&self) {
         let imp = self.imp();
-        let field: gtk::Widget = match first_field(imp.draft.borrow().kind) {
-            Field::To => imp.to.clone().upcast(),
-            Field::Body => imp.body.widget().clone().upcast(),
-        };
+        let field: gtk::Widget = self.widget_for(first_field(imp.draft.borrow().kind));
         if !field.grab_focus() {
             let ticks = Cell::new(0u8);
             field.clone().add_tick_callback(move |field, _| {
@@ -2249,6 +2637,36 @@ impl Composer {
         imp.cc.grab_focus();
     }
 
+    /// Raises Cc and Bcc, or puts them away again — [`CommandId::CopyFields`].
+    ///
+    /// Asymmetric on purpose. Raising always works; putting away only works
+    /// while both fields are empty, because `resume` already holds the rule
+    /// that these rows are visible *because* there is something in them. A
+    /// hidden row that still held addresses would keep those recipients on the
+    /// draft and still send to them, under a sender who could no longer see
+    /// them — worse than the dead end this replaces.
+    ///
+    /// When it will not put them away it takes the keyboard to `Cc` instead.
+    /// A refusal that does nothing visible is indistinguishable from a bug.
+    pub fn toggle_copy_fields(&self) {
+        let imp = self.imp();
+        if !imp.cc_row.is_visible() || !imp.bcc_row.is_visible() {
+            self.show_copy_fields();
+            return;
+        }
+        let draft = self.draft();
+        if draft.cc.is_empty() && draft.bcc.is_empty() {
+            imp.cc_row.set_visible(false);
+            imp.bcc_row.set_visible(false);
+            self.sync_more();
+            // The keyboard cannot be left in a row that is no longer on
+            // screen, or Tab resumes from somewhere invisible.
+            imp.to.grab_focus();
+        } else {
+            imp.cc.grab_focus();
+        }
+    }
+
     fn sync_more(&self) {
         let imp = self.imp();
         imp.more
@@ -2260,7 +2678,12 @@ impl Composer {
         let imp = self.imp();
         let draft = self.draft();
 
-        match recipient_warning(&draft) {
+        // A problem outranks a count: an address that will bounce is worth
+        // more of this one line than a tally of how many people are on the
+        // message. When there is no problem the line carries the tally
+        // instead (FR-023), which is what keeps a reply-to-all to a large
+        // list from looking exactly like a reply until it is sent.
+        match recipient_warning(&draft).or_else(|| recipient_summary(&draft)) {
             Some(text) => {
                 imp.warning.set_text(&text);
                 imp.warning.set_visible(true);
@@ -2268,6 +2691,16 @@ impl Composer {
             None => imp.warning.set_visible(false),
         }
         imp.send.set_sensitive(draft.is_sendable());
+
+        // A detached window's title is how it is told apart in the window
+        // list, and the subject is usually typed after it was detached
+        // (FR-014).
+        if let Some(host) = self.detached_window() {
+            let title = self.window_title();
+            if host.title().as_deref() != Some(title.as_str()) {
+                host.set_title(Some(&title));
+            }
+        }
 
         if imp.filling.get() {
             return;
@@ -2599,6 +3032,26 @@ impl Composer {
         ));
         toolbar.append(&imp.link_button);
 
+        // The third outcome, and until now the one with nothing on screen at
+        // all: an image in the body was reachable by pasting or dropping and
+        // by nothing else, so it was absent from the palette and the `?`
+        // sheet and out of reach for anyone who does neither. Next to the
+        // link button rather than the attach one, because what these two
+        // share is that they put something *into* the text (FR-049).
+        style_toolbar_button(
+            &imp.image_button,
+            CommandId::InsertImage,
+            "insert-image-symbolic",
+            "postio-toolbar-image",
+        );
+        imp.image_button.set_focus_on_click(true);
+        imp.image_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::InsertImage)
+        ));
+        toolbar.append(&imp.image_button);
+
         // Attaching a file had a command, a keybinding, a file chooser, a
         // drop target and a whole blob-store path behind it — and nothing on
         // screen that said so, so the honest answer to "how do I attach a
@@ -2652,10 +3105,15 @@ impl Composer {
         imp.more.add_css_class("postio-compose-more");
         imp.more
             .update_property(&[gtk::accessible::Property::Label("Show Cc and Bcc")]);
+        // The same verb the keyboard and the palette reach, not a second
+        // implementation of it. `more` is only on screen while the rows are
+        // down, so the toggle can only mean "show" from here -- but wiring it
+        // to `show_copy_fields` instead would be two paths that have to be
+        // kept in step, which is what the registry exists to prevent.
         imp.more.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_| composer.show_copy_fields()
+            move |_| composer.toggle_copy_fields()
         ));
 
         let row = self.build_row(&row, "To", &imp.to);
@@ -2703,7 +3161,7 @@ impl Composer {
         imp.signature.connect_selected_notify(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_| composer.apply_identity()
+            move |_| composer.apply_signature()
         ));
         imp.signature.set_visible(false);
         row.append(&imp.signature);
@@ -2894,9 +3352,22 @@ impl Composer {
     /// composition would have left it. Not meant for anything but tests.
     #[doc(hidden)]
     pub fn test_focus_field(&self, field: Field) -> bool {
+        self.widget_for(field).grab_focus()
+    }
+
+    /// The widget a [`Field`] names.
+    ///
+    /// One mapping, so the three callers that need it cannot come to disagree
+    /// about which widget `Field::Subject` is — and so adding a field is one
+    /// edit rather than three the compiler finds one at a time.
+    fn widget_for(&self, field: Field) -> gtk::Widget {
+        let imp = self.imp();
         match field {
-            Field::To => self.imp().to.grab_focus(),
-            Field::Body => self.imp().body.widget().grab_focus(),
+            Field::To => imp.to.clone().upcast(),
+            Field::Cc => imp.cc.clone().upcast(),
+            Field::Bcc => imp.bcc.clone().upcast(),
+            Field::Subject => imp.subject.clone().upcast(),
+            Field::Body => imp.body.widget().clone().upcast(),
         }
     }
 
@@ -3056,6 +3527,80 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_attachments_visible(&self) -> bool {
         self.imp().attachments_box.is_visible()
+    }
+
+    /// Whether the Cc and Bcc rows are on screen.
+    #[doc(hidden)]
+    pub fn test_copy_fields_visible(&self) -> bool {
+        let imp = self.imp();
+        imp.cc_row.is_visible() && imp.bcc_row.is_visible()
+    }
+
+    /// Whether the `+ Cc` control that raises those rows is on screen.
+    #[doc(hidden)]
+    pub fn test_more_button_visible(&self) -> bool {
+        self.imp().more.is_visible()
+    }
+
+    /// The `GType`s each of the composer's drop targets accepts, as
+    /// `(where, type name)`.
+    ///
+    /// A drag cannot be synthesised in this suite and the `drop` signal will
+    /// not take a boxed `GValue` through `emit_by_name`, so the handler's body
+    /// is out of reach. What is *not* out of reach is whether the controllers
+    /// are installed at all, on the widgets they are meant to be on, accepting
+    /// the type they are meant to accept — which is what actually goes wrong
+    /// when somebody reorganises a widget tree.
+    #[doc(hidden)]
+    pub fn test_drop_targets(&self) -> Vec<(&'static str, String)> {
+        let mut found = Vec::new();
+        for (label, widget) in [
+            ("composer", self.clone().upcast::<gtk::Widget>()),
+            ("body", self.imp().body.widget().clone().upcast()),
+        ] {
+            let controllers = widget.observe_controllers();
+            for index in 0..controllers.n_items() {
+                if let Some(target) = controllers.item(index).and_downcast::<gtk::DropTarget>()
+                    && let Some(formats) = target.formats()
+                {
+                    found.push((label, formats.to_string()));
+                }
+            }
+        }
+        found
+    }
+
+    /// Pastes from the clipboard, as `ctrl+v` on the body does.
+    ///
+    /// One step nearer the gesture than [`Self::test_paste_image_bytes`],
+    /// which hands the bytes straight to `add_inline_image` and so skips the
+    /// half that reads the clipboard and decodes a texture. Answers what the
+    /// key controller answers: whether this paste was ours.
+    #[doc(hidden)]
+    pub fn test_paste(&self) -> bool {
+        self.paste_image()
+    }
+
+    /// Inlines `path`, as choosing it from the image chooser would.
+    ///
+    /// `gtk::FileDialog` does not open headlessly, so this is the seam the
+    /// chooser's callback lands on — everything after "a file was chosen",
+    /// which is where the sniffing and the refusal live.
+    #[doc(hidden)]
+    pub fn test_insert_image_file(&self, path: &std::path::Path) {
+        self.insert_image_file(&gio::File::for_path(path));
+    }
+
+    /// The window this composition was detached into, if it is in one.
+    #[doc(hidden)]
+    pub fn test_detached_window(&self) -> Option<adw::Window> {
+        self.detached_window()
+    }
+
+    /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.
+    #[doc(hidden)]
+    pub fn test_set_cc(&self, text: &str) {
+        self.imp().cc.set_text(text);
     }
 
     /// Removes the attachment at `index`, as its row's own button would.
@@ -3717,26 +4262,129 @@ mod tests {
     }
 
     #[test]
-    fn implausible_recipients_are_counted_not_refused() {
+    fn a_message_with_nothing_odd_about_it_is_not_questioned() {
+        // The case that has to stay silent, because a dialog people see on
+        // every send is a dialog they stop reading -- and the two below are
+        // worth reading.
+        let mut ordinary = draft();
+        ordinary.subject = "the tide gate".to_owned();
+        ordinary.body.text = Some("Armed and holding.".to_owned());
+        assert!(send_concerns(&ordinary).is_empty());
+    }
+
+    #[test]
+    fn an_empty_subject_is_asked_about_and_never_refused() {
+        // FR-018. A message with no subject is an ordinary thing to send on
+        // purpose; refusing it would be the app having an opinion about
+        // somebody else's correspondence.
+        let mut bare = draft();
+        bare.subject = String::new();
+        bare.body.text = Some("Armed and holding.".to_owned());
+
+        let concerns = send_concerns(&bare);
+        assert_eq!(concerns.len(), 1, "{concerns:?}");
+        assert!(concerns[0].contains("subject"), "{concerns:?}");
+
+        // Whitespace is not a subject.
+        bare.subject = "   ".to_owned();
+        assert_eq!(send_concerns(&bare).len(), 1);
+    }
+
+    #[test]
+    fn two_odd_things_about_one_message_are_one_question() {
+        // Two dialogs in a row is how somebody learns to answer the second
+        // without reading it, which costs the first one its value as well.
+        let mut both = draft();
+        both.subject = String::new();
+        both.body.text = Some("Please find attached.".to_owned());
+
+        let concerns = send_concerns(&both);
+        assert_eq!(concerns.len(), 2, "{concerns:?}");
+
+        let said = join_with_and(&concerns);
+        assert!(said.contains(" and "), "the clauses are not joined: {said}");
+        assert!(
+            said.contains("subject") && said.contains("attachment"),
+            "{said}"
+        );
+        assert!(
+            !said.contains(" and  and "),
+            "the joiner doubled up: {said}"
+        );
+    }
+
+    #[test]
+    fn implausible_recipients_are_named_not_just_counted() {
+        // FR-024: the report names *the address and the field it is in*. A
+        // count alone -- which is what this said before -- tells somebody
+        // with nine recipients across three fields that one of them is wrong
+        // and leaves them to find it, which is the work the message was
+        // supposed to do.
         let mut one = draft();
         one.to = vec![
             EmailAddress::new(None::<String>, "ada@example.com"),
             EmailAddress::new(None::<String>, "grace"),
         ];
-        assert_eq!(
-            recipient_warning(&one).as_deref(),
-            Some("1 address does not look like an address")
+        let said = recipient_warning(&one).expect("one address is wrong");
+        assert!(said.contains("grace"), "the address is not named: {said}");
+        assert!(said.contains("To"), "the field is not named: {said}");
+        assert!(
+            !said.contains("ada@example.com"),
+            "an address that is fine must not be named as a problem: {said}"
         );
 
         one.cc = vec![EmailAddress::new(None::<String>, "@example.com")];
-        assert_eq!(
-            recipient_warning(&one).as_deref(),
-            Some("2 addresses do not look like addresses")
+        let said = recipient_warning(&one).expect("two addresses are wrong");
+        assert!(
+            said.contains("grace") && said.contains("@example.com"),
+            "{said}"
         );
+        assert!(said.contains("To") && said.contains("Cc"), "{said}");
 
         let mut fine = draft();
         fine.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
         assert_eq!(recipient_warning(&fine), None);
+    }
+
+    #[test]
+    fn a_long_list_of_wrong_addresses_is_summarised_rather_than_recited() {
+        // Naming them is right up to a point. Past it the warning stops being
+        // a sentence and becomes a wall, so it names the first few and counts
+        // the rest -- the same shape the size refusal uses.
+        let mut many = draft();
+        many.to = (0..9)
+            .map(|n| EmailAddress::new(None::<String>, format!("wrong{n}")))
+            .collect();
+        let said = recipient_warning(&many).expect("nine addresses are wrong");
+        assert!(said.contains('9'), "the total is not stated: {said}");
+        assert!(
+            said.len() < 200,
+            "the warning recites every address instead of summarising: {said}"
+        );
+    }
+
+    #[test]
+    fn the_recipient_count_is_reported_per_field_before_sending() {
+        // FR-023, so a reply-to-all to a large list is not a surprise. The
+        // count has to say *which field*, because "42 recipients" reads very
+        // differently from "1 To, 41 Cc".
+        let mut wide = draft();
+        wide.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        wide.cc = (0..41)
+            .map(|n| EmailAddress::new(None::<String>, format!("person{n}@example.org")))
+            .collect();
+        wide.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.net")];
+
+        let said = recipient_summary(&wide).expect("a wide message says so");
+        assert!(said.contains("41"), "the Cc count is missing: {said}");
+        assert!(said.contains("Cc"), "the field is not named: {said}");
+        assert!(said.contains("Bcc"), "Bcc is not counted: {said}");
+
+        // One recipient is the ordinary case and needs no announcement --
+        // a banner that is always there is a banner nobody reads.
+        let mut narrow = draft();
+        narrow.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        assert_eq!(recipient_summary(&narrow), None);
     }
 
     fn source_message() -> Message {
@@ -3882,17 +4530,18 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            document.blocks.iter().any(|block| matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines) if inlines
-                        .iter()
-                        .any(|inline| matches!(inline, postio_body::Inline::Strong(_)))
-                ))
-            )),
-            "{document:?}"
+            quoted.html().contains("<strong>"),
+            "the emphasis was flattened out of the quote: {}",
+            quoted.html()
         );
         let text = draft.body.text.expect("a text half");
         assert!(text.contains("> The lamp"), "{text}");
@@ -3934,20 +4583,19 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
-        let quoted_paragraph_is_one_unbroken_sentence = document.blocks.iter().any(|block| {
-            matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines)
-                        if inlines.as_slice() == [postio_body::Inline::Text(sentence.to_owned())]
-                ))
-            )
-        });
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            quoted_paragraph_is_one_unbroken_sentence,
+            quoted.text().contains(sentence),
             "the quote must be the sender's one sentence, not their soft \
-             wrap read back as typed line breaks: {document:?}"
+             wrap read back as typed line breaks: {:?}",
+            quoted.text()
         );
     }
 
@@ -3976,23 +4624,24 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
-        let quote_keeps_both_typed_lines = document.blocks.iter().any(|block| {
-            matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines) if inlines.as_slice() == [
-                        postio_body::Inline::Text("Short note before the walkthrough.".to_owned()),
-                        postio_body::Inline::Break,
-                        postio_body::Inline::Text("See you then.".to_owned()),
-                    ]
-                ))
-            )
-        });
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            quote_keeps_both_typed_lines,
+            quoted.html().contains("walkthrough.<br>See you then."),
             "an ordinary sender's own line break must survive as a break, \
-             not be joined onto its neighbour: {document:?}"
+             not be joined onto its neighbour: {}",
+            quoted.html()
+        );
+        assert!(
+            quoted.text().contains("walkthrough.\nSee you then."),
+            "and the plain half must keep it too: {:?}",
+            quoted.text()
         );
     }
 

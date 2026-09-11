@@ -48,18 +48,21 @@ mod gtk_checkrow;
 mod gtk_composer_action_row;
 mod gtk_composer_attachments;
 mod gtk_composer_autosave;
+mod gtk_composer_confirms;
 mod gtk_composer_detach;
 mod gtk_composer_document;
 mod gtk_composer_focus;
 mod gtk_composer_header;
 mod gtk_composer_inline_image;
 mod gtk_composer_keymap;
+mod gtk_composer_many;
 mod gtk_composer_recipient_select;
 mod gtk_composer_recipients;
 mod gtk_composer_reply;
 mod gtk_composer_resume;
 mod gtk_composer_schedule_send;
 mod gtk_composer_signature_default;
+mod gtk_composer_size;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_composer_warm;
@@ -70,9 +73,11 @@ mod gtk_display_required;
 mod gtk_dwell;
 mod gtk_dwell_conversation;
 mod gtk_editable_dialect;
+mod gtk_editor_appearance;
 mod gtk_editor_bridge;
 mod gtk_editor_format;
 mod gtk_editor_images;
+mod gtk_editor_markdown;
 mod gtk_editor_profile;
 mod gtk_feeds;
 mod gtk_finder;
@@ -166,6 +171,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it",
         gtk_composer_resume::resuming_an_unsaved_draft_over_another_unsaved_one_replaces_it as fn(),
+    ),
+    (
+        "gtk_composer_resume::reopening_restores_the_formatting_and_the_attachments_too",
+        gtk_composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
     ),
     (
         "gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing",
@@ -366,6 +375,10 @@ const CASES: &[(&str, fn())] = &[
         "gtk_composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped",
         gtk_composer_focus::focus_lands_when_the_composer_opens_before_the_window_is_ever_mapped
             as fn(),
+    ),
+    (
+        "gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order",
+        gtk_composer_focus::the_keyboard_walks_the_composer_in_a_defined_order as fn(),
     ),
     (
         "gtk_composer_recipient_select::clicking_a_suggestion_puts_that_one_in_the_field",
@@ -920,8 +933,32 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_keymap::a_composer_built_after_a_rebind_starts_on_the_rebound_key as fn(),
     ),
     (
+        "gtk_composer_keymap::a_single_key_binding_does_not_fire_while_typing",
+        gtk_composer_keymap::a_single_key_binding_does_not_fire_while_typing as fn(),
+    ),
+    (
         "gtk_composer_recipients::typing_a_prefix_offers_suggestions_and_accepting_one_completes_it",
         gtk_composer_recipients::typing_a_prefix_offers_suggestions_and_accepting_one_completes_it as fn(),
+    ),
+    (
+        "gtk_composer_recipients::revealing_cc_and_bcc_keeps_what_was_already_typed",
+        gtk_composer_recipients::revealing_cc_and_bcc_keeps_what_was_already_typed as fn(),
+    ),
+    (
+        "gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty",
+        gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty as fn(),
+    ),
+    (
+        "gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler",
+        gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler as fn(),
+    ),
+    (
+        "gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back",
+        gtk_composer_confirms::the_composer_asks_before_the_two_things_it_cannot_take_back as fn(),
+    ),
+    (
+        "gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own",
+        gtk_composer_many::a_second_draft_moves_the_first_into_a_window_of_its_own as fn(),
     ),
     (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",
@@ -972,12 +1009,20 @@ const CASES: &[(&str, fn())] = &[
         gtk_editor_bridge::an_edit_becomes_the_document_and_undo_walks_typing_runs as fn(),
     ),
     (
+        "gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white",
+        gtk_editor_appearance::the_editing_surface_is_dark_in_dark_mode_and_never_white as fn(),
+    ),
+    (
         "gtk_editor_format::every_formatting_command_lands_as_canonical_structure",
         gtk_editor_format::every_formatting_command_lands_as_canonical_structure as fn(),
     ),
     (
         "gtk_editor_images::inline_images_render_from_the_blob_store_and_remote_ones_never_load",
         gtk_editor_images::inline_images_render_from_the_blob_store_and_remote_ones_never_load as fn(),
+    ),
+    (
+        "gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces",
+        gtk_editor_markdown::typed_markdown_becomes_the_formatting_its_command_produces as fn(),
     ),
     (
         "gtk_editor_profile::the_editing_profile_runs_our_script_and_nothing_else",

@@ -117,6 +117,10 @@ fn render() -> String {
         let recovery = match spec.recovery {
             Recovery::None => "",
             Recovery::Undo => "Undoable",
+            // Deliberately not "Undoable": `u` does not reach it, and the
+            // keyboard reference is where somebody looks to find out which
+            // key does what (#1481).
+            Recovery::Window => "Undo briefly",
             Recovery::Confirm => "Asks first",
         };
         let _ = writeln!(

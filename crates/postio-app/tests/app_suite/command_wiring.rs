@@ -101,6 +101,12 @@ const COMPOSER_OWNED: &[CommandId] = &[
     CommandId::DiscardDraft,
     CommandId::AttachFile,
     CommandId::DetachComposer,
+    // Covered by `gtk_suite/gtk_composer_recipients.rs`, which drives the
+    // toggle in both directions and over a non-empty Cc.
+    CommandId::CopyFields,
+    // Covered by `gtk_suite/gtk_composer_inline_image.rs`, which drives the
+    // inline path the command reaches.
+    CommandId::InsertImage,
     CommandId::Reply,
     CommandId::ReplyAll,
     CommandId::Forward,

@@ -49,5 +49,7 @@ pub use edit::{EditHistory, EditStep};
 pub use outgoing::{harden, render};
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
-pub use replying::{Placement, apply_signature, forwarded, quoted_reply};
+pub use replying::{
+    Placement, Presentation, Quoted, apply_signature, forwarded, quote_of, quoted_reply,
+};
 pub use sanitize::{CID_SCHEME, RemoteImages, Sanitized, sanitize_body};
