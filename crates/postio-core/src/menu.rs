@@ -195,6 +195,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),
+        // With the other thing you put into the text, not under File with
+        // the attachment it is deliberately not.
+        C::InsertImage => Some(M::Format),
         C::InsertLink | C::QuoteBlock => Some(M::Format),
     }
 }

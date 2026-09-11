@@ -39,6 +39,7 @@ mark_sent	ctrl+shift+m
 attach_file	ctrl+shift+a
 detach_composer	ctrl+shift+o
 copy_fields	ctrl+shift+c
+insert_image	ctrl+shift+g
 bold	ctrl+b
 italic	ctrl+i
 bullet_list	ctrl+shift+8

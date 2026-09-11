@@ -82,6 +82,7 @@ command from inside a text field.
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
 | `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |
+| `ctrl+shift+g` | Insert image… | Composer |  | `insert_image` |
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` | Italic | Composer |  | `italic` |
 | `ctrl+shift+8` | Bulleted list | Composer |  | `bullet_list` |

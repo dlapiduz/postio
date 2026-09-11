@@ -723,6 +723,22 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::InsertImage,
+        // "Insert image…" rather than "Attach image": the ellipsis says a
+        // chooser opens, and the verb is what keeps it distinct from
+        // `attach_file` in a palette where both are one search away (FR-049).
+        title: "Insert image…",
+        // Beside `insert_link` on the `mod+shift+<letter>` shelf, because
+        // they are the two verbs that put something *into* the text.
+        default_binding: "mod+shift+g",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // The editor's own undo takes it back out, like any other edit.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
         default_binding: "mod+b",

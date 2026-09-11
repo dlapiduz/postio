@@ -120,4 +120,60 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
             || html.contains("src=\"cid:pasted-1@postio.invalid\""),
         "{html}"
     );
+
+    // ── FR-049 and FR-051: chosen, not only pasted ───────────────────────
+    //
+    // Pasting and dropping reached this and nothing else did, so an image in
+    // the body was the one of FR-049's three outcomes with no command and no
+    // control — absent from the palette and the `?` sheet, and out of reach
+    // for anyone who neither pastes nor drops. `CommandId::InsertImage` and
+    // a toolbar button beside the link one close that; the registry tests
+    // cover the command's reach, and what is asserted here is the half after
+    // the chooser, since `gtk::FileDialog` does not open headlessly.
+    let directory = tempfile::tempdir().expect("a directory");
+    let image = directory.path().join("gauge.png");
+    std::fs::write(&image, png_bytes()).expect("write the image");
+
+    let before = composer.test_attachment_count();
+    composer.test_insert_image_file(&image);
+    settle("the chosen image to be inlined", || {
+        composer.test_attachment_count() > before
+    });
+
+    let inlined = composer
+        .draft()
+        .attachments
+        .into_iter()
+        .next_back()
+        .expect("the chosen image rides the draft");
+    assert_eq!(
+        inlined.disposition,
+        Disposition::Inline,
+        "a chosen image was attached alongside instead of placed in the body, \
+         which is the distinction FR-049 exists to keep"
+    );
+    assert_eq!(
+        inlined.mime_type, "image/png",
+        "the type was guessed from the name rather than the bytes, and the \
+         declaration is all the recipient's client has to go on"
+    );
+
+    // ── And a file that is not an image is refused, with somewhere to go ──
+    let text = directory.path().join("notes.txt");
+    std::fs::write(&text, b"not a picture").expect("write the text file");
+    let count = composer.test_attachment_count();
+    composer.test_insert_image_file(&text);
+    settle("the refusal to be said", || !composer.status().is_empty());
+
+    assert_eq!(
+        composer.test_attachment_count(),
+        count,
+        "a text file was inlined as an image"
+    );
+    assert!(
+        composer.status().contains("Attach file"),
+        "the refusal does not say what to do instead, which leaves the \
+         person with a file and no way to send it: {}",
+        composer.status()
+    );
 }

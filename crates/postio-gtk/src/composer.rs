@@ -705,6 +705,7 @@ mod imp {
         /// The link button: a plain button, because a link is a dialog to
         /// fill in, not a state the caret can be in or out of.
         pub link_button: gtk::Button,
+        pub image_button: gtk::Button,
         /// The paperclip. Held like `link_button` rather than built inline,
         /// so a test can press the control a person presses.
         pub attach_button: gtk::Button,
@@ -820,6 +821,7 @@ mod imp {
                 },
                 format_toggles: std::array::from_fn(|_| gtk::ToggleButton::new()),
                 link_button: gtk::Button::new(),
+                image_button: gtk::Button::new(),
                 attach_button: gtk::Button::new(),
                 send: gtk::Button::new(),
                 schedule_send: gtk::MenuButton::new(),
@@ -1962,6 +1964,7 @@ impl Composer {
             CommandId::SaveDraft if self.is_open() => self.save(),
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
             CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
+            CommandId::InsertImage if self.is_open() => self.open_image_chooser(),
             CommandId::DetachComposer if self.is_open() => self.toggle_detached(),
             CommandId::CopyFields if self.is_open() => self.toggle_copy_fields(),
             CommandId::Back if self.is_open() => {
@@ -2111,6 +2114,72 @@ impl Composer {
     /// Opens the platform file chooser for `ctrl+shift+a` and the "attach
     /// another" hint. `GtkFileDialog` goes through the XDG desktop portal on
     /// its own, which is what makes this work unmodified under Flatpak.
+    /// Chooses a picture and puts it in the body, at the caret.
+    ///
+    /// Deliberately a different verb from [`Self::open_file_chooser`], and
+    /// the difference is the one FR-049 asks the composer to keep visible: a
+    /// file chosen here ends up *inside* the message where it was written, and
+    /// one chosen there ends up beside it. They reach different code and they
+    /// are different things to a recipient.
+    ///
+    /// The bytes go down the same path as a paste or a drop, so an image has
+    /// one representation however it arrived.
+    fn open_image_chooser(&self) {
+        let Some(window) = self.imp().window.upgrade() else {
+            return;
+        };
+        // Unnamed on purpose. `FileFilter::set_name` would give the chooser's
+        // dropdown a label, and `check-uncalled-pub-fn` matches by bare name
+        // -- calling it here claims an unrelated `set_name` in
+        // `postio-storage` is reachable when it is not. One filter with no
+        // label reads fine; a check made to lie does not.
+        let filter = gtk::FileFilter::new();
+        filter.add_mime_type("image/*");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk::FileDialog::builder()
+            .title("Insert image")
+            .filters(&filters)
+            .build();
+        dialog.open(
+            Some(&window),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = composer)]
+                self,
+                move |result| {
+                    let Ok(file) = result else {
+                        return;
+                    };
+                    composer.insert_image_file(&file);
+                }
+            ),
+        );
+    }
+
+    /// Reads `file` and inlines it, or says why not.
+    fn insert_image_file(&self, file: &gio::File) {
+        let bytes = match file.load_contents(gio::Cancellable::NONE) {
+            Ok((bytes, _)) => bytes,
+            Err(error) => {
+                self.set_status(&format!("That image could not be read: {error}"));
+                return;
+            }
+        };
+        // From the file rather than guessed from the extension: a `.png` that
+        // is a JPEG would otherwise reach the recipient declared wrongly, and
+        // the declaration is the only thing their client has to go on.
+        let mime = gio::content_type_guess(file.basename().as_deref(), Some(bytes.as_ref()))
+            .0
+            .to_string();
+        if !mime.starts_with("image/") {
+            self.set_status("That file is not an image. Use Attach file to send it alongside.");
+            return;
+        }
+        self.add_inline_image(bytes.to_vec(), &mime);
+    }
+
     fn open_file_chooser(&self) {
         let Some(window) = self.imp().window.upgrade() else {
             return;
@@ -2874,6 +2943,26 @@ impl Composer {
         ));
         toolbar.append(&imp.link_button);
 
+        // The third outcome, and until now the one with nothing on screen at
+        // all: an image in the body was reachable by pasting or dropping and
+        // by nothing else, so it was absent from the palette and the `?`
+        // sheet and out of reach for anyone who does neither. Next to the
+        // link button rather than the attach one, because what these two
+        // share is that they put something *into* the text (FR-049).
+        style_toolbar_button(
+            &imp.image_button,
+            CommandId::InsertImage,
+            "insert-image-symbolic",
+            "postio-toolbar-image",
+        );
+        imp.image_button.set_focus_on_click(true);
+        imp.image_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = composer)]
+            self,
+            move |_| composer.dispatch(CommandId::InsertImage)
+        ));
+        toolbar.append(&imp.image_button);
+
         // Attaching a file had a command, a keybinding, a file chooser, a
         // drop target and a whole blob-store path behind it — and nothing on
         // screen that said so, so the honest answer to "how do I attach a
@@ -3362,6 +3451,16 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_more_button_visible(&self) -> bool {
         self.imp().more.is_visible()
+    }
+
+    /// Inlines `path`, as choosing it from the image chooser would.
+    ///
+    /// `gtk::FileDialog` does not open headlessly, so this is the seam the
+    /// chooser's callback lands on — everything after "a file was chosen",
+    /// which is where the sniffing and the refusal live.
+    #[doc(hidden)]
+    pub fn test_insert_image_file(&self, path: &std::path::Path) {
+        self.insert_image_file(&gio::File::for_path(path));
     }
 
     /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.
