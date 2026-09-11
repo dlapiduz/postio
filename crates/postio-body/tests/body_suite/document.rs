@@ -732,3 +732,50 @@ fn a_flowed_reply_body_unwraps_to_the_sentence_the_sender_actually_wrote() {
          three typed line breaks"
     );
 }
+
+#[test]
+fn a_tables_cells_come_apart_in_the_plain_text_rendering() {
+    // #1482. A table has no `Block` — that is the authoring subset working as
+    // designed and is not an argument for adding one. What was wrong is that
+    // its cells were concatenated with *nothing* between them, so
+    // `<td>Gate</td><td>Interlock</td>` narrowed to `GateInterlock` and a row
+    // ran straight into the row below it.
+    //
+    // Where it shows is the `text/plain` half of any reply to a table-based
+    // HTML message, which is most commercial mail: a recipient whose client
+    // prefers plain text sees the quote as one run-on word.
+    let document = parse(
+        "<table>\
+           <tr><td>Gate</td><td>Interlock</td></tr>\
+           <tr><td>North</td><td>Armed</td></tr>\
+         </table>",
+    );
+    let text = document.to_text();
+
+    assert!(
+        !text.contains("GateInterlock"),
+        "the cells in a row ran together: {text:?}"
+    );
+    assert!(
+        !text.contains("InterlockNorth"),
+        "one row ran into the next: {text:?}"
+    );
+    for cell in ["Gate", "Interlock", "North", "Armed"] {
+        assert!(text.contains(cell), "{cell} was lost entirely: {text:?}");
+    }
+}
+
+#[test]
+fn a_table_cell_does_not_gain_a_space_that_was_not_there() {
+    // The other direction: the separator is for the boundary between cells,
+    // not a licence to pad. A single cell is its own text and nothing else,
+    // and a cell whose content already ends in a space does not get a second.
+    let one = parse("<table><tr><td>Gate</td></tr></table>").to_text();
+    assert_eq!(one.trim(), "Gate", "{one:?}");
+
+    let spaced = parse("<table><tr><td>Gate </td><td>Interlock</td></tr></table>").to_text();
+    assert!(
+        !spaced.contains("Gate  Interlock"),
+        "a cell that already ended in a space got a second one: {spaced:?}"
+    );
+}

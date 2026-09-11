@@ -752,11 +752,13 @@ fn a_quote_survives_the_round_trip_through_the_editor_intact() {
             || line.starts_with("Acknowledged")),
         "a quoted line escaped its markers: {text:?}"
     );
-    // Not asserted here: that the table's *cells* come apart. They do not --
-    // `parse` narrows a table to loose inlines with no separator, so this
-    // reads `GateInterlock`. That predates this change (every reply to a
-    // table-based message has always had it in its text/plain half) and is
-    // filed as #1482 rather than widened into here.
+    // And the cells come apart, which they did not when this was written --
+    // `parse` narrowed a table to loose inlines with no separator at all, so
+    // the text half read `GateInterlock`. #1482, fixed.
+    assert!(
+        !text.contains("GateInterlock"),
+        "the table's cells ran together in the plain half: {text:?}"
+    );
 }
 
 #[test]
