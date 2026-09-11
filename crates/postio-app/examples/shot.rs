@@ -17,6 +17,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/account.png demo account
 //! cargo run -p postio-app --example shot -- /tmp/compose.png demo compose
 //! cargo run -p postio-app --example shot -- /tmp/reply.png demo reply 1600x900
+//! cargo run -p postio-app --example shot -- /tmp/rich.png demo reply row5 unfold
 //! cargo run -p postio-app --example shot -- /tmp/popout.png demo compose detached
 //! cargo run -p postio-app --example shot -- /tmp/tight.png demo compact
 //! cargo run -p postio-app --example shot -- /tmp/large.png demo text2
@@ -673,6 +674,11 @@ fn unrecognized_arguments<'a>(args: &'a [String], asked: &HashSet<String>) -> Ve
                     .split_once('x')
                     .is_none_or(|(w, h)| w.parse::<i32>().is_err() || h.parse::<i32>().is_err())
                 && !token.starts_with("text")
+                // `row<n>` is read straight out of `args` rather than through
+                // `flag()`, so it never lands in `asked` and would be
+                // reported as a typo. Same escape as `text<n>` above, for the
+                // same reason.
+                && !(token.starts_with("row") && token[3..].parse::<u32>().is_ok())
         })
         .map(String::as_str)
         .collect()
@@ -707,6 +713,25 @@ mod unrecognized_argument_tests {
     /// What `flag` was asked about during the run.
     fn asked(names: &[&str]) -> HashSet<String> {
         names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_row_number_is_an_argument_and_not_a_typo() {
+        // It is read out of `args` rather than asked for through `flag()`, so
+        // without an escape the guard reports the one argument that chose the
+        // message as the thing it did not understand.
+        assert_eq!(
+            unrecognized_arguments(
+                &args(&["demo", "reply", "row5"]),
+                &asked(&["demo", "reply"])
+            ),
+            Vec::<&str>::new()
+        );
+        // And still catches a real typo that merely starts the same way.
+        assert_eq!(
+            unrecognized_arguments(&args(&["demo", "rowdy"]), &asked(&["demo"])),
+            vec!["rowdy"]
+        );
     }
 
     #[test]
@@ -1207,7 +1232,15 @@ fn main() -> glib::ExitCode {
         // then press the key. Everything between the store and the editor's
         // WebView is in the picture -- `quote_of`, the sanitiser, the styles,
         // `postio-ui`'s editor document, the folded `<details>`.
-        window.list().click_row(0);
+        // Which row: `row<n>` picks one, because the interesting reply is to
+        // a *rich* message and the top of the list is plain text. A quote of
+        // plain text cannot show what ADR 0033 changed.
+        let row = args
+            .iter()
+            .find_map(|arg| arg.strip_prefix("row"))
+            .and_then(|n| n.parse::<u32>().ok())
+            .unwrap_or(0);
+        window.list().click_row(row);
         let context = glib::MainContext::default();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -1223,6 +1256,23 @@ fn main() -> glib::ExitCode {
         while Instant::now() < deadline {
             context.iteration(false);
             std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // `open` unfolds the quote, which is the half a folded shot cannot
+        // show: whether what survived the sanitiser actually *looks* like the
+        // message being answered. Through the element's own `open` property,
+        // because `<details>` is script-free by design and there is no
+        // gesture to send it from here.
+        if flag("unfold") {
+            window.composer().test_body_eval(
+                "(() => { const d = document.querySelector('details.postio-quote'); \
+                   if (d) d.open = true; return 'opened'; })()",
+            );
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 

@@ -103,6 +103,15 @@ else
 fi
 
 echo
+echo "not answerable here — do these on a real display:"
+echo "  anything about the narrow breakpoint. libadwaita's breakpoints do not"
+echo "  fire under this compositor at all: a bare AdwApplicationWindow with a"
+echo "  max-width condition, presented at 820px, never applies it. So a narrow"
+echo "  shot shows three panes crammed together whatever the window does on a"
+echo "  desktop, and reading a layout bug out of one would be reading the"
+echo "  runner rather than the application."
+
+echo
 echo "PNGs in $OUT — open them. The rest of T048 is a person:"
 echo "  the quote opens folded, and opens when clicked"
 echo "  the caret sits above it, and typing goes where you look"
