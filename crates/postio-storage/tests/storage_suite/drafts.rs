@@ -1659,4 +1659,34 @@ fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found(
         "the reason went with the attempt, so nothing can ever tell the \
          person why"
     );
+
+    // ── And it is reachable from the draft, which is what a surface has ──
+    //
+    // #1487. A surface reopening a failed draft has a `DraftId` and nothing
+    // else; the reason lives on a queue row keyed by target. Without this
+    // there is no query from one to the other, which is why the reason was
+    // durable and still unreachable.
+    //
+    // Read rather than copied onto the draft: one source of truth, and a
+    // second copy is one that can disagree with the first about why a send
+    // failed.
+    assert_eq!(
+        queue
+            .last_failure_for(OperationTarget::Draft(draft.id))
+            .expect("look for the failure")
+            .as_deref(),
+        Some("550 mailbox unavailable"),
+        "the draft cannot reach the reason its own send failed"
+    );
+
+    // A draft whose send never failed has nothing to say, and must not
+    // inherit somebody else's reason.
+    let mut untroubled = a_draft(account.id);
+    drafts.save(&mut untroubled).expect("save");
+    assert_eq!(
+        queue
+            .last_failure_for(OperationTarget::Draft(untroubled.id))
+            .expect("look for the failure"),
+        None
+    );
 }

@@ -43,10 +43,10 @@ use postio_gtk::composer::{Closing, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
 use postio_model::ids::{AccountId, MessageId};
 use postio_model::signature_default;
-use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress};
+use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, OperationTarget};
 use postio_storage::repository::{
     AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
-    DraftRepository, MailboxRepository, MessageRepository,
+    DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
 };
 use postio_storage::{BlobStore, Database};
 
@@ -283,10 +283,23 @@ fn install_resume(
             } else {
                 draft
             };
+            // FR-066's third clause, and #1487: a failed send has to name
+            // what went wrong. The reason was computed, written to the queue
+            // row and carried all the way up the engine's report -- whose own
+            // doc says "the reason the user should see" -- and then read by
+            // nobody. Said here because this is where the person has come
+            // back to do something about it.
+            let failure = (draft.state == DraftState::Failed)
+                .then(|| why_the_send_failed(&database, draft.id))
+                .flatten();
+
             // So that closing it empty clears the right row: `connect_closed`
             // carries what became of the draft and not which one it was.
             last_id.set(Some(draft.id));
             composer.resume(draft);
+            if let Some(reason) = failure {
+                composer.set_status(&format!("Not sent — {reason}"));
+            }
         }
     });
 }
@@ -318,6 +331,23 @@ fn cancel_queued_send(database: &Database, id: DraftId) -> Option<Draft> {
             None
         }
     }
+}
+
+/// Why this draft's last send attempt gave up, if it did.
+///
+/// Read from the queue row rather than from the draft, because that is where
+/// the drainer writes it and a second copy is one that can come to disagree
+/// with the first (#1487).
+fn why_the_send_failed(database: &Database, id: DraftId) -> Option<String> {
+    let connection = database
+        .connection()
+        .map_err(|error| tracing::warn!(%error, "could not open the store to read a send failure"))
+        .ok()?;
+    OperationQueueRepository::new(&connection)
+        .last_failure_for(OperationTarget::Draft(id))
+        .map_err(|error| tracing::warn!(%error, "could not read why a send failed"))
+        .ok()
+        .flatten()
 }
 
 /// The draft a message row is listing, if it is listing one.

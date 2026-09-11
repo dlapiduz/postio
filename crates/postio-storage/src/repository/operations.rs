@@ -16,6 +16,7 @@ use postio_model::{
     AccountId, MailboxId, MessageId, Operation, OperationId, OperationRange, OperationState,
     OperationTarget, RemoteId,
 };
+use rusqlite::OptionalExtension as _;
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
 
@@ -462,6 +463,39 @@ impl<'a> OperationQueueRepository<'a> {
         ))?;
         let mut rows = statement.query(params![target.kind(), target.id()])?;
         rows.next()?.map(read_queued).transpose()
+    }
+
+    /// Why the last attempt against `target` gave up, if one did.
+    ///
+    /// [`pending_for`](Self::pending_for) answers for work still in progress;
+    /// this answers for work that stopped. A surface reopening a failed draft
+    /// has a `DraftId` and nothing else, and the reason lives on a queue row
+    /// keyed by target — without a query from one to the other the reason is
+    /// durable and unreachable, which is exactly what it was (#1487).
+    ///
+    /// Read rather than copied onto the draft: one source of truth, and a
+    /// second copy is one that can come to disagree with the first about why
+    /// a send failed.
+    ///
+    /// The most recent, since a target may have failed more than once and the
+    /// current reason is the one worth saying.
+    pub fn last_failure_for(&self, target: OperationTarget) -> Result<Option<String>> {
+        let reason: Option<Option<String>> = self
+            .connection
+            .query_row(
+                "SELECT last_error FROM operation_queue
+                  WHERE target_kind = ?1 AND target_id = ?2 AND state = 'failed'
+                  ORDER BY id DESC
+                  LIMIT 1",
+                params![target.kind(), target.id()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        // Flattened: no failed row and a failed row that recorded no reason
+        // are the same answer to "what should I tell them", and a caller that
+        // had to tell them apart would have nothing to do with the
+        // difference.
+        Ok(reason.flatten())
     }
 
     /// Whether anything unsettled is queued against `target`.

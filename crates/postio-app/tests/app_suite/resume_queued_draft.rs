@@ -224,6 +224,54 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         "nothing should still be queued against this draft"
     );
 
+    // ── #1487: a failed send says why, where the person comes back to it ─
+    //
+    // FR-066's third clause. The reason was computed by the drainer, written
+    // to the queue row, and carried all the way up the engine's report --
+    // whose own doc says "the reason the user should see" -- and then read by
+    // nothing. What the person got was a message that did not go and no
+    // explanation, when "mailbox unavailable" and "message too large" ask
+    // completely different things of them.
+    //
+    // Driven from the far end, like the rest of this file: the reason has to
+    // survive the trip from a queue row to a composer somebody reopened, and
+    // the joints in between are what this suite exists to check.
+    window.composer().close();
+    while glib::MainContext::default().iteration(false) {}
+
+    {
+        let drafts = DraftRepository::new(&connection);
+        let queue = OperationQueueRepository::new(&connection);
+        let mut draft = drafts.get(draft_id).expect("get").expect("still here");
+        let queued = queue
+            .enqueue(
+                account,
+                OperationTarget::Draft(draft_id),
+                &postio_model::Operation::Send { draft: draft_id },
+                chrono::Utc::now(),
+            )
+            .expect("queue a second send");
+        queue
+            .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
+            .expect("the send gives up");
+        drafts
+            .set_state(draft.id, DraftState::Failed)
+            .expect("the draft learns of it");
+        draft.state = DraftState::Failed;
+    }
+
+    list.test_activate_cursor();
+    let reopened = settle_until(|| window.composer().is_open());
+    assert!(reopened, "the failed draft did not reopen for editing");
+
+    let said = window.composer().status();
+    assert!(
+        said.contains("550 mailbox unavailable"),
+        "reopening a failed draft says nothing about why the send failed, so \
+         the reason is durable, reachable, and still never reaches the one \
+         person who needs it: {said:?}"
+    );
+
     bridge.shutdown();
 }
 
