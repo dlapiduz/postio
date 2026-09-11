@@ -165,13 +165,75 @@ fn block_for(handle: &Handle, name: &str) -> Option<Block> {
             ordered: name == "ol",
             items: items_of(handle),
         }),
-        "blockquote" => Some(Block::Quote(blocks_of(handle))),
+        "blockquote" => {
+            // A reply quote comes back as one (ADR 0033, FR-046): what is in
+            // the editor is what is sent, and narrowing it here would mean
+            // the fidelity survived until the user typed a character.
+            //
+            // Rebuilt through `quote_of` rather than trusted, so the gate
+            // holds on the way back in as well as on the way out. The content
+            // was sanitised when the quote was made, but it has since been
+            // through a `contenteditable` DOM, and "it was safe when we put it
+            // there" is exactly the assumption worth not making.
+            if attribute(handle, crate::document::QUOTED_MARKER).is_some() {
+                let (html, text) = quoted_halves(handle);
+                Some(Block::Quoted(crate::quote_of(
+                    Some(&html),
+                    &text,
+                    QUOTE_SCOPE,
+                )))
+            } else {
+                Some(Block::Quote(blocks_of(handle)))
+            }
+        }
         // Whitespace is the content of a `<pre>`, so it is taken raw rather
         // than collapsed the way flowing text is.
         "pre" => Some(Block::Pre(raw_text(handle))),
         "hr" => Some(Block::Rule),
         _ => None,
     }
+}
+
+/// The scope a re-parsed quote is rewritten under.
+///
+/// Fixed rather than carried through the round trip: the scope only has to be
+/// unique within the document it is emitted into, and a draft holds one reply
+/// quote. Carrying the original message's id here would put a database id in
+/// markup that goes out on the wire for no gain.
+const QUOTE_SCOPE: &str = "quote";
+
+/// A marked blockquote's two renderings: its markup verbatim, and its text.
+///
+/// Both are taken from the same nodes rather than the text being remembered
+/// separately, because the editor's DOM is the only thing that knows what the
+/// user did to the quote — deleting half of it, most commonly — and a
+/// remembered text alternative would still describe the whole of it.
+///
+/// The text half goes through the ordinary narrowing, and that is the right
+/// place for it: `text/plain` *is* a reduction, so the subset that loses a
+/// table costs nothing here, while `raw_text` would run the cells together
+/// with no separator at all. The HTML half is what must not be narrowed.
+fn quoted_halves(handle: &Handle) -> (String, String) {
+    let mut html = String::new();
+    for child in handle.children.borrow().iter() {
+        let mut buffer = Vec::new();
+        let node = markup5ever_rcdom::SerializableHandle::from(child.clone());
+        // `IncludeNode`, not the default `ChildrenOnly`: the child's own tag
+        // is the part that carries the structure, and serializing only its
+        // children hands back a table's text with the table gone.
+        let options = html5ever::serialize::SerializeOpts {
+            traversal_scope: html5ever::serialize::TraversalScope::IncludeNode,
+            ..Default::default()
+        };
+        if html5ever::serialize::serialize(&mut buffer, &node, options).is_ok() {
+            html.push_str(&String::from_utf8_lossy(&buffer));
+        }
+    }
+    let text = crate::Document {
+        blocks: blocks_of(handle),
+    }
+    .to_text();
+    (html, text)
 }
 
 /// The inline this element is, if it is one.

@@ -214,13 +214,36 @@ pub enum Block {
         /// The items.
         items: Vec<Vec<Block>>,
     },
-    /// `<blockquote>` — what quoting a reply produces.
+    /// `<blockquote>` — a quote the *user* made, from the authoring subset.
     Quote(Vec<Block>),
+    /// `<blockquote>` — the quote a reply opens with: the original message as
+    /// the reader rendered it (ADR 0033).
+    ///
+    /// Distinct from [`Block::Quote`] because its content is not the
+    /// authoring subset and must not be narrowed to it. Narrowing is exactly
+    /// what the reply quote stopped doing: a table, a colour and an inline
+    /// declaration have no `Block`, and losing them is what made a reply to a
+    /// rich message quote something that did not look like the message being
+    /// answered.
+    ///
+    /// The content is still a gate rather than a hole — see
+    /// [`crate::Quoted`], which only [`crate::quote_of`] can build, and which
+    /// the parser rebuilds through the same constructor on the way back in so
+    /// nothing the editor's DOM picked up can widen it.
+    Quoted(crate::Quoted),
     /// `<pre>`. Holds a string: preformatted text is not marked up.
     Pre(String),
     /// `<hr>`.
     Rule,
 }
+
+/// The attribute that marks a `<blockquote>` as a reply quote rather than one
+/// the user made.
+///
+/// A `data-` attribute so it is valid HTML and so the editor's own DOM keeps
+/// it across a round trip. It carries no content: it says only "the parser
+/// should hand this back to `quote_of` rather than narrowing it".
+pub(crate) const QUOTED_MARKER: &str = "data-postio-quoted";
 
 /// A message body, as it is edited.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -477,6 +500,12 @@ fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
                 }
             }
             Block::Quote(blocks) => collect_link_hosts_in_blocks(blocks, hosts),
+            // The reply quote's links are the *original sender's*, already
+            // in front of whoever read the message. `link_hosts` answers
+            // "what would this draft reach out to", which is about what the
+            // user is about to send on their own behalf, so a quoted
+            // newsletter's fifty footer links do not belong in that answer.
+            Block::Quoted(_) => {}
             Block::Pre(_) | Block::Rule => {}
         }
     }
@@ -589,6 +618,17 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             }
             out.push_str("</blockquote>");
         }
+        // Verbatim, because narrowing it is the thing this variant exists to
+        // stop. The marker attribute is what `parse` recognises coming back,
+        // so a round trip through the editor's DOM returns a `Quoted` rather
+        // than collapsing to the authoring subset (FR-046).
+        Block::Quoted(quoted) => {
+            out.push_str("<blockquote ");
+            out.push_str(QUOTED_MARKER);
+            out.push_str("=\"1\">");
+            out.push_str(quoted.html());
+            out.push_str("</blockquote>");
+        }
         Block::Pre(text) => {
             out.push_str("<pre>");
             escape_text(out, text);
@@ -684,6 +724,24 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                         out.push_str("\n\n");
                     }
                     write_block_text(out, block, if nth > 0 { depth + 1 } else { 0 }, links);
+                }
+            }
+        }
+        // The plain rendering the original carried, under the same `> `
+        // convention: the rich half is what the HTML part shows, and
+        // `text/plain` recipients get the text alternative the sender wrote
+        // rather than a flattening of their markup.
+        Block::Quoted(quoted) => {
+            for (index, line) in quoted.text().split('\n').enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&indent);
+                if line.is_empty() {
+                    out.push('>');
+                } else {
+                    out.push_str("> ");
+                    out.push_str(line);
                 }
             }
         }
@@ -787,6 +845,18 @@ fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usiz
         }
         Block::Quote(blocks) => {
             for (index, block) in blocks.iter().enumerate() {
+                if index > 0 {
+                    out.push_str("\n\n");
+                }
+                write_block_flowed(out, block, depth + 1, width);
+            }
+        }
+        Block::Quoted(quoted) => {
+            // Through the same path as any other quote: `from_text` gives the
+            // sender's text alternative the block structure this needs, and
+            // the `> ` markers and wrapping then come from one place.
+            let inner = Document::from_text(quoted.text());
+            for (index, block) in inner.blocks.iter().enumerate() {
                 if index > 0 {
                     out.push_str("\n\n");
                 }

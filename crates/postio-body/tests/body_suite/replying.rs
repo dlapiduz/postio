@@ -31,6 +31,29 @@ fn hostile_document() -> Document {
     parse(&html)
 }
 
+/// The same fixture as a quote, which is the production path for a reply now
+/// (ADR 0033): the reply carries the reader's sanitised rendering, so what
+/// these tests check is that `quote_of`'s gate holds, not that a reduction
+/// happened to lose the beacon on the way.
+fn hostile_quote() -> postio_body::Quoted {
+    let fixture = postio_model::test_corpus::get(HOSTILE)
+        .unwrap_or_else(|| panic!("{HOSTILE} is not in the corpus"));
+    let message = fixture.parse();
+    let html = message
+        .body
+        .html
+        .expect("the fixture is a text/html message");
+    assert!(
+        html.contains("pixel.tracker.example.org"),
+        "the fixture arrived without its beacon, so this test cannot fail"
+    );
+    postio_body::quote_of(
+        Some(&html),
+        message.body.text.as_deref().unwrap_or_default(),
+        "q1",
+    )
+}
+
 fn text(text: &str) -> Inline {
     Inline::Text(text.to_owned())
 }
@@ -41,12 +64,11 @@ fn text(text: &str) -> Inline {
 
 #[test]
 fn a_quoted_reply_is_a_caret_line_an_attribution_and_the_source_as_a_quote() {
-    let source = Document {
-        blocks: vec![Block::Paragraph(vec![
-            text("The lamp "),
-            Inline::Strong(vec![text("has shipped")]),
-        ])],
-    };
+    let source = postio_body::quote_of(
+        Some("<p>The lamp <strong>has shipped</strong></p>"),
+        "The lamp has shipped",
+        "q1",
+    );
     let reply = quoted_reply(&source, "On 2026-08-26, Ada Lovelace wrote:");
     assert_eq!(
         reply.blocks,
@@ -56,14 +78,14 @@ fn a_quoted_reply_is_a_caret_line_an_attribution_and_the_source_as_a_quote() {
             // paragraph away on the first round trip.
             Block::Paragraph(vec![Inline::Break]),
             Block::Paragraph(vec![text("On 2026-08-26, Ada Lovelace wrote:")]),
-            Block::Quote(source.blocks),
+            Block::Quoted(source),
         ]
     );
 }
 
 #[test]
 fn the_quoted_replys_text_form_is_the_familiar_angle_bracket_shape() {
-    let source = Document::from_text("Short note\nto cover");
+    let source = postio_body::quote_of(None, "Short note\nto cover", "q1");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
     let rendered = reply.to_text();
     assert!(rendered.contains("On 2026-08-26, Ada wrote:"), "{rendered}");
@@ -73,12 +95,15 @@ fn the_quoted_replys_text_form_is_the_familiar_angle_bracket_shape() {
 
 #[test]
 fn quoting_nothing_still_leaves_the_attribution_but_no_empty_quote() {
-    let reply = quoted_reply(&Document::new(), "On 2026-08-26, Ada wrote:");
+    let reply = quoted_reply(
+        &postio_body::quote_of(None, "", "q1"),
+        "On 2026-08-26, Ada wrote:",
+    );
     assert!(
         !reply
             .blocks
             .iter()
-            .any(|block| matches!(block, Block::Quote(_))),
+            .any(|block| matches!(block, Block::Quote(_) | Block::Quoted(_))),
         "an empty quote block says something was quoted when nothing was"
     );
     assert!(reply.to_text().contains("wrote:"));
@@ -104,7 +129,7 @@ fn a_forward_carries_the_header_block_and_the_source_unquoted() {
         !forward
             .blocks
             .iter()
-            .any(|block| matches!(block, Block::Quote(_))),
+            .any(|block| matches!(block, Block::Quote(_) | Block::Quoted(_))),
         "a forward is not a quote"
     );
     let rendered = forward.to_text();
@@ -140,11 +165,20 @@ const LOADS: [&str; 7] = [
     "lamp-brass-441",
 ];
 
-const EXECUTES: [&str; 6] = ["<script", "<style", "<iframe", "style=", "class=", "onload"];
+/// What may never be re-emitted, whatever else a quote carries.
+///
+/// `style=` used to be on this list and is deliberately off it (ADR 0033): an
+/// inline declaration is how a quote carries the sender's styling now that the
+/// quote is the reader's rendering rather than a rebuild, and the sanitiser
+/// admits it on the reading path for the same reason. `<style` stays — the
+/// sender's own element never survives; what is emitted is CSS Postio parsed
+/// and rewrote, in `Quoted::styles`. The rest are what makes a mail client run
+/// something it was not asked to.
+const EXECUTES: [&str; 4] = ["<script", "<style", "<iframe", "onload"];
 
 #[test]
 fn a_reply_built_by_the_production_path_carries_no_load_and_no_script() {
-    let reply = quoted_reply(&hostile_document(), "On 2026-08-26, a sender wrote:");
+    let reply = quoted_reply(&hostile_quote(), "On 2026-08-26, a sender wrote:");
     let (rendered_text, rendered_html) = postio_body::render(&reply);
 
     for leak in LOADS {
@@ -154,10 +188,23 @@ fn a_reply_built_by_the_production_path_carries_no_load_and_no_script() {
     for leak in EXECUTES {
         assert!(!rendered_html.contains(leak), "{leak}:\n{rendered_html}");
     }
-    assert!(!rendered_html.contains("<img"), "{rendered_html}");
+    // Not asserted: that no `<img>` survives at all. Under the old rule none
+    // could -- an image had no representation unless it was a `cid:` part the
+    // document knew. Under ADR 0033 a remote `<img>` keeps its element and
+    // loses its `src`, which is exactly what the reader shows, and the loop
+    // above is what proves nothing loads. Whether a reply should carry those
+    // src-less elements at all, or drop them, is a product question rather
+    // than a safety one, and it is #1484.
+    assert!(
+        !rendered_html.contains("src=\"http") && !rendered_html.contains("src='http"),
+        "an image kept a remote source: {rendered_html}"
+    );
     // Still a quote of the message the human read.
     assert!(rendered_html.contains("has shipped"), "{rendered_html}");
-    assert!(rendered_html.contains("<blockquote>"), "{rendered_html}");
+    assert!(
+        rendered_html.contains("<blockquote"),
+        "the quote stopped being a quote: {rendered_html}"
+    );
 }
 
 #[test]
@@ -184,7 +231,7 @@ fn a_forward_built_by_the_production_path_carries_no_load_and_no_script() {
 #[test]
 fn a_signature_lands_after_the_quote_and_swaps_idempotently() {
     let reply = quoted_reply(
-        &Document::from_text("original words"),
+        &postio_body::quote_of(None, "original words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
 
@@ -233,7 +280,7 @@ fn a_separator_inside_the_quote_is_not_this_drafts_signature() {
     // replacing "the signature" must never reach into it — mirroring
     // `postio_model::signature::split`, where a separator followed by quoted
     // lines is somebody else's.
-    let source = Document::from_text("their words\n\n-- \nTheir Signature");
+    let source = postio_body::quote_of(None, "their words\n\n-- \nTheir Signature", "q1");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
     let signed = apply_signature(
         &reply,
@@ -260,26 +307,25 @@ fn rich_structure_survives_a_signature_swap() {
     // The regression this API exists to prevent: the composer used to apply
     // signatures by flattening the whole body to text and reloading it,
     // which would have turned a rich quote into angle-bracket lines.
-    let source = Document {
-        blocks: vec![Block::Paragraph(vec![Inline::Strong(vec![text("bold")])])],
-    };
+    let source = postio_body::quote_of(Some("<p><strong>bold</strong></p>"), "bold", "q1");
     let reply = quoted_reply(&source, "On 2026-08-26, Ada wrote:");
     let signed = apply_signature(
         &reply,
         Some(&signature("Grace", None)),
         Placement::BelowQuote,
     );
+    let quoted = signed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Quoted(quoted) => Some(quoted),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the signature swap ate the quote: {signed:?}"));
     assert!(
-        signed.blocks.iter().any(|block| matches!(
-            block,
-            Block::Quote(blocks)
-                if blocks.iter().any(|inner| matches!(
-                    inner,
-                    Block::Paragraph(inlines)
-                        if inlines.iter().any(|inline| matches!(inline, Inline::Strong(_)))
-                ))
-        )),
-        "{signed:?}"
+        quoted.html().contains("<strong>"),
+        "the emphasis was flattened by the signature swap: {}",
+        quoted.html()
     );
 }
 
@@ -302,7 +348,7 @@ fn a_rich_signature_keeps_its_structure_instead_of_being_flattened() {
     // beginning with nothing to put it in; the composer has a rich body now.
     // A signature with markup must arrive as markup, not as its text form.
     let reply = quoted_reply(
-        &Document::from_text("their words"),
+        &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
     let signed = apply_signature(
@@ -332,7 +378,7 @@ fn a_rich_signature_keeps_its_structure_instead_of_being_flattened() {
 #[test]
 fn a_signature_with_no_rich_variant_falls_back_to_its_text() {
     let reply = quoted_reply(
-        &Document::from_text("their words"),
+        &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
     let signed = apply_signature(
@@ -348,7 +394,7 @@ fn placement_puts_the_signature_above_the_quote_when_asked() {
     // Top-posting: the signature belongs under what was written and above the
     // quoted message, which is where every client that top-posts puts it.
     let reply = quoted_reply(
-        &Document::from_text("their words"),
+        &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
     let signed = apply_signature(
@@ -369,7 +415,7 @@ fn placement_puts_the_signature_above_the_quote_when_asked() {
         signed
             .blocks
             .iter()
-            .any(|block| matches!(block, Block::Quote(_))),
+            .any(|block| matches!(block, Block::Quote(_) | Block::Quoted(_))),
         "{signed:?}"
     );
 }
@@ -377,7 +423,7 @@ fn placement_puts_the_signature_above_the_quote_when_asked() {
 #[test]
 fn swapping_placement_moves_the_signature_rather_than_adding_one() {
     let reply = quoted_reply(
-        &Document::from_text("their words"),
+        &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
     let sig = signature("Grace Hopper", None);
@@ -398,7 +444,7 @@ fn swapping_placement_moves_the_signature_rather_than_adding_one() {
 #[test]
 fn a_signature_above_the_quote_is_still_replaced_not_stacked() {
     let reply = quoted_reply(
-        &Document::from_text("their words"),
+        &postio_body::quote_of(None, "their words", "q1"),
         "On 2026-08-26, Ada wrote:",
     );
     let first = apply_signature(
@@ -651,5 +697,93 @@ fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
         checked >= 5,
         "only {checked} HTML messages were checked; the corpus loader is not \
          finding them and this test is passing over nothing"
+    );
+}
+
+#[test]
+fn a_quote_survives_the_round_trip_through_the_editor_intact() {
+    // FR-046: what is in the editor is what is sent. The editor holds HTML
+    // and hands it back, so every keystroke costs a `to_html` and a `parse`.
+    // Under the old rule the rich quote would have survived exactly until the
+    // user typed a character and then collapsed to the authoring subset --
+    // fidelity that lasts until first use is not fidelity.
+    let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
+    let document = postio_body::Document {
+        blocks: vec![
+            postio_body::document::Block::Paragraph(vec![text("Acknowledged.")]),
+            postio_body::document::Block::Quoted(quoted),
+        ],
+    };
+
+    let round_tripped = postio_body::parse(&document.to_html());
+
+    let Some(postio_body::document::Block::Quoted(after)) = round_tripped
+        .blocks
+        .iter()
+        .find(|block| matches!(block, postio_body::document::Block::Quoted(_)))
+    else {
+        panic!(
+            "the quote came back as something other than a quote: {:?}",
+            round_tripped.blocks
+        );
+    };
+    assert!(
+        after.html().contains("<table") && after.html().contains("Interlock"),
+        "the table did not survive the round trip: {}",
+        after.html()
+    );
+    assert!(
+        after.html().contains("font-weight:bold"),
+        "the inline declaration did not survive the round trip: {}",
+        after.html()
+    );
+    // The text alternative is re-derived from the markup rather than
+    // remembered, so it reflects whatever the user did to the quote. It is
+    // narrowed on the way, which is right: `text/plain` is a reduction
+    // already, and the cells must at least come apart.
+    let text = round_tripped.to_text();
+    assert!(
+        text.contains("> Do not reset before the tide turns."),
+        "the plain rendering lost the quote markers: {text:?}"
+    );
+    assert!(
+        text.lines().all(|line| line.is_empty()
+            || line.starts_with('>')
+            || line.starts_with("Acknowledged")),
+        "a quoted line escaped its markers: {text:?}"
+    );
+    // Not asserted here: that the table's *cells* come apart. They do not --
+    // `parse` narrows a table to loose inlines with no separator, so this
+    // reads `GateInterlock`. That predates this change (every reply to a
+    // table-based message has always had it in its text/plain half) and is
+    // filed as #1482 rather than widened into here.
+}
+
+#[test]
+fn a_script_smuggled_into_the_editors_quote_does_not_come_back_out() {
+    // The reason `parse` rebuilds through `quote_of` instead of trusting what
+    // it finds. The content was sanitised when the quote was made, but it has
+    // been through a `contenteditable` DOM since -- paste handlers, an
+    // extension, a bug in this crate -- and "it was safe when we put it
+    // there" is the assumption worth not making, because what is on the other
+    // side of this one is everyone who receives the reply.
+    let smuggled = "<blockquote data-postio-quoted=\"1\">\
+<p>Morning.</p><script>steal()</script>\
+<img src=\"https://pixel.tracker.example.org/x.gif\"></blockquote>";
+
+    let document = postio_body::parse(smuggled);
+    let rendered = document.to_html();
+
+    assert!(
+        !rendered.contains("<script") && !rendered.contains("steal()"),
+        "a script came back out of the editor: {rendered}"
+    );
+    assert!(
+        !rendered.contains("pixel.tracker.example.org"),
+        "a beacon came back out of the editor: {rendered}"
+    );
+    assert!(
+        rendered.contains("Morning."),
+        "sanitising took the content with it: {rendered}"
     );
 }

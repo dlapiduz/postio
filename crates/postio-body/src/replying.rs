@@ -90,20 +90,42 @@ impl Quoted {
 /// them would carry it to every recipient of the reply, and hand the sender a
 /// beacon that fires in other people's clients.
 pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
+    // Nothing to quote at all: a reply to a message whose body never arrived,
+    // most often. Returned before the fallback runs, because
+    // `Document::from_text("")` still renders an empty paragraph and a quote
+    // holding one says something was quoted when nothing was.
+    if html.is_none_or(|html| html.trim().is_empty()) && text.trim().is_empty() {
+        return Quoted::default();
+    }
     if let Some(html) = html.filter(|html| !html.trim().is_empty()) {
         let sanitized = sanitize_body_in(html, RemoteImages::Blocked, Some(scope));
         if !sanitized.html.trim().is_empty() {
+            // An HTML-only message has no text alternative to carry, and a
+            // reply to one must still have a `text/plain` half -- otherwise
+            // the quote is an attribution followed by a bare `> `. Narrowing
+            // the sanitised markup is exactly the right source for it: the
+            // text part is a reduction by definition, and this is the same
+            // reduction the reader would show with markup turned off.
+            let text = if text.trim().is_empty() {
+                crate::parse::parse(&sanitized.html).to_text()
+            } else {
+                text.to_owned()
+            };
             return Quoted {
                 html: sanitized.html,
                 styles: sanitized.styles,
-                text: text.to_owned(),
+                text,
             };
         }
     }
-    // The fallback. Escaped through the same sanitiser rather than by hand:
-    // one gate, and `text` is still someone else's bytes.
+    // The fallback, through `Document::from_text` rather than one `<p>` around
+    // the lot: a sender's own line break is content (#456), and wrapping the
+    // whole text in a single paragraph turns every one of them into the space
+    // HTML collapses it to. `from_text` gives breaks and blank-line paragraph
+    // splits their markup, and the result still goes through the sanitiser --
+    // one gate, and this is someone else's text.
     let escaped = sanitize_body_in(
-        &format!("<p>{}</p>", html_escape(text)),
+        &Document::from_text(text).to_html(),
         RemoteImages::Blocked,
         Some(scope),
     );
@@ -114,21 +136,6 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
     }
 }
 
-/// The four characters that cannot appear literally in HTML text.
-fn html_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
 /// The document a reply starts from: a blank line for the caret, the
 /// attribution, and `source` as a quote.
 ///
@@ -136,13 +143,13 @@ fn html_escape(text: &str) -> String {
 /// `parse` narrows a truly empty paragraph away on the first round trip
 /// through the editor, and the caret needs its place above the quote to
 /// survive that.
-pub fn quoted_reply(source: &Document, attribution: &str) -> Document {
+pub fn quoted_reply(source: &Quoted, attribution: &str) -> Document {
     let mut blocks = vec![
         Block::Paragraph(vec![Inline::Break]),
         Block::Paragraph(vec![Inline::Text(attribution.to_owned())]),
     ];
     if !source.is_empty() {
-        blocks.push(Block::Quote(source.blocks.clone()));
+        blocks.push(Block::Quoted(source.clone()));
     }
     Document { blocks }
 }
@@ -232,7 +239,7 @@ pub fn apply_signature(
         // written; with nothing quoted the two placements agree.
         Placement::AboveQuote => blocks
             .iter()
-            .position(|block| matches!(block, Block::Quote(_)))
+            .position(|block| matches!(block, Block::Quote(_) | Block::Quoted(_)))
             .unwrap_or(blocks.len()),
     };
     blocks.splice(at..at, inserted);
@@ -288,7 +295,7 @@ fn existing_signature(blocks: &[Block]) -> Option<std::ops::Range<usize>> {
     let separator = blocks.iter().rposition(is_separator)?;
     let end = blocks[separator..]
         .iter()
-        .position(|block| matches!(block, Block::Quote(_)))
+        .position(|block| matches!(block, Block::Quote(_) | Block::Quoted(_)))
         .map(|offset| separator + offset)
         .unwrap_or(blocks.len());
     Some(separator..end)

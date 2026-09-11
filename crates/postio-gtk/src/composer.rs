@@ -492,22 +492,41 @@ fn reply_draft(id: CommandId, source: &Message, account: &Account) -> Option<Dra
     }
 }
 
-/// The body a reply or forward starts from, built from the parsed document —
-/// ADR 0003 Q3's inversion, done in the crate that has both halves.
+/// The body a reply or forward starts from, done in the crate that has both
+/// halves.
 ///
-/// Rich, in both renderings: the HTML half is what the editor opens
-/// (`document_of` prefers it), and the text half is the same document's
-/// `to_text`, whose `> ` convention keeps the plain form every mail client
-/// expects. Building both from one [`postio_body::Document`] is the
-/// security property (hardening requirement 6): a script or a tracking
-/// pixel in the source has no representation in the document, so neither
-/// rendering can carry one.
+/// Rich in both renderings: the HTML half is what the editor opens
+/// (`document_of` prefers it), and the text half keeps the `> ` convention
+/// every mail client expects.
+///
+/// A **reply** quotes what the reader showed (ADR 0033): the original's
+/// sanitised markup, through [`postio_body::quote_of`], so a table and a
+/// colour reach the quote instead of being narrowed away. The security
+/// property is unchanged and lives in that constructor — remote images
+/// blocked whatever the reader was allowed, and the reader's own permitted
+/// set rather than a second one.
+///
+/// A **forward** still goes through the parsed [`postio_body::Document`].
+/// It presents the whole message as the body of a new one rather than as a
+/// quotation inside a reply, so it is the *user's* content once sent, and
+/// `Block::Quoted` is specifically the thing that is not that. Bringing the
+/// two together is #1483.
 fn quoted_body(source: &Message, forward: bool) -> MessageBody {
-    let document = source_document(source);
     let rich = if forward {
-        postio_body::forwarded(&document, &reply::forward_header(source))
+        postio_body::forwarded(&source_document(source), &reply::forward_header(source))
     } else {
-        postio_body::quoted_reply(&document, &reply::attribution(source))
+        // The text half still goes through `source_document` when there is
+        // no markup, because that is where `format=flowed` is unwrapped
+        // (#456): handing `quote_of` the raw `text/plain` would quote a
+        // sender's soft wrap back at them as line breaks they never typed.
+        // With markup present the text part is the sender's own alternative
+        // and is taken as written.
+        let text = match source.body.html {
+            Some(_) => source.body.text.clone().unwrap_or_default(),
+            None => source_document(source).to_text(),
+        };
+        let quoted = postio_body::quote_of(source.body.html.as_deref(), &text, QUOTE_SCOPE);
+        postio_body::quoted_reply(&quoted, &reply::attribution(source))
     };
     let (text, html) = postio_body::render(&rich);
     MessageBody {
@@ -515,6 +534,13 @@ fn quoted_body(source: &Message, forward: bool) -> MessageBody {
         html: Some(html),
     }
 }
+
+/// The scope a reply's quoted styles are rewritten under.
+///
+/// One reply holds one quote, so this only has to be unique within the draft
+/// rather than globally — and `postio_body::parse` uses the same word coming
+/// back, so a round trip through the editor does not renumber anything.
+const QUOTE_SCOPE: &str = "quote";
 
 /// The document `source`'s body means — the markup the reader showed when
 /// there is markup, the plain text otherwise.
@@ -3987,17 +4013,18 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            document.blocks.iter().any(|block| matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines) if inlines
-                        .iter()
-                        .any(|inline| matches!(inline, postio_body::Inline::Strong(_)))
-                ))
-            )),
-            "{document:?}"
+            quoted.html().contains("<strong>"),
+            "the emphasis was flattened out of the quote: {}",
+            quoted.html()
         );
         let text = draft.body.text.expect("a text half");
         assert!(text.contains("> The lamp"), "{text}");
@@ -4039,20 +4066,19 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
-        let quoted_paragraph_is_one_unbroken_sentence = document.blocks.iter().any(|block| {
-            matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines)
-                        if inlines.as_slice() == [postio_body::Inline::Text(sentence.to_owned())]
-                ))
-            )
-        });
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            quoted_paragraph_is_one_unbroken_sentence,
+            quoted.text().contains(sentence),
             "the quote must be the sender's one sentence, not their soft \
-             wrap read back as typed line breaks: {document:?}"
+             wrap read back as typed line breaks: {:?}",
+            quoted.text()
         );
     }
 
@@ -4081,23 +4107,24 @@ mod tests {
         let draft = reply_draft(CommandId::Reply, &source, &account).expect("a reply");
 
         let document = document_of(&draft.body);
-        let quote_keeps_both_typed_lines = document.blocks.iter().any(|block| {
-            matches!(
-                block,
-                postio_body::Block::Quote(blocks) if blocks.iter().any(|inner| matches!(
-                    inner,
-                    postio_body::Block::Paragraph(inlines) if inlines.as_slice() == [
-                        postio_body::Inline::Text("Short note before the walkthrough.".to_owned()),
-                        postio_body::Inline::Break,
-                        postio_body::Inline::Text("See you then.".to_owned()),
-                    ]
-                ))
-            )
-        });
+        let quoted = document
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                postio_body::Block::Quoted(quoted) => Some(quoted),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no quote in the reply: {document:?}"));
         assert!(
-            quote_keeps_both_typed_lines,
+            quoted.html().contains("walkthrough.<br>See you then."),
             "an ordinary sender's own line break must survive as a break, \
-             not be joined onto its neighbour: {document:?}"
+             not be joined onto its neighbour: {}",
+            quoted.html()
+        );
+        assert!(
+            quoted.text().contains("walkthrough.\nSee you then."),
+            "and the plain half must keep it too: {:?}",
+            quoted.text()
         );
     }
 

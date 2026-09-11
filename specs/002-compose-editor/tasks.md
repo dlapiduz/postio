@@ -106,17 +106,17 @@ appearance and quote work depend on.
 
 ### Tests for User Story 2 — the quote (blocked on T003)
 
-- [ ] T024 [P] [US2] **Red first**: assert an HTML original's structure and styling survive into the quote, in `crates/postio-body/tests/` — FR-044
-- [ ] T025 [P] [US2] **Red first**: assert a plain-text-only original falls back rather than producing an empty quote — FR-045
-- [ ] T026a [P] [US2] **Red first**: assert a quote is sanitised with remote images blocked even when the original is displayed with them allowed — a per-sender allowance is the reader's own privacy decision and must not travel to a recipient (ADR 0033 Q2) — FR-047
-- [ ] T026 [P] [US2] **Security test, corpus-wide**: assert zero scripts, zero remote-loading references and zero tracking pixels are re-emitted across every HTML message in `crates/postio-model/tests/corpus/` — FR-047
-- [ ] T027 [P] [US2] Assert a sender's CSS in a quote cannot restyle the user's own text, a nested earlier quote, or Postio's chrome — FR-078
-- [ ] T028 [P] [US2] Assert what is in the editor is what is sent — FR-046
+- [X] T024 [P] [US2] **Red first**: assert an HTML original's structure and styling survive into the quote, in `crates/postio-body/tests/` — FR-044
+- [X] T025 [P] [US2] **Red first**: assert a plain-text-only original falls back rather than producing an empty quote — FR-045
+- [X] T026a [P] [US2] **Red first**: assert a quote is sanitised with remote images blocked even when the original is displayed with them allowed — a per-sender allowance is the reader's own privacy decision and must not travel to a recipient (ADR 0033 Q2) — FR-047
+- [X] T026 [P] [US2] **Security test, corpus-wide**: assert zero scripts, zero remote-loading references and zero tracking pixels are re-emitted across every HTML message in `crates/postio-model/tests/corpus/` — FR-047
+- [X] T027 [P] [US2] Assert a sender's CSS in a quote cannot restyle the user's own text, a nested earlier quote, or Postio's chrome — FR-078
+- [X] T028 [P] [US2] Assert what is in the editor is what is sent — FR-046
 
 ### Implementation for User Story 2 — the quote
 
-- [ ] T029 [US2] Change `quoted_reply` in `crates/postio-body/src/replying.rs` to build the quote from the reader's sanitised rendering rather than from the closed `Document`, reusing `sanitize.rs` and `styles::Scoped` — no second sanitiser (see [contracts/quote-construction.md](./contracts/quote-construction.md))
-- [ ] T030 [US2] Make T024–T028 green; if `styles.rs` needs a nesting fix for quotes inside quotes, do it here
+- [X] T029 [US2] Change `quoted_reply` in `crates/postio-body/src/replying.rs` to build the quote from the reader's sanitised rendering rather than from the closed `Document`, reusing `sanitize.rs` and `styles::Scoped` — no second sanitiser (see [contracts/quote-construction.md](./contracts/quote-construction.md))
+- [X] T030 [US2] Make T024–T028 green; if `styles.rs` needs a nesting fix for quotes inside quotes, do it here. `styles.rs` needed nothing — scoping already applied at every level. What did need work was everything *after* `replying.rs`: `harden` narrowed the quote straight back out again (its tag list is defined as the closure of what `to_html` emits, and `to_html` now emits more), `parse` had to recognise a reply quote and rebuild it through `quote_of` rather than narrow it, and the composer had to keep `format=flowed` unwrapping alive on the fallback path (#456). Three product questions came out of it and are filed rather than decided: #1483 (a forward still flattens), #1484 (src-less images in a quote), #1482 (table cells in the text half)
 
 **Checkpoint**: replies are correct, and the quote change is contained by a security test that names its numbers.
 
