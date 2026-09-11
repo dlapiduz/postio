@@ -264,16 +264,16 @@ pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
 
     // ── FR-072: the plain-text alternative carries no stray markers ──────
     //
-    // `z` between the two runs rather than a bare space, deliberately: two
-    // conversions separated by *exactly* one space lose it (#1486). That is a
-    // narrow edge in how WebKit relocates the text node between them, it is
-    // filed, and it is not what this assertion is about.
+    // Two conversions with a single space between them was #1486, and the
+    // cause was not in this file at all: `parse` dropped a whitespace-only
+    // text node between two *loose* inlines, which is exactly what the
+    // editor's DOM holds after a formatting command.
     //
     // The half nobody looks at, and the one where a doubled marker shows up:
     // `to_text` renders a bold run as its text, so a surviving `**` here
     // would mean the markers were kept *and* the formatting applied.
     ready(&editor);
-    type_text(editor.widget(), "**x** z *y*");
+    type_text(editor.widget(), "**x** *y*");
     settle("both runs to cross the bridge", || {
         has_strong(&editor.document().blocks, "x")
     });
@@ -284,7 +284,7 @@ pub fn typed_markdown_becomes_the_formatting_its_command_produces() {
         "markers reached the plain-text alternative: {text:?}"
     );
     assert!(
-        text.contains("x z y"),
+        text.contains("x y"),
         "the words did not survive the conversion: {text:?}"
     );
 }

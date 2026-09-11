@@ -779,3 +779,24 @@ fn a_table_cell_does_not_gain_a_space_that_was_not_there() {
         "a cell that already ended in a space got a second one: {spaced:?}"
     );
 }
+
+#[test]
+fn a_space_between_two_loose_inlines_is_content_not_formatting() {
+    // #1486. `walk_blocks` dropped every whitespace-only text node, which is
+    // right between blocks and wrong between inlines: in `<b>x</b> <i>y</i>`
+    // that node is the space somebody typed, and losing it joins two words.
+    //
+    // Inside a `<p>` the same markup already survived, because paragraphs go
+    // through a different walker — so this was invisible to anything that
+    // tests well-formed mail and showed up in the composer, whose DOM has
+    // loose inlines in `<body>` after a formatting command.
+    assert_eq!(parse("<b>x</b> <i>y</i>").to_text(), "x y");
+    assert_eq!(parse("<b>x</b>\u{a0}<i>y</i>").to_text(), "x y");
+
+    // Still dropped where it is formatting rather than content: leading
+    // whitespace, and the newline-and-indent between two block elements.
+    assert_eq!(parse("   <b>x</b>").to_text(), "x");
+    assert_eq!(parse("<p>one</p>\n  <p>two</p>").to_text(), "one\n\ntwo");
+    // And never doubled.
+    assert_eq!(parse("<b>x</b>  <i>y</i>").to_text(), "x y");
+}

@@ -115,6 +115,19 @@ fn walk_blocks(node: &Handle, blocks: &mut Vec<Block>, loose: &mut Vec<Inline>) 
                 let text = contents.borrow().to_string();
                 if !text.trim().is_empty() {
                     loose.push(Inline::Text(collapse(&text)));
+                } else if !ends_with_space(loose) {
+                    // Whitespace-only, and whether that is content depends on
+                    // what is beside it (#1486). Between two inlines --
+                    // `<b>x</b> <i>y</i>` -- it is the space somebody typed,
+                    // and dropping it joins two words. Before anything, or
+                    // between two blocks, it is the newline and indent of
+                    // someone's markup and means nothing.
+                    //
+                    // `ends_with_space` answers both: an empty run is the
+                    // leading case, and `flush` empties the run at every
+                    // block boundary, so only a genuine gap between inlines
+                    // reaches this.
+                    loose.push(Inline::Text(" ".to_owned()));
                 }
             }
             NodeData::Element { .. } => {
