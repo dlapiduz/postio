@@ -572,6 +572,11 @@ mod imp {
         pub heading: gtk::Label,
         pub status: gtk::Label,
         pub to: gtk::Entry,
+        /// The account's send-size ceiling, when it has one.
+        ///
+        /// `None` is not "unknown", it is "no limit configured", and it means
+        /// nothing is checked -- see `postio_model::size::check`.
+        pub size_limit: Cell<Option<u64>>,
         pub cc: gtk::Entry,
         pub bcc: gtk::Entry,
         pub subject: gtk::Entry,
@@ -700,6 +705,7 @@ mod imp {
                 heading: gtk::Label::new(None),
                 status: gtk::Label::new(Some(UNSAVED)),
                 to: gtk::Entry::new(),
+                size_limit: Cell::new(None),
                 cc: gtk::Entry::new(),
                 bcc: gtk::Entry::new(),
                 subject: gtk::Entry::new(),
@@ -1166,6 +1172,26 @@ impl Composer {
         true
     }
 
+    /// The largest message this account may send, in bytes.
+    ///
+    /// `None` when the account carries no configured limit, and then nothing
+    /// is checked: a guessed ceiling refuses mail the provider would have
+    /// taken, and the person cannot tell Postio's opinion from their
+    /// provider's rule.
+    pub fn set_size_limit(&self, limit: Option<u64>) {
+        self.imp().size_limit.set(limit);
+    }
+
+    /// The refusal this draft would earn, if any.
+    ///
+    /// Checked here rather than left to the server, which is the whole point
+    /// of FR-056: a server's rejection arrives after the composer has closed,
+    /// and what the person is left holding is a `Failed` draft and the job of
+    /// working out which of six attachments to remove.
+    fn too_large(&self) -> Option<postio_model::size::TooLarge> {
+        postio_model::size::check(&self.draft(), self.imp().size_limit.get())
+    }
+
     /// Offers `signatures` in the picker, alongside the identity's own.
     ///
     /// Hidden entirely when the account has none: a picker with one entry is
@@ -1372,6 +1398,10 @@ impl Composer {
             });
             return;
         }
+        if let Some(refusal) = self.too_large() {
+            self.set_status(&refusal.to_string());
+            return;
+        }
         for handler in self.imp().sent.borrow().iter() {
             handler(&draft);
         }
@@ -1398,6 +1428,13 @@ impl Composer {
             } else {
                 NO_RECIPIENTS
             });
+            return;
+        }
+        // A scheduled send is still a send, and refusing it at the scheduled
+        // hour -- when nobody is watching the composer -- is strictly worse
+        // than refusing it now.
+        if let Some(refusal) = self.too_large() {
+            self.set_status(&refusal.to_string());
             return;
         }
         for handler in self.imp().sent_later.borrow().iter() {

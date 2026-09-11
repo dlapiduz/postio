@@ -60,6 +60,7 @@ mod gtk_composer_reply;
 mod gtk_composer_resume;
 mod gtk_composer_schedule_send;
 mod gtk_composer_signature_default;
+mod gtk_composer_size;
 mod gtk_composer_toolbar;
 mod gtk_composer_tracking_notice;
 mod gtk_composer_warm;
@@ -940,6 +941,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty",
         gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty as fn(),
+    ),
+    (
+        "gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler",
+        gtk_composer_size::an_oversize_draft_is_refused_before_it_reaches_the_send_handler as fn(),
     ),
     (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",

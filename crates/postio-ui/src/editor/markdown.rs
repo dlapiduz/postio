@@ -91,16 +91,6 @@ pub const SEQUENCES: &[Sequence] = &[
     },
 ];
 
-/// The commands any sequence can reach.
-///
-/// The bound FR-068 states, as a list something can be compared against.
-pub fn reachable_commands() -> Vec<&'static str> {
-    let mut commands: Vec<&'static str> = SEQUENCES.iter().map(|s| s.command).collect();
-    commands.sort_unstable();
-    commands.dedup();
-    commands
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +155,12 @@ mod tests {
 
     #[test]
     fn the_reachable_set_is_the_formatting_set_without_duplicates() {
-        let commands = reachable_commands();
+        // The bound FR-068 states, pinned as a list. A sequence added for a
+        // command that is not in here is exactly the change this makes
+        // visible.
+        let mut commands: Vec<&str> = SEQUENCES.iter().map(|s| s.command).collect();
+        commands.sort_unstable();
+        commands.dedup();
         assert_eq!(
             commands,
             [

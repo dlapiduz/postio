@@ -175,6 +175,7 @@ fn install_identities(
                 .map(|identity| identity.address.clone())
                 .collect();
             window.conversation().set_own_addresses(&addresses);
+            composer.set_size_limit(account.max_message_size);
             composer.set_identities(account.identities);
             composer.set_signatures(account.signatures);
         }

@@ -134,14 +134,14 @@ appearance and quote work depend on.
 - [ ] T032 [P] [US3] Assert a link can be inserted, edited and removed on a selection, and its target is visible before committing — FR-050
 - [ ] T033 [P] [US3] Assert an image dropped or pasted into the body appears at that point and travels as a real part, visible to a recipient blocking remote content — FR-051, FR-052
 - [ ] T034 [P] [US3] Assert attachments are listed with name and size and are removable — FR-053, FR-054
-- [ ] T035 [P] [US3] **Red first**: assert inline images and attached files count against one size total — FR-055
-- [ ] T036 [P] [US3] **Red first**: assert an oversize message is refused before queueing, naming the limit, the overage and the largest items — FR-056
+- [X] T035 [P] [US3] **Red first**: assert inline images and attached files count against one size total — FR-055
+- [X] T036 [P] [US3] **Red first**: assert an oversize message is refused before queueing, naming the limit, the overage and the largest items — FR-056
 - [ ] T037 [P] [US3] Assert a message whose text mentions an attachment with none present asks first — FR-057
 
 ### Implementation for User Story 3
 
-- [ ] T038 [US3] Add the size total across inline images and attachments, sourced from account configuration and never from the SMTP `SIZE` capability (see [research.md](./research.md) §3), in `crates/postio-gtk/src/composer.rs` and the model
-- [ ] T039 [US3] Decide and implement what happens when no limit is configured — check nothing rather than invent a number; record the choice in the commit body
+- [X] T038 [US3] Add the size total across inline images and attachments, sourced from account configuration and never from the SMTP `SIZE` capability (see [research.md](./research.md) §3), in `crates/postio-gtk/src/composer.rs` and the model
+- [X] T039 [US3] Decide and implement what happens when no limit is configured — check nothing rather than invent a number; record the choice in the commit body. **Decided: check nothing.** A guessed ceiling refuses mail the provider would have taken, and the person cannot tell Postio's opinion from their provider's rule. `Account::max_message_size` is `Option<u64>` and `None` is the ordinary state, not a gap to fill
 
 **Checkpoint**: nothing leaves without its attachments, and nothing is silently too big.
 

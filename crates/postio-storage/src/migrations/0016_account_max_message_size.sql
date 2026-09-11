@@ -1,0 +1,19 @@
+-- The largest message this account's provider will accept, in bytes (spec
+-- 002, FR-055).
+--
+-- There was no client-side size check at all, so an oversize draft was
+-- queued, sent, and rejected by the server -- after the composer had closed.
+-- What the person was left holding was a `Failed` draft and the job of
+-- working out which of six attachments to remove.
+--
+-- Nullable, and null is the ordinary state rather than something to migrate
+-- away from: an account with no configured limit is checked against nothing.
+-- Inventing a number would refuse mail the provider would have taken, and
+-- there is no way for the person to tell Postio's guess from their
+-- provider's rule. A provider's real number is data for the preset table,
+-- never a constant in the code.
+--
+-- Deliberately *not* the SMTP `SIZE` capability. `postio-smtp` holds that
+-- Postio "announces nothing and relies on nothing, and a capability list is
+-- exactly the thing that erodes that one `if server_supports` at a time".
+ALTER TABLE accounts ADD COLUMN max_message_size INTEGER;

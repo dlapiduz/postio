@@ -61,6 +61,7 @@ pub mod reply;
 pub mod scope;
 pub mod signature;
 pub mod signature_default;
+pub mod size;
 pub mod subject;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
