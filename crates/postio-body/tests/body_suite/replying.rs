@@ -471,3 +471,185 @@ fn a_signature_on_an_empty_draft_leaves_somewhere_to_type() {
     // pipeline has always put on the wire.
     assert_eq!(signed.to_text(), "\n\n-- \nLena");
 }
+
+// ---------------------------------------------------------------------------
+// FR-044: the quote is the original as the reader renders it
+//
+// ADR 0033 reverses ADR 0003 Q3's *representation* while keeping its argument.
+// The old rule was that a quote is rebuilt from the closed `Document`, so a
+// script has no representation rather than being stripped on the way out. The
+// new rule is that a quote carries the reader's own sanitised rendering — and
+// the type is still the gate, because `Quoted` can only be made by a
+// constructor that sanitises. What changed is what survives sanitising: a
+// table, a colour, a class. What did not change is what does not.
+// ---------------------------------------------------------------------------
+
+/// A source with structure and styling the closed `Document` cannot hold.
+///
+/// Both carriers the reader actually admits: a `<style>` block, which is
+/// parsed and scoped, and inline `style`, which is the one attribute
+/// `add_generic_attributes` allows. Deliberately *not* `class` -- the
+/// sanitiser drops it, so the reader drops it, so the quote must too. FR-045
+/// says the quote is what the reader renders, which cuts both ways.
+const RICH: &str = "\
+<style>td { padding: 4px } p { color: #b00 }</style>\
+<table><tr><td>Gate</td><td>Interlock</td></tr>\
+<tr><td>North</td><td style=\"font-weight:bold\">Armed</td></tr></table>\
+<p>Do not reset before the tide turns.</p>";
+
+#[test]
+fn an_html_originals_structure_and_styling_survive_into_the_quote() {
+    // FR-044. Under the old rule every one of these assertions failed: a
+    // `<table>` has no `Block`, and a class has nowhere to live at all.
+    let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
+
+    assert!(
+        quoted.html().contains("<table"),
+        "the table became something else: {}",
+        quoted.html()
+    );
+    assert!(
+        quoted.html().contains("Interlock") && quoted.html().contains("Armed"),
+        "the table's cells did not survive"
+    );
+    assert!(
+        quoted.html().contains("font-weight:bold"),
+        "the inline declaration was dropped -- that is the attribute the \
+         sanitiser admits and most HTML mail styles itself with: {}",
+        quoted.html()
+    );
+    assert!(
+        quoted.styles().contains("#b00"),
+        "the sender's stylesheet did not survive: {}",
+        quoted.styles()
+    );
+}
+
+#[test]
+fn a_quotes_styles_are_scoped_so_they_cannot_reach_the_users_own_text() {
+    // FR-078, and the reason `styles.rs` exists: admitting one unscoped
+    // sheet would let a message restyle Postio's chrome, the reply being
+    // written above it, or an earlier quote nested inside it.
+    let quoted = postio_body::quote_of(Some(RICH), "Do not reset.", "q1");
+
+    for rule in quoted.styles().split('}').filter(|rule| rule.contains('{')) {
+        let selector = rule.split('{').next().unwrap_or_default().trim();
+        if selector.is_empty() {
+            continue;
+        }
+        assert!(
+            selector.contains("q1"),
+            "a rule escaped the quote's scope and can match anything on the \
+             page: {selector:?} in {}",
+            quoted.styles()
+        );
+    }
+}
+
+#[test]
+fn a_plain_text_only_original_falls_back_rather_than_quoting_nothing() {
+    // FR-045. The failure this guards against is silent: a reply to a
+    // text/plain message opening with an attribution and an empty box.
+    let quoted = postio_body::quote_of(None, "Tide gate interlock is armed.", "q1");
+
+    assert!(
+        quoted.html().contains("Tide gate interlock is armed."),
+        "a text-only original produced an empty quote: {:?}",
+        quoted.html()
+    );
+    assert!(
+        quoted.text().contains("Tide gate interlock is armed."),
+        "the plain rendering lost the text too"
+    );
+}
+
+#[test]
+fn an_html_original_that_sanitises_to_nothing_still_falls_back_to_its_text() {
+    // The case between the two above, and the one a naive `is_some` check
+    // gets wrong: there *is* an HTML part, and nothing in it survives.
+    let quoted = postio_body::quote_of(
+        Some("<script>steal()</script>"),
+        "Tide gate interlock is armed.",
+        "q1",
+    );
+
+    assert!(
+        quoted.html().contains("Tide gate interlock is armed."),
+        "an HTML part that sanitised away left an empty quote instead of \
+         falling back to the text alternative: {:?}",
+        quoted.html()
+    );
+}
+
+#[test]
+fn a_quote_blocks_remote_images_even_where_the_reader_was_allowed_to_show_them() {
+    // ADR 0033 Q2, and the one rule in this file that is about someone other
+    // than the user. Allowing a sender's remote images is a decision the
+    // reader makes on this machine, about this mailbox. Re-emitting them in a
+    // reply would carry that decision to every recipient -- and hand the
+    // sender a beacon that now fires in other people's clients.
+    let with_beacon = "<p>Morning.</p><img src=\"https://pixel.tracker.example.org/x.gif\">";
+    let quoted = postio_body::quote_of(Some(with_beacon), "Morning.", "q1");
+
+    assert!(
+        !quoted.html().contains("pixel.tracker.example.org"),
+        "a remote reference was re-emitted into the reply: {}",
+        quoted.html()
+    );
+    assert!(
+        !quoted.html().contains("https://"),
+        "some remote reference survived: {}",
+        quoted.html()
+    );
+}
+
+#[test]
+fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
+    // FR-047 as a security test rather than a rendering nicety: rendering
+    // happens on one machine, re-emission puts markup in front of everyone
+    // who receives the reply. Corpus-wide, and it counts what it checked so
+    // it cannot quietly pass over an empty set.
+    let mut checked = 0;
+    for fixture in postio_model::test_corpus::all() {
+        let message = fixture.parse();
+        let Some(html) = message.body.html.as_deref() else {
+            continue;
+        };
+        let text = message.body.text.clone().unwrap_or_default();
+        let quoted = postio_body::quote_of(Some(html), &text, "q1");
+        let emitted = format!("{} {}", quoted.html(), quoted.styles());
+
+        // Loading, not linking. An `<a href="https://...">` fetches nothing
+        // until someone clicks it and the reader keeps it, so banning every
+        // `https://` would ban ordinary correspondence. What may never be
+        // re-emitted is anything the recipient's client would fetch on its
+        // own -- which is what a tracking pixel *is*.
+        for forbidden in [
+            "<script",
+            "<iframe",
+            "<object",
+            "<embed",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "src=\"http",
+            "src='http",
+            "url(http",
+            "url(\"http",
+            "url('http",
+            "background=\"http",
+        ] {
+            assert!(
+                !emitted.contains(forbidden),
+                "{forbidden:?} was re-emitted from {}",
+                fixture.name()
+            );
+        }
+        checked += 1;
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} HTML messages were checked; the corpus loader is not \
+         finding them and this test is passing over nothing"
+    );
+}

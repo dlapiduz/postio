@@ -1,23 +1,133 @@
-//! The documents a reply and a forward start from: ADR 0003 Q3's inversion.
+//! The documents a reply and a forward start from: ADR 0003 Q3, as ADR 0033
+//! amended it.
 //!
 //! `postio_model::reply` computes recipients, subjects and threading; it
 //! cannot compute a quote, because quoting means parsing untrusted markup
 //! and the parser lives here, *above* the model. So the quote is built here
-//! from the already-parsed [`Document`] and handed down — which is also the
-//! security property (hardening requirement 6): a reply re-emits quoted
-//! content into the world, and building it from the closed type means a
-//! script or a tracking pixel has no representation rather than being
-//! stripped on the way out.
+//! and handed down.
+//!
+//! # What ADR 0033 changed, and what it did not
+//!
+//! It used to be built from the already-parsed [`Document`], the closed
+//! authoring type, and the argument was that a script or a tracking pixel
+//! then has *no representation* rather than being stripped on the way out.
+//! The cost was fidelity: a table, a colour, a class had no representation
+//! either, so a reply to a rich message quoted something that did not look
+//! like the message being answered. ADR 0033 decided fidelity wins.
+//!
+//! The argument survives; only the representation moved. [`Quoted`] is still
+//! a gate — it cannot be constructed except through [`quote_of`], which runs
+//! the reader's own sanitiser with remote images blocked. What changed is
+//! *what survives* sanitising: a table now does, a script still does not, and
+//! the permitted set is [`crate::sanitize`]'s, not a second one written here.
+//! A hole in that gate is a hole in the reader too, which is the point: one
+//! policy, one place, tested once.
 
 use postio_model::account::Signature;
 
 use crate::document::{Block, Document, Inline};
+use crate::sanitize::{RemoteImages, sanitize_body_in};
 
 /// What a plain separator line says. Mirrors
 /// `postio_model::signature::SEPARATOR`, spelled here because the model sits
 /// below this crate and a signature is a convention of the wire, not of any
 /// one crate.
 const SEPARATOR: &str = "--";
+
+/// A quote: the original as the reader would render it.
+///
+/// Opaque on purpose. The fields are private and the only constructor is
+/// [`quote_of`], so a `Quoted` in hand is markup that has been through
+/// [`crate::sanitize`] with remote images blocked — there is no path that
+/// puts a sender's raw bytes in one. That is ADR 0003 Q3's guarantee kept
+/// under ADR 0033's representation: the type is the gate, and what it admits
+/// is the reader's policy rather than a second policy written for replies.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Quoted {
+    html: String,
+    styles: String,
+    text: String,
+}
+
+impl Quoted {
+    /// The sanitised markup, ready to sit inside the reply's `<blockquote>`.
+    pub fn html(&self) -> &str {
+        &self.html
+    }
+
+    /// The sender's stylesheet, scoped so it cannot match outside this quote.
+    ///
+    /// Separate from [`Self::html`] for the reason [`crate::sanitize::Sanitized::styles`]
+    /// gives: what is emitted is CSS Postio parsed and rewrote, never the
+    /// sender's own `<style>` element passed through.
+    pub fn styles(&self) -> &str {
+        &self.styles
+    }
+
+    /// The plain-text rendering, for the `text/plain` half of the reply.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether there is anything to quote at all.
+    pub fn is_empty(&self) -> bool {
+        self.html.trim().is_empty() && self.text.trim().is_empty()
+    }
+}
+
+/// Builds the quote of a message whose HTML is `html` and whose plain-text
+/// alternative is `text`, scoped under `scope`.
+///
+/// `html` is `None` for a `text/plain`-only original — and the fallback is
+/// used for a *second* case that a naive `is_some` check gets wrong: an HTML
+/// part every byte of which sanitises away. Either way the result is the text
+/// alternative rather than an empty quote (FR-045), because a reply that
+/// opens with an attribution and an empty box is a silent failure.
+///
+/// Remote images are always [`RemoteImages::Blocked`] here, whatever the
+/// reader was allowed to show (ADR 0033 Q2). Allowing a sender's remote
+/// images is a decision made on this machine about this mailbox; re-emitting
+/// them would carry it to every recipient of the reply, and hand the sender a
+/// beacon that fires in other people's clients.
+pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
+    if let Some(html) = html.filter(|html| !html.trim().is_empty()) {
+        let sanitized = sanitize_body_in(html, RemoteImages::Blocked, Some(scope));
+        if !sanitized.html.trim().is_empty() {
+            return Quoted {
+                html: sanitized.html,
+                styles: sanitized.styles,
+                text: text.to_owned(),
+            };
+        }
+    }
+    // The fallback. Escaped through the same sanitiser rather than by hand:
+    // one gate, and `text` is still someone else's bytes.
+    let escaped = sanitize_body_in(
+        &format!("<p>{}</p>", html_escape(text)),
+        RemoteImages::Blocked,
+        Some(scope),
+    );
+    Quoted {
+        html: escaped.html,
+        styles: String::new(),
+        text: text.to_owned(),
+    }
+}
+
+/// The four characters that cannot appear literally in HTML text.
+fn html_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 /// The document a reply starts from: a blank line for the caret, the
 /// attribution, and `source` as a quote.
