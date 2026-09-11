@@ -714,7 +714,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            tracing::error!(%error, "the sync engine has no runtime");
+            tracing::error!(%error, "the sync engine has no runtime: {error}");
             parts.events.emit(Event::Error {
                 message: format!("the sync engine has no runtime: {error}"),
             });
@@ -1136,7 +1136,7 @@ async fn start_watching(parts: &EngineParts, pool: &Pool, state: &mut State) {
     let mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
-            tracing::error!(%error, "cannot read the account's folders; not watching");
+            tracing::error!(%error, "cannot read the account's folders; not watching: {error}");
             return;
         }
     };
@@ -1500,7 +1500,7 @@ fn queue_every_mailbox(parts: &EngineParts, pool: &Pool, state: &mut State) {
     let mut mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account) {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
-            tracing::error!(%error, "cannot read the account's folders; syncing nothing");
+            tracing::error!(%error, "cannot read the account's folders; syncing nothing: {error}");
             return;
         }
     };

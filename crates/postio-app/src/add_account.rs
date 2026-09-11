@@ -181,7 +181,7 @@ fn join(window: &Window, wiring: &Wiring, address: &str) {
         // sentence names the two things the user can do about it and
         // nothing else in the window is going to explain why the account
         // they just added is not syncing.
-        tracing::error!(%refusal, "the account was added but is not syncing");
+        tracing::error!(%refusal, "the account was added but is not syncing: {refusal}");
         window.show_action_completed(&refusal.to_string(), false);
     }
 }

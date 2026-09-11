@@ -417,7 +417,8 @@ async fn submit(
                 tracing::error!(
                     %error,
                     "could not record that a send was left unconfirmed; the \
-                     draft stays in Sending, which still refuses to resend it"
+                     draft stays in Sending, which still refuses to resend it: \
+                     {error}"
                 );
             }
             return Outcome::Uncertain {
