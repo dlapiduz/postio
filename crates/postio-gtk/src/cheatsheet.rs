@@ -492,6 +492,74 @@ mod tests {
     }
 
     /// #182's acceptance, on the second surface it names.
+    /// Every composer command is discoverable in both surfaces, with its key.
+    ///
+    /// Constitution II: a command has a binding, a palette entry and an
+    /// accessible control, and all three come from one table — so "the
+    /// composer is keyboard friendly" is not a claim about the composer, it
+    /// is a claim about whether the registry's composer commands actually
+    /// reach the two surfaces a person discovers them in.
+    ///
+    /// Both surfaces in one test on purpose. They are generated from the same
+    /// registry but by different code in different crates — `palette::entries`
+    /// in `postio-ui`, `sections` here — and a command reaching one and not
+    /// the other is exactly the drift having one table is supposed to prevent.
+    /// Neither half needs a display.
+    ///
+    /// Spec 002 FR-001, FR-002.
+    #[test]
+    fn every_composer_command_is_in_the_palette_and_the_sheet() {
+        let keymap = defaults();
+        let scope = Scope::Account(AccountId::new(1));
+
+        let reachable: Vec<_> =
+            postio_core::registry::reachable_in(Context::Composer, scope).collect();
+        assert!(
+            !reachable.is_empty(),
+            "the registry offers nothing in the composer, so this test would \
+             pass by having nothing to check"
+        );
+
+        let in_palette: Vec<ActionId> =
+            postio_ui::palette::entries(&keymap, Context::Composer, scope, "")
+                .into_iter()
+                .map(|entry| entry.id)
+                .collect();
+        let in_sheet: Vec<ActionId> = sections(&keymap, Context::Composer, scope)
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .filter_map(|row| row.id)
+            .collect();
+
+        for spec in &reachable {
+            assert!(
+                in_palette.contains(&spec.id),
+                "{:?} is reachable in the composer but not in the palette: a \
+                 command nobody can find is a command that does not exist",
+                spec.id
+            );
+            assert!(
+                in_sheet.contains(&spec.id),
+                "{:?} is reachable in the composer but not on the `?` sheet",
+                spec.id
+            );
+        }
+
+        // And the sheet teaches the key, not only the name. A row with no
+        // binding is a row that tells a reader what exists and not how to
+        // reach it.
+        let keyless: Vec<ActionId> = sections(&keymap, Context::Composer, scope)
+            .into_iter()
+            .flat_map(|section| section.rows)
+            .filter(|row| row.id.is_some() && row.binding.is_none())
+            .filter_map(|row| row.id)
+            .collect();
+        assert!(
+            keyless.is_empty(),
+            "these composer rows name a command and no key: {keyless:?}"
+        );
+    }
+
     #[test]
     fn a_unified_view_lists_no_move() {
         let ids = |scope| -> Vec<ActionId> {
