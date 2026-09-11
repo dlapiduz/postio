@@ -1115,6 +1115,7 @@ impl Composer {
         *imp.identities.borrow_mut() = identities;
         imp.identity.set_selected(default.unwrap_or(0) as u32);
         self.apply_identity();
+        self.apply_signature();
     }
 
     /// Sends this draft as the identity with `id`, if the account has it.
@@ -1135,6 +1136,7 @@ impl Composer {
         };
         self.imp().identity.set_selected(index as u32);
         self.apply_identity();
+        self.apply_signature();
         true
     }
 
@@ -1153,6 +1155,7 @@ impl Composer {
         *imp.signatures.borrow_mut() = signatures;
         imp.signature.set_selected(0);
         self.apply_identity();
+        self.apply_signature();
     }
 
     /// Selects the named signature with `id` in the picker, if the account
@@ -1229,12 +1232,18 @@ impl Composer {
         }
     }
 
-    /// Puts the selected identity, and its signature, into the draft.
+    /// Puts the selected identity into the draft. Does not touch the body.
     ///
-    /// Idempotent, because [`Draft::use_identity`] replaces the signature
-    /// block rather than appending one: switching identity mid-compose swaps
-    /// signatures, and re-running this over an unchanged draft changes
-    /// nothing.
+    /// FR-031: changing who a draft is from is a header change and nothing
+    /// else. It used to swap the signature block too, which meant the `From`
+    /// dropdown rewrote a signature the user had edited by hand -- and
+    /// `postio_body::apply_signature` cannot tell an edited signature from an
+    /// untouched one, because it matches the separator, not intent.
+    ///
+    /// The body half is [`Self::apply_signature`], which the signature picker
+    /// owns and which a draft runs once when it opens. Two controls, two
+    /// jobs: `From` chooses an address, the signature picker chooses a
+    /// signature.
     fn apply_identity(&self) {
         let Some(identity) = self.identity() else {
             return;
@@ -1243,6 +1252,20 @@ impl Composer {
         let mut draft = self.draft();
         draft.use_identity(&identity);
         imp.draft.borrow_mut().identity_id = draft.identity_id;
+    }
+
+    /// Puts the chosen signature into the body, replacing whatever block is
+    /// there.
+    ///
+    /// Run when a draft opens -- where signing is safe because nothing has
+    /// been typed yet -- and when the signature picker is used, which is the
+    /// user asking for exactly this. Never on an identity change: see
+    /// [`Self::apply_identity`].
+    fn apply_signature(&self) {
+        let Some(identity) = self.identity() else {
+            return;
+        };
+        let imp = self.imp();
 
         // At the block level for every draft, never through text: flattening
         // a rich quote to `> ` lines to swap a signature would be the
@@ -2216,6 +2239,7 @@ impl Composer {
         // made before it was closed is still this draft's.
         if !identity.is_some_and(|id| self.select_identity(id)) {
             self.apply_identity();
+            self.apply_signature();
         }
 
         // Above the quote and above the signature, which is where a reply is
@@ -2752,7 +2776,7 @@ impl Composer {
         imp.signature.connect_selected_notify(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_| composer.apply_identity()
+            move |_| composer.apply_signature()
         ));
         imp.signature.set_visible(false);
         row.append(&imp.signature);

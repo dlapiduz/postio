@@ -119,7 +119,7 @@ pub fn the_reply_comes_from_the_address_it_was_sent_to_and_signs_once() {
     )];
     reply.subject = "Re: mbox importer review".to_owned();
     reply.body.text = Some("Looking now.\n\n> Small diff.\n".to_owned());
-    reply.use_identity(chosen);
+    reply.start_as(chosen);
 
     composer.open(reply);
     settle();

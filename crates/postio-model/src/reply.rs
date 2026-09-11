@@ -15,7 +15,7 @@
 //! # What is not here
 //!
 //! Nothing here sends anything or resolves an identity's signature bytes —
-//! [`Draft::use_identity`] already does the signature, and does it correctly
+//! [`Draft::start_as`] already does the signature, and does it correctly
 //! against text this module has already quoted (see its doc for why quoting
 //! first and signing after never doubles up). Attaching this to the reading
 //! pane, and deciding which `Message` a reply's `in_reply_to` local id points
@@ -61,7 +61,7 @@ pub fn forward(source: &Message, account: &Account, body: MessageBody) -> Draft 
     draft.attachments = carried_attachments(source);
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
-        draft.use_identity(identity);
+        draft.start_as(identity);
     }
     draft
 }
@@ -85,7 +85,7 @@ fn build_reply(source: &Message, account: &Account, all: bool, quote: MessageBod
     draft.body = quote;
 
     if let Some(identity) = account.identity_for(&recipients_of(source)) {
-        draft.use_identity(identity);
+        draft.start_as(identity);
     }
     draft
 }

@@ -100,9 +100,9 @@ appearance and quote work depend on.
 
 ### Tests for User Story 2 — signatures (not blocked)
 
-- [ ] T021 [P] [US2] Assert a draft opens carrying the signature of the identity it starts as, in `crates/postio-model/tests/` — FR-030
-- [ ] T022 [P] [US2] **Red first**: assert changing identity does not alter the body, including a hand-edited signature — this reverses current behaviour and must fail before T023 — FR-031
-- [ ] T023 [US2] Change `Draft::use_identity` in `crates/postio-model/src/draft.rs` to update the sender without touching the body; assert no path produces two signatures — FR-031, FR-032
+- [X] T021 [P] [US2] Assert a draft opens carrying the signature of the identity it starts as, in `crates/postio-model/tests/` — FR-030. Asserted by `starting_as_an_identity_records_it_and_signs_the_body_once` and by the first half of `changing_identity_never_touches_the_body`, which checks the opening signature before it checks that a later switch leaves it alone
+- [X] T022 [P] [US2] **Red first**: assert changing identity does not alter the body, including a hand-edited signature — this reverses current behaviour and must fail before T023 — FR-031. Seen red (`no method named start_as`), then green
+- [X] T023 [US2] Change `Draft::use_identity` in `crates/postio-model/src/draft.rs` to update the sender without touching the body; assert no path produces two signatures — FR-031, FR-032. Done as a split rather than a deletion: `use_identity` is the header change, `start_as` is what a *new* draft does, and the same split runs through `Composer::apply_identity`/`apply_signature` — the GTK composer had its own body path (`postio_body::apply_signature`) that the model change alone would not have reached
 
 ### Tests for User Story 2 — the quote (blocked on T003)
 

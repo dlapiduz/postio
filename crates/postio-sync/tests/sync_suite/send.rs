@@ -87,7 +87,7 @@ fn a_draft(account: &Account, to: &str) -> Draft {
     draft.to = vec![EmailAddress::new(None::<String>, to)];
     draft.subject = "Analytical engine".to_owned();
     draft.body.text = Some("Notes on the difference engine.".to_owned());
-    draft.use_identity(&account.identities[0]);
+    draft.start_as(&account.identities[0]);
     draft
 }
 

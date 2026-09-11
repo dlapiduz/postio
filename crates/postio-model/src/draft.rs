@@ -199,19 +199,44 @@ impl Draft {
         }
     }
 
-    /// Sends this draft as `identity`, and puts its signature in the body.
+    /// Sends this draft as `identity`. Does not touch the body.
+    ///
+    /// Changing who a draft is from is a header change, and that is all it is
+    /// (FR-031). This used to re-run [`signature::apply`], which meant
+    /// switching the `From` picker rewrote prose the user had already edited:
+    /// [`signature::split`] finds the RFC 3676 separator, not intent, so a
+    /// signature someone had rewritten looked exactly like one they had not
+    /// and was replaced wholesale. There is no version of that heuristic that
+    /// never destroys work, so the body is simply left alone.
+    ///
+    /// The signature is instead something a draft *starts* with — see
+    /// [`Self::start_as`], which is the only place one is inserted, and which
+    /// is why there is never a second copy to stack.
+    ///
+    /// [`signature::apply`]: crate::signature::apply
+    /// [`signature::split`]: crate::signature::split
+    pub fn use_identity(&mut self, identity: &Identity) {
+        self.identity_id = Some(identity.id);
+    }
+
+    /// Starts this draft as `identity`: records it and signs the body.
+    ///
+    /// For the moment a draft comes into existence — a new message, a reply, a
+    /// forward — and not for a later change of mind, which is
+    /// [`Self::use_identity`]. Signing is safe *here* precisely because
+    /// nothing has been typed yet: there is no prose to protect, so an
+    /// unchanged wrong signature would be the worse outcome.
     ///
     /// Replaces rather than appends — [`signature::apply`] splits the body at
-    /// the RFC 3676 separator first — so switching identity mid-compose swaps
-    /// one signature for the other and reopening a saved draft does not stack
-    /// a second copy on the first.
+    /// the RFC 3676 separator first — so calling it twice, as resuming a draft
+    /// can, does not stack a second copy on the first (FR-032).
     ///
     /// Plain text only in v1. An identity's HTML signature waits for the
     /// composer to have an HTML body to put it in (`postio-z3b.3`).
     ///
     /// [`signature::apply`]: crate::signature::apply
-    pub fn use_identity(&mut self, identity: &Identity) {
-        self.identity_id = Some(identity.id);
+    pub fn start_as(&mut self, identity: &Identity) {
+        self.use_identity(identity);
         let signature = identity
             .signature
             .as_ref()
@@ -259,43 +284,98 @@ mod tests {
     }
 
     #[test]
-    fn using_an_identity_records_it_and_signs_the_body_once() {
+    fn starting_as_an_identity_records_it_and_signs_the_body_once() {
         let mut draft = Draft::new(AccountId::UNASSIGNED);
         draft.body.text = Some("Looking now.".to_owned());
 
         let ada = identity("ada@example.com", Some("Ada"));
-        draft.use_identity(&ada);
+        draft.start_as(&ada);
         assert_eq!(draft.identity_id, Some(IdentityId::new(7)));
         assert_eq!(
             draft.body.text.as_deref(),
             Some("Looking now.\n\n-- \nAda\n")
         );
 
-        // The override the user made is the draft's, and re-applying it is not
-        // a second signature.
-        draft.use_identity(&ada);
+        // Resuming a draft can run this again, and must not stack.
+        draft.start_as(&ada);
         assert_eq!(
             draft.body.text.as_deref(),
             Some("Looking now.\n\n-- \nAda\n")
         );
+    }
 
-        let grace = identity("grace@example.net", Some("Grace"));
-        draft.use_identity(&grace);
+    #[test]
+    fn changing_identity_never_touches_the_body() {
+        // FR-031, and the spec's third clarification. `use_identity` used to
+        // re-run `signature::apply` on every call, so switching the From
+        // picker rewrote prose the user had already edited. There is no
+        // reliable way to tell a signature the user has rewritten from one
+        // they have not -- `split` finds the `-- ` separator, not intent --
+        // so the only rule that never destroys work is to leave the body
+        // alone and let the signature be a thing the draft *started* with.
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.start_as(&identity("ada@example.com", Some("Ada")));
         assert_eq!(
             draft.body.text.as_deref(),
-            Some("Looking now.\n\n-- \nGrace\n"),
-            "switching identity replaces the signature"
+            Some("\n\n-- \nAda\n"),
+            "a draft still opens carrying its identity's signature (FR-030)"
         );
+
+        // The user writes, and edits the signature the draft came with.
+        draft.body.text = Some("Looking now.\n\n-- \nAda, from the boat\n".to_owned());
+        let before = draft.body.text.clone();
+
+        draft.use_identity(&identity("grace@example.net", Some("Grace")));
+
+        assert_eq!(
+            draft.identity_id,
+            Some(IdentityId::new(7)),
+            "the From did change"
+        );
+        assert_eq!(
+            draft.body.text, before,
+            "changing who a draft is from must not rewrite what is in it -- \
+             the hand-edited signature is the user's prose now"
+        );
+    }
+
+    #[test]
+    fn a_draft_never_carries_two_signatures() {
+        // FR-032. `start_as` is the one place a signature is inserted, and
+        // calling it twice -- which resuming a draft can do -- must not stack.
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        let ada = identity("ada@example.com", Some("Ada"));
+        draft.start_as(&ada);
+        draft.start_as(&ada);
+        assert_eq!(
+            draft
+                .body
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .matches("-- \n")
+                .count(),
+            1,
+            "two separators means the recipient sees the signature twice"
+        );
+
+        // And switching before anything is typed re-signs rather than stacks,
+        // because until the user has written a word there is no prose to
+        // protect and an unchanged wrong signature would be worse.
+        let mut fresh = Draft::new(AccountId::UNASSIGNED);
+        fresh.start_as(&ada);
+        fresh.start_as(&identity("grace@example.net", Some("Grace")));
+        assert_eq!(fresh.body.text.as_deref(), Some("\n\n-- \nGrace\n"));
     }
 
     #[test]
     fn an_identity_with_no_signature_leaves_the_body_unsigned() {
         let mut draft = Draft::new(AccountId::UNASSIGNED);
-        draft.use_identity(&identity("ada@example.com", None));
+        draft.start_as(&identity("ada@example.com", None));
         assert_eq!(draft.body.text, None, "and does not invent an empty body");
 
         draft.body.text = Some("Looking now.".to_owned());
-        draft.use_identity(&identity("ada@example.com", None));
+        draft.start_as(&identity("ada@example.com", None));
         assert_eq!(draft.body.text.as_deref(), Some("Looking now.\n"));
     }
 
