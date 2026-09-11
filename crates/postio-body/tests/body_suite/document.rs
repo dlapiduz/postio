@@ -800,3 +800,26 @@ fn a_space_between_two_loose_inlines_is_content_not_formatting() {
     // And never doubled.
     assert_eq!(parse("<b>x</b>  <i>y</i>").to_text(), "x y");
 }
+
+#[test]
+fn the_folds_own_chrome_is_not_part_of_the_message() {
+    // What the editor's DOM holds for a reply: the quote inside the
+    // `<details>` that `fold_quotes` wraps it in. The bridge posts that back
+    // verbatim, so whatever `parse` makes of it is what gets sent.
+    let folded = "<p>Acknowledged.</p>\
+<details class=\"postio-quote\">\
+<summary contenteditable=\"false\">Quoted message</summary>\
+<blockquote data-postio-quoted=\"1\"><p>Do not reset.</p></blockquote>\
+</details>";
+    let text = parse(folded).to_text();
+
+    assert!(
+        !text.contains("Quoted message"),
+        "the summary became content, so a reply carries a line nobody wrote: {text:?}"
+    );
+    assert!(text.contains("Acknowledged."), "{text:?}");
+    assert!(
+        text.contains("> Do not reset."),
+        "the quote was lost: {text:?}"
+    );
+}

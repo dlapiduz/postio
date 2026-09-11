@@ -39,8 +39,21 @@ use crate::document::{Block, ContentId, Document, HeadingLevel, Href, Inline};
 /// Elements whose *contents* go with them.
 ///
 /// Everything else unknown is unwrapped, keeping its text.
-const DROPPED: [&str; 9] = [
+const DROPPED: [&str; 10] = [
     "script", "style", "iframe", "object", "embed", "svg", "math", "noscript", "template",
+    // Not a hazard like the rest of this list — chrome. A reply's quote is
+    // wrapped in `<details><summary>Quoted message</summary>` by
+    // `postio_ui::editor::document::fold_quotes` so it opens folded, and that
+    // wrapper is in the editor's DOM, which the bridge posts straight back
+    // here on every edit. Without this the summary's text was collected as
+    // ordinary content: typing one character into a reply put a line saying
+    // "Quoted message" in the draft, and the recipient got it.
+    //
+    // Tag *and* contents, which is what this list means and what is wanted: a
+    // `<summary>` is never something a person wrote. A sender's own
+    // `<details>` inside a quote is untouched, because a quote's markup is
+    // carried opaquely (`Block::Quoted`) and never walked here.
+    "summary",
 ];
 
 /// Narrow `html` to the subset Postio can hold.
