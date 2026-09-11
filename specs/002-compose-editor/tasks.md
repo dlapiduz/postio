@@ -223,8 +223,8 @@ appearance and quote work depend on.
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T066 [P] Assert a Bcc recipient is never disclosed to another recipient, including a Bcc-only message, in `crates/postio-model/tests/` — FR-021
-- [ ] T067 [P] **Red first**: assert a Bcc-only message goes out with `undisclosed-recipients:;` in To, never a real address and never absent, in `crates/postio-model/src/outgoing.rs` — FR-022
+- [X] T066 [P] Assert a Bcc recipient is never disclosed to another recipient, including a Bcc-only message, in `crates/postio-model/tests/` — FR-021
+- [X] T067 [P] **Red first**: assert a Bcc-only message goes out with `undisclosed-recipients:;` in To, never a real address and never absent, in `crates/postio-model/src/outgoing.rs` — FR-022
 - [ ] T068 [P] Assert the composer makes no network request the user did not ask for while editing — FR-079
 - [ ] T069 [P] Assert recipient count is shown before sending, and a malformed address is reported before queueing — FR-023, FR-024
 - [ ] T070 [P] Assert an empty subject asks first, and no recipients is refused — FR-017, FR-062
