@@ -1,5 +1,18 @@
 //! A pasted image, through the composer: issue #341.
 //!
+//! # What this reaches, and what it does not
+//!
+//! Three gestures put a picture in the body and they converge on
+//! `add_inline_image`: a paste, a drop of an image file, and
+//! `CommandId::InsertImage` from the toolbar or the palette. This drives the
+//! paste from the clipboard and the chooser from a file on disk, so both
+//! halves either side of that convergence are covered.
+//!
+//! Two bindings are not, and are small and visible rather than hidden: the
+//! `ctrl+v` match arm that calls `paste_image`, and the body's `DropTarget`
+//! for a `FileList`. Both need an input device or a drag this suite has no way
+//! to synthesise. What can be checked without one is checked.
+//!
 //! The paste seam hands the bytes out (the blob store lives above this
 //! crate), gets back an attachment with a `Content-ID`, and the composer
 //! records it on the draft, shows it in the attachment list, and puts the
@@ -119,6 +132,45 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
         html.contains("src=\"cid:pasted-1%40postio.invalid\"")
             || html.contains("src=\"cid:pasted-1@postio.invalid\""),
         "{html}"
+    );
+
+    // ── Through the clipboard, which is where the gesture starts ─────────
+    //
+    // Everything above hands the bytes to `add_inline_image` directly, which
+    // is the tail of a paste and not a paste: it never asks the clipboard for
+    // anything, so it cannot fail when the clipboard half is broken. What
+    // `ctrl+v` actually does is check the clipboard for a texture, claim the
+    // keystroke if there is one, and decode it -- and that is what this
+    // drives.
+    let pixels = glib::Bytes::from_owned(vec![128u8; 16]);
+    let texture = gdk::MemoryTexture::new(2, 2, gdk::MemoryFormat::R8g8b8a8, &pixels, 8);
+    display.clipboard().set_texture(&texture);
+    settle("the clipboard to hold a texture", || {
+        display
+            .clipboard()
+            .formats()
+            .contains_type(gdk::Texture::static_type())
+    });
+
+    let before = composer.test_attachment_count();
+    assert!(
+        composer.test_paste(),
+        "a clipboard holding pixels must be claimed by the composer -- \
+         letting it through writes an unresolvable URL into the DOM (#341)"
+    );
+    settle("the pasted texture to become a part", || {
+        composer.test_attachment_count() > before
+    });
+    let pasted = composer
+        .draft()
+        .attachments
+        .into_iter()
+        .next_back()
+        .expect("the pasted image rides the draft");
+    assert_eq!(pasted.disposition, Disposition::Inline);
+    assert!(
+        pasted.content_id.is_some(),
+        "a pasted image with no Content-ID cannot be referenced from the body"
     );
 
     // ── FR-049 and FR-051: chosen, not only pasted ───────────────────────

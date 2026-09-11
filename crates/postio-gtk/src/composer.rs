@@ -3542,6 +3542,17 @@ impl Composer {
         self.imp().more.is_visible()
     }
 
+    /// Pastes from the clipboard, as `ctrl+v` on the body does.
+    ///
+    /// One step nearer the gesture than [`Self::test_paste_image_bytes`],
+    /// which hands the bytes straight to `add_inline_image` and so skips the
+    /// half that reads the clipboard and decodes a texture. Answers what the
+    /// key controller answers: whether this paste was ours.
+    #[doc(hidden)]
+    pub fn test_paste(&self) -> bool {
+        self.paste_image()
+    }
+
     /// Inlines `path`, as choosing it from the image chooser would.
     ///
     /// `gtk::FileDialog` does not open headlessly, so this is the seam the
