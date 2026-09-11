@@ -5,6 +5,14 @@ description: "Task list for the compose editor"
 
 # Tasks: The Compose Editor
 
+> **74 of 77 done. The three that are not are one thing waiting.** T048 is
+> somebody pressing `c` and looking at the composer; T072's by-eye half is the
+> same check; T073 is the merge that should not happen before it. Every WebKit
+> test in this repository runs the software path
+> (`WEBKIT_DISABLE_DMABUF_RENDERER=1`, the mitigation for #272), so none of the
+> 4,095 passing tests has seen how the editor actually paints (#1307) — which
+> is why the pull request (#1489) is open without auto-merge armed.
+
 **Input**: Design documents from `/specs/002-compose-editor/`
 
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/](./contracts/)
@@ -229,8 +237,8 @@ appearance and quote work depend on.
 - [X] T069 [P] Assert recipient count is shown before sending, and a malformed address is reported before queueing — FR-023, FR-024. **Both were half-built.** The warning counted wrong addresses without naming them — useless to somebody with nine recipients across three fields — so it now names the address and its field, and summarises past three rather than reciting. And there was no count at all: `recipient_summary` reports per field, shown on the same line when there is no problem to report, and silent for one recipient because a banner that is always there is a banner nobody reads
 - [X] T070 [P] Assert an empty subject asks first, and no recipients is refused — FR-017, FR-062. No recipients was already refused by name (`NO_RECIPIENTS`). The empty subject was not asked about at all (FR-018), and adding it as a second dialog would have stacked with FR-057's — so both are now one question that names whatever applies, because two dialogs in a row about one message is how somebody learns to answer the second without reading it
 - [X] T071 Run the full gate: `scripts/check.sh`, `scripts/test-sanity.sh`, `gtk_suite` and `app_suite` under nextest. **Green.** `cargo nextest run --workspace --no-fail-fast`: **4,087 tests, 4,087 passed**, 19 skipped. Two flaky and both are #957's shared-binary WebView contention (`gtk_editor_format`, `gtk_composer_toolbar`), passing on retry and passing alone in seconds. Plus `check.sh` clean on every invariant, `test-sanity.sh` in 31s, `cargo check --workspace --all-targets` clean, and the doctests nextest does not run — 25 across the seven crates this branch touches
-- [~] T072 Walk [quickstart.md](./quickstart.md) end to end, including the by-eye checks that no test covers. **Every runnable step walked and green** — section 1 (8 + 38), section 2 (6), section 3 (25 + 42 + 1), section 4 (sanity tier, gtk_suite 275, app_suite 89), and `check.sh`. **One real defect found and fixed in the walking**: the command labelled "the security assertion, which is the one that matters" was `cargo test -p postio-body corpus_quote`, which matches no test — it printed `test result: ok` having run nothing. Every command in the file now carries the count it should select, because `ok. 0 passed` and `ok. 1 passed` look alike at a glance and mean opposite things. **What remains is the by-eye half only**, which is T048 and needs a person at a display
-- [~] T073 Land: `scripts/issue-land.sh --detach` — one pull request, reviewed against spec.md, closing no issue. **PR #1489 open, and deliberately without auto-merge.** The land script always arms it, and T048 has not happened — 38 commits including two ADRs that reverse documented properties should not merge themselves while the one check no test on this machine can perform is outstanding. Opened with `gh pr create` instead, so it is readable and mergeable by hand. The maintainer merges after T048
+- [ ] T072 Walk [quickstart.md](./quickstart.md) end to end, including the by-eye checks that no test covers. **Every runnable step walked and green** — section 1 (8 + 38), section 2 (6), section 3 (25 + 42 + 1), section 4 (sanity tier, gtk_suite 275, app_suite 89), and `check.sh`. **One real defect found and fixed in the walking**: the command labelled "the security assertion, which is the one that matters" was `cargo test -p postio-body corpus_quote`, which matches no test — it printed `test result: ok` having run nothing. Every command in the file now carries the count it should select, because `ok. 0 passed` and `ok. 1 passed` look alike at a glance and mean opposite things. **What remains is the by-eye half only**, which is T048 and needs a person at a display
+- [ ] T073 Land: `scripts/issue-land.sh --detach` — one pull request, reviewed against spec.md, closing no issue. **PR #1489 open, and deliberately without auto-merge.** The land script always arms it, and T048 has not happened — 38 commits including two ADRs that reverse documented properties should not merge themselves while the one check no test on this machine can perform is outstanding. Opened with `gh pr create` instead, so it is readable and mergeable by hand. The maintainer merges after T048
 
 ---
 
