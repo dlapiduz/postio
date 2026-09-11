@@ -704,6 +704,25 @@ static SPECS: &[CommandSpec] = &[
         requires: None,
     },
     CommandSpec {
+        id: CommandId::CopyFields,
+        // Named for the pair rather than for `+ Cc`, because the button is
+        // only the way in and this verb is also the way out. "Cc and Bcc" is
+        // what someone hunting the palette for a Bcc field will type.
+        title: "Cc and Bcc",
+        // The `mod+shift+<letter>` shelf every secondary composer verb sits
+        // on, and `c` for the field it names -- which is also what other mail
+        // clients bind. `mod+c` is copy and stays copy.
+        default_binding: "mod+shift+c",
+        alternate_bindings: &[],
+        contexts: Context::Composer.as_set(),
+        destructive: false,
+        // Nothing durable changes: this raises and lowers two rows, and it
+        // refuses to lower them while they hold anything. There is nothing to
+        // take back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::Bold,
         title: "Bold",
         default_binding: "mod+b",

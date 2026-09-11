@@ -1738,6 +1738,7 @@ impl Composer {
             CommandId::DiscardDraft if self.is_open() => self.request_discard(),
             CommandId::AttachFile if self.is_open() => self.open_file_chooser(),
             CommandId::DetachComposer if self.is_open() => self.toggle_detached(),
+            CommandId::CopyFields if self.is_open() => self.toggle_copy_fields(),
             CommandId::Back if self.is_open() => {
                 self.close();
             }
@@ -2262,6 +2263,36 @@ impl Composer {
         imp.cc.grab_focus();
     }
 
+    /// Raises Cc and Bcc, or puts them away again — [`CommandId::CopyFields`].
+    ///
+    /// Asymmetric on purpose. Raising always works; putting away only works
+    /// while both fields are empty, because `resume` already holds the rule
+    /// that these rows are visible *because* there is something in them. A
+    /// hidden row that still held addresses would keep those recipients on the
+    /// draft and still send to them, under a sender who could no longer see
+    /// them — worse than the dead end this replaces.
+    ///
+    /// When it will not put them away it takes the keyboard to `Cc` instead.
+    /// A refusal that does nothing visible is indistinguishable from a bug.
+    pub fn toggle_copy_fields(&self) {
+        let imp = self.imp();
+        if !imp.cc_row.is_visible() || !imp.bcc_row.is_visible() {
+            self.show_copy_fields();
+            return;
+        }
+        let draft = self.draft();
+        if draft.cc.is_empty() && draft.bcc.is_empty() {
+            imp.cc_row.set_visible(false);
+            imp.bcc_row.set_visible(false);
+            self.sync_more();
+            // The keyboard cannot be left in a row that is no longer on
+            // screen, or Tab resumes from somewhere invisible.
+            imp.to.grab_focus();
+        } else {
+            imp.cc.grab_focus();
+        }
+    }
+
     fn sync_more(&self) {
         let imp = self.imp();
         imp.more
@@ -2665,10 +2696,15 @@ impl Composer {
         imp.more.add_css_class("postio-compose-more");
         imp.more
             .update_property(&[gtk::accessible::Property::Label("Show Cc and Bcc")]);
+        // The same verb the keyboard and the palette reach, not a second
+        // implementation of it. `more` is only on screen while the rows are
+        // down, so the toggle can only mean "show" from here -- but wiring it
+        // to `show_copy_fields` instead would be two paths that have to be
+        // kept in step, which is what the registry exists to prevent.
         imp.more.connect_clicked(glib::clone!(
             #[weak(rename_to = composer)]
             self,
-            move |_| composer.show_copy_fields()
+            move |_| composer.toggle_copy_fields()
         ));
 
         let row = self.build_row(&row, "To", &imp.to);
@@ -3082,6 +3118,25 @@ impl Composer {
     #[doc(hidden)]
     pub fn test_attachments_visible(&self) -> bool {
         self.imp().attachments_box.is_visible()
+    }
+
+    /// Whether the Cc and Bcc rows are on screen.
+    #[doc(hidden)]
+    pub fn test_copy_fields_visible(&self) -> bool {
+        let imp = self.imp();
+        imp.cc_row.is_visible() && imp.bcc_row.is_visible()
+    }
+
+    /// Whether the `+ Cc` control that raises those rows is on screen.
+    #[doc(hidden)]
+    pub fn test_more_button_visible(&self) -> bool {
+        self.imp().more.is_visible()
+    }
+
+    /// Types `text` into `Cc`, as [`Self::test_set_to`] does for `To`.
+    #[doc(hidden)]
+    pub fn test_set_cc(&self, text: &str) {
+        self.imp().cc.set_text(text);
     }
 
     /// Removes the attachment at `index`, as its row's own button would.

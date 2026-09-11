@@ -936,6 +936,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_recipients::revealing_cc_and_bcc_keeps_what_was_already_typed as fn(),
     ),
     (
+        "gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty",
+        gtk_composer_recipients::cc_and_bcc_put_themselves_away_only_while_they_are_empty as fn(),
+    ),
+    (
         "gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward",
         gtk_composer_reply::e_shift_e_and_f_open_reply_reply_all_and_forward as fn(),
     ),
