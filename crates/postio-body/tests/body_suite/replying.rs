@@ -188,16 +188,13 @@ fn a_reply_built_by_the_production_path_carries_no_load_and_no_script() {
     for leak in EXECUTES {
         assert!(!rendered_html.contains(leak), "{leak}:\n{rendered_html}");
     }
-    // Not asserted: that no `<img>` survives at all. Under the old rule none
-    // could -- an image had no representation unless it was a `cid:` part the
-    // document knew. Under ADR 0033 a remote `<img>` keeps its element and
-    // loses its `src`, which is exactly what the reader shows, and the loop
-    // above is what proves nothing loads. Whether a reply should carry those
-    // src-less elements at all, or drop them, is a product question rather
-    // than a safety one, and it is #1484.
+    // And no image element at all, which was #1484: under ADR 0033 a remote
+    // `<img>` kept its element and lost its `src`, so the recipient of the
+    // reply got a broken icon with no banner to explain it. It is the
+    // sender's `alt` now, or nothing.
     assert!(
-        !rendered_html.contains("src=\"http") && !rendered_html.contains("src='http"),
-        "an image kept a remote source: {rendered_html}"
+        !rendered_html.contains("<img"),
+        "a broken image element reached the reply: {rendered_html}"
     );
     // Still a quote of the message the human read.
     assert!(rendered_html.contains("has shipped"), "{rendered_html}");
@@ -684,6 +681,8 @@ fn no_quote_of_any_corpus_message_re_emits_a_script_or_a_remote_reference() {
             "url(\"http",
             "url('http",
             "background=\"http",
+            // #1484: not one broken image icon, across the whole corpus.
+            "<img",
         ] {
             assert!(
                 !emitted.contains(forbidden),
@@ -788,4 +787,64 @@ fn a_script_smuggled_into_the_editors_quote_does_not_come_back_out() {
         rendered.contains("Morning."),
         "sanitising took the content with it: {rendered}"
     );
+}
+
+#[test]
+fn an_image_in_a_quote_becomes_what_the_sender_called_it() {
+    // #1484. The reader blocks a remote image by stripping its `src` and
+    // keeping the element, which is right *there*: it sits beside a banner
+    // saying images were blocked and offering to load them. A sent reply has
+    // neither, so the recipient got a broken-image icon with no explanation
+    // and no way to resolve it -- and a reply to an image-heavy newsletter
+    // quoted a column of them.
+    //
+    // A reply carries none of the original's parts, so every image in a quote
+    // is broken by construction. What the sender *called* it is not, and that
+    // is the one thing worth keeping.
+    let quoted = postio_body::quote_of(
+        Some(
+            "<p>Morning.</p>\
+             <img src=\"https://shop.example.org/lamp.png\" alt=\"Brass reading lamp\">\
+             <p>Best.</p>",
+        ),
+        "Morning. Best.",
+        "q1",
+    );
+
+    assert!(
+        !quoted.html().contains("<img"),
+        "a broken image element reached the reply: {}",
+        quoted.html()
+    );
+    assert!(
+        quoted.html().contains("Brass reading lamp"),
+        "the sender's own description went with it, so the recipient cannot \
+         tell there was a picture at all: {}",
+        quoted.html()
+    );
+    assert!(
+        quoted.html().contains("Morning.") && quoted.html().contains("Best."),
+        "the text around the image was disturbed: {}",
+        quoted.html()
+    );
+}
+
+#[test]
+fn an_image_with_nothing_to_say_leaves_nothing_behind() {
+    // The tracking pixel's carcass is the case that matters: a 1x1 with no
+    // `alt`, which under the rule above has nothing to contribute and goes.
+    // A caption of `[]` would be worse than the broken icon it replaced.
+    let quoted = postio_body::quote_of(
+        Some("<p>Morning.</p><img src=\"https://pixel.tracker.example.org/x.gif\" alt=\"\">"),
+        "Morning.",
+        "q1",
+    );
+
+    assert!(!quoted.html().contains("<img"), "{}", quoted.html());
+    assert!(
+        !quoted.html().contains("[]"),
+        "an image with no description left an empty caption: {}",
+        quoted.html()
+    );
+    assert!(quoted.html().contains("Morning."), "{}", quoted.html());
 }

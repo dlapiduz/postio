@@ -26,7 +26,7 @@
 use postio_model::account::Signature;
 
 use crate::document::{Block, Document, Inline};
-use crate::sanitize::{RemoteImages, sanitize_body_in};
+use crate::sanitize::{RemoteImages, Sanitized, sanitize_body_in};
 
 /// What a plain separator line says. Mirrors
 /// `postio_model::signature::SEPARATOR`, spelled here because the model sits
@@ -99,6 +99,10 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
     }
     if let Some(html) = html.filter(|html| !html.trim().is_empty()) {
         let sanitized = sanitize_body_in(html, RemoteImages::Blocked, Some(scope));
+        let sanitized = Sanitized {
+            html: caption_images(&sanitized.html),
+            ..sanitized
+        };
         if !sanitized.html.trim().is_empty() {
             // An HTML-only message has no text alternative to carry, and a
             // reply to one must still have a `text/plain` half -- otherwise
@@ -134,6 +138,61 @@ pub fn quote_of(html: Option<&str>, text: &str, scope: &str) -> Quoted {
         styles: String::new(),
         text: text.to_owned(),
     }
+}
+
+/// Replaces every image in a quote with what the sender called it (#1484).
+///
+/// A reply carries none of the original's parts — that is a forward's job
+/// (FR-043) — so every image in a quote is broken by construction, inline
+/// ones included. In the reader a src-less `<img>` is correct: it sits beside
+/// a banner saying images were blocked and offering to load them. A sent
+/// reply has neither, so the recipient gets a broken-image icon with no
+/// explanation and no way to resolve it, and a reply to an image-heavy
+/// newsletter quotes a column of them.
+///
+/// What the sender *called* it is not broken, and it is the one thing worth
+/// keeping: `alt` is their own description, and a reader with images off has
+/// always been shown exactly this. An image with nothing to say leaves
+/// nothing behind — a caption of `[]` would be worse than the icon it
+/// replaced, and that is the tracking pixel's case.
+///
+/// Rejected: carrying the parts, so the images resolve. It is the most
+/// faithful answer and by far the largest — it changes what a reply is on the
+/// wire, inflates every one with the original's pictures, and forwards a
+/// sender's content to third parties, which is a different act from
+/// displaying it locally.
+fn caption_images(html: &str) -> String {
+    // Text, not markup: `alt` is the sender's, and the one thing that must not
+    // happen is a description being parsed as tags on the way through.
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(at) = rest.find("<img") {
+        out.push_str(&rest[..at]);
+        let Some(end) = rest[at..].find('>') else {
+            break;
+        };
+        let tag = &rest[at..at + end + 1];
+        if let Some(alt) = attribute_value(tag, "alt").filter(|alt| !alt.trim().is_empty()) {
+            out.push_str("<span>[");
+            out.push_str(&alt);
+            out.push_str("]</span>");
+        }
+        rest = &rest[at + end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One double-quoted attribute's value out of a start tag.
+///
+/// Narrow on purpose: this reads tags `ammonia` has just written, and it
+/// writes every attribute double-quoted with the value already escaped. It is
+/// not a parser and must never be pointed at anybody else's markup.
+fn attribute_value(tag: &str, name: &str) -> Option<String> {
+    let needle = format!(" {name}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = start + tag[start..].find('"')?;
+    Some(tag[start..end].to_owned())
 }
 
 /// The document a reply starts from: a blank line for the caret, the
