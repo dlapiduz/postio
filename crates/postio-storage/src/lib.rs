@@ -45,6 +45,7 @@
 //! See `test_support` (behind the `test-support` feature) for throwaway stores
 //! in tests.
 
+pub mod blob;
 pub mod error;
 pub mod key;
 mod perm;
@@ -53,7 +54,10 @@ pub mod repository;
 pub mod schema;
 pub mod store;
 #[cfg(feature = "test-support")]
+pub mod seed;
+#[cfg(feature = "test-support")]
 pub mod test_support;
 
+pub use blob::{BlobStore, BlobWriter, EvictionReport};
 pub use error::{Error, Result};
 pub use store::{Connection, Store, WritePriority};
