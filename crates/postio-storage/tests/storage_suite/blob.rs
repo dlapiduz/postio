@@ -365,7 +365,7 @@ fn a_blob_becomes_collectable_once_its_last_reference_goes() {
     assert!(store.contains(&shared));
 
     connection
-        .execute("DELETE FROM messages", [])
+        .execute("DELETE FROM messages", ())
         .expect("delete the rest");
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())

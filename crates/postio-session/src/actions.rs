@@ -206,7 +206,7 @@ pub struct Actions {
 
 impl Actions {
     /// Verbs over `database`, resolving their targets against `state`.
-    pub async fn new(database: Store, state: SharedState) -> Self {
+    pub fn new(database: Store, state: SharedState) -> Self {
         Actions {
             database,
             state,
@@ -2057,7 +2057,7 @@ async fn account_of(
 /// the tests below, which are about the verbs rather than about the wiring.
 #[cfg(test)]
 pub async fn dispatcher(actions: Actions) -> postio_core::Dispatcher {
-    wire(DispatcherBuilder::new(), actions).await.build()
+    wire(DispatcherBuilder::new(), actions).build()
 }
 
 /// Register every verb this module answers on `builder`.
@@ -2065,7 +2065,7 @@ pub async fn dispatcher(actions: Actions) -> postio_core::Dispatcher {
 /// The builder is taken rather than made so that a verb belonging to another
 /// module — `Refresh`, which is a network pass rather than a local-first write
 /// — can join the same bus without this module knowing about it.
-pub async fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
+pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
     builder.on_each(WIRED.iter().copied(), move |invocation| {
         let actions = actions.clone();
         // Awaited rather than spawned, which is the same guarantee the
@@ -2283,7 +2283,7 @@ mod tests {
         let (sink, events) = event_channel();
         let (quiet, _) = event_channel();
         World {
-            actions: Actions::new(database.clone(), state.clone()).await,
+            actions: Actions::new(database.clone(), state.clone()),
             database,
             account,
             inbox,

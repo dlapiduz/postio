@@ -41,6 +41,19 @@ thread_local! {
 /// of the file descriptors a reactor needs. Nothing this callback could
 /// return would be true in that case.
 pub(crate) fn now<T>(future: impl Future<Output = T>) -> T {
+    // Already on a runtime thread -- which the application never is, because
+    // GTK owns this thread, but the tests are: `#[tokio::test]` runs the test
+    // body on a worker. Building a second runtime inside one panics, so hand
+    // the future to the runtime that is already here.
+    //
+    // `block_in_place` is what makes that safe: it tells the scheduler this
+    // worker is about to block, so the others keep running. It needs a
+    // multi-threaded runtime, which is why the tests that reach this are
+    // `#[tokio::test(flavor = "multi_thread")]`.
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return tokio::task::block_in_place(|| handle.block_on(future));
+    }
+
     BRIDGE.with(|cell| {
         cell.get_or_init(|| {
             tokio::runtime::Builder::new_current_thread()

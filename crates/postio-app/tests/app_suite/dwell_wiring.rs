@@ -106,7 +106,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let (inbox, flagged_total) = {
         let connection = database.connection().expect("a connection");
         connection
-            .execute("UPDATE messages SET flagged = 1", [])
+            .execute("UPDATE messages SET flagged = 1", ())
             .expect("the fixture writes");
         let flagged_total: u32 = connection
             .query_row(
@@ -123,7 +123,7 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
         // would satisfy the resting assertion without the dwell doing
         // anything.
         connection
-            .execute("UPDATE messages SET seen = 0, flags = ''", [])
+            .execute("UPDATE messages SET seen = 0, flags = ''", ())
             .expect("the fixture writes");
         (inbox.id, flagged_total)
     };

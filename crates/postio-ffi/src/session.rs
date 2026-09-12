@@ -873,18 +873,35 @@ impl Session {
                 Some(database) => database,
                 None => {
                     // A fresh key per session, from the OS RNG. The database
-                    // lives and dies inside this process, so there is nothing
-                    // to reopen it with later — and an in-memory session still
-                    // runs the encrypted path, which is the whole point of ADR
-                    // 0014 Q3's "nothing tests a plaintext configuration that
-                    // no longer ships". No keyring is touched.
+                    // lives and dies with this process, so there is nothing
+                    // to reopen it with later — and it still runs the
+                    // encrypted path, which is the whole point of ADR 0014
+                    // Q3's "nothing tests a plaintext configuration that no
+                    // longer ships". No keyring is touched.
+                    //
+                    // A file in a temporary directory rather than an
+                    // in-memory database: the engine refuses to key one
+                    // (research.md Q6), and `test_support::memory` has been a
+                    // file on /dev/shm since #204 for a separate reason.
+                    // Neither survives the process, which is what "in memory"
+                    // meant to a caller of this.
                     let key = postio_storage::key::StoreKey::generate()
                         .derive(postio_storage::key::Purpose::Database);
-                    postio_storage::Store::open_in_memory(&key).map_err(|error| {
-                        SessionError::StoreUnavailable {
+                    let scratch =
+                        tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                             message: error.to_string(),
-                        }
-                    })?
+                        })?;
+                    let store = runtime
+                        .block_on(postio_storage::Store::open(
+                            scratch.path().join("postio.db"),
+                            &key,
+                        ))
+                        .map_err(|error| SessionError::StoreUnavailable {
+                            message: error.to_string(),
+                        })?;
+                    // The directory has to outlive every connection onto it.
+                    std::mem::forget(scratch);
+                    store
                 }
             };
             let (blobs, scratch) = match options.seeded_blobs {

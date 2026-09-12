@@ -117,8 +117,8 @@ pub(crate) async fn copy(
                 flags: Default::default(),
                 internal_date: None,
             },
-        )
-        .await
+        ).await
+        
     {
         Ok(mapping) => mapping,
         Err(error) => {
@@ -257,8 +257,8 @@ pub(crate) async fn remove(
             &path,
             &ids,
             &postio_account::backend::FlagChange::Add(deleted_flag()),
-        )
-        .await
+        ).await
+        
     {
         return Outcome::Retry {
             reason: format!("could not mark the source copy deleted: {error}"),

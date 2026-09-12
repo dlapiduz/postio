@@ -575,12 +575,25 @@ const BODY_SCORE_WEIGHT: f64 = 0.5;
 /// query that matched 1% of it, measured at 49 ms where the single-index
 /// version took 2.9. Driving from the matches is a point lookup per hit into
 /// `messages`' own primary key.
+///
+/// # `-fts_score`, and the minus sign is load-bearing
+///
+/// This was `bm25()`, where a *more negative* number is a better match, and
+/// [`rank_score`] and the sort after it both take that convention: candidates
+/// are sorted ascending and the best one is first. `fts_score` is the other
+/// way round -- higher is better, which is why the engine's own examples say
+/// `ORDER BY score DESC`. Negating here keeps the one convention that the
+/// ranker, the sort, and every comment about them already assume.
 const HITS_JOIN: &str = "FROM (
-             SELECT rowid AS rid, bm25(messages_fts) AS meta, NULL AS body
-               FROM messages_fts WHERE messages_fts MATCH ?
+             SELECT message_id AS rid,
+                    -fts_score(sender, recipients, subject, filenames, list_id, ?) AS meta,
+                    NULL AS body
+               FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
              UNION ALL
-             SELECT rowid, NULL, bm25(message_bodies_fts)
-               FROM message_bodies_fts WHERE message_bodies_fts MATCH ?
+             SELECT id, NULL, -fts_score(body_search, ?)
+               FROM messages
+              WHERE fts_match(body_search, ?)
           ) hits CROSS JOIN messages m ON m.id = hits.rid";
 
 /// The same match, asked one message at a time.
@@ -601,8 +614,11 @@ const HITS_JOIN: &str = "FROM (
 /// posting. On a word in most of the mailbox either is ~120 ms of setup to
 /// answer a `LIMIT 50`.
 const CORRELATED_MATCH: &str =
-    "(EXISTS (SELECT 1 FROM messages_fts WHERE rowid = m.id AND messages_fts MATCH ?)
-   OR EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id AND message_bodies_fts MATCH ?))";
+    "(EXISTS (SELECT 1 FROM search_documents d
+               WHERE d.message_id = m.id
+                 AND fts_match(d.sender, d.recipients, d.subject, d.filenames, d.list_id, ?))
+   OR EXISTS (SELECT 1 FROM messages b
+               WHERE b.id = m.id AND fts_match(b.body_search, ?)))";
 
 /// Which plan a statement asks for. See [`HITS_JOIN`] and [`CORRELATED_MATCH`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -713,24 +729,28 @@ impl Plan {
         let mut has_match = false;
         let mut match_param = None;
 
-        // Negated terms are excluded across the whole union rather than
-        // folded into each index's own `MATCH`, and that is a correctness
-        // fix rather than tidiness. `("report") NOT ("spam")` asked of
-        // `messages_fts` is true for a message whose "spam" is in its *body*
-        // — the metadata genuinely does not contain it — so the message came
+        // Negated terms are excluded across both indexes rather than folded
+        // into each one's own match, and that is a correctness fix rather
+        // than tidiness. `("report") NOT ("spam")` asked of the metadata
+        // index alone is true for a message whose "spam" is in its *body* --
+        // the metadata genuinely does not contain it -- so the message came
         // back from a query that had explicitly refused it. An exclusion has
         // to be about the message, and only a condition outside the join can
         // be.
         for term in request.query.text_terms().filter(|term| term.negated) {
             conditions.push(
-                "m.id NOT IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)
-                 AND m.id NOT IN (SELECT rowid FROM message_bodies_fts
-                                   WHERE message_bodies_fts MATCH ?)"
+                "m.id NOT IN (SELECT message_id FROM search_documents
+                               WHERE fts_match(sender, recipients, subject,
+                                               filenames, list_id, ?))
+                 AND m.id NOT IN (SELECT id FROM messages
+                                   WHERE fts_match(body_search, ?))"
                     .to_string(),
             );
-            let literal = turso::Value::Text(fts_literal(&term.value));
-            params.push(literal.clone());
-            params.push(literal);
+            let literal = fts_literal(&term.value);
+            // The body half folded, the metadata half not -- the same rule
+            // `match_params` keeps, for the same reason.
+            params.push(turso::Value::Text(literal.clone()));
+            params.push(turso::Value::Text(postio_model::fold::fold(&literal)));
         }
 
         let positive = request
@@ -808,13 +828,13 @@ impl Plan {
     fn params_for(&self, form: Form) -> Vec<turso::Value> {
         match form {
             Form::Driven => {
-                let mut params = self.match_params();
+                let mut params = self.match_params(Form::Driven);
                 params.extend(self.params.iter().cloned());
                 params
             }
             Form::Probed => {
                 let mut params = self.params.clone();
-                params.extend(self.match_params());
+                params.extend(self.match_params(Form::Probed));
                 params
             }
         }
@@ -837,12 +857,26 @@ impl Plan {
     /// list rather than pushed onto `params` in `build`, so that every caller
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
-    fn match_params(&self) -> Vec<turso::Value> {
-        match &self.match_param {
-            // Once for each index. The same expression: a term the user typed
-            // is asked of the metadata and of the body, and either is a hit.
-            Some(expr) => vec![expr.clone(), expr.clone()],
-            None => Vec::new(),
+    fn match_params(&self, form: Form) -> Vec<turso::Value> {
+        let Some(expr) = &self.match_param else {
+            return Vec::new();
+        };
+        // The body index is built over folded text, so the body's half of the
+        // expression is folded to match. The metadata index is not -- its
+        // columns are stored as they read -- so that half goes through
+        // unchanged. Both or neither, per `postio_model::fold`.
+        let folded = match expr {
+            turso::Value::Text(text) => {
+                turso::Value::Text(postio_model::fold::fold(text))
+            }
+            other => other.clone(),
+        };
+        match form {
+            // `-fts_score(.., ?)` in the SELECT list and `fts_match(.., ?)` in
+            // the WHERE, per arm: four in the order the `?`s are written.
+            Form::Driven => vec![expr.clone(), expr.clone(), folded.clone(), folded],
+            // One `fts_match` per arm, and no score to compute.
+            Form::Probed => vec![expr.clone(), folded],
         }
     }
 
@@ -1393,10 +1427,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
     }
 }
 
-/// Builds a condition against one `messages_fts` column, via a non-correlated
-/// `IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ...)`
-/// subquery — the same shape [`Plan::build`] uses to exclude negated-only
-/// free text.
+/// Builds a condition against one indexed column of `search_documents`.
 ///
 /// This is why `from:`/`to:`/`subject:`/`filename:`/`list:` match whole
 /// tokens (as FTS5 tokenizes them) rather than an arbitrary substring: the
@@ -1405,13 +1436,39 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
 /// row, but `total_hits`'s `count(*)` has no `LIMIT` to short-circuit it, so
 /// a plain `from:` search over a large mailbox paid for one such scan per
 /// message in the account and blew the `<100 ms` budget (postio-y47's
-/// benchmark caught this). Querying the column FTS5 already indexes turns
+/// benchmark caught this). Querying the column the index already covers turns
 /// that into a single inverted-index lookup, the same cost class as free
 /// text.
+///
+/// # Why the term is asked twice
+///
+/// FTS5 scoped a match to one column inside the query string —
+/// `messages_fts MATCH 'sender:ada'`. This engine takes the columns as
+/// arguments instead, and `fts_match(sender, ?)` on its own is *correct* and
+/// **does not use the index**: a subset of an index's columns gets `SCAN`,
+/// which is exactly the per-message scan the paragraph above is about.
+///
+/// So the term is asked twice. The five-column form narrows through the
+/// index to messages carrying the term *anywhere*; the one-column form then
+/// says which column it had to be in. Both are token matches, so
+/// `from:`/`to:`/`subject:`/`filename:`/`list:` keep matching whole tokens
+/// rather than substrings — and the per-row check only ever runs on what the
+/// index already narrowed to.
+///
+/// Verified in `turso_capabilities.rs`: a column subset alone scans, and the
+/// pair uses the index.
 fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let literal = fts_literal(value);
     (
-        "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)".to_string(),
-        vec![turso::Value::Text(format!("{column}:{}", fts_literal(value)))],
+        format!(
+            "m.id IN (SELECT message_id FROM search_documents
+                       WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+                         AND fts_match({column}, ?))"
+        ),
+        vec![
+            turso::Value::Text(literal.clone()),
+            turso::Value::Text(literal),
+        ],
     )
 }
 

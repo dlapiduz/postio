@@ -1330,8 +1330,8 @@ async fn discover(parts: &EngineParts, store: &Store) {
         parts.backend.as_ref(),
         parts.account,
         &parts.mailbox_roles,
-    )
-    .await
+    ).await
+    
     {
         Ok(report) => {
             if report.changed() {
@@ -1409,8 +1409,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             &mut state.backfill,
             mailbox.id,
             parts.backfill.seed_batch,
-        )
-        .await
+        ).await
+        
         {
             Ok(queued) => queued,
             Err(error) => {
@@ -1438,8 +1438,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             &mut state.backfill,
             mailbox.id,
             parts.backfill.seed_batch,
-        )
-        .await
+        ).await
+        
         {
             Ok(queued) => queued,
             Err(error) => {
@@ -1470,8 +1470,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
                 &mut state.backfill,
                 mailbox.id,
                 parts.backfill.seed_batch,
-            )
-            .await
+            ).await
+            
             {
                 Ok(queued) => queued,
                 Err(error) => {
@@ -2539,8 +2539,8 @@ async fn settle_pass(
                     &mut state.backfill,
                     mailbox,
                     parts.backfill.seed_batch,
-                )
-                .await
+                ).await
+                
                 {
                     parts.events.emit(Event::Error {
                         message: error.to_string(),
