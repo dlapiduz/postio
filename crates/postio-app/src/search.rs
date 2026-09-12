@@ -1219,6 +1219,19 @@ mod interactive_read {
             MockBackend::builder()
                 .mailbox(folder("INBOX", 3))
                 .mailbox(folder(BULK, BULK_MESSAGES))
+                // The five reserved roles this test does not care about, given
+                // rather than created. Every account ends discovery with a
+                // folder for all six (spec 003 FR-026), so without these the
+                // engine would issue a CREATE for each and re-LIST, in the
+                // middle of the window where this test is counting the pool's
+                // connections. Seeded up front, the folder count is settled
+                // before the measurement starts — which is the only property
+                // of them this test depends on.
+                .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
+                .mailbox(MockMailbox::new("Sent").attributes(["\\Sent"]))
+                .mailbox(MockMailbox::new("Drafts").attributes(["\\Drafts"]))
+                .mailbox(MockMailbox::new("Trash").attributes(["\\Trash"]))
+                .mailbox(MockMailbox::new("Junk").attributes(["\\Junk"]))
                 .build(),
         );
         backend.set_latency(Duration::from_millis(20));
@@ -1250,7 +1263,16 @@ mod interactive_read {
         // never enough this fails loudly rather than hanging the suite.
         let (spare_sender, spare_receiver) = mpsc::channel();
         let pool_for_spares = database.pool().clone();
-        let spare_count = 2;
+        // Whatever the engine has not claimed, rather than a hard-coded two.
+        //
+        // Two was right when an account had exactly the two mailboxes this
+        // test seeds. Every account now ends discovery with a folder for all
+        // six reserved roles (spec 003 FR-026), so the sync wave's lane
+        // arithmetic is not the one that number was measured against — and a
+        // literal here would have to be re-measured every time the folder
+        // count moves for an unrelated reason. "Exhaust the pool" is what this
+        // setup means; this is that, said directly.
+        let spare_count = database.pool().idle_connections();
         std::thread::spawn(move || {
             let held: Vec<_> = (0..spare_count)
                 .map(|_| pool_for_spares.get().expect("a connection eventually"))

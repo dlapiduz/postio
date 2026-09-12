@@ -92,9 +92,9 @@ once.
 ### Tests
 
 - [X] T014 [P] [US3] Test in `crates/postio-account/src/backend/mock.rs`: `MockBackend` records `create_mailbox` calls so a suite can assert on them
-- [ ] T015 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server listing only `INBOX` ends discovery with one selectable mailbox per reserved role, one create per missing role
-- [ ] T016 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a second pass over the same account issues **zero** creates (SC-007, FR-028)
-- [ ] T017 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: `Inbox` is never created, even when the server does not list it (FR-029)
+- [X] T015 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server listing only `INBOX` ends discovery with one selectable mailbox per reserved role, one create per missing role
+- [X] T016 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a second pass over the same account issues **zero** creates (SC-007, FR-028)
+- [X] T017 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: `Inbox` is never created, even when the server does not list it (FR-029)
 - [ ] T018 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refused create leaves the role unmapped and shown, records the server's reason, and the next pass makes no second attempt (FR-031)
 - [ ] T019 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refusal for one role does not stop the others resolving
 - [ ] T020 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server reporting the mailbox already exists is treated as success
@@ -108,12 +108,12 @@ once.
 - [X] T025 [P] [US3] Implement it in `crates/postio-account/src/backend/mock.rs`, recording calls and allowing a scripted refusal
 - [X] T026 [P] [US3] Return `Unsupported` in `crates/postio-gmail/src/backend.rs`
 - [X] T027 [P] [US3] Return `Unsupported` in `crates/postio-jmap/src/backend.rs`
-- [ ] T028 [US3] Migration `crates/postio-storage/src/migrations/0018_role_creation_refused.sql`: the refusal time and the server's reason on `mailbox_roles`, registered in `crates/postio-storage/src/migrations/mod.rs`
-- [ ] T029 [US3] Read and write the refusal in `crates/postio-storage/src/repository/mailbox_roles.rs`, including clearing it
-- [ ] T030 [US3] In `crates/postio-sync/src/discover.rs`, create a reserved role's folder when every tier resolves to nothing — never for `Inbox`, never when a refusal is recorded, never twice
-- [ ] T031 [US3] Record a refusal rather than failing the pass in `crates/postio-sync/src/discover.rs`; the other roles still resolve and the account stays usable
+- [X] T028 [US3] Migration `crates/postio-storage/src/migrations/0018_role_creation_refused.sql`: the refusal time and the server's reason in **its own table**, not a column on `mailbox_roles` — that table's `path` is `CHECK (length(path) > 0)` and a refusal has no path; registered in `crates/postio-storage/src/migrations/mod.rs`
+- [X] T029 [US3] Read and write the refusal in `crates/postio-storage/src/repository/mailbox_roles.rs`, including clearing it
+- [X] T030 [US3] In `crates/postio-sync/src/discover.rs`, create a reserved role's folder when every tier resolves to nothing — never for `Inbox`, never when a refusal is recorded, never twice
+- [X] T031 [US3] Record a refusal rather than failing the pass in `crates/postio-sync/src/discover.rs`; the other roles still resolve and the account stays usable
 - [ ] T032 [US3] Show an unmapped role and the server's reason in the account's Mailboxes rows in `crates/postio-gtk/src/settings.rs`
-- [ ] T033 [US3] Log the account id, role and outcome only in `crates/postio-sync/src/discover.rs` — never the folder name a server rejected, never its message verbatim (Principle VI)
+- [X] T033 [US3] Log the account id, role and outcome only in `crates/postio-sync/src/discover.rs` — never the folder name a server rejected, never its message verbatim (Principle VI)
 
 **Checkpoint**: `cargo nextest run -p postio-sync -p postio-account -p postio-storage`. Every account has every reserved role, offline drafts have somewhere to be listed.
 

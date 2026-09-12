@@ -560,11 +560,10 @@ fn a_view_role_cannot_be_stored_as_a_mailbox() {
     let account = seeded_account(&connection);
     let mailboxes = MailboxRepository::new(&connection);
 
-    for role in [
-        MailboxRole::Flagged,
-        MailboxRole::Snoozed,
-        MailboxRole::Outbox,
-    ] {
+    // Not `Flagged`: RFC 6154 defines `\Flagged`, so a server can really have
+    // that folder and `flagged` is in the schema's CHECK for that reason.
+    // `Snoozed` and `Outbox` have no attribute and no server can advertise one.
+    for role in [MailboxRole::Snoozed, MailboxRole::Outbox] {
         let mut mailbox = Mailbox::new(account, "Somewhere", None);
         mailbox.role = role;
         let outcome = mailboxes.create(&mut mailbox);
