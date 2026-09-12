@@ -257,6 +257,14 @@ mod imp {
         /// What the mail on screen belongs to. Beside `context` because the
         /// two together are what decides whether a command is offered (#182).
         pub scope: std::cell::Cell<postio_core::Scope>,
+        /// Whether the local store behind this window is open yet (#1114).
+        ///
+        /// Starts `false`, which is the truth about every window the moment
+        /// it is built: `postio-app` presents the window and *then* opens the
+        /// store, so the interval is real rather than theoretical. A window
+        /// built for a test of one widget stays here and offers the chrome,
+        /// which is what such a window can in fact do.
+        pub store_open: std::cell::Cell<bool>,
         pub commands: std::cell::RefCell<Vec<CommandHandler>>,
         /// Handlers for whole invocations, which the mouse produces — see
         /// [`Window::connect_action`](super::Window::connect_action).
@@ -2531,13 +2539,45 @@ impl Window {
     /// registry decides; this is only how the answer gets there.
     pub fn set_scope(&self, scope: postio_core::Scope) {
         self.imp().scope.set(scope);
-        self.finder().set_scope(scope);
-        self.cheatsheet().set_scope(scope);
+        self.publish_availability();
     }
 
     /// The scope the window is showing.
     pub fn scope(&self) -> postio_core::Scope {
         self.imp().scope.get()
+    }
+
+    /// Whether the local store behind this window is open yet (#1114).
+    ///
+    /// `false` from the moment the window is presented until the store lands,
+    /// which is a real interval on a real install: the keyring read, the
+    /// schema migrations and the search-index rebuild all happen behind a
+    /// window that already exists, and a migration launch has been twelve
+    /// seconds. What it changes is the vocabulary — the palette and the cheat
+    /// sheet list only what can actually run — not the window's appearance.
+    pub fn set_store_open(&self, open: bool) {
+        if self.imp().store_open.replace(open) == open {
+            return;
+        }
+        self.publish_availability();
+    }
+
+    /// What this window can currently do, as the registry evaluates it.
+    ///
+    /// The one place the two halves are combined, so the palette, the cheat
+    /// sheet and anything asking `available` cannot disagree about what is
+    /// offered.
+    pub fn availability(&self) -> postio_core::Availability {
+        postio_core::Availability {
+            scope: self.imp().scope.get(),
+            store_open: self.imp().store_open.get(),
+        }
+    }
+
+    fn publish_availability(&self) {
+        let state = self.availability();
+        self.finder().set_availability(state);
+        self.cheatsheet().set_availability(state);
     }
 
     /// Called with every command a key press resolves to.

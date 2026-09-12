@@ -473,6 +473,13 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         }
     });
 
+    // Whatever else this call does, it is handing the window a store. The
+    // window learns it here rather than from every caller, so a surface that
+    // asks the registry what is available gets the same answer as the pane
+    // that is about to fill with mail (#1114). `present` says the same thing
+    // one step earlier, for the onboarding branch that never reaches here.
+    window.set_store_open(true);
+
     let Some(account) = first_account(&wiring.database) else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"
@@ -1261,6 +1268,12 @@ fn present(
     // across it is a `borrow_mut` panic waiting for whoever edits this next.
     let ready = opened.borrow().is_some();
     if ready {
+        // The mail is behind the window from here on, so every command that
+        // reads or writes it becomes available -- to the palette, the cheat
+        // sheet and the keyboard at once, because all three ask the registry
+        // (#1114). Before this line the window offers the chrome and nothing
+        // else, which is exactly what it can do.
+        window.set_store_open(true);
         let held = opened.borrow();
         let ready = held.as_ref().expect("just checked");
         let notifier = notifications::Notifier::new(

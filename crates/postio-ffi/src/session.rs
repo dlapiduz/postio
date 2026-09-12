@@ -1299,9 +1299,25 @@ impl Session {
         let Ok(id) = id.parse::<postio_core::ActionId>() else {
             return false;
         };
-        let scope = *self.account_scope.lock().expect("account scope lock");
-        postio_core::registry::reachable_in(postio_core::Context::from(context), scope)
-            .any(|spec| spec.id == id)
+        postio_core::registry::reachable_in(
+            postio_core::Context::from(context),
+            self.availability(),
+        )
+        .any(|spec| spec.id == id)
+    }
+
+    /// What this session can currently do, as the registry evaluates it.
+    ///
+    /// `store_open` is unconditionally true here, and that is a fact about
+    /// this type rather than an assumption: a `Session` is constructed *over*
+    /// an open store, so there is no interval in which one does not exist.
+    /// The window-first startup that makes [`Requirement::StoreOpen`] worth
+    /// evaluating is `postio-app`'s (#1114), and a frontend that ever grows
+    /// the same shape answers here instead of at a menu.
+    ///
+    /// [`Requirement::StoreOpen`]: postio_core::Requirement::StoreOpen
+    fn availability(&self) -> postio_core::Availability {
+        postio_core::Availability::open(*self.account_scope.lock().expect("account scope lock"))
     }
 
     /// The palette's rows for `query`, best first.
@@ -1323,7 +1339,7 @@ impl Session {
         postio_ui::palette::entries(
             &keymap,
             postio_core::Context::from(context),
-            *self.account_scope.lock().expect("account scope lock"),
+            self.availability(),
             query,
         )
         .into_iter()
