@@ -734,6 +734,15 @@ struct Inner {
     /// Who may take SQLite's write lock next. One per database, because that
     /// is the scope of the lock it is arbitrating.
     write_gate: WriteGate,
+    /// Whether every connection this pool hands out is counted — see
+    /// [`Pool::count_every_checkout`].
+    ///
+    /// Test-only, and a flag on the pool rather than something the caller
+    /// does per checkout because a caller that has to remember is a caller
+    /// that eventually forgets, and the failure is a measurement that quietly
+    /// counted less than it thought (#1479).
+    #[cfg(feature = "test-support")]
+    counted: std::sync::atomic::AtomicBool,
     /// Something that must live exactly as long as the pool — the temporary
     /// directory a scratch database sits in (`test_support::memory`). `None`
     /// for every real database. Declared last so the connections in `state`
@@ -810,6 +819,8 @@ impl Pool {
                 }),
                 returned: Condvar::new(),
                 write_gate: WriteGate::new(),
+                #[cfg(feature = "test-support")]
+                counted: std::sync::atomic::AtomicBool::new(false),
                 _guard: guard,
             }),
         })
@@ -915,6 +926,15 @@ impl Pool {
         }
     }
 
+    /// Count everything read through this pool, on every connection it hands
+    /// out from here on — see [`crate::test_support::counting::install_on`].
+    #[cfg(feature = "test-support")]
+    pub fn count_every_checkout(&self) {
+        self.inner
+            .counted
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// The largest number of connections this pool will open.
     pub fn max_connections(&self) -> usize {
         self.inner.max_connections
@@ -944,6 +964,18 @@ impl Pool {
     }
 
     fn guard(&self, connection: Connection) -> PooledConnection {
+        // On every checkout rather than once per connection: installing the
+        // trace hook is setting a pointer, and the alternative is
+        // bookkeeping about which connections have already been fitted with
+        // one -- for no gain, since the answer has to be "all of them".
+        #[cfg(feature = "test-support")]
+        if self
+            .inner
+            .counted
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            crate::test_support::counting::install(&connection);
+        }
         PooledConnection {
             inner: Arc::clone(&self.inner),
             connection: Some(connection),
@@ -1221,6 +1253,14 @@ impl Database {
     /// on (a reading-pane body, a search) should check out with.
     pub fn connection_interactive(&self) -> Result<PooledConnection> {
         self.pool.get_interactive()
+    }
+
+    /// Count everything read through this database — see
+    /// [`crate::test_support::counting::install_on`], which is what callers
+    /// use.
+    #[cfg(feature = "test-support")]
+    pub fn count_every_checkout(&self) {
+        self.pool.count_every_checkout();
     }
 
     /// The connection pool, for handing to a worker.
