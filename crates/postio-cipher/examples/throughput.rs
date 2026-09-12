@@ -205,6 +205,14 @@ fn whole_store(directory: &std::path::Path, was: postio_cipher::Shipped) {
         // the page path Postio actually runs.
         db.execute_batch("PRAGMA cipher_hmac_algorithm = HMAC_SHA256;")
             .expect("the page mac Postio uses");
+        // WAL, because that is what Postio runs -- and because the number
+        // this is compared against (SQLite3 Multiple Ciphers, in
+        // `spike/FINDINGS.md`) has to be measured in the same journal mode
+        // or the comparison is between two things that differ twice.
+        let mode: String = db
+            .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+            .expect("wal");
+        assert_eq!(mode, "wal", "the WAL did not engage");
         db.execute_batch(
             "CREATE TABLE mail(id INTEGER PRIMARY KEY, subject TEXT, body BLOB);
              WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000)
@@ -212,6 +220,7 @@ fn whole_store(directory: &std::path::Path, was: postio_cipher::Shipped) {
                SELECT 'a subject line ' || i, randomblob(4000) FROM n;",
         )
         .expect("a store worth scanning");
+        db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").ok();
     }
     let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
@@ -256,11 +265,11 @@ fn whole_store(directory: &std::path::Path, was: postio_cipher::Shipped) {
     // something else by accident.
     postio_cipher::restore(was).expect("back");
 
+    let mb = bytes as f64 / 1048576.0;
     println!(
-        "\nfull scan of {:.1} MB   openssl {:>8.2?}   rust {:>8.2?}   rust/openssl {:>5.2}x",
-        bytes as f64 / 1024.0 / 1024.0,
-        theirs,
-        mine,
+        "\nfull scan of {mb:.1} MB   openssl {theirs:>8.2?} ({:.2} ms/MB)   rust {mine:>8.2?} ({:.2} ms/MB)   rust/openssl {:>5.2}x",
+        theirs.as_secs_f64() * 1000.0 / mb,
+        mine.as_secs_f64() * 1000.0 / mb,
         mine.as_secs_f64() / theirs.as_secs_f64()
     );
 }

@@ -328,6 +328,75 @@ handed over raw, with no passphrase KDF on the open path. It is why the
 PBKDF2 costs, and it is the one part of the current design this spike found
 nothing to improve.
 
+## The recommendation, spiked: sqlite3mc under the real workspace
+
+`spike/sqlite3mc/run.sh` swaps SQLite3 Multiple Ciphers in for SQLCipher
+across the whole workspace — by replacing the amalgamation inside a scratch
+copy of `libsqlite3-sys`, since sqlite3mc *is* SQLite with encryption built in
+and the plain `bundled` feature builds it — and runs `postio-storage`'s own
+suite against it.
+
+### The encryption still holds, and is asserted rather than assumed
+
+    cipher = "chacha20"   journal_mode = "wal"   sqlite = "3.53.4"
+    encrypted, wrong key refused, 23.5 MB
+
+`PRAGMA key = "x'…'"` works unchanged, the file header is the random salt
+rather than `SQLite format 3`, a wrong key is refused, and WAL engages. No
+libcrypto in the binary: `ldd` finds zero.
+
+### `postio-storage`'s suite: 576 of 587
+
+| | |
+|---|---|
+| passed | **576** |
+| failed | 11 |
+| skipped | 2 |
+
+**Every one of the eleven is a test asserting SQLCipher's own behaviour**, not
+a storage layer that stopped working:
+
+- `encrypt_migration` (6) — ADR 0014's plaintext-to-SQLCipher migration, which
+  goes through `sqlcipher_export`. A port needs sqlite3mc's equivalent, or
+  needs to decide the migration is a resync.
+- `page_mac` (2) — that a new store authenticates with SHA-256 and an old one
+  says so. Under an AEAD there is no separate MAC to choose, which is the
+  point of it being one pass.
+- `key_pragma_failure` (2) and `concurrent_open::an_empty_key_string_…` (1) —
+  matched against SQLCipher's own error wording, which sqlite3mc does not use.
+
+### What it cost to get there, and the one real surprise
+
+Three edits to `db.rs`: drop `silence_openssl_atexit` (there is no libcrypto
+left to silence — the #794/#699 crash class goes away rather than being worked
+around), swap `PRAGMA cipher_memory_security` for `PRAGMA cipher = chacha20`,
+and drop `PRAGMA cipher_hmac_algorithm`.
+
+And one that had to be found by running it:
+
+> Setting key not supported for in-memory or temporary databases.
+
+**sqlite3mc will not key an in-memory database, where SQLCipher will.** Three
+pool tests failed on it before keying was skipped for `Location::Memory`.
+Safe on its own terms — there is no file to protect and nothing outlives the
+process — and every real store is a file, so this is test infrastructure. But
+it is a behavioural difference somebody has to decide deliberately rather than
+discover, and it is exactly the sort of thing that does not appear in a
+feature comparison.
+
+### And the speed, measured the same way on both
+
+Same workload, same journal mode, same machine, floor of five fresh-connection
+full scans:
+
+| | ms/MB |
+|---|---:|
+| SQLCipher + OpenSSL (today) | 5.20 |
+| **sqlite3mc + ChaCha20-Poly1305** | **2.82** |
+
+**1.84x faster on the real page path**, with no OpenSSL in the process and the
+encryption proved at every step.
+
 ## One more footgun, walked into while measuring
 
 `restore` used to take a bare `*mut Provider`, and the crate also handed out

@@ -1,0 +1,182 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 7d7a70eb..8a91b8c9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -191,3 +191,10 @@ debug = 0
+ # in any gate's pass or fail.
+ [profile.dev.package."*"]
+ opt-level = 2
++
++# SPIKE ONLY. SQLite3 Multiple Ciphers in place of SQLCipher: the same
++# libsqlite3-sys with its bundled amalgamation replaced by sqlite3mc's, which
++# is SQLite with encryption built in and no OpenSSL anywhere. An absolute path
++# because it is a scratch copy; `spike/run-sqlite3mc.sh` builds it.
++[patch.crates-io]
++libsqlite3-sys = { path = "@SQLITE3MC_SYS@" }
+diff --git a/crates/postio-bench/Cargo.toml b/crates/postio-bench/Cargo.toml
+index 050e2b73..1b57f13c 100644
+--- a/crates/postio-bench/Cargo.toml
++++ b/crates/postio-bench/Cargo.toml
+@@ -44,9 +44,7 @@ tempfile = "3.27.0"
+ # `rusqlite` connection itself. The feature string has to match every other
+ # consumer's: one `links = "sqlite3"` crate in the graph, and ADR 0014 is why
+ # it is the SQLCipher one.
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled"] }
+ # `store_reads` builds a multi-thread runtime and `sync_lanes` a current-thread
+ # one, both by hand: the store and the sync engine are async, and a bench has
+ # to own the runtime it measures them on.
+diff --git a/crates/postio-index/Cargo.toml b/crates/postio-index/Cargo.toml
+index 4d016070..34f56685 100644
+--- a/crates/postio-index/Cargo.toml
++++ b/crates/postio-index/Cargo.toml
+@@ -19,9 +19,7 @@ postio-model = { workspace = true }
+ postio-search = { workspace = true }
+ # Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so
+ # the feature that selects SQLCipher has to agree everywhere (ADR 0014).
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled"] }
+ thiserror = "2.0.20"
+ tracing = "0.1"
+ 
+diff --git a/crates/postio-runtime/Cargo.toml b/crates/postio-runtime/Cargo.toml
+index b65dcf58..3fd89f49 100644
+--- a/crates/postio-runtime/Cargo.toml
++++ b/crates/postio-runtime/Cargo.toml
+@@ -41,7 +41,7 @@ postio-test-support.workspace = true
+ # Features match `postio-storage`'s -- one `links = "sqlite3"` crate in the
+ # graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
+ rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
++    "bundled",
+     # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
+     "trace",
+ ] }
+diff --git a/crates/postio-session/Cargo.toml b/crates/postio-session/Cargo.toml
+index 48891922..da51ab1f 100644
+--- a/crates/postio-session/Cargo.toml
++++ b/crates/postio-session/Cargo.toml
+@@ -53,9 +53,7 @@ postio-storage = { workspace = true, features = ["test-support"] }
+ # features match `postio-storage`'s, because one `links = "sqlite3"` crate in
+ # the graph means the feature selecting SQLCipher has to agree everywhere
+ # (ADR 0014).
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled"] }
+ # The unkeyed digest a blob written before ADR 0014 was named by, so the
+ # fixture is the shape a real pre-release store has rather than a plausible
+ # one.
+diff --git a/crates/postio-storage/Cargo.toml b/crates/postio-storage/Cargo.toml
+index 524eb811..8bffedb0 100644
+--- a/crates/postio-storage/Cargo.toml
++++ b/crates/postio-storage/Cargo.toml
+@@ -36,9 +36,7 @@ postio-model = { version = "0.2.0", path = "../postio-model" }
+ # keeps the Flatpak and contributor machines hermetic; the system-libcrypto
+ # variant is the recorded alternative if vendored OpenSSL's build cost ever
+ # earns its removal. sccache absorbs it machine-wide after the first build.
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled"] }
+ serde_json = "1.0.151"
+ tempfile = { version = "3.27.0", optional = true }
+ # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
+@@ -56,10 +54,7 @@ postio-storage = { path = ".", features = ["test-support"] }
+ tempfile = "3.27.0"
+ blake3 = "1.8.7"
+ chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-    "trace",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled", "trace"] }
+ 
+ [lints.rust]
+ # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
+diff --git a/crates/postio-storage/src/db.rs b/crates/postio-storage/src/db.rs
+index 567c1d43..b1a34440 100644
+--- a/crates/postio-storage/src/db.rs
++++ b/crates/postio-storage/src/db.rs
+@@ -349,8 +349,10 @@ pub fn configure(connection: &Connection, key: &Subkey) -> Result<()> {
+ /// store written under SHA-512 has to keep configuring every later connection
+ /// the same way, or the second checkout fails where the first succeeded.
+ pub fn configure_as(connection: &Connection, key: &Subkey, mac: PageMac) -> Result<()> {
+-    // Before the key, which is what SQLCipher requires of this one.
+-    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
++    // SPIKE: `cipher_memory_security` is SQLCipher's. sqlite3mc's default
++    // cipher is already chosen (`chacha20`, the sqleet scheme); naming it
++    // explicitly is what a real port would do rather than inherit a default.
++    connection.execute_batch("PRAGMA cipher = chacha20;")?;
+ 
+     // Zeroized on drop, and the only place the database subkey is rendered.
+     let hex = key.to_hex();
+@@ -364,10 +366,11 @@ pub fn configure_as(connection: &Connection, key: &Subkey, mac: PageMac) -> Resu
+         }
+     })?;
+ 
+-    // After the key and before anything reads a page, which is what SQLCipher
+-    // requires of this one: it decides how pages are authenticated, so it
+-    // cannot be changed once one has been read.
+-    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {};", mac.pragma()))?;
++    // SPIKE: there is no separate MAC algorithm to choose. ChaCha20-Poly1305
++    // authenticates the page as part of encrypting it, which is the whole
++    // reason it is one pass instead of two -- so `PageMac` has nothing to
++    // say here and the parameter is ignored.
++    let _ = mac;
+ 
+     // The probe. `sqlite_schema` lives on page 1, so this is the cheapest read
+     // that proves the key: one page, already in cache for everything after it.
+@@ -492,7 +495,18 @@ impl Location {
+                     | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+             )?,
+         };
+-        configure_as(&connection, key, mac)?;
++        // SPIKE: SQLite3 Multiple Ciphers refuses `PRAGMA key` outright on an
++        // in-memory database -- "Setting key not supported for in-memory or
++        // temporary databases" -- where SQLCipher accepts it. So keying is
++        // skipped for one, which is safe on its own terms (there is no file
++        // to protect and nothing survives the process) but is a real
++        // behavioural difference somebody has to decide deliberately rather
++        // than discover. Every *store* is `Location::File`; this is test
++        // infrastructure.
++        match self {
++            Self::File(_) => configure_as(&connection, key, mac)?,
++            Self::Memory(_) => {}
++        }
+         Ok(connection)
+     }
+ 
+@@ -790,9 +804,10 @@ impl Pool {
+     ) -> Result<Self> {
+         assert!(max_connections > 0, "a pool needs at least one connection");
+ 
+-        // Before the first connection, because that is the first thing to
+-        // touch libcrypto. See the function's own docs for the coredump.
+-        silence_openssl_atexit();
++        // SPIKE: nothing to silence. SQLite3 Multiple Ciphers carries its
++        // own crypto, so there is no libcrypto in this build to register an
++        // `atexit` handler -- which is the #794/#699 crash class gone rather
++        // than worked around.
+ 
+         // One open, in the one format this build writes. A failure here is
+         // where a store in the older MAC is recognised and named, rather than
+diff --git a/crates/postio-sync/Cargo.toml b/crates/postio-sync/Cargo.toml
+index af1054b4..4d95c160 100644
+--- a/crates/postio-sync/Cargo.toml
++++ b/crates/postio-sync/Cargo.toml
+@@ -26,9 +26,7 @@ postio-smtp.workspace = true
+ postio-storage.workspace = true
+ # Matches `postio-storage`: one `links = "sqlite3"` crate in the graph, so
+ # the feature that selects SQLCipher has to agree everywhere (ADR 0014).
+-rusqlite = { version = "0.40.2", features = [
+-    "bundled-sqlcipher-vendored-openssl",
+-] }
++rusqlite = { version = "0.40.2", features = ["bundled"] }
+ secrecy = "0.10.3"
+ thiserror = "2.0.20"
+ tracing = "0.1"
