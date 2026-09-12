@@ -829,7 +829,7 @@ fn run(parts: EngineParts, pool: Pool, inbox: async_channel::Receiver<Job>, busy
                 if state.supervisor.link().is_online() && has_queued_work(&parts, &pool) {
                     state.busy.set("draining after a wave");
                     let outcome = drain(&parts, &pool, &mut state).await;
-                    announce_drain(&parts.events, parts.account, &outcome);
+                    announce_drain(&parts, &outcome);
                 }
 
                 // Then fetch bodies, but only while nothing else is asking. One
@@ -1029,7 +1029,7 @@ async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut St
         // grown one.
         state.backfill_covered = false;
         let outcome = drain(parts, pool, state).await;
-        announce_drain(&parts.events, parts.account, &outcome);
+        announce_drain(parts, &outcome);
         // Before anything asks what is *in* a folder, find out which
         // folders there are. Everything below reads the local table, and on
         // a new account that table is empty until this runs.
@@ -1046,7 +1046,7 @@ async fn handle_link_transition(parts: &EngineParts, pool: &Pool, state: &mut St
         // *reconnection* to go out, which on a machine that stays online is
         // never.
         let outcome = drain(parts, pool, state).await;
-        announce_drain(&parts.events, parts.account, &outcome);
+        announce_drain(parts, &outcome);
     }
 }
 
@@ -1888,7 +1888,7 @@ async fn serve(job: Job, parts: &EngineParts, pool: &Pool, state: &mut State) {
     match job {
         Job::Drain { reply } => {
             let outcome = drain(parts, pool, state).await;
-            announce_drain(&parts.events, parts.account, &outcome);
+            announce_drain(parts, &outcome);
             let _ = reply.send(outcome);
         }
         Job::SeedBackfill {
@@ -2718,14 +2718,45 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
     }
 }
 
+/// The account's Drafts folder, for saying that a draft moved.
+///
+/// A point read on a connection this thread already has. `None` before the
+/// first sync has found one, in which case no draft has a row to have moved.
+fn drafts_mailbox(parts: &EngineParts) -> Option<MailboxId> {
+    let connection = parts.database.connection().ok()?;
+    postio_storage::repository::MailboxRepository::new(&connection)
+        .by_role(parts.account, postio_model::MailboxRole::Drafts)
+        .ok()
+        .flatten()
+        .map(|mailbox| mailbox.id)
+}
+
 /// Say what a drain did, so the UI hears it the way it hears everything else.
-fn announce_drain(
-    events: &EventSink,
-    account: AccountId,
-    outcome: &Result<DrainSummary, EngineError>,
-) {
+fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, EngineError>) {
+    let events = &parts.events;
+    let account = parts.account;
     match outcome {
         Ok(summary) => {
+            // A drain moves drafts between Drafts and the Outbox: the drainer
+            // marks Sending as it opens the socket, Sent when the server
+            // accepts, and Failed or Unconfirmed when it does not (spec 003).
+            // The row's `send_state` is what decides which list holds it, so
+            // both have to be re-read.
+            //
+            // Deliberately coarse -- any drain that did something, not "a
+            // drain that touched a send". The report does not distinguish
+            // operation kinds, and threading that through it would buy a
+            // distinction nobody can see: these two lists are small, a Reload
+            // re-queries them, and the alternative is a stale row saying
+            // "Sending" about a message that failed ten minutes ago.
+            let moved =
+                summary.applied > 0 || !summary.failed.is_empty() || !summary.uncertain.is_empty();
+            if moved && let Some(drafts) = drafts_mailbox(parts) {
+                events.emit(Event::MessageListChanged {
+                    account,
+                    mailbox: drafts,
+                });
+            }
             // A mailbox the server disagreed with has to be re-read, and the
             // list showing it is the thing that has to know.
             for mailbox in &summary.needs_resync {
