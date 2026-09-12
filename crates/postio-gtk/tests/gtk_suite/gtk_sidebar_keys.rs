@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 use gtk::gdk;
 use postio_core::Context;
+use postio_gtk::sidebar::SidebarChoice;
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
@@ -89,7 +90,10 @@ pub fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
     let opened: Rc<RefCell<Vec<i64>>> = Default::default();
     window.sidebar().connect_selected({
         let opened = Rc::clone(&opened);
-        move |id| opened.borrow_mut().push(id.get())
+        move |choice| match choice {
+            SidebarChoice::Folder(id) => opened.borrow_mut().push(id.get()),
+            SidebarChoice::View(role) => panic!("a folder was expected, got the {role:?} view"),
+        }
     });
 
     assert_eq!(
