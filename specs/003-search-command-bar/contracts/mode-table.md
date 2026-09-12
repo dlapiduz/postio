@@ -27,7 +27,7 @@ The prefixes are what ships and are **not** being changed by this feature.
 
 1. **One enumeration.** The bar's hint, the cheat sheet and the documentation all read this table. A mode added later appears in all three from one edit — FR-032, SC-010.
 2. **Prefixes are unique**, and exactly one mode has none.
-3. **Marker and purpose are user-facing text**, in a user's words, not identifiers. There is deliberately no separate `name`: nothing would render it, and an unread `pub fn` is what `check-uncalled-pub-fn.py` refuses.
+3. **Marker and purpose are user-facing text**, in a user's words, not identifiers. There is deliberately no separate `name`, because nothing would render it — a hint lists the prefix and what it does, and so does the documentation.
 4. **No GTK.** The table is plain data in `postio-ui`, which `check-crate-boundaries.py` keeps free of toolkit dependencies, so the macOS frontend consumes it rather than re-deriving it.
 5. **A mode that cannot act where the user stands is not advertised there** — FR-033.
 

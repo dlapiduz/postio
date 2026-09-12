@@ -29,7 +29,7 @@ A Cargo workspace. Crate sources are `crates/<crate>/src/`, unit tests live besi
 **Purpose**: Establish that the built parts really are built, because everything in this plan rests on that claim.
 
 - [X] T001 Run the built-state baseline and record every count in `specs/003-search-command-bar/quickstart.md`, replacing each `[n]` placeholder: `cargo test -p postio-core --lib`, `cargo nextest run -p postio-core --test core_suite`, `cargo nextest run -p postio-gtk --test gtk_suite gtk_finder`, `cargo test -p postio-app --test app_suite`
-- [ ] T002 Confirm `scripts/check.sh` is clean before anything moves between crates, so a later crate-boundary failure is known to be this feature's doing
+- [X] T002 Confirm `scripts/check.sh` is clean before anything moves between crates, so a later crate-boundary failure is known to be this feature's doing
 
 ---
 
@@ -51,7 +51,7 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 
 ### Tests for User Story 4 ⚠️ red first
 
-- [ ] T003 [P] [US4] Unit tests for the mode table's invariants in `crates/postio-ui/src/finder_modes.rs` — prefixes unique, exactly one mode without a prefix, every mode carrying a non-empty name and purpose
+- [X] T003 [P] [US4] Unit tests for the mode table's invariants in `crates/postio-ui/src/finder_modes.rs` — prefixes unique, exactly one mode without a prefix, every mode carrying a non-empty name and purpose
 - [ ] T004 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_finder.rs` asserting the bar at rest indicates it does more than search mail, and that an open empty box lists every mode with its prefix and purpose (FR-028, FR-029)
 - [ ] T005 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_finder.rs` asserting an active mode says which mode it is and how to leave it (FR-030)
 - [ ] T006 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_cheatsheet.rs` asserting the `?` cheat sheet lists the bar's modes
@@ -60,7 +60,7 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 
 ### Implementation for User Story 4
 
-- [ ] T009 [US4] Create the mode table in `crates/postio-ui/src/finder_modes.rs` — prefix, name, purpose per [contracts/mode-table.md](./contracts/mode-table.md) — and export it from `crates/postio-ui/src/lib.rs`
+- [X] T009 [US4] Create the mode table in `crates/postio-ui/src/finder.rs` — prefix, name, purpose per [contracts/mode-table.md](./contracts/mode-table.md) — and export it from `crates/postio-ui/src/lib.rs`
 - [ ] T010 [US4] Re-export the table from `crates/postio-gtk/src/finder.rs` and delete the prefix and description strings it duplicates, so the table is the only place the set is written down
 - [ ] T011 [US4] Render the hint in `crates/postio-gtk/src/finder.rs` — visible at rest and in an open empty box, out of the way once a query is being typed (FR-035)
 - [ ] T012 [US4] Show the active mode and how to leave it in `crates/postio-gtk/src/finder.rs`
