@@ -42,6 +42,22 @@
 #   scripts/sccache-restart.sh --check     # report only; 0 healthy, 3 wedged
 #   scripts/sccache-restart.sh             # restart through the wrapper
 #   scripts/sccache-restart.sh --if-wedged # check, and restart only if it is
+#   scripts/sccache-restart.sh --reap      # restart, then kill what stayed parked
+#
+# # 3. The restart does not reach the casualties
+#
+# Replacing the daemon fixes the daemon. It does nothing for the clients
+# already parked on the one it replaced: they are futex-parked waiting for a
+# reply from a process that no longer exists, so they wait for ever, and the
+# cargo above each one holds `target/`'s lock and `~/.cargo/.package-cache`
+# the whole time. On 2026-09-11 that was one abandoned 29-hour `cargo nextest`
+# tree serialising every other session on the box, still there after a clean
+# restart and only fixed by killing nine pids by hand.
+#
+# `--reap` is that, as a step: restart, then kill the compiles still parked
+# past `STALLED_AFTER`. It is a flag rather than the default because killing
+# somebody's build is destructive, and it names every pid as it goes. A plain
+# restart says what it left behind and stops there.
 #
 # Exit status: 0 fine (or restarted), 2 sccache is not installed or would not
 # answer, 3 wedged (with --check).
@@ -53,6 +69,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # has to be to count as stalled. Overridable so the self-test does not sleep.
 WINDOW="${POSTIO_SCCACHE_WINDOW:-60}"
 STALLED_AFTER="${POSTIO_SCCACHE_STALLED_AFTER:-300}"
+
+# How to kill a parked compile. Overridable because `kill` is a shell builtin
+# and a PATH stub cannot shadow one, so it is the only way the self-test can
+# record what would die instead of killing it.
+KILL="${POSTIO_SCCACHE_KILL:-kill}"
 
 if ! command -v sccache >/dev/null 2>&1; then
     echo "sccache-restart: sccache is not installed; nothing to do" >&2
@@ -70,8 +91,18 @@ executed() {
 # and always idle-looking, and what a wedge produces is *clients* waiting on
 # it.
 stalled() {
-    ps -eo etimes,args 2>/dev/null |
+    ps -eo etimes,pid,args 2>/dev/null |
         awk -v old="$STALLED_AFTER" '$1 > old && /rustc/ && !/awk/ { count++ } END { print count + 0 }'
+}
+
+# The same processes, by pid, for `--reap`.
+#
+# Deliberately the same match as `stalled` above: the number the check reports
+# and the number reaped must not be able to disagree. Counting never needed
+# the pid column; killing does.
+stalled_pids() {
+    ps -eo etimes,pid,args 2>/dev/null |
+        awk -v old="$STALLED_AFTER" '$1 > old && /rustc/ && !/awk/ { print $2 }'
 }
 
 max_cache_size() {
@@ -133,6 +164,17 @@ restart() {
     # Said out loud rather than assumed, because the failure this guards
     # against is silent: a 10 GiB daemon works perfectly and evicts for ever.
     echo "sccache: restarted, max cache size $size"
+    # The daemon is new; anything still parked is parked on the old one and
+    # will not recover. Said out loud because the failure is otherwise
+    # invisible: the daemon looks fixed while the box stays serialised behind
+    # a lock held by a build that can never finish.
+    local parked
+    parked="$(stalled_pids | wc -l)"
+    if [ "$parked" -gt 0 ]; then
+        echo "sccache: $parked compile(s) are still parked on the daemon that was replaced." >&2
+        echo "sccache: they cannot recover, and each one's cargo holds its locks meanwhile." >&2
+        echo "sccache: clear them with scripts/sccache-restart.sh --reap" >&2
+    fi
     case "$size" in
     *10\ GiB*)
         echo "sccache-restart: that is the DEFAULT size, not this workspace's." >&2
@@ -140,6 +182,32 @@ restart() {
         return 2
         ;;
     esac
+    return 0
+}
+
+# Kill the compiles left behind by a daemon that is gone.
+#
+# Destructive on purpose and never reached without `--reap`: these pids are
+# somebody's build, and the only thing that makes killing them right is that
+# the process each is waiting for no longer exists.
+reap() {
+    local pids count=0
+    pids="$(stalled_pids)"
+    if [ -z "$pids" ]; then
+        echo "sccache: nothing is parked; nothing to reap"
+        return 0
+    fi
+    for pid in $pids; do
+        if "$KILL" "$pid" 2>/dev/null; then
+            echo "sccache: reaped compile $pid, parked over ${STALLED_AFTER}s"
+            count=$((count + 1))
+        else
+            # Gone between the listing and the kill, or another user's. Not a
+            # failure: the point was for it not to be waiting any more.
+            echo "sccache: $pid was already gone" >&2
+        fi
+    done
+    echo "sccache: reaped $count parked compile(s)"
     return 0
 }
 
@@ -159,12 +227,21 @@ case "${1:-}" in
     restart
     exit $?
     ;;
+--reap)
+    # Restart first: reaping while the wedged daemon is still up would kill
+    # the clients and leave the thing that wedged them running to collect
+    # more.
+    restart
+    status=$?
+    reap
+    exit "$status"
+    ;;
 "")
     restart
     exit $?
     ;;
 *)
-    echo "usage: sccache-restart.sh [--check|--if-wedged]" >&2
+    echo "usage: sccache-restart.sh [--check|--if-wedged|--reap]" >&2
     exit 2
     ;;
 esac
