@@ -385,3 +385,109 @@ fn refresh_button(sidebar: &Sidebar) -> gtk::Button {
         .find_map(|widget| widget.downcast::<gtk::Button>().ok())
         .expect("the status line offers a manual sync")
 }
+
+/// The sidebar draws the model it was given, and does not re-derive it
+/// (spec 003, FR-016 and FR-012).
+///
+/// Which rows exist, what each is called and what number sits beside it are
+/// `postio_ui::sidebar`'s answers, so that the GTK sidebar and the macOS one
+/// draw the same thing. The expectations below are therefore computed from
+/// that module rather than written out: a literal here would pass while the
+/// two frontends disagreed, which is the shape #1155 left behind — the
+/// *ordering* moved to the shared layer and the rows did not, so macOS had
+/// no Flagged or Snoozed at all.
+pub fn the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let sidebar = Sidebar::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&sidebar));
+    window.set_default_size(212, 700);
+    window.present();
+    sidebar.set_account("lena@example.com");
+
+    let account = AccountId::new(1);
+    let folders = canvas_mailboxes(12);
+
+    // What the sidebar should show, asked of the shared layer.
+    let expected = |counts: postio_ui::sidebar::ViewCounts| {
+        let mut all = folders.clone();
+        all.extend(postio_ui::sidebar::view_rows(account, &folders, counts));
+        all
+    };
+    let rendered_against = |all: &[Mailbox]| {
+        sidebar.set_mailboxes(all);
+        pump();
+        let mut drawn = labels(&sidebar);
+        let mut wanted: Vec<(String, Option<String>)> = all
+            .iter()
+            .map(|mailbox| {
+                (
+                    postio_ui::sidebar::display_name(mailbox, all),
+                    postio_ui::sidebar::count_for(mailbox).map(|count| count.to_string()),
+                )
+            })
+            .collect();
+        // Order is the existing test's subject; this one is about membership.
+        drawn.sort();
+        wanted.sort();
+        (drawn, wanted)
+    };
+
+    // ── the ordinary state: nothing on its way, so no Outbox row ─────────
+    let quiet = expected(postio_ui::sidebar::ViewCounts {
+        flagged: 3,
+        snoozed: 2,
+        outbox: 0,
+        drafts: 2,
+        attention: 0,
+    });
+    let (drawn, wanted) = rendered_against(&quiet);
+    assert_eq!(
+        drawn, wanted,
+        "the sidebar drew something the model did not"
+    );
+    assert!(
+        !drawn.iter().any(|(name, _)| name == "Outbox"),
+        "an empty Outbox is not a row (FR-012): {drawn:?}"
+    );
+    // The account's server has a real `\Flagged` folder, so the model
+    // synthesises none — and the sidebar must not have one of its own.
+    assert_eq!(
+        drawn.iter().filter(|(name, _)| name == "Flagged").count(),
+        1,
+        "one Flagged row, the server's own: {drawn:?}"
+    );
+
+    // ── three on their way ───────────────────────────────────────────────
+    let sending = expected(postio_ui::sidebar::ViewCounts {
+        flagged: 3,
+        snoozed: 2,
+        outbox: 3,
+        drafts: 2,
+        attention: 0,
+    });
+    let (drawn, wanted) = rendered_against(&sending);
+    assert_eq!(
+        drawn, wanted,
+        "the sidebar drew something the model did not"
+    );
+    let outbox = drawn
+        .iter()
+        .find(|(name, _)| name == "Outbox")
+        .expect("three messages on their way, and no Outbox row to say so");
+    assert_eq!(
+        outbox.1,
+        Some("3".to_string()),
+        "the badge says how many are waiting"
+    );
+
+    window.close();
+}

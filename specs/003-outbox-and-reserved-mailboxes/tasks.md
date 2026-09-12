@@ -140,7 +140,7 @@ frontends render that same answer, view rows included.
 - [X] T035 [P] [US4] Unit test in `crates/postio-ui/src/sidebar.rs`: row order matches the canvas — Inbox, Flagged, Snoozed, Drafts, Outbox, Sent, Archive, Junk, Trash
 - [X] T036 [P] [US4] Unit test in `crates/postio-ui/src/sidebar.rs`: the count rules move intact — Drafts a total, Flagged flagged, Snoozed snoozed, Sent/Archive/Trash/Junk nothing, Inbox and ordinary unread, zero never drawn
 - [X] T037 [P] [US4] Test in `crates/postio-ffi/tests/mailboxes.rs`: the FFI returns the same rows in the same order **including view rows** — the assertion that would have failed since #1155
-- [ ] T038 [P] [US4] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: the rendered sidebar matches the shared model rather than re-deriving it
+- [X] T038 [P] [US4] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: the rendered sidebar matches the shared model rather than re-deriving it
 
 ### Implementation
 
@@ -189,7 +189,7 @@ Sent and the row disappears.
 - [X] T060 [US1] Write `send_state` beside `drafts.state` in `crates/postio-storage/src/repository/drafts.rs` — `save`, `set_state`, `queue_send`, `queue_send_at`, `cancel_send` — in the same transaction, and nowhere else
 - [X] T061 [US1] Add `ListScope::Outbox(AccountId)` to `crates/postio-model/src/scope.rs` with its arms in `reaction`, `is_drawn_from` and `mailbox()`
 - [X] T062 [US1] Add the Outbox predicate and the Drafts exclusion to `where_clause` and `scope_arguments` in `crates/postio-storage/src/repository/messages.rs` — **the riskiest change in the feature**, measured against T047
-- [ ] T063 [US1] Add `ListQuery::outbox` beside the existing constructors in `crates/postio-storage/src/repository/messages.rs`
+- [X] T063 [US1] Add `ListQuery::outbox` beside the existing constructors in `crates/postio-storage/src/repository/messages.rs`
 - [X] T064 [US1] Replace `MessageListRow::draft: bool` with `send_state: Option<DraftState>` in `crates/postio-storage/src/repository/messages.rs` and update every consumer the compiler names
 - [X] T065 [US1] **No new event.** `Event::MessageListChanged` already means what happened — the row leaves Drafts and joins the Outbox, which is a membership change in both — and both scopes already answer `Reload` to it, where `MessagesChanged` would make the Drafts scope `Refetch` and keep drawing a row that is no longer a member. What was missing was that the compose send path emitted *nothing*: `crates/postio-app/src/compose.rs` now announces through a callback seam. **The drainer's own transitions (Sending/Failed/Unconfirmed in `postio-sync`) still announce nothing** — see the note below
 - [X] T066 [US1] Add the sidebar's per-account count query (Outbox count, Drafts total, attention count) in `crates/postio-storage/src/repository/mailboxes.rs`, and carry it through `crates/postio-runtime/src/store/sqlite.rs`
@@ -216,10 +216,10 @@ with an attention count of 2.
 
 ### Tests
 
-- [ ] T072 [P] [US2] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: Drafts holds `editing`, `failed` and `unconfirmed` and nothing in flight (FR-020)
+- [X] T072 [P] [US2] **Covered** by `storage_suite::drafts::every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists`, which asserts FR-020 in both directions over all five states — it lives in `drafts.rs`, where the mirror-row fixture is
 - [X] T073 [P] [US2] Test in `crates/postio-storage/tests/storage_suite/mailboxes.rs`: the attention count is `failed` plus `unconfirmed`, and the Drafts total excludes in-flight rows (FR-022)
 - [X] T074 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: no attention marker when nothing needs one (FR-023)
-- [ ] T075 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_list.rs`: each Drafts row states which state it is in (FR-021)
+- [X] T075 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_row.rs`: each Drafts row states which state it is in (FR-021) — the words in `row::tests`, and the four glyphs against the real icon theme (`lookup_icon` never fails, it falls back)
 - [X] T076 [P] [US2] Test in `crates/postio-session/tests/session_suite/outbox.rs`: retrying a failed draft moves it to the Outbox and lowers the attention count by one (FR-024)
 
 ### Implementation

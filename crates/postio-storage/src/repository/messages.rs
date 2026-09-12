@@ -149,6 +149,15 @@ impl ListQuery {
         Self::new(ListScope::Snoozed(id))
     }
 
+    /// Every message on its way out of an account: queued, and sending.
+    ///
+    /// Not a mailbox — the rows are filed in Drafts and `send_state` is what
+    /// picks them out. See spec 003 and
+    /// `docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md`.
+    pub fn outbox(id: AccountId) -> Self {
+        Self::new(ListScope::Outbox(id))
+    }
+
     /// Every message of one thread, in every folder it touches.
     pub fn thread(id: ThreadId) -> Self {
         Self::new(ListScope::Thread(id))

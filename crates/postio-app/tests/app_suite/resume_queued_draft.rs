@@ -145,11 +145,7 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     let expected = {
         let connection = database.connection().expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
-            .count(&postio_storage::repository::ListQuery {
-                scope: postio_storage::repository::ListScope::Outbox(account),
-                limit: 50,
-                after: None,
-            })
+            .count(&postio_storage::repository::ListQuery::outbox(account))
             .expect("a count")
     };
     assert!(

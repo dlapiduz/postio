@@ -767,3 +767,36 @@ pub fn building_rows_does_not_resolve_a_keymap() {
         postio_gtk::row::hints(postio_core::Keymap::defaults())
     );
 }
+
+/// The four send states wear four different glyphs (spec 003, FR-021).
+///
+/// `lookup_icon` never fails: a name the theme does not hold comes back as
+/// `image-missing`, drawn without complaint. So a row whose mark is meant to
+/// say "this one stopped and needs you" can quietly draw the same box as the
+/// three beside it, and nothing anywhere reports a problem — the distinction
+/// exists in the source and not on the screen.
+///
+/// Asserting the names are distinct would be asserting on a `match` arm.
+/// This asks the theme the running application asks.
+pub fn the_send_state_marks_are_four_glyphs_the_theme_actually_has() {
+    let Some(display) = gdk::Display::default() else {
+        eprintln!("no display; skipping");
+        return;
+    };
+    let theme = gtk::IconTheme::for_display(&display);
+
+    // The names `row.rs` hands to `pipe_icon`, in the order a draft passes
+    // through them.
+    for name in [
+        "document-edit-symbolic",
+        "mail-send-symbolic",
+        "dialog-warning-symbolic",
+        "dialog-question-symbolic",
+    ] {
+        assert!(
+            theme.has_icon(name),
+            "{name} is not in this theme, so the row draws image-missing and \
+             the send state it stands for is invisible"
+        );
+    }
+}
