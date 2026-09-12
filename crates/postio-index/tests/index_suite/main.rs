@@ -27,3 +27,4 @@ mod header_index_size;
 mod schema_upgrade;
 mod search_statement_budget;
 mod startup_index_budget;
+mod suggestion;
