@@ -49,3 +49,8 @@
   convention being copied. The spec keeps it and gives the archive another
   letter, and says so where a reader will find it.
 - Ready for `/speckit-plan`.
+- **After implementation**: every requirement is met except FR-028, the
+  at-rest hint, which is #1511 and is a design-authority call — the resting
+  field is drawn by canvas 1b. The spec says so at the requirement itself, so
+  a reviewer reading the branch against the spec finds the gap where the claim
+  is, not in a commit message.

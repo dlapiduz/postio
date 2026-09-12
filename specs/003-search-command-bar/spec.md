@@ -265,7 +265,7 @@ destination.
 
 #### Finding out the bar exists — New
 
-- **FR-028**: The bar at rest MUST indicate that it does more than search mail.
+- **FR-028**: The bar at rest MUST indicate that it does more than search mail. **Not built, and deliberately: #1511.** At rest the field says *Search all mail* with a `/` chip, which is what canvas 1b draws — and CLAUDE.md makes the canvas visual truth, so changing the resting field is a design call rather than an implementation one. Everything else in this story is behind a keypress, so the gap is real and is recorded rather than quietly closed.
 - **FR-029**: When the bar is open with no prefix typed, it MUST show the available modes, the character that reaches each, and what each is for.
 - **FR-030**: When a mode is active, the bar MUST show which mode it is in and how to leave it.
 - **FR-031**: The modes and their prefixes MUST appear in the documentation a user is pointed at to learn Postio's keyboard, alongside the key bindings.
