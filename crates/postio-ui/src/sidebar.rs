@@ -12,7 +12,7 @@
 //! had already fixed on the other platform. Nothing here touches a toolkit:
 //! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
-use postio_model::{Mailbox, MailboxRole};
+use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
@@ -65,6 +65,105 @@ pub fn primary_within(mailbox: &Mailbox, among: &[Mailbox]) -> bool {
     })
 }
 
+/// How many messages each of the sidebar's views holds.
+///
+/// Gathered by the caller because the three come from different places:
+/// `flagged` and `snoozed` are sums over the account's folders, which the
+/// store's cached counts already have, and `outbox` is a question about draft
+/// state that only a query can answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ViewCounts {
+    /// Everything flagged in the account, wherever it is filed.
+    pub flagged: u32,
+    /// Everything currently snoozed.
+    pub snoozed: u32,
+    /// Drafts whose send is under way.
+    pub outbox: u32,
+}
+
+/// Whether `mailbox` is a view over messages filed elsewhere rather than a
+/// folder on the server.
+///
+/// A view is unpersisted by construction — it has no row, because there is
+/// nothing to store — so an unassigned id is what says so. Every mailbox the
+/// sidebar is handed otherwise comes from the store and has one.
+///
+/// This replaces the negative-id sentinels the GTK feed used to invent
+/// (`MailboxId::new(-1)` and `-2`). A sentinel is a value that means something
+/// only to whoever remembers it, and the frontend that did not remember —
+/// macOS — simply never had these rows.
+pub fn is_view(mailbox: &Mailbox) -> bool {
+    !mailbox.id.is_assigned()
+}
+
+/// The view rows this account's sidebar draws, in no particular order —
+/// [`sections`] places them.
+///
+/// # Why this is here and not in a widget
+///
+/// Every frontend needs the same answer, and the one that had to invent it
+/// locally did not: `Flagged` and `Snoozed` were built inside
+/// `postio-gtk::feed`, so the macOS sidebar has never had either row. Building
+/// them in the toolkit-free layer both frontends already consume is what makes
+/// "the same account draws the same rows" true rather than aspirational.
+///
+/// # What is invented, and what is not
+///
+/// `Snoozed` and `Outbox` are always Postio's own: no `SPECIAL-USE` attribute
+/// names either, so no server can advertise one and `MailboxRole::kind`
+/// answers `View` for both.
+///
+/// `Flagged` is the awkward one and the reason this takes the account's
+/// folders. RFC 6154 *does* define `\Flagged`, so a server can have a real
+/// one — Gmail's "Starred" — and inventing a second row beside it would draw
+/// the word twice. Worse, a view's empty path sorts before any real path, so
+/// the invented row would win [`primary_within`] and the user's actual folder
+/// would be demoted to an ordinary row underneath it.
+///
+/// The `Outbox` row is absent when it holds nothing, which is its ordinary
+/// state (spec 003 FR-012).
+pub fn view_rows(account: AccountId, folders: &[Mailbox], counts: ViewCounts) -> Vec<Mailbox> {
+    let mut rows = Vec::new();
+
+    let server_has_flagged = folders
+        .iter()
+        .any(|folder| folder.account_id == account && folder.role == MailboxRole::Flagged);
+    if !server_has_flagged {
+        rows.push(view(account, MailboxRole::Flagged, counts.flagged));
+    }
+    rows.push(view(account, MailboxRole::Snoozed, counts.snoozed));
+    if counts.outbox > 0 {
+        rows.push(view(account, MailboxRole::Outbox, counts.outbox));
+    }
+    rows
+}
+
+/// One view row: a query wearing a folder's clothes.
+///
+/// `path` is empty because there is nothing to `SELECT`, the id is left
+/// unassigned because there is no row, and `last_synced_at` stays `None`
+/// because a question is never out of date.
+fn view(account: AccountId, role: MailboxRole, count: u32) -> Mailbox {
+    let mut row = Mailbox::new(account, "", None);
+    row.role = role;
+    row.selectable = true;
+    row.counts = MailboxCounts {
+        total: count,
+        unread: 0,
+        flagged: if role == MailboxRole::Flagged {
+            count
+        } else {
+            0
+        },
+        snoozed: if role == MailboxRole::Snoozed {
+            count
+        } else {
+            0
+        },
+    };
+    row
+}
+
 /// Split the mailboxes into the two sections the canvas draws, each in order.
 ///
 /// Unselectable folders — `\Noselect` containers that exist only to hold a
@@ -93,6 +192,159 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
 
 #[cfg(test)]
 mod tests {
+
+    // ── The view rows (spec 003, US4) ────────────────────────────────────
+
+    #[test]
+    fn a_view_row_is_built_here_rather_than_by_a_frontend() {
+        let account = AccountId::new(1);
+        let folders = vec![folder(1, "INBOX", MailboxRole::Inbox)];
+
+        let views = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 3,
+                snoozed: 2,
+                outbox: 0,
+            },
+        );
+
+        let roles: Vec<MailboxRole> = views.iter().map(|row| row.role).collect();
+        assert_eq!(
+            roles,
+            vec![MailboxRole::Flagged, MailboxRole::Snoozed],
+            "no Outbox: it is hidden when empty (FR-012)"
+        );
+        for row in &views {
+            assert!(
+                is_view(row),
+                "{:?} has an id, so something will try to SELECT it",
+                row.role
+            );
+            assert!(row.path.is_empty(), "a view has nothing to SELECT");
+            assert!(row.selectable, "a view row is one a person can open");
+        }
+        assert_eq!(views[0].counts.flagged, 3);
+        assert_eq!(views[1].counts.snoozed, 2);
+    }
+
+    #[test]
+    fn the_outbox_row_appears_only_when_it_holds_something() {
+        let account = AccountId::new(1);
+        let folders = vec![folder(1, "INBOX", MailboxRole::Inbox)];
+        let with = |outbox| {
+            view_rows(
+                account,
+                &folders,
+                ViewCounts {
+                    flagged: 0,
+                    snoozed: 0,
+                    outbox,
+                },
+            )
+            .into_iter()
+            .map(|row| row.role)
+            .collect::<Vec<_>>()
+        };
+
+        assert!(
+            !with(0).contains(&MailboxRole::Outbox),
+            "an empty Outbox is not drawn (FR-012)"
+        );
+        assert!(with(1).contains(&MailboxRole::Outbox));
+    }
+
+    #[test]
+    fn no_flagged_view_is_invented_when_the_server_really_has_that_folder() {
+        // RFC 6154 defines `\Flagged`, so a server can have a real one --
+        // Gmail's "Starred". Synthesising a second row beside it would draw
+        // "Flagged, Flagged", and because a view's empty path sorts first the
+        // *synthetic* one would win `primary_within` and the real folder would
+        // be demoted to an ordinary row. The account's own mail would then be
+        // one click further away than on an account whose server has nothing.
+        let account = AccountId::new(1);
+        let folders = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(2, "Starred", MailboxRole::Flagged),
+        ];
+
+        let roles: Vec<MailboxRole> = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 3,
+                snoozed: 0,
+                outbox: 0,
+            },
+        )
+        .into_iter()
+        .map(|row| row.role)
+        .collect();
+
+        assert_eq!(
+            roles,
+            vec![MailboxRole::Snoozed],
+            "the real Starred folder is the Flagged row; nothing is invented"
+        );
+    }
+
+    #[test]
+    fn snoozed_is_always_invented_because_no_server_can_have_one() {
+        let account = AccountId::new(1);
+        // Even handed a folder a careless server called "Snoozed": a role is
+        // resolved from `SPECIAL-USE`, and there is no attribute for this.
+        let folders = vec![folder(3, "Snoozed", MailboxRole::Regular)];
+
+        let roles: Vec<MailboxRole> = view_rows(
+            account,
+            &folders,
+            ViewCounts {
+                flagged: 0,
+                snoozed: 0,
+                outbox: 0,
+            },
+        )
+        .into_iter()
+        .map(|row| row.role)
+        .collect();
+
+        assert_eq!(roles, vec![MailboxRole::Flagged, MailboxRole::Snoozed]);
+    }
+
+    #[test]
+    fn the_view_rows_take_their_place_in_the_shared_order() {
+        // Built here *and* ordered here: a frontend appending them to the end
+        // of the list is how the two frontends came to disagree.
+        let account = AccountId::new(1);
+        let mut all = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(4, "Sent", MailboxRole::Sent),
+            folder(5, "Projects", MailboxRole::Regular),
+        ];
+        all.extend(view_rows(
+            account,
+            &all.clone(),
+            ViewCounts {
+                flagged: 1,
+                snoozed: 1,
+                outbox: 1,
+            },
+        ));
+
+        let (special, ordinary) = sections(&all);
+        assert_eq!(
+            special.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![
+                MailboxRole::Inbox,
+                MailboxRole::Flagged,
+                MailboxRole::Snoozed,
+                MailboxRole::Outbox,
+                MailboxRole::Sent,
+            ]
+        );
+        assert_eq!(ordinary.len(), 1, "Projects is the only ordinary folder");
+    }
 
     #[test]
     fn the_outbox_sits_between_drafts_and_sent() {
