@@ -1,8 +1,9 @@
 # Keyboard reference
 
-<!-- Generated from `postio-core`'s command registry by
-`crates/postio-core/tests/keybindings_doc.rs`. Do not edit by hand:
-change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core`. -->
+<!-- Generated from `postio-core`'s command registry and the one
+box's mode table by `crates/postio-ui/tests/ui_suite/keybindings_doc.rs`.
+Do not edit by hand:
+change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`. -->
 
 Every command below is also in the `Ctrl+K` palette and the `?` cheat
 sheet, because all three are generated from one table.
@@ -124,3 +125,19 @@ command from inside a text field.
 | `H` | Render part once | Parts panel |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
+
+## The one box
+
+`/` opens one box in the header, and it answers more than one
+question. Typing searches mail; a character typed into an empty box
+chooses what else to ask, and is absorbed into a marker on the field
+rather than staying in the query. Backspace at the start gives the
+mode back and keeps what was typed.
+
+| Typed | What it does |
+|---|---|
+| *(nothing)* | Search all mail |
+| `>` | Run a command |
+| `#` | Go to a folder |
+| `@` | Find a correspondent |
+| `+` | Add a label |
