@@ -417,3 +417,94 @@ fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
         "the count read more rows once the account had mail: {small:?} then {large:?}"
     );
 }
+
+#[test]
+fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_you() {
+    // FR-024. The whole point of counting attention separately: the number
+    // goes down when you deal with one. A retry that left it at 2 would make
+    // the badge a thing to ignore.
+    use postio_model::{Draft, DraftState};
+    use postio_storage::repository::DraftRepository;
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account_mid_send(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    let before = mailboxes.draft_counts(account).expect("counts");
+    assert_eq!((before.outbox, before.attention), (2, 2));
+
+    // The gesture: open the failed one and send it again. `queue_send` is
+    // what the composer calls, so this is that path and not a shortcut.
+    let drafts = DraftRepository::new(&connection);
+    let failed = drafts
+        .by_state(DraftState::Failed)
+        .expect("by_state")
+        .into_iter()
+        .next()
+        .expect("one failed draft");
+    let mut failed = drafts.get(failed.id).expect("get").expect("the draft");
+    drafts
+        .queue_send(&mut failed, chrono::Utc::now())
+        .expect("send it again");
+
+    let after = mailboxes.draft_counts(account).expect("counts");
+    assert_eq!(
+        after.attention, 1,
+        "retrying one of two should leave one needing a person"
+    );
+    assert_eq!(after.outbox, 3, "and it is on its way now");
+    assert_eq!(
+        after.drafts,
+        before.drafts - 1,
+        "Drafts holds one fewer, because the row moved rather than copied"
+    );
+    let _ = Draft::new(account);
+}
+
+#[test]
+fn a_failed_send_keeps_the_reason_the_composer_shows() {
+    // FR-025. #1487 computed the reason, wrote it to the queue row and
+    // carried it up the engine's report, where nobody read it; `compose.rs`
+    // reads it now and says "Not sent — {reason}". This is the half that can
+    // be asserted without a display: the reason survives on the row for the
+    // composer to find when the person comes back to it.
+    use postio_model::{Draft, DraftState, Operation, OperationTarget};
+    use postio_storage::repository::{DraftRepository, OperationQueueRepository};
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    test_support::mailbox(&connection, &account, "Drafts");
+
+    let drafts = DraftRepository::new(&connection);
+    let mut draft = Draft::new(account.id);
+    draft.subject = "Re: the contract".to_owned();
+    drafts.save(&mut draft).expect("save");
+    let queued = drafts
+        .queue_send(&mut draft, chrono::Utc::now())
+        .expect("send");
+
+    let queue = OperationQueueRepository::new(&connection);
+    queue
+        .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
+        .expect("the server refuses it");
+    drafts
+        .set_state(draft.id, DraftState::Failed)
+        .expect("the drainer gives up");
+
+    // Read back the way `compose.rs` reads it: by the draft it is about,
+    // which is all the composer has when somebody reopens the row.
+    let reason = queue
+        .last_failure_for(OperationTarget::Draft(draft.id))
+        .expect("last_failure_for");
+    assert!(
+        reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("550")),
+        "the server's own words have to survive for the composer to show \
+         them -- \"something went wrong\" is what FR-025 exists to prevent: \
+         {reason:?}"
+    );
+    let _ = Operation::Send { draft: draft.id };
+}
