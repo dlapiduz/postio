@@ -116,6 +116,12 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
         blobs,
         bridge.handle(),
         postio_app::reading::Showing::default(),
+        {
+            // The real seam: pressing Send has to reach the list and the
+            // sidebar, which is what moves the row into the Outbox on screen.
+            let feeds = feeds.clone();
+            std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
+        },
     );
     window.composer().close();
     while glib::MainContext::default().iteration(false) {}

@@ -630,6 +630,10 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         wiring.blobs.clone(),
         wiring.runtime.clone(),
         showing.clone(),
+        {
+            let feeds = feeds.clone();
+            std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
+        },
     );
 
     // The reading pane. After `compose::install`, because the two share the

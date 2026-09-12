@@ -41,7 +41,7 @@ use gtk::gio;
 use gtk::prelude::*;
 use postio_gtk::composer::{Closing, Composer, RecipientCandidate};
 use postio_gtk::window::Window;
-use postio_model::ids::{AccountId, MessageId};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::signature_default;
 use postio_model::{Attachment, Draft, DraftId, DraftState, EmailAddress, OperationTarget};
 use postio_storage::repository::{
@@ -62,6 +62,13 @@ const SUGGESTION_LIMIT: u32 = 8;
 /// `showing` is the reading pane's own record of which message is on screen
 /// ([`crate::reading::Showing`]), which is what `e`, `E` and `f` have to act
 /// on. It is passed in rather than derived here for the reason #325 records.
+/// How the composer tells the rest of the window something happened.
+///
+/// A callback rather than the `Feeds` themselves: what this module needs is
+/// "say so", and handing it the panes would let it reach into them. It is also
+/// what lets a composer test run without building a message list to ignore.
+pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
+
 pub fn install(
     window: &Window,
     account: AccountId,
@@ -69,6 +76,7 @@ pub fn install(
     blobs: BlobStore,
     runtime: tokio::runtime::Handle,
     showing: crate::reading::Showing,
+    announce: Announce,
 ) {
     let composer = window.composer();
     composer.set_account(account);
@@ -76,7 +84,13 @@ pub fn install(
     install_signature_default(&composer, window, database.clone(), account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
-    install_send(&composer, database.clone(), Rc::clone(&last_id));
+    install_send(
+        &composer,
+        database.clone(),
+        Rc::clone(&last_id),
+        account,
+        announce,
+    );
     install_send_later(&composer, database.clone(), Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
     install_recipient_suggestions(&composer, database.clone(), account);
@@ -467,7 +481,13 @@ fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> 
 /// folder and recoverable; letting the close path run instead would delete
 /// the user's words on the way out. Losing the send is recoverable, losing
 /// the message is not.
-fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option<DraftId>>>) {
+fn install_send(
+    composer: &Composer,
+    database: Database,
+    last_id: Rc<Cell<Option<DraftId>>>,
+    account: AccountId,
+    announce: Announce,
+) {
     composer.connect_send(move |draft| {
         // Cloned because the seam hands out `&Draft`: unlike a save, which
         // writes the assigned id back onto the composer's own draft, nothing
@@ -479,8 +499,44 @@ fn install_send(composer: &Composer, database: Database, last_id: Rc<Cell<Option
             // status line: `Composer::send` closes straight after this, so
             // there is nothing on screen left to read it.
             tracing::error!(%error, "could not queue the draft for sending: {error}");
+            return;
+        }
+        // Say so, or the write is invisible until something else redraws.
+        //
+        // This is the last step of the local-first order -- write, enqueue,
+        // emit, repaint -- and it was missing: the draft moved from Drafts to
+        // the Outbox in the store and nothing on screen knew. `Composer::send`
+        // closes the pane straight after this, so the user is looking at the
+        // list while it happens.
+        //
+        // `MessageListChanged` rather than a state-change event of its own.
+        // What happened *is* a list membership change, in both directions at
+        // once: the row leaves Drafts and joins the Outbox. Both scopes
+        // already answer `Reload` to it, and the Drafts mailbox scope answers
+        // `Refetch` to `MessagesChanged`, which would keep drawing a row that
+        // is no longer a member.
+        if let Some(drafts) = drafts_mailbox(&database, account) {
+            announce(&postio_core::Event::MessageListChanged {
+                account,
+                mailbox: drafts,
+            });
         }
     });
+}
+
+/// The account's Drafts folder, which is where a draft's row lives whatever
+/// its send state — the Outbox is a predicate over that folder, not a second
+/// one (spec 003).
+///
+/// `None` before the first sync has found one, in which case the draft has no
+/// row to have moved and there is nothing to announce.
+fn drafts_mailbox(database: &Database, account: AccountId) -> Option<MailboxId> {
+    let connection = database.connection().ok()?;
+    postio_storage::repository::MailboxRepository::new(&connection)
+        .by_role(account, postio_model::MailboxRole::Drafts)
+        .ok()
+        .flatten()
+        .map(|mailbox| mailbox.id)
 }
 
 /// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
@@ -959,6 +1015,9 @@ mod tests {
                 blobs,
                 runtime.handle().clone(),
                 crate::reading::Showing::default(),
+                // These tests are about the composer's own behaviour, not
+                // about what the list does afterwards; nobody is listening.
+                Rc::new(|_: &postio_core::Event| {}),
             );
             let composer = window.composer();
             composer.open(Draft::new(account));
@@ -991,6 +1050,9 @@ mod tests {
                 blobs,
                 runtime.handle().clone(),
                 crate::reading::Showing::default(),
+                // These tests are about the composer's own behaviour, not
+                // about what the list does afterwards; nobody is listening.
+                Rc::new(|_: &postio_core::Event| {}),
             );
             settle();
 
@@ -1048,6 +1110,9 @@ mod tests {
                 blobs,
                 runtime.handle().clone(),
                 crate::reading::Showing::default(),
+                // These tests are about the composer's own behaviour, not
+                // about what the list does afterwards; nobody is listening.
+                Rc::new(|_: &postio_core::Event| {}),
             );
             let composer = window.composer();
             composer.open(Draft::new(account));
@@ -1076,6 +1141,9 @@ mod tests {
                 blobs,
                 runtime.handle().clone(),
                 crate::reading::Showing::default(),
+                // These tests are about the composer's own behaviour, not
+                // about what the list does afterwards; nobody is listening.
+                Rc::new(|_: &postio_core::Event| {}),
             );
             settle();
 
