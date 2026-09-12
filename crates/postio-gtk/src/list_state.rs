@@ -180,7 +180,7 @@ pub fn derive_opening(waiting: Waiting, waited: std::time::Duration) -> Option<S
 /// The heading and the line under it for one wait.
 ///
 /// Split out of [`describe`] so the copy can be asserted on without a
-/// display, the same reason [`derive`] is a pure function.
+/// display, the same reason [`fn@derive`] is a pure function.
 pub fn describe_wait(waiting: Waiting) -> (&'static str, &'static str) {
     match waiting {
         // Named as the keyring rather than as Postio, because what to *do*
