@@ -26,7 +26,7 @@ binaries are put on a private compositor automatically.
 
 ```bash
 cargo test -p postio-core --lib                                    # 81 passed
-cargo nextest run -p postio-core --test core_suite command_registry # part of core_suite's 137
+cargo nextest run -p postio-core --test core_suite command_registry # 20 passed
 ```
 
 Expect: every new id has a title and a non-empty default binding; no binding
@@ -34,8 +34,12 @@ collides with `g g`, `g f` or `g a`; each is reachable in a list context.
 
 ## 2. The generated documentation followed
 
+*(The generator moved to `postio-ui` during implementation: the document is
+rendered from two tables now, and only that crate can see both. See
+[research.md](./research.md) R5 and R6.)*
+
 ```bash
-cargo nextest run -p postio-core --test core_suite keybindings_doc  # [n] passed
+cargo nextest run -p postio-ui --test ui_suite keybindings_doc      # 2 passed
 git diff --stat docs/keybindings.md
 ```
 
@@ -47,7 +51,7 @@ read by the bar and not by the docs.
 ## 3. The mode table is shared and whole
 
 ```bash
-cargo test -p postio-ui --lib finder_modes                          # [n] passed
+cargo test -p postio-ui --lib finder                                # 3 passed
 ```
 
 Expect: prefixes unique, exactly one mode without one, every mode named and
@@ -57,8 +61,10 @@ section 5 is what checks that.
 ## 4. The bar and the keys, where a person would see them
 
 ```bash
-cargo nextest run -p postio-gtk --test gtk_suite gtk_finder         # 4 passed (271 skipped)
-cargo nextest run -p postio-gtk --test gtk_suite gtk_cheatsheet     # [n] passed
+cargo nextest run -p postio-gtk --test gtk_suite gtk_finder         # 4 passed
+cargo nextest run -p postio-gtk --test gtk_suite gtk_cheatsheet     # 1 passed
+cargo nextest run -p postio-gtk --test gtk_suite gtk_go_to           # 1 passed
+cargo nextest run -p postio-gtk --test gtk_accessibility             # 1 passed
 cargo test -p postio-app --test app_suite                           # 89 passed, 1 failed -- see below
 ```
 

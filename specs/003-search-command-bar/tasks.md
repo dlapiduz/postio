@@ -102,10 +102,10 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T028 [P] Confirm `crates/postio-ui` still carries no toolkit dependency by running `python3 scripts/checks/check-crate-boundaries.py`
-- [ ] T029 [P] Run `cargo clippy -p postio-core -p postio-ui -p postio-gtk -p postio-app --all-targets -- -D warnings`
-- [ ] T030 Run `scripts/check.sh` and confirm every repository invariant is clean
-- [ ] T031 Walk [quickstart.md](./quickstart.md) sections 1–5 end to end, and replace any remaining `[n]` with the count the command actually selected — a section is not walked while its own count is a placeholder
+- [X] T028 [P] Confirm `crates/postio-ui` still carries no toolkit dependency by running `python3 scripts/checks/check-crate-boundaries.py`
+- [X] T029 [P] Run `cargo clippy -p postio-core -p postio-ui -p postio-gtk -p postio-app --all-targets -- -D warnings`
+- [X] T030 Run `scripts/check.sh` and confirm every repository invariant is clean
+- [~] T031 Walk [quickstart.md](./quickstart.md) sections 1–5 end to end — sections 1–3 and 5 walked and counted; section 4's `app_suite` count outstanding, and replace any remaining `[n]` with the count the command actually selected — a section is not walked while its own count is a placeholder
 - [ ] T032 Walk [quickstart.md](./quickstart.md) section 6 by eye, which is the only step that can judge whether a person can find the thing. Needs a display and a person
 - [ ] T033 Land: `scripts/issue-land.sh --detach` from the feature worktree — one pull request reviewed against [spec.md](./spec.md), closing no issue, with `Refs: specs/003-search-command-bar`
 
