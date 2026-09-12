@@ -407,6 +407,9 @@ struct State {
     persistent_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
+    /// Every path `create_mailbox` was asked for, in order, including ones
+    /// that already existed. See [`MockBackend::created`].
+    created: Vec<String>,
     /// Calls currently waiting out [`State::latency`].
     in_flight: usize,
     /// The largest [`State::in_flight`] ever reached.
@@ -621,6 +624,15 @@ impl MockBackend {
     /// How many calls the backend has served.
     pub fn calls(&self) -> u64 {
         self.state().calls
+    }
+
+    /// Every path `create_mailbox` was asked for, oldest first.
+    ///
+    /// Includes paths that already existed — the call is idempotent, and a
+    /// test asserting "created once" has to be able to see a second attempt
+    /// that a silently-successful implementation would hide.
+    pub fn created(&self) -> Vec<String> {
+        self.state().created.clone()
     }
 
     /// Which mailbox each served header `FETCH` was for, oldest first.
@@ -895,6 +907,7 @@ impl MockBackendBuilder {
                 refuse_uid_listing: false,
                 latency: Duration::ZERO,
                 calls: 0,
+                created: Vec::new(),
                 in_flight: 0,
                 peak_in_flight: 0,
                 header_fetches: Vec::new(),
@@ -965,6 +978,22 @@ impl MailBackend for MockBackend {
         // state no real backend produces.
         super::resolve_roles(&mut listed);
         Ok(listed)
+    }
+
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
+        self.enter("CREATE").await?;
+        let mut state = self.state();
+        state.require_connected("CREATE")?;
+        state.created.push(path.to_owned());
+        // Already there is success, not failure: the caller wants the folder
+        // to exist, not to have been the one that made it.
+        if state.index_of(path).is_ok() {
+            return Ok(());
+        }
+        state
+            .mailboxes
+            .push(MailboxState::seed(MockMailbox::new(path.to_owned())));
+        Ok(())
     }
 
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus> {

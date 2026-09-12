@@ -91,7 +91,7 @@ once.
 
 ### Tests
 
-- [ ] T014 [P] [US3] Test in `crates/postio-account/src/backend/mock.rs`: `MockBackend` records `create_mailbox` calls so a suite can assert on them
+- [X] T014 [P] [US3] Test in `crates/postio-account/src/backend/mock.rs`: `MockBackend` records `create_mailbox` calls so a suite can assert on them
 - [ ] T015 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server listing only `INBOX` ends discovery with one selectable mailbox per reserved role, one create per missing role
 - [ ] T016 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a second pass over the same account issues **zero** creates (SC-007, FR-028)
 - [ ] T017 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: `Inbox` is never created, even when the server does not list it (FR-029)
@@ -103,11 +103,11 @@ once.
 
 ### Implementation
 
-- [ ] T023 [US3] Add `async fn create_mailbox(&self, path: &str) -> BackendResult<()>` to the trait in `crates/postio-account/src/backend/mod.rs`, with no default implementation
-- [ ] T024 [US3] Implement it for IMAP in `crates/postio-account/src/imap/mailboxes.rs` over `io-imap`'s RFC 3501 `CREATE`, subscribing where the protocol separates the two, and wire it in `crates/postio-account/src/imap/backend.rs`
-- [ ] T025 [P] [US3] Implement it in `crates/postio-account/src/backend/mock.rs`, recording calls and allowing a scripted refusal
-- [ ] T026 [P] [US3] Return `Unsupported` in `crates/postio-gmail/src/backend.rs`
-- [ ] T027 [P] [US3] Return `Unsupported` in `crates/postio-jmap/src/backend.rs`
+- [X] T023 [US3] Add `async fn create_mailbox(&self, path: &str) -> BackendResult<()>` to the trait in `crates/postio-account/src/backend/mod.rs`, with no default implementation
+- [X] T024 [US3] Implement it for IMAP in `crates/postio-account/src/imap/mailboxes.rs` over `io-imap`'s RFC 3501 `CREATE`, subscribing where the protocol separates the two, and wire it in `crates/postio-account/src/imap/backend.rs`
+- [X] T025 [P] [US3] Implement it in `crates/postio-account/src/backend/mock.rs`, recording calls and allowing a scripted refusal
+- [X] T026 [P] [US3] Return `Unsupported` in `crates/postio-gmail/src/backend.rs`
+- [X] T027 [P] [US3] Return `Unsupported` in `crates/postio-jmap/src/backend.rs`
 - [ ] T028 [US3] Migration `crates/postio-storage/src/migrations/0018_role_creation_refused.sql`: the refusal time and the server's reason on `mailbox_roles`, registered in `crates/postio-storage/src/migrations/mod.rs`
 - [ ] T029 [US3] Read and write the refusal in `crates/postio-storage/src/repository/mailbox_roles.rs`, including clearing it
 - [ ] T030 [US3] In `crates/postio-sync/src/discover.rs`, create a reserved role's folder when every tier resolves to nothing — never for `Inbox`, never when a refusal is recorded, never twice

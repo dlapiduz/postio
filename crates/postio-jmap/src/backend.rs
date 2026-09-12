@@ -190,6 +190,20 @@ impl MailBackend for JmapBackend {
             .collect())
     }
 
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()> {
+        // Not yet. JMAP can create a folder, but this adapter has no reason
+        // to until it is a backend someone runs (v1 is IMAP and SMTP), and a
+        // stub that silently succeeded would tell discovery a folder exists
+        // when none does. Reported as a refusal so the caller records it and
+        // stops asking, which is exactly the behaviour a server that will
+        // never allow it should get.
+        let _ = path;
+        Err(BackendError::Rejected {
+            command: "CREATE".to_owned(),
+            reason: "this backend cannot create folders yet".to_owned(),
+        })
+    }
+
     async fn select(&self, path: &str, _mode: SelectMode) -> BackendResult<MailboxStatus> {
         self.status(path).await
     }

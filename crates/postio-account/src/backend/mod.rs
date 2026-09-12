@@ -124,6 +124,26 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     /// Lists mailboxes, resolving each one's role at the edge.
     async fn list_mailboxes(&self, filter: &MailboxFilter) -> BackendResult<Vec<MailboxSummary>>;
 
+    /// Creates `path` on the server, subscribing to it where the protocol
+    /// separates the two.
+    ///
+    /// **Idempotent from the caller's point of view.** A server reporting that
+    /// the mailbox already exists is success, not failure: two clients may
+    /// race, and the caller wants the folder to *exist*, not to have been the
+    /// one that made it.
+    ///
+    /// Called only by discovery, and only for a reserved role that resolves to
+    /// no folder — never for `INBOX`, which RFC 3501 names and every server
+    /// has. A server that refuses is reported as
+    /// [`BackendError::Rejected`] so the refusal can be recorded and not
+    /// retried on every pass; it is never fatal to a discovery pass.
+    ///
+    /// No default implementation on purpose. One returning `Ok(())` would
+    /// report success for something that never happened, and one returning an
+    /// error would let a new backend forget to answer. A backend that cannot
+    /// create a folder has to say so.
+    async fn create_mailbox(&self, path: &str) -> BackendResult<()>;
+
     /// Opens a mailbox and reports its state.
     async fn select(&self, path: &str, mode: SelectMode) -> BackendResult<MailboxStatus>;
 
