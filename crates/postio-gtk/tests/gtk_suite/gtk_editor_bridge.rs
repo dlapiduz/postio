@@ -234,4 +234,41 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
         text.contains("Acknowledged."),
         "the reply's own words went missing: {text:?}"
     );
+
+    // ── And it opens when you click it, inside a contenteditable ────────
+    //
+    // `specs/002-compose-editor` T048 left this to a person at a display,
+    // and the folded-by-default half is covered above and in
+    // `postio_ui::editor::document`'s own tests. This is the other half, and
+    // it is the half with a real way to fail: the fold sits *inside* the
+    // editing surface, where a click's ordinary job is to place a caret. The
+    // mitigation is `<summary contenteditable="false">`, and whether that is
+    // enough is a question about WebKit rather than about our markup — which
+    // is exactly the kind a test should answer once instead of a person
+    // answering it every release.
+    //
+    // No script runs the fold, by design (FR-041), so `open` flipping is the
+    // browser doing it.
+    let open = || eval(editor.widget(), "document.querySelector('details').open");
+    assert_eq!(open(), "false", "a reply's quote starts folded");
+
+    eval(
+        editor.widget(),
+        "(() => { document.querySelector('details > summary').click();            return 'clicked'; })()",
+    );
+    settle("the fold to open", || open() == "true");
+    assert_eq!(
+        open(),
+        "true",
+        "clicking the summary did not open the quote"
+    );
+
+    // And it closes again, because a fold that only opens is a disclosure a
+    // person cannot undo.
+    eval(
+        editor.widget(),
+        "(() => { document.querySelector('details > summary').click();            return 'clicked'; })()",
+    );
+    settle("the fold to close", || open() == "false");
+    assert_eq!(open(), "false", "the quote would not fold back up");
 }
