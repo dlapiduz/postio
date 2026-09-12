@@ -39,4 +39,13 @@
   undiscoverable: four of the bar's five modes appear in no documentation and
   are not hinted at by the bar itself. That is now User Story 4, and it is the
   only new work here.
+- A second new story was added after the maintainer asked for the `g i`
+  convention from other mail clients: direct sequences to the destinations
+  people reach most. It shares its mechanism with the discoverability story —
+  a destination expressed as a registry command gets its binding, palette
+  entry, cheat-sheet line and documented row from one table — so the two are
+  one piece of work at different ends.
+- `g a` is noted as taken: it is "next scope" here and "all mail" in the
+  convention being copied. The spec keeps it and gives the archive another
+  letter, and says so where a reader will find it.
 - Ready for `/speckit-plan`.

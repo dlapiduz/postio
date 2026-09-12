@@ -37,8 +37,20 @@ the maintainer came to ask for a folder jump that had already shipped.
 
 That is what this feature adds, and the built behaviour is written down here
 because it is the thing discoverability has to describe accurately. Sections
-marked **Built** are being ratified, not rebuilt. The section marked **New**
-is the work.
+marked **Built** are being ratified, not rebuilt. Sections marked **New** are
+the work.
+
+The second new part is a **direct route** to the destinations people reach
+most. The bar is a good general answer and a long way round for "go to my
+inbox", which is why every mail client people arrive from binds that to two
+keys. Postio already has `g`-prefixed sequences; this adds the family users
+bring with them.
+
+These two new parts are the same work at different ends. A destination
+expressed as a command in the registry gets its binding, its palette entry,
+its cheat-sheet line and its row in `keybindings.md` from the one table that
+already generates all four — so making the destinations reachable by chord is
+also what makes them discoverable, and neither has to be solved twice.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -149,6 +161,36 @@ tells them enough to get there.
 5. **Given** a new mode is added to the bar later, **When** the documentation is generated, **Then** the new mode appears without anybody editing a second list by hand.
 6. **Given** a screen-reader user, **When** the bar is at rest and when it is in a mode, **Then** the same facts are available to them as text.
 
+---
+
+### User Story 5 - Go straight to the places you go most (Priority: P2) — New
+
+Someone who has used mail on the web arrives with `g i` in their fingers. They
+press it expecting the inbox. In Postio today, nothing happens. The same is
+true of every other destination they reach dozens of times a day: the route
+exists, but it costs a prefix and a name, or a trip to the sidebar.
+
+With this, the common destinations answer to a two-key sequence — `g i` for the
+inbox, and a consistent family for the rest of the roles the sidebar shows.
+
+**Why this priority**: P2 — below being able to find the modes at all, above
+ratifying what already ships. It is a small amount of work with an outsized
+effect on how the client feels to somebody arriving from elsewhere, and it
+carries the discoverability of the destinations along with it for free.
+
+**Independent Test**: With mail in more than one folder, press `g i` from the
+message list and confirm the inbox is showing; repeat for each bound
+destination.
+
+**Acceptance Scenarios**:
+
+1. **Given** the user is anywhere they could use the message list, **When** they press `g i`, **Then** the inbox is shown and becomes the current folder everywhere the current folder is shown.
+2. **Given** an account whose inbox is not named "Inbox" — a different provider, a different language — **When** the user presses `g i`, **Then** they still arrive at that account's inbox.
+3. **Given** the destinations that have a sequence, **When** the user opens the bar in command mode or the cheat sheet, **Then** each appears there by name with the sequence beside it, without anybody maintaining a second list.
+4. **Given** a user who rebinds one of these in configuration, **When** they use the new binding, **Then** it works and the old one no longer does, on the same terms as every other command.
+5. **Given** a destination that does not exist for the current account, **When** its sequence is pressed, **Then** the user is told plainly rather than being left on an empty list wondering whether it worked.
+6. **Given** the user is typing in the bar or composing, **When** they type `g` followed by a letter, **Then** the letters are entered as text and no navigation happens.
+
 ### Edge Cases
 
 - **A folder named like a command.** A folder called "Archive" and the command "Archive" both match `archive`. Both are offered; the rows say which is which, and activating one never silently does the other.
@@ -165,6 +207,9 @@ tells them enough to get there.
 - **The hint competing with the query.** Whatever tells the user about the modes must not obstruct typing, and must get out of the way once a query is under way.
 - **A new mode added later.** Both the bar's own hint and the documentation must gain it without a second hand-maintained list, on pain of the drift a single registry exists to prevent.
 ## Requirements *(mandatory)*
+- **A sequence whose first key already means something.** `g g`, `g f` and `g a` are taken. `g a` is the one that collides with the convention being copied — it is "next scope" here and "all mail" there — and an arriving user's muscle memory will find it.
+- **A destination with no folder behind it.** An account with no Junk folder, or no Archive: the sequence must say so rather than appear to do nothing.
+- **More than one account.** "The inbox" is ambiguous once a second account exists, and the sequence must land somewhere defensible rather than on whichever account sorted first.
 
 ### Functional Requirements
 
@@ -218,6 +263,17 @@ tells them enough to get there.
 - **FR-034**: Everything the bar says about its modes MUST be available to assistive technology as text.
 - **FR-035**: Nothing added for discoverability may obstruct typing a query or slow the bar's response to a keystroke.
 
+#### Going straight there — New
+
+- **FR-036**: Users MUST be able to reach the inbox with the two-key sequence `g i`.
+- **FR-037**: The common destinations the sidebar shows MUST each be reachable by a two-key sequence beginning `g`, consistent with each other and, where it does not collide, with the convention users arrive with.
+- **FR-038**: These sequences MUST target a mailbox's **role**, not its name, so that an inbox called something else, or named in another language, is still what `g i` reaches.
+- **FR-039**: Each such destination MUST be a command in the registry, so that its binding, its palette entry, its cheat-sheet line and its documented row all derive from the one table rather than from four hand-kept lists.
+- **FR-040**: These sequences MUST be rebindable on the same terms as every other command.
+- **FR-041**: A sequence whose destination does not exist for the current account MUST say so rather than silently do nothing.
+- **FR-042**: These sequences MUST NOT fire while the user is entering text, including in the bar, the composer, and any other text field.
+- **FR-043**: Adding these MUST NOT change the meaning of any sequence already bound.
+
 ### Key Entities
 
 - **Query**: the line of text the user typed, together with the operators recognized within it and their positions in that text.
@@ -238,6 +294,8 @@ tells them enough to get there.
 - **SC-006**: A user who has never read the source can reach all five of the bar's modes using only what the bar and the documentation tell them.
 - **SC-009**: A user who has never read the documentation can go to Drafts from the keyboard on the first attempt, without being told the prefix beforehand.
 - **SC-010**: Adding a mode to the bar requires editing exactly one list for it to appear in both the bar's hint and the generated documentation.
+- **SC-011**: A user arriving from another mail client reaches their inbox with the sequence they already know, on the first try, without reading anything.
+- **SC-012**: Every destination that has a sequence is reachable in exactly two keystrokes from anywhere the message list is usable.
 - **SC-007**: Opening the bar and typing stays responsive with an account of 500 folders — no perceptible delay between keystroke and narrowed results.
 - **SC-008**: No search or navigation performed from the bar causes any network request.
 
@@ -246,6 +304,9 @@ tells them enough to get there.
 - **The bar is one box, and already is.** Two surfaces — a `ctrl+k` palette and a `/` query bar — were converged into one, and this spec describes that box. Results are ranked within the active mode and never blended across modes, because a list mixing commands and messages is harder to scan than either.
 - **Folder names are untrusted text.** They come from a mail server, so they are displayed literally and never interpreted.
 - **Destinations follow the sidebar.** Whatever the sidebar decides a user can go to — including roles that span accounts and saved searches — is what the bar offers, rather than a second list that could disagree.
+- **`g a` stays as it is.** It means "next scope" today, and the convention being copied would have it mean "all mail" — so the archive gets a different letter rather than an existing binding being taken away for a destination that is not even the same one. Named here because an arriving user's fingers will find `g a` anyway, and that is a thing to have decided rather than discovered.
+- **Which letters, beyond `g i`, is a design call**, not a product one: the requirement is a consistent family covering the sidebar's roles, and the specific letters belong with whoever owns the keymap.
+- **Multi-account destinations follow whatever the sidebar already does** for a role that spans accounts, rather than inventing a second answer here.
 - **Ranking across kinds is a design decision, not a product one**, and is left to the design authority provided FR-005 holds: a user can always tell what a row will do.
 - **Body search covers what has been indexed.** A message whose body has not yet been fetched is still findable by its indexed parts.
 - **No new persisted state.** Going to a folder from the bar leaves the same trace that going to it from the sidebar does; this feature adds no history or recents store of its own.
@@ -260,5 +321,8 @@ tells them enough to get there.
   that exist findable; it does not redesign them.
 - Changing the prefix characters. They are what ships and what any
   documentation written here will describe.
+- Rebinding or removing any sequence that exists today, `g a` included.
+- A sequence for every folder. The roles the sidebar shows get one; a folder
+  six levels into a tree is what the bar is for.
 - Acting on messages in bulk from the result list beyond what the existing commands already do.
 - Remembering recent or frequent destinations to reorder results.
