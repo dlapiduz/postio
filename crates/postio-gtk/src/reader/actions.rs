@@ -37,6 +37,23 @@ pub const ACTIONS: [Action; 4] = [
     button(ReaderAction::Archive, "postio-reader-action-archive"),
 ];
 
+/// What a message waiting to be sent offers: stopping it, and nothing else.
+///
+/// A separate array rather than a mutable bar, because [`ActionBar`] is built
+/// once from a slice and is shared with the conversation pane and its footer
+/// — three surfaces, one of which would have to grow a rebuild path for a
+/// case the other two never hit.
+pub const QUEUED: [Action; 1] = [button(
+    ReaderAction::CancelSend,
+    "postio-reader-action-cancel",
+)];
+
+/// What a send that stopped offers: trying again.
+pub const STOPPED: [Action; 1] = [button(
+    ReaderAction::RetrySend,
+    "postio-reader-action-retry",
+)];
+
 /// One verb, dressed for GTK.
 const fn button(verb: ReaderAction, class: &'static str) -> Action {
     let action = Action::new(verb.command(), verb.title(), class);
@@ -53,7 +70,20 @@ const fn button(verb: ReaderAction, class: &'static str) -> Action {
 /// the pane, and re-hides it the moment the pane empties or the composer
 /// takes over.
 pub fn new() -> Rc<ActionBar> {
-    let bar = ActionBar::new(&ACTIONS, "postio-reader-actions");
+    build(&ACTIONS)
+}
+
+/// A bar for one of the outgoing verb sets, hidden like the ordinary one.
+///
+/// Which verbs belong to which state is
+/// [`ReaderAction::for_send_state`](postio_ui::reader::header::ReaderAction::for_send_state)'s
+/// answer, in `postio-ui`, so the macOS reader reaches the same one.
+pub fn new_for(actions: &'static [Action]) -> Rc<ActionBar> {
+    build(actions)
+}
+
+fn build(actions: &[Action]) -> Rc<ActionBar> {
+    let bar = ActionBar::new(actions, "postio-reader-actions");
     bar.set_visible(false);
 
     // The canvas right-aligns a thread-position status after these four

@@ -133,6 +133,10 @@ command_ids! {
     DiscardDraft => "discard_draft",
     /// Settle an unconfirmed send by hand: it did arrive.
     MarkSent => "mark_sent",
+    /// Put a send that stopped back on the queue.
+    RetrySend => "retry_send",
+    /// Take a queued send back off the queue, leaving the draft editable.
+    CancelSend => "cancel_send",
     /// Attach a file to the draft.
     AttachFile => "attach_file",
     /// Move the composition between the reading pane and a window of its own.
@@ -567,6 +571,30 @@ pub enum Command {
         /// Which draft, or the one in view.
         draft: Option<DraftId>,
     },
+    /// Put a send back on the queue after it stopped.
+    ///
+    /// The way out of `Failed` and `Unconfirmed` that is not "throw it away".
+    /// Until now the only retry was to open the draft and press Send again,
+    /// which works -- `queue_send` is what the composer calls, and it is what
+    /// this calls -- but is not something the Outbox could offer, because a
+    /// message on its way has no composer open.
+    ///
+    /// `None` means the draft in view.
+    RetrySend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
+    /// Take a queued send back off the queue, leaving the draft editable.
+    ///
+    /// Refused once the submission has started: ADR 0021 keeps exactly-once
+    /// by never cancelling something that may already be in flight, and
+    /// `DraftRepository::cancel_send` reports which of those happened.
+    ///
+    /// `None` means the draft in view.
+    CancelSend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId>,
+    },
     /// Attach a file to the draft.
     AttachFile {
         /// The file; `None` opens the file chooser.
@@ -820,6 +848,8 @@ impl Command {
             Command::SaveDraft => CommandId::SaveDraft,
             Command::DiscardDraft => CommandId::DiscardDraft,
             Command::MarkSent { .. } => CommandId::MarkSent,
+            Command::RetrySend { .. } => CommandId::RetrySend,
+            Command::CancelSend { .. } => CommandId::CancelSend,
             Command::AttachFile { .. } => CommandId::AttachFile,
             Command::DetachComposer => CommandId::DetachComposer,
             Command::CopyFields => CommandId::CopyFields,
@@ -934,6 +964,8 @@ impl Command {
             CommandId::SaveDraft => Command::SaveDraft,
             CommandId::DiscardDraft => Command::DiscardDraft,
             CommandId::MarkSent => Command::MarkSent { draft: None },
+            CommandId::RetrySend => Command::RetrySend { draft: None },
+            CommandId::CancelSend => Command::CancelSend { draft: None },
             CommandId::AttachFile => Command::AttachFile { path: None },
             CommandId::DetachComposer => Command::DetachComposer,
             CommandId::CopyFields => Command::CopyFields,
