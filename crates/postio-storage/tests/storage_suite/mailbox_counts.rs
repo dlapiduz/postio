@@ -309,3 +309,111 @@ fn a_seeded_store_still_agrees_with_a_recount() {
         "the triggers and the recount have to mean the same thing"
     );
 }
+
+// ── What the sidebar draws beside Drafts and the Outbox (spec 003, T066) ────
+
+/// Seeds one draft per state and returns the account.
+fn an_account_mid_send(connection: &rusqlite::Connection) -> postio_model::AccountId {
+    use postio_model::{Draft, DraftState};
+    use postio_storage::repository::DraftRepository;
+
+    let account = test_support::account(connection);
+    test_support::mailbox(connection, &account, "Drafts");
+    let drafts = DraftRepository::new(connection);
+
+    for state in [
+        DraftState::Editing,
+        DraftState::Editing,
+        DraftState::Queued,
+        DraftState::Sending,
+        DraftState::Failed,
+        DraftState::Unconfirmed,
+    ] {
+        let mut draft = Draft::new(account.id);
+        draft.subject = format!("{state:?}");
+        drafts.save(&mut draft).expect("save");
+        drafts.set_state(draft.id, state).expect("move it");
+    }
+    account.id
+}
+
+#[test]
+fn the_sidebar_counts_what_is_on_its_way_and_what_needs_a_person() {
+    // Three numbers from one read. The Outbox has no mailbox row to hold a
+    // cached count -- it is not a mailbox -- and the Drafts badge can no
+    // longer be `total_count`, which still counts every message row filed
+    // there including the ones in flight.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account_mid_send(&connection);
+
+    let counts = MailboxRepository::new(&connection)
+        .draft_counts(account)
+        .expect("counts");
+
+    assert_eq!(counts.outbox, 2, "queued and sending are on their way");
+    assert_eq!(
+        counts.attention, 2,
+        "failed and unconfirmed have stopped and need a person (FR-022)"
+    );
+    assert_eq!(
+        counts.drafts, 4,
+        "what Drafts shows: everything that is not in flight -- two being \
+         written, and the two that need attention"
+    );
+}
+
+#[test]
+fn an_account_sending_nothing_counts_nothing() {
+    // The ordinary state, and the one that keeps the Outbox row hidden.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+
+    let counts = MailboxRepository::new(&connection)
+        .draft_counts(account.id)
+        .expect("counts");
+    assert_eq!((counts.outbox, counts.attention, counts.drafts), (0, 0, 0));
+}
+
+#[test]
+fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
+    // SC-008, and Principle V's "counts, not timings". The sidebar refreshes
+    // on every arrival, so a read that grew with the mailbox would be paid
+    // for on the surface redrawn most often. `idx_messages_send_state` is
+    // partial on exactly this predicate, so the account's mail is not touched.
+    use postio_storage::test_support::counting::{counted, install};
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account_mid_send(&connection);
+    let inbox = test_support::mailbox(&connection, &test_support::account(&connection), "INBOX");
+    install(&connection);
+
+    let mailboxes = MailboxRepository::new(&connection);
+    let _ = mailboxes.draft_counts(account).expect("warm");
+    let small = counted(|| {
+        mailboxes.draft_counts(account).expect("counts");
+    });
+
+    // A mailbox's worth of ordinary mail, none of it a draft.
+    for _ in 0..400 {
+        let mut message = postio_model::Message::new(account, inbox.id, chrono::Utc::now());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .expect("file it");
+    }
+
+    let large = counted(|| {
+        mailboxes.draft_counts(account).expect("counts");
+    });
+
+    assert_eq!(
+        small.statements, large.statements,
+        "the count query changed shape with the mailbox"
+    );
+    assert_eq!(
+        small.rows, large.rows,
+        "the count read more rows once the account had mail: {small:?} then {large:?}"
+    );
+}

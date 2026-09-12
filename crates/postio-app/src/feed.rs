@@ -156,6 +156,33 @@ impl MailboxSource for Sources {
             }
         })
     }
+
+    fn draft_counts(&self, account: AccountId) -> postio_gtk::feed::DraftCountsFuture {
+        let answer =
+            self.ask(move |store| Box::pin(async move { store.draft_counts(account).await }));
+        Box::pin(async move {
+            match answer.recv().await {
+                Ok(Ok(counts)) => {
+                    // Counts and outcomes, never content: how many are on
+                    // their way says nothing about what any of them says.
+                    tracing::debug!(
+                        outbox = counts.outbox,
+                        attention = counts.attention,
+                        "draft counts read"
+                    );
+                    Ok(postio_ui::sidebar::ViewCounts {
+                        // Filled by `Folders::arrived` from the account's own
+                        // folders; this answer is only about drafts.
+                        flagged: 0,
+                        snoozed: 0,
+                        outbox: counts.outbox,
+                    })
+                }
+                Ok(Err(reason)) => Err(reason),
+                Err(_) => Err("the runtime stopped before the draft counts arrived".to_string()),
+            }
+        })
+    }
 }
 
 /// What a page read was asked for, for the log line above.

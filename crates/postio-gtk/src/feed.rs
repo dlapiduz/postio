@@ -76,6 +76,7 @@ use postio_model::{Arrival, Reaction};
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
 use crate::sidebar::{SidebarChoice, SyncStatus};
+use postio_ui::sidebar::ViewCounts;
 
 /// One page of a mailbox, as the runtime answered it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -626,7 +627,25 @@ pub type MailboxFuture = Pin<Box<dyn Future<Output = Result<Vec<Mailbox>, String
 pub trait MailboxSource {
     /// Read `account`'s folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> MailboxFuture;
+
+    /// What the sidebar draws beside Drafts and the Outbox.
+    ///
+    /// Separate from [`mailboxes`](Self::mailboxes) because the Outbox is not
+    /// one: it has no row to carry a count, and the Drafts badge needs a
+    /// number the cached column deliberately does not hold (spec 003 T066).
+    ///
+    /// **Defaults to nothing in flight**, which is a true answer for a source
+    /// with no drafts — which every fixture in this workspace is. The one
+    /// source over a real store overrides it; a fixture that grows drafts and
+    /// forgets to will draw no Outbox row, which is what
+    /// `resume_queued_draft` in `app_suite` is there to notice.
+    fn draft_counts(&self, _account: AccountId) -> DraftCountsFuture {
+        Box::pin(async { Ok(ViewCounts::default()) })
+    }
 }
+
+/// The answer to a request for an account's draft counts.
+pub type DraftCountsFuture = Pin<Box<dyn Future<Output = Result<ViewCounts, String>>>>;
 
 /// The status line, folded out of the runtime's events.
 ///
@@ -873,9 +892,15 @@ struct FolderInner {
     /// field rather than `account` becoming a `Vec` — a store with one
     /// account must not start paying for a loop it has no use for.
     sections: RefCell<Vec<AccountId>>,
-    /// The folders as last read — including the synthetic ones — so picking
-    /// one can name it without another round trip.
+    /// The folders as last read — including the view rows — so picking one
+    /// can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
+    /// How many of the account's drafts are on their way, as last read.
+    ///
+    /// Held beside the folders rather than derived from them: the Outbox is
+    /// not a mailbox, so no folder's cached count adds up to this. Read in the
+    /// same pass as the folders so the sidebar redraws once, with both.
+    outbox: Cell<u32>,
     trackers: RefCell<Trackers>,
     generation: Cell<u64>,
     /// Whether a reload is already queued for this turn of the main loop.
@@ -909,6 +934,14 @@ impl FolderInner {
             .iter()
             .map(|account| self.source.mailboxes(*account))
             .collect();
+        // Built here, beside the folder reads, and awaited below for the same
+        // reason they are: the future has to be made before the main context
+        // starts polling, or `check-runtime-crossings` is right that this is a
+        // runtime-dependent await on the glib loop.
+        let counting = self
+            .account
+            .get()
+            .map(|account| self.source.draft_counts(account));
         glib::spawn_future_local(async move {
             let mut all = Vec::new();
             for future in futures {
@@ -925,6 +958,19 @@ impl FolderInner {
                         }
                         return;
                     }
+                }
+            }
+            // Alongside the folders, in the same pass: the sidebar redraws
+            // once with both, rather than drawing an Outbox-less column and
+            // then correcting itself. A failure here is not worth abandoning
+            // the folder list over -- the sidebar draws, without an Outbox
+            // row, which is what it did before this existed.
+            if let Some(counting) = counting {
+                // POSTIO-GLIB-SAFE: a channel receive, like the folder reads
+                // above -- `MailboxSource::draft_counts` returns something
+                // pollable on the main context by the same contract.
+                if let Ok(counts) = counting.await {
+                    self.outbox.set(counts.outbox);
                 }
             }
             self.arrived(generation, all);
@@ -963,10 +1009,10 @@ impl FolderInner {
             let counts = postio_ui::sidebar::ViewCounts {
                 flagged: mailboxes.iter().map(|folder| folder.counts.flagged).sum(),
                 snoozed: mailboxes.iter().map(|folder| folder.counts.snoozed).sum(),
-                // Filled by the sidebar's own count query in spec 003 T066;
-                // zero keeps the row hidden, which is the right answer until
-                // something can count it.
-                outbox: 0,
+                // Summed over the account's folders like the two above, but
+                // asked for rather than derived: the Outbox is not a mailbox
+                // and has no cached column to sum.
+                outbox: self.outbox.get(),
             };
             mailboxes.extend(postio_ui::sidebar::view_rows(account, &mailboxes, counts));
         }
@@ -1009,6 +1055,7 @@ impl Folders {
             account: Cell::new(None),
             sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
+            outbox: Cell::new(0),
             trackers: RefCell::new(Trackers::default()),
             generation: Cell::new(0),
             queued: Cell::new(false),
@@ -1090,14 +1137,12 @@ impl Folders {
             (SidebarChoice::View(role), Some(account)) => match role {
                 MailboxRole::Flagged => ListScope::Flagged(account),
                 MailboxRole::Snoozed => ListScope::Snoozed(account),
-                // `MailboxRole::Outbox` belongs here and is not reachable
-                // yet: `postio_ui::sidebar::view_rows` draws that row only
-                // when the Outbox holds something, and nothing counts it
-                // until `ListScope::Outbox` exists (spec 003, T061). Mapped
-                // to the account rather than left to a catch-all so the gap
-                // is stated: a superset of what was asked for is wrong, but
-                // it is visibly wrong, where a scope matching nothing would
-                // look like an empty folder.
+                MailboxRole::Outbox => ListScope::Outbox(account),
+                // No other role reaches here: `view_rows` builds exactly those
+                // three, and a row with an id is a `Folder` above. The account
+                // is the one safe answer -- a superset of what was asked for,
+                // never a scope that silently matches nothing and reads as an
+                // empty folder.
                 _ => ListScope::Account(account),
             },
             // A view with no account in scope: nothing to narrow to.
