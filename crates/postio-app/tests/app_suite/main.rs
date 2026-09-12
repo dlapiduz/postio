@@ -31,6 +31,7 @@ mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
 mod focus_on_launch;
+mod go_to_keystroke;
 mod keystroke;
 mod label_wiring;
 mod list_contract;
@@ -235,6 +236,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "dwell_wiring::resting_on_a_message_marks_it_read_and_sweeping_past_does_not",
         dwell_wiring::resting_on_a_message_marks_it_read_and_sweeping_past_does_not as fn(),
+    ),
+    (
+        "go_to_keystroke::pressing_g_i_shows_the_inbox",
+        go_to_keystroke::pressing_g_i_shows_the_inbox as fn(),
     ),
     (
         "keystroke::pressing_a_archives_the_row_in_the_database",

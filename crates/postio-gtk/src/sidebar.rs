@@ -1137,6 +1137,26 @@ impl Sidebar {
         self.imp().mailboxes.borrow().clone()
     }
 
+    /// The mailbox wearing `role`, for a destination command to point at.
+    ///
+    /// Read from the list this sidebar was given, so `g i` and clicking Inbox
+    /// reach the same row by construction rather than by two lookups that
+    /// have to agree. No query and no network: the folders are already here.
+    ///
+    /// Sentinels are deliberately included, where `Folders::default_mailbox`
+    /// filters them out. Flagged and Snoozed are synthetic rows with
+    /// non-positive ids, and #813 was a window opening one of those when it
+    /// meant "the first real folder" -- but somebody asking for their flagged
+    /// mail means precisely that row. The two questions only looked alike.
+    pub fn mailbox_for_role(&self, role: MailboxRole) -> Option<MailboxId> {
+        self.imp()
+            .mailboxes
+            .borrow()
+            .iter()
+            .find(|mailbox| mailbox.role == role)
+            .map(|mailbox| mailbox.id)
+    }
+
     /// Replace the accounts strip: Unified, then `accounts` in order.
     ///
     /// # Why it disappears below two accounts

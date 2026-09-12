@@ -1177,6 +1177,17 @@ impl Window {
         self.imp().compose_button.get().cloned()
     }
 
+    /// A plain statement to the person at the keyboard, with nothing to undo.
+    ///
+    /// Not [`Window::show_action_completed`] with `undoable: false`, though
+    /// that is what it delegates to: the cases here are ones where *nothing*
+    /// completed -- a key pressed for a folder this account does not have --
+    /// and a call site saying "action completed" about that reads as the
+    /// opposite of what happened.
+    pub fn announce(&self, description: &str) {
+        self.show_action_completed(description, false);
+    }
+
     /// *Archived 12 messages — Undo.* Whoever applies a
     /// [`postio_core::Command`] and gets back an undoable
     /// [`postio_core::Event::ActionCompleted`] calls this with it; `u` and
@@ -2767,6 +2778,31 @@ impl Window {
 
     /// Run an invocation: the window's own commands first, then the handlers.
     pub fn act(&self, command: postio_core::Command) {
+        // A destination is a role, not a name: an inbox a provider calls
+        // something else is still where `g i` goes. Resolved against the
+        // sidebar's own list so the key and the click reach the same row,
+        // and routed through `open_mailbox`, which *is* that click -- a
+        // second way to arrive would be a second set of bugs about what the
+        // sidebar highlights.
+        use postio_model::mailbox::MailboxRole;
+        let destination = match command {
+            postio_core::Command::GoToInbox => Some((MailboxRole::Inbox, "inbox")),
+            postio_core::Command::GoToDrafts => Some((MailboxRole::Drafts, "drafts folder")),
+            postio_core::Command::GoToSent => Some((MailboxRole::Sent, "sent folder")),
+            postio_core::Command::GoToFlagged => Some((MailboxRole::Flagged, "flagged folder")),
+            _ => None,
+        };
+        if let Some((role, called)) = destination {
+            match self.sidebar().mailbox_for_role(role) {
+                Some(mailbox) => self.open_mailbox(mailbox),
+                // Said, not swallowed. A key that appears to do nothing is
+                // read as a broken key, and the next thing tried is the same
+                // key again.
+                None => self.announce(&format!("This account has no {called}")),
+            }
+            return;
+        }
+
         // A move with no destination is half a request: `None` means "ask the
         // user", and this is the window asking. Matched on the whole command
         // rather than its id because the *answered* move — from a drop, or

@@ -81,8 +81,8 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 ### Tests for User Story 5 ⚠️ red first
 
 - [X] T016 [P] [US5] A `core_suite` case in `crates/postio-core/tests/core_suite/command_registry.rs` asserting the four destination ids exist with their titles, bindings and list-surface contexts per [contracts/command-ids.md](./contracts/command-ids.md)
-- [ ] T017 [P] [US5] A unit test in `crates/postio-gtk/src/feed.rs` (or its module's tests) for role resolution: a role that exists returns its mailbox, a role that does not returns nothing
-- [ ] T018 [US5] **The acceptance test**: a new `app_suite` case in `crates/postio-app/tests/app_suite/` — a module plus its row in `CASES` in `crates/postio-app/tests/app_suite/main.rs` — that presses `g i` at the composition root and asserts on the folder then showing. Not that a handler fired: what a person would be looking at ([research.md](./research.md) R8)
+- [~] T017 [P] [US5] A unit test in `crates/postio-gtk/src/feed.rs` (or its module's tests) for role resolution: a role that exists returns its mailbox, a role that does not returns nothing
+- [X] T018 [US5] **The acceptance test**: a new `app_suite` case in `crates/postio-app/tests/app_suite/` — a module plus its row in `CASES` in `crates/postio-app/tests/app_suite/main.rs` — that presses `g i` at the composition root and asserts on the folder then showing. Not that a handler fired: what a person would be looking at ([research.md](./research.md) R8)
 - [ ] T019 [P] [US5] An `app_suite` or `gtk_suite` case asserting `g` typed in the composer enters a letter and navigates nowhere (FR-042)
 - [ ] T020 [P] [US5] A case asserting a destination absent from the current account is reported to the user rather than silently doing nothing (FR-041)
 
@@ -91,9 +91,9 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 - [X] T021 [US5] Add `GoToInbox`, `GoToDrafts`, `GoToSent` and `GoToFlagged` to `command_ids!` in `crates/postio-core/src/command.rs`, with the `[keys]` spellings from [contracts/command-ids.md](./contracts/command-ids.md)
 - [X] T022 [US5] Add the four `CommandSpec` entries in `crates/postio-core/src/registry.rs` — titles, `g i`/`g d`/`g t`/`g s`, list-surface contexts, `destructive: false`, `Recovery::None`, `requires: None`
 - [X] T023 [US5] Add the `Command` variants and their dispatch in `crates/postio-core/src/command.rs` so each id carries its role
-- [ ] T024 [US5] Resolve a role to a mailbox from the list the feed already holds, in `crates/postio-gtk/src/feed.rs`, honouring the sidebar's current scope ([research.md](./research.md) R7). No query, no network
-- [ ] T025 [US5] Handle the four commands in `crates/postio-gtk/src/window.rs`'s `act`, reaching the folder through the existing `sidebar().select(id)` and `show(id)` rather than a second path
-- [ ] T026 [US5] Report an absent destination in `crates/postio-gtk/src/window.rs` (FR-041)
+- [X] T024 [US5] Resolve a role to a mailbox from the list the **sidebar** already holds, in `crates/postio-gtk/src/sidebar.rs` (the plan said `feed.rs`; the sidebar is the list of record, which is FR-026 by construction), honouring the sidebar's current scope ([research.md](./research.md) R7). No query, no network
+- [X] T025 [US5] Handle the four commands in `crates/postio-gtk/src/window.rs`'s `act`, reaching the folder through the existing `sidebar().select(id)` and `show(id)` rather than a second path
+- [X] T026 [US5] Report an absent destination in `crates/postio-gtk/src/window.rs` (FR-041)
 - [X] T027 [US5] Regenerate `docs/keybindings.md` so the four destinations appear, and confirm `keybindings_doc.rs` passes
 
 **Checkpoint**: `g i` works, and the destinations are in the palette and the cheat sheet without anybody having added them there.
