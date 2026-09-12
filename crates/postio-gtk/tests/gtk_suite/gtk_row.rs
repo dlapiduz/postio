@@ -789,7 +789,7 @@ pub fn the_send_state_marks_are_four_glyphs_the_theme_actually_has() {
     // through them.
     for name in [
         "document-edit-symbolic",
-        "mail-send-symbolic",
+        "send-to-symbolic",
         "dialog-warning-symbolic",
         "dialog-question-symbolic",
     ] {

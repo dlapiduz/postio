@@ -36,6 +36,8 @@ schedule_send	ctrl+shift+Return
 save_draft	ctrl+s
 discard_draft	ctrl+d
 mark_sent	ctrl+shift+m
+retry_send	ctrl+shift+r
+cancel_send	ctrl+shift+x
 attach_file	ctrl+shift+a
 detach_composer	ctrl+shift+o
 copy_fields	ctrl+shift+c
