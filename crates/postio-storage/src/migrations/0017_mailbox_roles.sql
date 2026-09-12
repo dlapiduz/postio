@@ -1,4 +1,4 @@
--- Each account's own map from role to server folder (ADR 0025, #962).
+-- Each account's own map from role to server folder (ADR 0035, #962).
 --
 -- Which of an account's folders plays which part is a fact about that
 -- account's server, so it lives beside the account (ADR 0005 Q6b: an account

@@ -1,12 +1,27 @@
-# ADR 0025 — Mailbox roles are mapped per account, in the store, and chosen in settings
+# ADR 0035 — Mailbox roles are mapped per account, in the store, and chosen in settings
 
-- **Status:** Proposed (2026-09-03)
+- **Status:** Accepted (2026-09-04)
+- **Numbered 0035, after two collisions.** Drafted as 0025 while ADR 0025
+  (arbitrary headers are indexed rows) was landing on `main`, renumbered to
+  0027 — and by the time this branch came back to be merged `main` had taken
+  0027 as well (the header index is budgeted per message). A number is
+  claimed when a branch merges, not when it is drafted, so a long-running
+  branch should expect to renumber on the way in rather than reserve one on
+  the way out. #967.
 - **Date:** 2026-09-03
 - **Decision by:** the maintainer, on the question raised while reproducing
   [#943](https://github.com/dlapiduz/postio/issues/943): a live iCloud
   account had two folders wearing every role, and the one Postio filed
   into was the one another client had created.
-- **Issue:** [#962](https://github.com/dlapiduz/postio/issues/962) (children: #963 → #964 → #965 → #966 → #967)
+- **Issue:** [#962](https://github.com/dlapiduz/postio/issues/962), delivered
+  by its five children in order: [#963](https://github.com/dlapiduz/postio/issues/963)
+  (the store's per-account map),
+  [#964](https://github.com/dlapiduz/postio/issues/964) (discovery builds the
+  overrides on every pass), [#965](https://github.com/dlapiduz/postio/issues/965)
+  (`MapMailboxRole`, local-first and undoable),
+  [#966](https://github.com/dlapiduz/postio/issues/966) (the Mailboxes rows in
+  the account detail view) and
+  [#967](https://github.com/dlapiduz/postio/issues/967) (this documentation).
 - **Related:** ADR 0005 Q6b (an account is state, not preference),
   [#164](https://github.com/dlapiduz/postio/issues/164) (`[mailboxes]`),
   [#501](https://github.com/dlapiduz/postio/issues/501) (one sidebar row
