@@ -84,8 +84,12 @@ pub struct Row {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and which state its send is in.
+    ///
+    /// The renderer needs the state, not the fact: a queued send and a failed
+    /// one are both "a draft", and drawing them the same is the defect the
+    /// Outbox exists to fix (#1491).
+    pub send_state: Option<postio_model::DraftState>,
     /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.

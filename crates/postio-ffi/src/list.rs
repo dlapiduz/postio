@@ -104,8 +104,16 @@ pub struct RowFfi {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and which state its send is in, as the stored
+    /// spelling — `"editing"`, `"queued"`, `"sending"`, `"failed"`,
+    /// `"unconfirmed"` — or `None` for ordinary mail.
+    ///
+    /// A string rather than a mirrored enum: this is the one field a frontend
+    /// only ever renders, and a tenth `*Ffi` enum to keep in step buys nothing
+    /// a `match` on the spelling does not. It is carried at all so macOS can
+    /// draw what GTK draws — flattening it to a bool here would re-open the
+    /// gap spec 003's US4 just closed.
+    pub send_state: Option<String>,
     /// Whether it has an attachment.
     pub has_attachments: bool,
     /// How many messages the conversation holds; the badge appears above one.
@@ -148,7 +156,7 @@ impl From<MessageSummary> for RowFfi {
             seen: row.seen,
             flagged: row.flagged,
             answered: row.answered,
-            draft: row.draft,
+            send_state: row.send_state.map(|state| state.as_str().to_owned()),
             has_attachments: row.has_attachments,
             thread_count: row.thread_count,
             is_thread: false,

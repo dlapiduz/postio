@@ -24,9 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, Attachment, BlobId, BodyState, Disposition, EmailAddress, Flag, FlagSet, Generation,
-    LabelId, LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange, RemoteId,
-    RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
+    AccountId, Attachment, BlobId, BodyState, Disposition, DraftState, EmailAddress, Flag, FlagSet,
+    Generation, LabelId, LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange,
+    RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
 use rusqlite::types::Value;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -73,8 +73,13 @@ pub struct MessageListRow {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and if so which state its send is in.
+    ///
+    /// `None` for ordinary mail. A `bool` was not enough (#1491): Drafts holds
+    /// what you are writing, what failed and what cannot be confirmed, and the
+    /// Outbox holds what is on its way — and a row that can only say "draft"
+    /// renders all five identically, which is the defect this replaces.
+    pub send_state: Option<DraftState>,
     /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
     /// Size in bytes.
@@ -82,6 +87,12 @@ pub struct MessageListRow {
 }
 
 impl MessageListRow {
+    /// Whether this row is a draft at all, for the callers that only want the
+    /// draft mark rather than which of the five states it is in.
+    pub fn is_draft(&self) -> bool {
+        self.send_state.is_some()
+    }
+
     /// The cursor that resumes paging immediately after this row.
     pub fn cursor(&self) -> ListCursor {
         ListCursor {
@@ -649,7 +660,7 @@ const ID_CHUNK: usize = 500;
 pub(crate) const LIST_COLUMNS: &str = "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
-messages.size,
+messages.size, messages.send_state,
 (SELECT name FROM recipients
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
@@ -2385,14 +2396,14 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
 }
 
 pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
-    let from_address: Option<String> = row.get(12)?;
+    let from_address: Option<String> = row.get(13)?;
     Ok(MessageListRow {
         id: MessageId::new(row.get(0)?),
         thread_id: row.get::<_, Option<i64>>(1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
                 Ok::<_, rusqlite::Error>(EmailAddress::new(
-                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
                     address,
                 ))
             })
@@ -2403,7 +2414,10 @@ pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
         seen: row.get(5)?,
         flagged: row.get(6)?,
         answered: row.get(7)?,
-        draft: row.get(8)?,
+        send_state: row
+            .get::<_, Option<String>>(11)?
+            .as_deref()
+            .and_then(DraftState::from_name),
         has_attachments: row.get(9)?,
         size: row.get::<_, i64>(10)? as u64,
     })

@@ -107,7 +107,7 @@ pub fn accessible_label(row: &Row) -> String {
     if row.flagged {
         parts.push("Flagged".to_string());
     }
-    if row.draft {
+    if row.send_state.is_some() {
         parts.push("Draft".to_string());
     }
     // A thread row is a conversation, and a screen reader has to hear that
@@ -984,7 +984,7 @@ impl MessageRowView {
         if row.as_ref().is_some_and(|row| row.has_attachments) {
             taken += CLIP as f32 + RUN;
         }
-        if row.as_ref().is_some_and(|row| row.draft) {
+        if row.as_ref().is_some_and(|row| row.send_state.is_some()) {
             taken += CLIP as f32 + RUN;
         }
         if row.as_ref().is_some_and(|row| row.answered) {
@@ -1338,7 +1338,7 @@ impl MessageRowView {
             );
             snapshot.restore();
         };
-        mark(row.draft, &palette.draft_mark);
+        mark(row.send_state.is_some(), &palette.draft_mark);
         mark(row.answered, &palette.answered_mark);
         mark(row.flagged, &palette.flag_mark);
 
@@ -1542,7 +1542,7 @@ mod tests {
             seen: false,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: true,
             thread_count: 14,
             participants: Vec::new(),
@@ -1578,7 +1578,7 @@ mod tests {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -1602,7 +1602,7 @@ mod tests {
         assert!(answered.contains("Answered"), "{answered}");
 
         let draft = accessible_label(&Row {
-            draft: true,
+            send_state: Some(postio_model::DraftState::Editing),
             ..base
         });
         assert!(draft.contains("Draft"), "{draft}");
@@ -1620,7 +1620,7 @@ mod tests {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),

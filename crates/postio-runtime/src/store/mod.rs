@@ -77,8 +77,13 @@ pub struct MessageSummary {
     pub flagged: bool,
     /// Whether it has been replied to.
     pub answered: bool,
-    /// Whether it is a draft.
-    pub draft: bool,
+    /// Whether it is a draft, and which state its send is in.
+    ///
+    /// Carried all the way to the row rather than flattened to a bool at this
+    /// seam: Drafts holds what you are writing, what failed and what cannot be
+    /// confirmed, the Outbox holds what is on its way, and a row that cannot
+    /// tell them apart renders all five the same (#1491).
+    pub send_state: Option<postio_model::DraftState>,
     /// Whether it has an attachment.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.

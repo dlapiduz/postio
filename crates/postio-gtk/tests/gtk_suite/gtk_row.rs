@@ -30,7 +30,7 @@ fn canvas_row() -> Row {
         seen: false,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: true,
         thread_count: 14,
         participants: Vec::new(),
@@ -81,7 +81,7 @@ pub fn the_row_draws_the_canvas_anatomy_at_every_density() {
     row.set_row(Some(Row {
         flagged: true,
         answered: true,
-        draft: true,
+        send_state: Some(postio_model::DraftState::Editing),
         ..canvas_row()
     }));
     pump();

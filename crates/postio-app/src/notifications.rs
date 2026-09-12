@@ -338,7 +338,7 @@ mod tests {
             seen: false,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 1,
         }

@@ -42,7 +42,7 @@ impl Fake {
             seen: position.is_multiple_of(2),
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 1,
         }

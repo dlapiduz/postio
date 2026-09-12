@@ -1128,24 +1128,20 @@ impl<'a> ThreadRepository<'a> {
                    FROM messages
                   WHERE thread_id IN ({}) AND {MEMBER}{scope}
              )
-             SELECT messages.id, messages.thread_id, messages.subject, messages.preview,
-                    messages.received_at, messages.seen, messages.flagged, messages.answered,
-                    messages.draft, messages.has_attachments, messages.size,
-                    (SELECT name FROM recipients
-                      WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
-                      ORDER BY recipients.position LIMIT 1),
-                    (SELECT addresses.address FROM recipients
-                        JOIN addresses ON addresses.id = recipients.address_id
-                      WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
-                      ORDER BY recipients.position LIMIT 1)
+             SELECT {LIST_COLUMNS}
                FROM ranked JOIN messages ON messages.id = ranked.id
               WHERE ranked.rank = 1",
             placeholders(ids.len(), 1)
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(ids.iter().map(|id| id.get())), |row| {
-            // The column order matches the list row's, with thread_id inserted
-            // second; read_list_row expects it there too.
+            // `LIST_COLUMNS` rather than a hand-written copy of it. This
+            // query used to spell the same thirteen columns out again, and
+            // adding a fourteenth to `LIST_COLUMNS` left this one behind --
+            // `read_list_row` then asked for a column index the statement did
+            // not have, and the unified list failed to page at all while every
+            // storage-level test passed. `thread_id` is the second column in
+            // both, which is what lets the reader be shared.
             Ok((ThreadId::new(row.get(1)?), read_list_row(row)?))
         })?;
 

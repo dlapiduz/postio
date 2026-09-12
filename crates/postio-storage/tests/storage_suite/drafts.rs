@@ -1041,7 +1041,7 @@ fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
     let rows = MessageRepository::new(&connection)
         .page(&query)
         .expect("a page");
-    assert!(rows[0].draft, "the row the folder shows is a draft");
+    assert!(rows[0].is_draft(), "the row the folder shows is a draft");
     assert!(rows[0].seen, "your own draft is not unread mail");
     assert_eq!(badge(&connection, drafts_mailbox), 1);
 }

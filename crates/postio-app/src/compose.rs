@@ -259,7 +259,7 @@ fn install_resume(
     window.list().connect_activated({
         let composer = composer.clone();
         move |row| {
-            if !row.draft {
+            if row.send_state.is_none() {
                 return;
             }
             let Some(window) = weak.upgrade() else {

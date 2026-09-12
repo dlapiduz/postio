@@ -45,7 +45,7 @@ fn message(id: i64, seen: bool) -> Row {
         seen,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: false,
         thread_count: 6,
         participants: Vec::new(),
@@ -266,7 +266,7 @@ pub fn a_conversation_ending_in_a_draft_offers_continue_editing() {
     // A message and the unsent reply to it: the draft is the latest, which is
     // what the header's verbs are aimed at.
     let mut messages: Vec<Row> = (1..=2).map(|id| message(id, true)).collect();
-    messages[1].draft = true;
+    messages[1].send_state = Some(postio_model::DraftState::Editing);
     let draft = messages[1].id;
     pane.open(messages);
     crate::pump();
