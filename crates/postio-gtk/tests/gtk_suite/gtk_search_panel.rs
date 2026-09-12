@@ -417,6 +417,65 @@ pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
     assert!(offer_button(&view).is_none());
 }
 
+/// Reading a message, then searching for something that is not there, leaves
+/// the message on screen beside a list saying nothing matched.
+///
+/// The order is the whole test. The reader takes the pane *before* the search
+/// starts -- that is the only way it can hold it, since `preview_focused`
+/// hands the pane over for every focused hit once a search is on. A search
+/// that then finds nothing clears the preview and never asks for the pane, so
+/// the reader keeps a message that has nothing to do with the query.
+pub fn a_search_with_no_hits_does_not_leave_the_last_message_on_screen() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let view = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    // Search, and open one of the results -- `claim_reading` is what `Enter`
+    // on a hit does. The reader takes the pane from the preview.
+    let finder = window.finder();
+    window.open_finder(Mode::Search);
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hannah".to_owned(),
+    });
+    pump();
+    window.shell().claim_reading();
+    pump();
+    assert_eq!(
+        window.shell().reader_occupant(),
+        postio_gtk::shell::ReaderOccupant::Reader,
+        "opening a result hands the pane to the reader"
+    );
+
+    // Now edit the query into one that finds nothing. The search never
+    // stopped, so `View::set_searching` sees no change and returns early --
+    // which is why nothing tells the shell the reader should stand down.
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hanah".to_owned(),
+    });
+    pump();
+    view.set_focused(None);
+    pump();
+
+    assert_ne!(
+        window.shell().reader_occupant(),
+        postio_gtk::shell::ReaderOccupant::Reader,
+        "nothing matched, and the pane is still showing a message that has \
+         nothing to do with the query -- the app contradicting itself in one \
+         glance"
+    );
+}
+
 /// The offer button, if the column is making one.
 fn offer_button(view: &View) -> Option<gtk::Button> {
     fn walk(widget: &gtk::Widget, found: &mut Vec<gtk::Button>) {

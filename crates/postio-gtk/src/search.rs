@@ -1389,7 +1389,21 @@ impl View {
                 // to the real reader, moving the focus takes it back.
                 self.inner.shell.preview_focused();
             }
-            None => self.inner.preview.clear(),
+            None => {
+                self.inner.preview.clear();
+                // And ask for the pane back, not merely empty a preview
+                // nobody is looking at. `View::set_searching` returns early
+                // when the search was already on, so opening a result and
+                // then editing the query into one that finds nothing leaves
+                // the reader holding the pane: the list says nothing matched
+                // while a message from years ago sits beside it, which is the
+                // app contradicting itself in one glance.
+                //
+                // `preview_focused` is a no-op unless a search is on, so this
+                // cannot take the pane from a reader nobody is searching
+                // over.
+                self.inner.shell.preview_focused();
+            }
         }
     }
 

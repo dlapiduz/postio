@@ -566,6 +566,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_search_live::the_readout_answers_the_query_on_screen_and_no_other as fn(),
     ),
     (
+        "gtk_search_panel::a_search_with_no_hits_does_not_leave_the_last_message_on_screen",
+        gtk_search_panel::a_search_with_no_hits_does_not_leave_the_last_message_on_screen as fn(),
+    ),
+    (
         "gtk_search_panel::a_search_that_found_nothing_offers_the_word_that_was_meant",
         gtk_search_panel::a_search_that_found_nothing_offers_the_word_that_was_meant as fn(),
     ),
