@@ -321,7 +321,7 @@ pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> Se
                     .expect("insert a synthetic message");
                 record_correspondents(&scope, &message).await;
             }
-            Ok(())
+            Ok::<_, crate::Error>(())
         })
         .await
         .expect("commit a seed batch");
@@ -461,7 +461,7 @@ pub async fn thread_seeded_messages(
         )
         .await
         .expect("recompute the seeded thread aggregates");
-        Ok(threads)
+        Ok::<_, crate::Error>(threads)
     })
     .await
     .expect("commit the threading batch");

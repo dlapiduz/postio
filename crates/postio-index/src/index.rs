@@ -42,9 +42,11 @@
 //! already created.
 
 use postio_model::MessageBody;
-use rusqlite::Connection;
-use rusqlite::OptionalExtension;
 
+
+use postio_storage::Connection;
+use postio_storage::sql::{self, RowExt as _, bind};
+use turso::Row;
 use crate::error::Result;
 
 /// Creates `search_documents`, `messages_fts` and every trigger that keeps
@@ -64,13 +66,13 @@ use crate::error::Result;
 /// and running it again is a no-op rather than a second copy. Everything
 /// except message *bodies*: those live in the blob store, no trigger and no
 /// `SELECT` can reach them, and [`index_body`] is how they arrive.
-pub fn ensure_schema(connection: &Connection) -> Result<()> {
+pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS search_schema (
              half    TEXT PRIMARY KEY,
              version INTEGER NOT NULL
          );",
-    )?;
+    ).await?;
 
     // `IF NOT EXISTS` adds new objects and cannot change an existing
     // table's columns, which is how `list_id` broke every store created
@@ -79,9 +81,9 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
     // schema is versioned per half, and a mismatched half is dropped and
     // rebuilt — the index is derived data, and the mail tables it derives
     // from are exactly one `SCHEMA` run away.
-    let metadata = half_version(connection, "metadata")?;
-    let bodies = half_version(connection, "bodies")?;
-    let headers = half_version(connection, "headers")?;
+    let metadata = half_version(connection, "metadata").await?;
+    let bodies = half_version(connection, "bodies").await?;
+    let headers = half_version(connection, "headers").await?;
 
     // Nothing to do, and saying so is worth more than it looks. The batch
     // below is every object `IF NOT EXISTS`, which reads as free and is not:
@@ -107,13 +109,13 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
     }
 
     if metadata != METADATA_SCHEMA_VERSION {
-        connection.execute_batch(DROP_METADATA)?;
+        connection.execute_batch(DROP_METADATA).await?;
     }
     if bodies != BODIES_SCHEMA_VERSION {
         connection.execute_batch(
-            "DROP TABLE IF EXISTS message_bodies_fts;
-             DROP TRIGGER IF EXISTS trg_message_bodies_fts_ad;",
-        )?;
+            "DROP INDEX IF EXISTS messages_body_fts;
+             UPDATE messages SET body_search = NULL;",
+        ).await?;
     }
     if headers != HEADERS_SCHEMA_VERSION {
         // The index goes with the table; SQLite drops it either way, and
@@ -121,14 +123,14 @@ pub fn ensure_schema(connection: &Connection) -> Result<()> {
         connection.execute_batch(
             "DROP INDEX IF EXISTS idx_message_headers_name;
              DROP TABLE IF EXISTS message_headers;",
-        )?;
+        ).await?;
     }
 
-    connection.execute_batch(SCHEMA)?;
+    connection.execute_batch(SCHEMA).await?;
 
-    set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION)?;
-    set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION)?;
-    set_half_version(connection, "headers", HEADERS_SCHEMA_VERSION)?;
+    set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION).await?;
+    set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION).await?;
+    set_half_version(connection, "headers", HEADERS_SCHEMA_VERSION).await?;
     Ok(())
 }
 
@@ -198,33 +200,30 @@ DROP TRIGGER IF EXISTS trg_search_documents_recipients_au;
 DROP TRIGGER IF EXISTS trg_search_documents_attachments_ai;
 DROP TRIGGER IF EXISTS trg_search_documents_attachments_ad;
 DROP TRIGGER IF EXISTS trg_search_documents_attachments_au;
-DROP TRIGGER IF EXISTS trg_messages_fts_ai;
-DROP TRIGGER IF EXISTS trg_messages_fts_ad;
-DROP TRIGGER IF EXISTS trg_messages_fts_au;
-DROP TABLE IF EXISTS messages_fts;
+DROP INDEX IF EXISTS search_documents_fts;
 DROP TABLE IF EXISTS search_documents;
 ";
 
 /// The recorded version of one schema half, `0` when it has never been
 /// recorded — a fresh store, or any store from before versioning existed.
 /// Both rebuild, which for the fresh store is simply the first build.
-fn half_version(connection: &Connection, half: &str) -> Result<i64> {
-    let version = connection
-        .query_row(
-            "SELECT version FROM search_schema WHERE half = ?1",
-            [half],
-            |row| row.get(0),
-        )
-        .optional()?;
+async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
+    let version = sql::first(
+        connection,
+        "SELECT version FROM search_schema WHERE half = ?1",
+        [half],
+        |row| row.col(0),
+    )
+    .await?;
     Ok(version.unwrap_or(0))
 }
 
-fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result<()> {
+async fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result<()> {
     connection.execute(
         "INSERT INTO search_schema (half, version) VALUES (?1, ?2)
          ON CONFLICT (half) DO UPDATE SET version = excluded.version",
-        rusqlite::params![half, version],
-    )?;
+        bind![half, version],
+    ).await?;
     Ok(())
 }
 
@@ -239,28 +238,33 @@ fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result
 /// message insert) is not an error: the write is simply a no-op, since there
 /// is nothing to update. See [`ensure_schema`] for why the row always exists
 /// once the message does.
-pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) -> Result<()> {
-    // Delete then insert, because a contentless table has no `UPDATE`. The
-    // delete runs unconditionally: naming a rowid that is not there costs
-    // nothing, and a branch that skipped it would have to be right about
-    // something it cannot see.
+pub async fn index_body(
+    connection: &Connection,
+    message_id: i64,
+    body: Option<&str>,
+) -> Result<()> {
+    // One `UPDATE` where there used to be a delete and an insert: the index
+    // is on a column of `messages` now rather than in a contentless table
+    // beside it, and a column can simply be written.
+    //
+    // **Empty string, not NULL, for a message with no text.** The column is
+    // also the record that this message *was* indexed:
+    // [`messages_missing_body_text`] asks for `body_search IS NULL`, and when
+    // "tried, nothing there" left the column NULL, every attachment-only
+    // message stayed a candidate for ever -- with one batch of them in a
+    // store, `postio_session::index_local_bodies` re-selected the same batch
+    // in a tight loop, burning a core and streaming write transactions for as
+    // long as the app ran (#500). An empty string is the cheapest possible
+    // spelling of "done", and it can never match.
+    //
+    // Folded on the way in, because the engine's tokenizer will not: see
+    // [`postio_model::fold`], and note that the query path must apply the
+    // same fold or the two stop meeting.
     connection.execute(
-        "DELETE FROM message_bodies_fts WHERE rowid = ?1",
-        [message_id],
-    )?;
-    // A message with no text still gets a row — empty, so it can never
-    // match — because the row is also the record that this message *was*
-    // indexed. [`messages_missing_body_text`] asks `NOT EXISTS` of this
-    // table, and when "tried, nothing there" left no row behind, every
-    // attachment-only message stayed a candidate for ever: with one batch of
-    // them in a store, `postio_session::index_local_bodies` re-selected the
-    // same batch in a tight loop, burning a core and streaming write
-    // transactions for as long as the app ran (#500). One rowid entry per
-    // textless message is the cheapest possible spelling of "done".
-    connection.execute(
-        "INSERT INTO message_bodies_fts (rowid, body) VALUES (?1, ?2)",
-        rusqlite::params![message_id, body.unwrap_or("")],
-    )?;
+            "UPDATE messages SET body_search = ?2 WHERE id = ?1",
+            (message_id, postio_model::fold::fold(body.unwrap_or(""))),
+        )
+        .await?;
 
     Ok(())
 }
@@ -281,8 +285,12 @@ pub fn index_body(connection: &Connection, message_id: i64, body: Option<&str>) 
 ///
 /// A message with neither form clears the column rather than leaving stale
 /// text behind — the same shape as `index_body(.., None)`.
-pub fn index_body_of(connection: &Connection, message_id: i64, body: &MessageBody) -> Result<()> {
-    index_body(connection, message_id, indexable_text(body).as_deref())
+pub async fn index_body_of(
+    connection: &Connection,
+    message_id: i64,
+    body: &MessageBody,
+) -> Result<()> {
+    index_body(connection, message_id, indexable_text(body).as_deref()).await
 }
 
 /// The plain text that represents `body` in the index, if it has any.
@@ -331,17 +339,20 @@ pub fn indexable_text(body: &MessageBody) -> Option<String> {
 /// indexed its bodies before this table existed has them in the old column,
 /// and asking the old column would answer "nothing to do" for every one of
 /// them while the new index stayed empty for ever.
-pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
-    let mut statement = connection.prepare(
+pub async fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
+    sql::all(
+        connection,
         "SELECT m.id
            FROM messages m
           WHERE m.body_state IN ('full', 'partial')
-            AND NOT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id)
+            AND m.body_search IS NULL
           ORDER BY m.received_at DESC
           LIMIT ?1",
-    )?;
-    let rows = statement.query_map([limit], |row| row.get::<_, i64>(0))?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+        [limit],
+        |row| row.col::<i64>(0),
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// As [`messages_missing_body_text`], scoped to one account (#981).
@@ -350,24 +361,27 @@ pub fn messages_missing_body_text(connection: &Connection, limit: u32) -> Result
 /// [`clear_account_body_index`] has made this account's own local mail the
 /// candidate set — the rest of the store is untouched, so a rebuild for one
 /// account never re-derives another's.
-pub fn messages_missing_body_text_for_account(
+pub async fn messages_missing_body_text_for_account(
     connection: &Connection,
     account_id: i64,
     limit: u32,
 ) -> Result<Vec<i64>> {
-    let mut statement = connection.prepare(
+    sql::all(
+        connection,
         "SELECT m.id
            FROM messages m
           WHERE m.account_id = ?1
             AND m.body_state IN ('full', 'partial')
-            AND NOT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = m.id)
+            AND m.body_search IS NULL
           ORDER BY m.received_at DESC
           LIMIT ?2",
-    )?;
-    let rows = statement.query_map(rusqlite::params![account_id, limit], |row| {
-        row.get::<_, i64>(0)
-    })?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+        bind![account_id, limit],
+        |row| {
+        row.col::<i64>(0)
+    },
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// Removes `account_id`'s rows from `message_bodies_fts`, so the next
@@ -379,12 +393,17 @@ pub fn messages_missing_body_text_for_account(
 /// touches `messages`, `search_documents` or `messages_fts`: this account's
 /// mail is not going anywhere, only its body text drops out of the index
 /// until the catch-up pass puts it back.
-pub fn clear_account_body_index(connection: &Connection, account_id: i64) -> Result<usize> {
-    Ok(connection.execute(
-        "DELETE FROM message_bodies_fts
-          WHERE rowid IN (SELECT id FROM messages WHERE account_id = ?1)",
-        [account_id],
-    )?)
+pub async fn clear_account_body_index(connection: &Connection, account_id: i64) -> Result<usize> {
+    // Clearing the column, not deleting a row: the body index is on
+    // `messages.body_search` now, and NULL is what the catch-up pass looks
+    // for. See `index_body` for why an indexed-but-textless message holds an
+    // empty string instead.
+    Ok(connection
+        .execute(
+            "UPDATE messages SET body_search = NULL WHERE account_id = ?1",
+            [account_id],
+        )
+        .await? as usize)
 }
 
 /// Replaces a message's rows in `message_headers`.
@@ -416,12 +435,12 @@ pub fn clear_account_body_index(connection: &Connection, account_id: i64) -> Res
 /// A message with no row in `messages` is a harmless no-op rather than an
 /// error, exactly as [`index_body`] is: the foreign key rejects the insert
 /// and indexing that raced an expunge is not a fault.
-pub fn index_headers(
+pub async fn index_headers(
     connection: &Connection,
     message_id: i64,
     headers: &postio_model::Headers,
 ) -> Result<()> {
-    if !message_exists(connection, message_id)? {
+    if !message_exists(connection, message_id).await? {
         return Ok(());
     }
     // Delete first: the pass is resumable and a version bump refills the whole
@@ -430,14 +449,14 @@ pub fn index_headers(
     connection.execute(
         "DELETE FROM message_headers WHERE message_id = ?1",
         [message_id],
-    )?;
+    ).await?;
 
     let normalized = headers.normalized();
     let mut statement = connection.prepare(
         "INSERT INTO message_headers (message_id, name, value, ordinal)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT (message_id, name, ordinal) DO NOTHING",
-    )?;
+    ).await?;
     let mut written = 0usize;
     for (ordinal, header) in normalized.iter().take(HEADER_ROWS_PER_MESSAGE).enumerate() {
         // `normalize_name` trims, so a field whose name was whitespace has
@@ -446,16 +465,16 @@ pub fn index_headers(
         if header.name.is_empty() {
             continue;
         }
-        statement.execute(rusqlite::params![
+        statement.execute(bind![
             message_id,
             header.name,
             header.value,
             ordinal as i64
-        ])?;
+        ]).await?;
         written += 1;
     }
     if written == 0 {
-        statement.execute(rusqlite::params![message_id, "", "", 0i64])?;
+        statement.execute(bind![message_id, "", "", 0i64]).await?;
     }
     Ok(())
 }
@@ -466,14 +485,14 @@ pub fn index_headers(
 /// delete on its own would succeed against no rows and the insert that
 /// follows would be the thing that failed — turning "indexed a message that
 /// has just been expunged" into an error the caller has to classify.
-fn message_exists(connection: &Connection, message_id: i64) -> Result<bool> {
-    let found: Option<i64> = connection
-        .query_row(
-            "SELECT 1 FROM messages WHERE id = ?1",
-            [message_id],
-            |row| row.get(0),
-        )
-        .optional()?;
+async fn message_exists(connection: &Connection, message_id: i64) -> Result<bool> {
+    let found: Option<i64> = sql::first(
+        connection,
+        "SELECT 1 FROM messages WHERE id = ?1",
+        [message_id],
+        |row| row.col(0),
+    )
+    .await?;
     Ok(found.is_some())
 }
 
@@ -493,29 +512,33 @@ fn message_exists(connection: &Connection, message_id: i64) -> Result<bool> {
 /// the raw blob on disk) or to `messages_needing_a_header_fetch` (the only
 /// case that dials out). Mixing them here would mean batches this pass can
 /// make no progress on, and the pass stops when a batch does not shrink.
-pub fn messages_missing_header_rows(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
-    let mut statement = connection.prepare(
+pub async fn messages_missing_header_rows(connection: &Connection, limit: u32) -> Result<Vec<i64>> {
+    sql::all(
+        connection,
         "SELECT m.id
            FROM messages m
           WHERE m.body_headers IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
           ORDER BY m.received_at DESC
           LIMIT ?1",
-    )?;
-    let rows = statement.query_map([limit], |row| row.get::<_, i64>(0))?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+        [limit],
+        |row| row.col::<i64>(0),
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// As [`messages_missing_header_rows`], scoped to one account (#981). See
 /// [`messages_missing_body_text_for_account`]'s own doc for why a targeted
 /// candidate query is what keeps a per-account reindex from touching any
 /// other account's rows.
-pub fn messages_missing_header_rows_for_account(
+pub async fn messages_missing_header_rows_for_account(
     connection: &Connection,
     account_id: i64,
     limit: u32,
 ) -> Result<Vec<i64>> {
-    let mut statement = connection.prepare(
+    sql::all(
+        connection,
         "SELECT m.id
            FROM messages m
           WHERE m.account_id = ?1
@@ -523,11 +546,13 @@ pub fn messages_missing_header_rows_for_account(
             AND NOT EXISTS (SELECT 1 FROM message_headers h WHERE h.message_id = m.id)
           ORDER BY m.received_at DESC
           LIMIT ?2",
-    )?;
-    let rows = statement.query_map(rusqlite::params![account_id, limit], |row| {
-        row.get::<_, i64>(0)
-    })?;
-    Ok(rows.collect::<std::result::Result<_, _>>()?)
+        bind![account_id, limit],
+        |row| {
+        row.col::<i64>(0)
+    },
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// Removes `account_id`'s rows from `message_headers`, so the next
@@ -536,12 +561,12 @@ pub fn messages_missing_header_rows_for_account(
 /// Ordinary rows, unlike [`clear_account_body_index`]'s contentless table —
 /// this is the same delete [`index_headers`] itself issues before replacing
 /// a message's rows, just for every message an account has rather than one.
-pub fn clear_account_header_index(connection: &Connection, account_id: i64) -> Result<usize> {
+pub async fn clear_account_header_index(connection: &Connection, account_id: i64) -> Result<usize> {
     Ok(connection.execute(
         "DELETE FROM message_headers
           WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
         [account_id],
-    )?)
+    ).await? as usize)
 }
 
 /// Rebuilds `messages_fts` from `search_documents`.
@@ -557,8 +582,8 @@ pub fn clear_account_header_index(connection: &Connection, account_id: i64) -> R
 /// content table to regenerate from, which is the whole point of it. What
 /// catches a body up is [`messages_missing_body_text`] and the pass that
 /// reads the blob store, because the blob store is where the text is.
-pub fn rebuild(connection: &Connection) -> Result<()> {
-    connection.execute_batch("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');")?;
+pub async fn rebuild(connection: &Connection) -> Result<()> {
+    connection.execute_batch("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');").await?;
     Ok(())
 }
 
@@ -572,100 +597,58 @@ CREATE TABLE IF NOT EXISTS search_documents (
     list_id     TEXT NOT NULL DEFAULT ''
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    sender, recipients, subject, filenames, list_id,
-    content = 'search_documents',
-    content_rowid = 'message_id',
-    tokenize = 'unicode61 remove_diacritics 2'
-);
+-- The metadata index: an index on the table, not a table beside it.
+--
+-- This was `messages_fts`, an FTS5 external-content virtual table, with three
+-- triggers keeping it in step with `search_documents`. The engine's full-text
+-- search is an *index method* rather than a module, so the shadow table and
+-- all three of its triggers are gone: the engine maintains this the way it
+-- maintains any other index, and there is no second copy of anything to keep
+-- in step.
+--
+-- The five columns are one index rather than five, because `fts_match` takes
+-- the columns it is searching and the planner resolves the set to an index
+-- that covers them.
+CREATE INDEX IF NOT EXISTS search_documents_fts ON search_documents
+    USING fts (sender, recipients, subject, filenames, list_id);
 
--- Message bodies: the index, and no second copy of the text.
+-- Message bodies are not here, and that is the other half of the change.
 --
--- `content = ''` means FTS5 keeps its inverted index and not the text. The
--- alternative is what `search_documents.body` still is: the entire text
--- corpus duplicated inside SQLite, which was free while nothing was indexed
--- (#327) and is the whole mailbox now that everything is (ADR 0016). It also
--- breaks migration 0001's own rule, which `PRODUCT.md` §6 repeats -- SQLite
--- holds the blob key and the metadata needed to list and search -- and every
--- megabyte of it is a megabyte of pages ADR 0014 is about to encrypt under a
--- 100 ms search budget.
+-- `message_bodies_fts` was a contentless FTS5 table keyed by message id,
+-- because the bodies lived in the blob store where no trigger could see them.
+-- They are `messages.body_text` now, so the index goes on the column:
+-- `messages.body_search`, which is the same text folded for search.
 --
--- `contentless_delete = 1` is what makes it usable rather than write-once: a
--- plain contentless table cannot delete a row without being handed every
--- original column value, and the original value is exactly what this design
--- no longer keeps. Available since SQLite 3.43; the bundled build is 3.53.2,
--- probed directly rather than assumed.
---
--- A table of its own rather than a seventh column on `messages_fts`, and
--- that is forced rather than chosen: under `content = ''` changing *any*
--- column means re-inserting them all, body included -- while the metadata
--- columns are maintained by triggers on `messages`, `recipients` and
--- `attachments`, and a trigger cannot read the blob store.
--- `MessageRepository::update` fires those triggers on every backfill.
---
--- The rowid is the message id, which is what lets a body be found, replaced
--- and deleted with no shadow row to keep in step.
-CREATE VIRTUAL TABLE IF NOT EXISTS message_bodies_fts USING fts5(
-    body,
-    content = '',
-    contentless_delete = 1,
-    tokenize = 'unicode61 remove_diacritics 2'
-);
-
--- messages -> message_bodies_fts: deletion, and only deletion.
---
--- The one trigger this table has, and it is not optional. `search_documents`
--- cascades from `messages` and its own delete trigger takes `messages_fts`
--- with it; a contentless table has no content row to cascade, so without this
--- the text of every deleted message stays matchable for ever and the index
--- grows exactly the way moving the bodies here exists to stop.
---
--- Insertion has no trigger and cannot have one: nothing in SQL can compute a
--- body. `index_body` is the only writer.
-CREATE TRIGGER IF NOT EXISTS trg_message_bodies_fts_ad
-AFTER DELETE ON messages
-BEGIN
-    DELETE FROM message_bodies_fts WHERE rowid = old.id;
-END;
+-- `postio_model::fold` does the folding, and the query path applies the
+-- identical fold -- the engine's tokenizer lowercases and does not strip
+-- diacritics, so an unaccented query finds an accented word only because
+-- both sides went through the same fold.
+-- `index_body` is the writer; the column's own documentation in
+-- `postio_storage::schema` says the rest.
+CREATE INDEX IF NOT EXISTS messages_body_fts ON messages USING fts (body_search);
 
 -- Arbitrary headers: the table `header:` matches against (ADR 0025 Q2).
 --
--- An ordinary table rather than a second FTS index, and the reason is the
--- values: `header:` is wanted for `x-mailer=mutt`, `spf=pass`,
--- `multipart/signed`, `1.5.24`. A `unicode61` tokenizer splits every one of
--- those into pieces and loses the adjacency that made it meaningful, so this
--- is a substring match on a column, not an inverted index.
+-- An ordinary table rather than a second full-text index, and the reason is
+-- the values: `header:` is wanted for `x-mailer=mutt`, `spf=pass`,
+-- `multipart/signed`, `1.5.24`. A word tokenizer splits every one of those
+-- into pieces and loses the adjacency that made it meaningful, so this is a
+-- substring match on a column, not an inverted index.
 --
--- Nor could a contentless FTS table say which message a row belongs to: it
--- gets away with `content = ''` on the bodies precisely because there is one
--- body per message and the rowid can *be* the message id. A message has many
--- headers, so the rowid would have to be a header id and mapping it back
--- needs a side table -- which is this table with the value taken out.
---
--- `ON DELETE CASCADE` rather than a trigger: `trg_message_bodies_fts_ad` had
--- to be written by hand only because a contentless table has no content row
--- for the foreign key to act on. This one does.
---
--- `WITHOUT ROWID` because the primary key is the whole row bar the value:
--- storing a rowid beside it would be a second copy of the key for nothing.
+-- No longer `WITHOUT ROWID`: the engine puts that behind an experimental flag
+-- and will not build a secondary index on such a table, and
+-- `idx_message_headers_name` is what makes `header:` a range scan over one
+-- name rather than a scan of everything.
 CREATE TABLE IF NOT EXISTS message_headers (
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     name       TEXT    NOT NULL,   -- lowercased; RFC 5322 names are case-insensitive
     value      TEXT    NOT NULL,   -- unfolded, RFC 2047-decoded, truncated at VALUE_LIMIT
     ordinal    INTEGER NOT NULL,   -- position within the message, wire order
     PRIMARY KEY (message_id, name, ordinal)
-) WITHOUT ROWID;
+);
 
--- `header:` narrows on the name first, and this is what makes that a range
--- scan over one name rather than a scan of the table. `message_id` second so
--- the correlated `EXISTS` the executor compiles is answered by the index
--- alone.
 CREATE INDEX IF NOT EXISTS idx_message_headers_name ON message_headers (name, message_id);
 
--- messages -> search_documents: subject and list_id, both scalar columns on
--- `messages` itself. Sender/recipients/filenames come from their own
--- tables' triggers below, since a message row can be inserted before or
--- after its recipients and attachments.
 CREATE TRIGGER IF NOT EXISTS trg_search_documents_messages_ai
 AFTER INSERT ON messages
 BEGIN
@@ -770,29 +753,8 @@ BEGIN
                      FROM attachments WHERE message_id = new.message_id AND filename IS NOT NULL)
     WHERE message_id = new.message_id AND new.message_id IS NOT NULL;
 END;
-
--- search_documents -> messages_fts: the standard external-content sync
--- recipe (SQLite documentation, 'External Content Tables'). search_documents
--- is the only writer of messages_fts; nothing else may touch that table.
-CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ai
-AFTER INSERT ON search_documents
-BEGIN
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, filenames, list_id)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.filenames, new.list_id);
 END;
-
-CREATE TRIGGER IF NOT EXISTS trg_messages_fts_ad
-AFTER DELETE ON search_documents
-BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, filenames, list_id)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.filenames, old.list_id);
 END;
-
-CREATE TRIGGER IF NOT EXISTS trg_messages_fts_au
-AFTER UPDATE ON search_documents
-BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, sender, recipients, subject, filenames, list_id)
-    VALUES ('delete', old.message_id, old.sender, old.recipients, old.subject, old.filenames, old.list_id);
     INSERT INTO messages_fts (rowid, sender, recipients, subject, filenames, list_id)
     VALUES (new.message_id, new.sender, new.recipients, new.subject, new.filenames, new.list_id);
 END;
@@ -842,13 +804,11 @@ mod tests {
     use postio_storage::test_support;
 
     fn matches(connection: &Connection, query: &str) -> Vec<i64> {
-        let mut statement = connection
-            .prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?1 ORDER BY rowid")
+        let mut statement = connection.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?1 ORDER BY rowid")
             .expect("prepare");
-        statement
-            .query_map([query], |row| row.get(0))
+        sql::mapped(&mut statement, [query], |row| row.col(0))
             .expect("query")
-            .collect::<rusqlite::Result<_>>()
+            .collect::<Result<_>>()
             .expect("rows")
     }
 
@@ -930,16 +890,14 @@ mod tests {
     /// Body matches, which live in their own contentless index now (#407)
     /// rather than in `messages_fts`.
     fn body_matches(connection: &Connection, query: &str) -> Vec<i64> {
-        let mut statement = connection
-            .prepare(
+        let mut statement = connection.prepare(
                 "SELECT rowid FROM message_bodies_fts
                   WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
             )
             .expect("prepare");
-        statement
-            .query_map([query], |row| row.get(0))
+        sql::mapped(&mut statement, [query], |row| row.col(0))
             .expect("query")
-            .collect::<rusqlite::Result<_>>()
+            .collect::<Result<_>>()
             .expect("rows")
     }
 
@@ -1002,10 +960,15 @@ mod tests {
             .expect("delete message");
 
         assert!(matches(&connection, "ephemeral").is_empty());
-        let count: i64 = connection
-            .query_row("SELECT count(*) FROM search_documents", [], |row| {
-                row.get(0)
-            })
+        let count: i64 = sql::one(
+            connection,
+            "SELECT count(*) FROM search_documents",
+            [],
+            |row| {
+                row.col(0)
+            },
+        )
+        .await
             .expect("count");
         assert_eq!(count, 0, "the shadow row must be cleaned up too");
     }
@@ -1031,8 +994,7 @@ mod tests {
             .create(&mut message)
             .expect("create message");
 
-        connection
-            .execute_batch("DELETE FROM messages_fts;")
+        connection.execute_batch("DELETE FROM messages_fts;")
             .expect("empty the index directly, simulating drift");
         assert!(matches(&connection, "rebuildable").is_empty());
 

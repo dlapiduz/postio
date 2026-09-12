@@ -49,7 +49,12 @@ pub mod blob;
 pub mod error;
 pub mod key;
 mod perm;
-pub(crate) mod sql;
+/// Reading rows and opening transactions, for the other crate that speaks SQL.
+///
+/// `postio-index` maintains the search index over these same tables and needs
+/// the same accessors; everything else above this layer goes through the
+/// repositories. Public for that one caller rather than as an invitation.
+pub mod sql;
 pub mod repository;
 pub mod schema;
 pub mod store;
@@ -60,4 +65,30 @@ pub mod test_support;
 
 pub use blob::{BlobStore, BlobWriter, EvictionReport};
 pub use error::{Error, Result};
-pub use store::{Connection, Store, WritePriority};
+pub use store::{Checkout, Connection, Store, WriteGate, WritePermit, WritePriority};
+
+/// Run `work` inside one atomic write, committing if it succeeds and rolling
+/// back if it does not.
+///
+/// `BEGIN IMMEDIATE` at the outermost level, a `SAVEPOINT` when it is nested
+/// inside a transaction the caller already opened — so a repository call
+/// composes inside a bigger write without a second `BEGIN`.
+///
+/// The sync engine is the caller this is public for: it writes a batch of
+/// messages, their threads and their correspondents as one unit, across three
+/// repositories, and half of that landing is worse than none of it.
+/// The error type is the caller's, not this crate's, as long as it can carry
+/// one of ours: a sync unit writes through three repositories and its own
+/// engine, and having to translate its error at the boundary would put a
+/// `map_err` on every line inside the transaction.
+pub async fn transaction<T, E, F, Fut>(
+    connection: &Connection,
+    work: F,
+) -> std::result::Result<T, E>
+where
+    E: From<Error>,
+    F: FnOnce(Connection) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    sql::in_scope(connection, work).await
+}

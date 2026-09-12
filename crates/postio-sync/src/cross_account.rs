@@ -25,7 +25,7 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{
     CrossAccountMove, CrossAccountMoveRepository, MailboxRepository, MessageRepository, MovePhase,
 };
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use crate::drain::Outcome;
 
@@ -37,7 +37,7 @@ pub(crate) async fn copy(
     saga_id: CrossAccountMoveId,
 ) -> Outcome {
     let sagas = CrossAccountMoveRepository::new(connection);
-    let saga = match sagas.get(saga_id) {
+    let saga = match sagas.get(saga_id).await {
         Ok(Some(saga)) => saga,
         Ok(None) => {
             return Outcome::Obsolete {
@@ -61,13 +61,13 @@ pub(crate) async fn copy(
     // The target must still exist to receive anything. If it is gone — the
     // folder deleted, the account removed — the saga aborts and the source
     // copy stays exactly where it is (Q13).
-    let Some(target_path) = target_path(connection, &saga) else {
+    let Some(target_path) = target_path(connection, &saga).await else {
         return abort(
             &sagas,
             saga_id,
             "the destination no longer exists; the move was abandoned and \
              the source copy is intact",
-        );
+        ).await;
     };
 
     // Confirm before append — both the idempotency rule and phase 2 itself.
@@ -76,7 +76,7 @@ pub(crate) async fn copy(
     if let Some(rfc) = saga.rfc_message_id.as_deref() {
         match backend.find_by_message_id(&target_path, rfc).await {
             Ok(Some(uid)) => {
-                return match sagas.confirm(saga_id, Some(&uid)) {
+                return match sagas.confirm(saga_id, Some(&uid)).await {
                     Ok(()) => Outcome::Applied,
                     Err(error) => failed(format!("could not record the confirmation: {error}")),
                 };
@@ -132,7 +132,10 @@ pub(crate) async fn copy(
     // Phase 2: the proof. APPENDUID is one; the Message-ID search is the
     // fallback; neither is a guess.
     if let Some(mapping) = mapping {
-        return match sagas.confirm(saga_id, Some(&mapping.destination_remote_id())) {
+        return match sagas
+            .confirm(saga_id, Some(&mapping.destination_remote_id()))
+            .await
+        {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not record the confirmation: {error}")),
         };
@@ -140,12 +143,13 @@ pub(crate) async fn copy(
     if let Some(rfc) = saga.rfc_message_id.as_deref()
         && let Ok(Some(uid)) = backend.find_by_message_id(&target_path, rfc).await
     {
-        return match sagas.confirm(saga_id, Some(&uid)) {
+        return match sagas.confirm(saga_id, Some(&uid)).await {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not record the confirmation: {error}")),
         };
     }
-    if let Err(error) = sagas.transition(saga_id, MovePhase::Unconfirmed) {
+    if let Err(error) = sagas.transition(saga_id, MovePhase::Unconfirmed).await
+    {
         return failed(format!("could not record the unconfirmed append: {error}"));
     }
     failed(
@@ -163,7 +167,7 @@ pub(crate) async fn remove(
     snapshot: &[postio_model::RemoteId],
 ) -> Outcome {
     let sagas = CrossAccountMoveRepository::new(connection);
-    let saga = match sagas.get(saga_id) {
+    let saga = match sagas.get(saga_id).await {
         Ok(Some(saga)) => saga,
         Ok(None) => {
             return Outcome::Obsolete {
@@ -192,11 +196,17 @@ pub(crate) async fn remove(
         MovePhase::Confirmed => {}
     }
 
-    let path = saga
-        .source_mailbox
-        .and_then(|mailbox| MailboxRepository::new(connection).get(mailbox).ok())
-        .flatten()
-        .map(|mailbox| mailbox.path);
+    // Spelled out rather than chained: `and_then` takes a closure, and a
+    // closure cannot await.
+    let path = match saga.source_mailbox {
+        Some(mailbox) => MailboxRepository::new(connection)
+            .get(mailbox)
+            .await
+                        .ok()
+            .flatten()
+            .map(|mailbox| mailbox.path),
+        None => None,
+    };
     // The queue row's snapshot first, the live row second (ADR 0026, #531).
     //
     // `enqueue` took the snapshot before the local write that hid the source
@@ -208,12 +218,18 @@ pub(crate) async fn remove(
     // provisional copy, which is born with no identity at all (#940) and
     // gains one only when phase 2 confirms. Re-deriving from that row is how
     // a removal reaches no server and reports success.
-    let remote_id = snapshot.first().cloned().or_else(|| {
-        saga.source_message
-            .and_then(|message| MessageRepository::new(connection).get(message).ok())
-            .flatten()
-            .and_then(|message| message.server.remote_id)
-    });
+    let remote_id = match snapshot.first().cloned() {
+        Some(id) => Some(id),
+        None => match saga.source_message {
+            Some(message) => MessageRepository::new(connection)
+                .get(message)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|message| message.server.remote_id),
+            None => None,
+        },
+    };
     let (Some(path), Some(remote_id)) = (path, remote_id) else {
         // Nothing names a server copy: it is already gone — another client
         // removed it, or a resync did — or it never had a coordinate at all.
@@ -229,7 +245,7 @@ pub(crate) async fn remove(
             had_snapshot = !snapshot.is_empty(),
             "settling a cross-account removal that names no server copy"
         );
-        return match sagas.transition(saga_id, MovePhase::Done) {
+        return match sagas.transition(saga_id, MovePhase::Done).await {
             Ok(()) => Outcome::Applied,
             Err(error) => failed(format!("could not settle the move: {error}")),
         };
@@ -255,17 +271,18 @@ pub(crate) async fn remove(
             after: None,
         };
     }
-    match sagas.transition(saga_id, MovePhase::Done) {
+    match sagas.transition(saga_id, MovePhase::Done).await {
         Ok(()) => Outcome::Applied,
         Err(error) => failed(format!("could not settle the move: {error}")),
     }
 }
 
-fn target_path(connection: &Connection, saga: &CrossAccountMove) -> Option<String> {
+async fn target_path(connection: &Connection, saga: &CrossAccountMove) -> Option<String> {
     let mailbox = saga.target_mailbox?;
     saga.target_account?;
     MailboxRepository::new(connection)
         .get(mailbox)
+        .await
         .ok()
         .flatten()
         .map(|mailbox| mailbox.path)
@@ -276,12 +293,13 @@ fn raw_bytes(blobs: Option<&BlobStore>, saga: &CrossAccountMove) -> Option<Vec<u
     blobs?.get(&postio_model::BlobId::new(blob.to_owned())).ok()
 }
 
-fn abort(
+async fn abort(
     sagas: &CrossAccountMoveRepository<'_>,
     saga: CrossAccountMoveId,
     reason: &str,
 ) -> Outcome {
-    if let Err(error) = sagas.transition(saga, MovePhase::Aborted) {
+    if let Err(error) = sagas.transition(saga, MovePhase::Aborted).await
+    {
         return failed(format!("could not abandon the move: {error}"));
     }
     failed(reason.to_owned())

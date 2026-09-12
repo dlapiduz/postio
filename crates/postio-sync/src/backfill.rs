@@ -52,7 +52,7 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{
     BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
 };
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
@@ -630,12 +630,13 @@ impl Backfill {
     /// One at a time, and outstanding until [`finished`](Self::finished)
     /// reports it. That is what bounds how long the user can wait behind the
     /// backfill: one body, the one already on the wire.
-    pub fn next_body(&mut self) -> Option<Claim> {
+    pub async fn next_body(&mut self) -> Option<Claim> {
         if self.cancelled {
             return None;
         }
 
-        if let Some(request) = self.take_interactive() {
+        if let Some(request) = self.take_interactive()
+    {
             return Some(self.claim(request, Priority::Interactive));
         }
         if !self.background_runs() {
@@ -784,19 +785,19 @@ impl Backfill {
 /// [`request_whole`] answer an interactive, on-open fetch exactly as they
 /// would for any other folder; only the unattended top-up this feeds skips
 /// an excluded one.
-pub fn seed(
+pub async fn seed(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_backfill_from(mailbox_id, limit, offset)?;
+        let candidates = messages.needing_backfill_from(mailbox_id, limit, offset).await?;
         let read = candidates.len();
         let queued = candidates
             .into_iter()
@@ -821,12 +822,12 @@ pub fn seed(
 /// Returns `false` when there is nothing to fetch — the message has no local
 /// row any more, has no `UID` yet, or already has its full body — in which
 /// case the reading pane already has everything it is going to get from this.
-pub fn request_body(
+pub async fn request_body(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id).await? else {
         return Ok(false);
     };
     backfill.request_now(candidate.into());
@@ -844,12 +845,12 @@ pub fn request_body(
 /// Under ADR 0017 the text axis stores no raw source, so those bytes are not
 /// on this machine for any message the background lane fetched, and there is
 /// nowhere to get them but the server.
-pub fn request_whole(
+pub async fn request_whole(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id)? else {
+    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id).await? else {
         return Ok(false);
     };
     let mut request = BodyRequest::from(candidate);
@@ -878,7 +879,7 @@ pub fn request_whole(
 /// never recorded escalates the request to [`Want::Whole`]: `BODY[2]` comes
 /// back encoded with nothing to say how, and storing base64 as though it were
 /// a PDF is worse than the extra bandwidth.
-pub fn request_payloads(
+pub async fn request_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
@@ -888,10 +889,10 @@ pub fn request_payloads(
         return Ok(false);
     }
     let messages = MessageRepository::new(connection);
-    let Some(candidate) = messages.backfill_candidate(message_id)? else {
+    let Some(candidate) = messages.backfill_candidate(message_id).await? else {
         return Ok(false);
     };
-    let Some(message) = messages.get(message_id)? else {
+    let Some(message) = messages.get(message_id).await? else {
         return Ok(false);
     };
 
@@ -941,18 +942,18 @@ pub fn request_payloads(
 /// competed with the mail somebody is reading would be the wrong trade. It
 /// stops finding work once the blocks are stored, which is what keeps it from
 /// being a permanent tax on every sync.
-pub fn seed_header_blocks(
+pub async fn seed_header_blocks(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut queued = 0;
-    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit)? {
+    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit).await? {
         let mut request = BodyRequest::from(candidate);
         request.want = Want::HeaderBlock;
         if backfill.enqueue(request) {
@@ -975,24 +976,24 @@ pub fn seed_header_blocks(
 /// a message set aside after a failed fetch stays `partial` for ever, so a
 /// folder whose newest batch is all such messages would answer the same rows
 /// on every seed and never reach the mail behind them.
-pub fn seed_payloads(
+pub async fn seed_payloads(
     connection: &Connection,
     backfill: &mut Backfill,
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id)? {
+    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_payloads_from(mailbox_id, limit, offset)?;
+        let candidates = messages.needing_payloads_from(mailbox_id, limit, offset).await?;
         let read = candidates.len();
         let mut queued = 0;
         for candidate in candidates {
             let message_id = candidate.message_id;
-            let Some(message) = messages.get(message_id)? else {
+            let Some(message) = messages.get(message_id).await? else {
                 continue;
             };
             let wanted = pending_payloads(&message);
@@ -1077,7 +1078,7 @@ pub async fn fetch_body(
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
-    let Some(mut message) = messages.get(request.message)? else {
+    let Some(mut message) = messages.get(request.message).await? else {
         // Deleted, or wiped by a UIDVALIDITY reset, while this sat in the
         // queue. Checked before the fetch so a stale queue costs no bandwidth.
         return Ok(Outcome::Gone);
@@ -1117,7 +1118,7 @@ pub async fn fetch_body(
                 });
             };
             let bytes = block.text.len() as u64;
-            messages.set_headers(request.message, Some(&block))?;
+            messages.set_headers(request.message, Some(&block)).await?;
             index_the_header_block(connection, request.message, Some(&block));
             return Ok(Outcome::Stored { bytes });
         }
@@ -1188,7 +1189,7 @@ pub async fn fetch_body(
     if message.preview.is_none() {
         message.preview = parsed.preview;
     }
-    messages.update(&mut message)?;
+    messages.update(&mut message).await?;
 
     // Every payload arrived with the message, so record where each one landed
     // — the same content-addressed blob the payload axis would have written,
@@ -1204,13 +1205,13 @@ pub async fn fetch_body(
             continue;
         };
         let blob = blobs.put(&part.content)?;
-        messages.set_attachment_blob(request.message, part_id, &blob)?;
+        messages.set_attachment_blob(request.message, part_id, &blob).await?;
     }
 
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
     // `postio_app::reading::part_bytes` falls back to.
-    messages.set_body(request.message, &stored, BodyState::Full)?;
+    messages.set_body(request.message, &stored, BodyState::Full).await?;
 
     // And into the search index, *after* the commit point.
     //
@@ -1230,8 +1231,8 @@ pub async fn fetch_body(
     // state (a headless sync, a test that only wants mail), and trading a
     // fetched message for an unavailable index would be the wrong way round.
     // `postio_session::index_local_bodies` sweeps up whatever this misses.
-    if let Err(error) =
-        postio_index::index::index_body_of(connection, request.message.get(), &parsed.body)
+    if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &parsed.body)
+        .await
     {
         tracing::debug!(
             message = request.message.get(),
@@ -1259,7 +1260,7 @@ pub async fn fetch_body(
 /// answer for a corpus the store does not have, and a store whose search
 /// schema was never created is a real state that must not cost a fetched
 /// message.
-fn index_the_header_block(
+async fn index_the_header_block(
     connection: &Connection,
     message: MessageId,
     block: Option<&postio_model::headers::Block>,
@@ -1271,7 +1272,8 @@ fn index_the_header_block(
         return;
     };
     let headers = postio_model::headers::parse_block(&block.text);
-    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers) {
+    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers)
+        .await {
         tracing::debug!(
             message = message.get(),
             %error,
@@ -1400,7 +1402,7 @@ async fn fetch_text_parts(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, &part_id, &blob)?;
+        messages.set_attachment_blob(request.message, &part_id, &blob).await?;
         // Kept in step with the row, so `state_for` below reads the truth
         // rather than the structure as the header sync left it.
         if let Some(attachment) = message
@@ -1432,7 +1434,7 @@ async fn fetch_text_parts(
     if message.preview.is_none() {
         message.preview = preview;
     }
-    messages.update(&mut message)?;
+    messages.update(&mut message).await?;
 
     // `partial` means text local, payloads not — the variant the schema
     // declared and nothing had ever written until ADR 0017 gave it a meaning.
@@ -1441,9 +1443,10 @@ async fn fetch_text_parts(
 
     // The commit point, after which the body is local as far as anything else
     // is concerned. See `fetch_body` for why it is last.
-    messages.set_body(request.message, &stored, state)?;
+    messages.set_body(request.message, &stored, state).await?;
 
     if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &body)
+        .await
     {
         tracing::debug!(
             message = request.message.get(),
@@ -1638,16 +1641,16 @@ async fn fetch_payloads(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, part_id, &blob)?;
+        messages.set_attachment_blob(request.message, part_id, &blob).await?;
     }
 
     // The commit point for this axis. Re-read rather than reasoned about: the
     // rows above were written one at a time, and what matters here is whether
     // *every* part is local now — including ones this request never asked for.
-    if let Some(settled) = messages.get(request.message)? {
+    if let Some(settled) = messages.get(request.message).await? {
         let state = state_for(&settled.attachments);
         if settled.sync.body_state != state {
-            messages.set_body_state(request.message, state)?;
+            messages.set_body_state(request.message, state).await?;
         }
     }
 
@@ -1819,7 +1822,7 @@ mod tests {
     #[test]
     fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let messages = MessageRepository::new(&connection);
 
@@ -1842,7 +1845,7 @@ mod tests {
     #[test]
     fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
@@ -1856,7 +1859,7 @@ mod tests {
     #[test]
     fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let messages = MessageRepository::new(&connection);
 
@@ -1880,7 +1883,7 @@ mod tests {
     #[test]
     fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let messages = MessageRepository::new(&connection);
 
