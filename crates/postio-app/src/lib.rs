@@ -877,9 +877,19 @@ async fn reclaim_disk(wiring: &Wiring) {
         // This engine has the `auto_vacuum` pragma and no
         // `incremental_vacuum` step to drive it with, so there is nothing to
         // call. The blob sweeps above still run and are the larger half by
-        // bytes. Filed rather than faked: a reclaim that silently reclaims
+        // bytes. Said rather than faked: a reclaim that silently reclaims
         // nothing is worse than one that is known to be missing.
-        let _ = &database;
+        //
+        // The write-ahead log is the half that *can* be reclaimed. #1175
+        // bounded it with `journal_size_limit`, which this engine does not
+        // have; `wal_checkpoint(TRUNCATE)` is the mechanism it does, and
+        // here is where it belongs -- off the startup path and off every
+        // interaction, which is what #1175's own 676 MB WAL was about.
+        match database.truncate_log().await {
+            Ok(0) => {}
+            Ok(bytes) => tracing::info!(bytes, "truncated the write-ahead log"),
+            Err(error) => tracing::warn!(%error, "could not truncate the log"),
+        }
     });
 }
 

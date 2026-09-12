@@ -350,7 +350,7 @@ impl Store {
     ///
     /// # Why this is `async` when the engine's own `connect` is not
     ///
-    /// Because of the pragma. **Foreign keys are per connection and default
+    /// Because of the pragmas. **Foreign keys are per connection and default
     /// to off**, so a connection that skipped this would see every `ON DELETE
     /// CASCADE` and `ON DELETE SET NULL` in the schema silently not happen --
     /// deleting an account would leave its mailboxes, and a cross-account move
@@ -363,6 +363,13 @@ impl Store {
     pub async fn connect(&self) -> Result<Checkout> {
         let connection = self.database.connect()?;
         connection.execute("PRAGMA foreign_keys = ON", ()).await?;
+        // ADR 0014's threat model closes the temp spill explicitly: an
+        // encrypted database whose sort scratch lands on disk in the clear
+        // has encrypted the wrong thing. The engine defaults this to 0
+        // (DEFAULT), not 2 (MEMORY) -- checked, not assumed, and
+        // `temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk` is
+        // what keeps it checked.
+        connection.execute("PRAGMA temp_store = 2", ()).await?;
         Ok(Checkout {
             connection,
             gate: self.gate.clone(),
@@ -396,6 +403,42 @@ impl Store {
     /// yet.
     fn connect_bare(&self) -> Result<Connection> {
         self.database.connect().map_err(Into::into)
+    }
+
+    /// Truncate the write-ahead log, returning what it was before.
+    ///
+    /// # Why this is a call and not a setting
+    ///
+    /// #1175 bounded the WAL with `PRAGMA journal_size_limit`: a ceiling the
+    /// engine enforced at every checkpoint, set once per connection. The live
+    /// install had reached a **676 MB** WAL against an 868 MB database, and
+    /// paid for it on every launch -- the WAL index is rebuilt before the
+    /// first row can be read, and that sits in front of the first frame.
+    ///
+    /// This engine has no `journal_size_limit`. It does have
+    /// `wal_checkpoint`, so the ceiling becomes a sweep: the housekeeping
+    /// worker calls this, off the startup path and off the interaction path,
+    /// and the log goes back to nothing.
+    ///
+    /// It is a weaker guarantee than a limit the engine enforces itself --
+    /// a session that never reaches housekeeping never truncates -- and it is
+    /// the mechanism available.
+    pub async fn truncate_log(&self) -> Result<u64> {
+        let before = self
+            .path
+            .as_ref()
+            .map(|path| path.with_extension("db-wal"))
+            .and_then(|wal| std::fs::metadata(wal).ok())
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+
+        let connection = self.connect().await?;
+        // A query, not an `execute`: it answers with (busy, log, checkpointed)
+        // and the engine refuses a statement whose rows nobody reads.
+        let mut rows = connection.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await?;
+        let _ = rows.next().await?;
+        drop(rows);
+        Ok(before)
     }
 
     /// Where the store lives, or `None` for one that is not on disk.

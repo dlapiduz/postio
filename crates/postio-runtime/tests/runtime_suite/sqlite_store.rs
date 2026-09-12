@@ -10,7 +10,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
 /// The seeded database, and a store over it.
-fn seeded() -> (postio_storage::Database, postio_storage::seed::SeedReport) {
+fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
     let database = test_support::memory();
     let report = seed_small(&database, 7);
     (database, report)

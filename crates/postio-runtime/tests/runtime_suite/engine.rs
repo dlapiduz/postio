@@ -25,7 +25,7 @@ use harness::BlobDir;
 /// read what it announced.
 fn engine() -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     BlobDir,
@@ -37,7 +37,7 @@ fn engine() -> (
 /// As [`engine`], keeping the mock so a test can make it fail.
 fn engine_with_backend() -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
@@ -58,7 +58,7 @@ fn engine_with(
     prepare: impl FnOnce(&MockBackend),
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
@@ -79,7 +79,7 @@ fn engine_with_backfill(
     backfill: postio_sync::BackfillPolicy,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_storage::seed::SeedReport,
     EventStream,
     Arc<MockBackend>,
@@ -801,7 +801,7 @@ async fn no_network_is_not_a_backoff() {
 
 /// Wait until the store stops changing, and say where it settled.
 async fn settle(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     mailbox: postio_model::ids::MailboxId,
 ) -> usize {
     let mut last = usize::MAX;
@@ -825,7 +825,7 @@ async fn settle(
 /// this; it is the price of a database that costs nothing to create, and it
 /// belongs in the tests rather than in the pragmas.
 fn with_store<T>(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     what: &str,
     work: impl Fn(&postio_storage::PooledConnection) -> postio_storage::Result<T>,
 ) -> T {
@@ -843,7 +843,7 @@ fn with_store<T>(
 }
 
 /// How many messages the local store holds for `mailbox`.
-fn stored_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> usize {
+fn stored_in(database: &postio_storage::Store, mailbox: postio_model::ids::MailboxId) -> usize {
     with_store(database, "counting messages", |connection| {
         postio_storage::repository::MessageRepository::new(connection)
             .count(&postio_storage::repository::ListQuery {
@@ -869,7 +869,7 @@ fn arriving_message() -> Vec<u8> {
 
 /// An engine over `database`, for a test that builds its own store.
 fn engine_over(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
     backend: MockBackend,
 ) -> (Engine, EventStream, BlobDir) {
@@ -879,7 +879,7 @@ fn engine_over(
 /// As [`engine_over`], keeping the mock so a test can change what the server
 /// holds while the engine is running.
 fn engine_over_arc(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
     backend: Arc<MockBackend>,
 ) -> (Engine, EventStream, BlobDir) {
@@ -979,7 +979,7 @@ fn server() -> MockBackend {
 /// `needing_backfill` will not offer a message it cannot ask the server for.
 /// A backfill test has to supply that itself.
 fn give_the_inbox_uids(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     mailbox: postio_model::ids::MailboxId,
 ) -> usize {
     let connection = database.connection().expect("a connection");
@@ -1004,7 +1004,7 @@ fn give_the_inbox_uids(
 
 /// Queue one flag change against the newest message in `mailbox`.
 fn queue_a_flag_change(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     report: &postio_storage::seed::SeedReport,
     mailbox: postio_model::ids::MailboxId,
 ) -> postio_model::ids::MessageId {
@@ -1418,7 +1418,7 @@ fn engine_seeding_in_batches(
     seed_batch: u32,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_model::ids::MailboxId,
     Arc<MockBackend>,
     BlobDir,
@@ -1499,7 +1499,7 @@ async fn until(done: impl Fn() -> bool) -> bool {
 }
 
 /// How many messages `mailbox` holds locally at all, body or no body.
-fn headers_in(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
+fn headers_in(database: &postio_storage::Store, mailbox: postio_model::ids::MailboxId) -> i64 {
     with_store(database, "counting headers", |connection| {
         Ok(connection.query_row(
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
@@ -1510,7 +1510,7 @@ fn headers_in(database: &postio_storage::Database, mailbox: postio_model::ids::M
 }
 
 /// How many of `mailbox`'s messages have their body on this machine.
-fn bodies_local(database: &postio_storage::Database, mailbox: postio_model::ids::MailboxId) -> i64 {
+fn bodies_local(database: &postio_storage::Store, mailbox: postio_model::ids::MailboxId) -> i64 {
     with_store(database, "counting local bodies", |connection| {
         Ok(connection.query_row(
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND body_state = 'full'",
@@ -1796,10 +1796,10 @@ fn engine_over_a_real_sync(
     backfill: postio_sync::BackfillPolicy,
 ) -> (
     Engine,
-    postio_storage::Database,
+    postio_storage::Store,
     postio_model::AccountId,
     BlobDir,
-    test_support::TempDatabase,
+    test_support::TempStore,
 ) {
     let database = test_support::temp();
     let account = {
@@ -1845,7 +1845,7 @@ fn engine_over_a_real_sync(
 
 /// Waits for `look` to answer `Some`, or gives up saying what it was after.
 async fn until_some<T>(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     what: &str,
     look: impl Fn(&postio_storage::PooledConnection) -> Option<T>,
 ) -> T {
@@ -1865,7 +1865,7 @@ async fn until_some<T>(
 
 /// The one message the mock holds, once the engine has synced it.
 async fn the_synced_message(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::AccountId,
 ) -> postio_model::MessageId {
     until_some(database, "the message reach the store", |connection| {
@@ -1887,7 +1887,7 @@ async fn the_synced_message(
 }
 
 fn attachment_blob(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     message: postio_model::MessageId,
 ) -> Option<postio_model::BlobId> {
     let connection = database.connection().ok()?;

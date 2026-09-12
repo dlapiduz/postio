@@ -12,7 +12,7 @@ use postio_storage::PooledConnection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox, sync_mailbox_with_batch_size};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
     ContactRepository::new(connection)

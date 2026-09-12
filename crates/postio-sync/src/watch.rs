@@ -832,11 +832,11 @@ mod tests {
         let now = DateTime::<Utc>::MIN_UTC;
 
         assert!(matches!(
-            watcher.next_push(now),
+            watcher.next_push(now).await,
             Watch::Wait { until: None }
         ));
         assert!(matches!(
-            watcher.next_poll(now),
+            watcher.next_poll(now).await,
             Watch::Wait { until: None }
         ));
     }

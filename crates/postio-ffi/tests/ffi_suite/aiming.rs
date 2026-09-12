@@ -151,7 +151,7 @@ mod through_the_boundary {
         std::sync::Arc<Session>,
         ScopeFfi,
         Vec<i64>,
-        postio_storage::Database,
+        postio_storage::Store,
     ) {
         let database = test_support::memory();
         let (mailbox, members) = {
@@ -196,7 +196,7 @@ mod through_the_boundary {
         )
     }
 
-    fn is_flagged(database: &postio_storage::Database, message: i64) -> bool {
+    fn is_flagged(database: &postio_storage::Store, message: i64) -> bool {
         let connection = database.connection().expect("a connection");
         MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))

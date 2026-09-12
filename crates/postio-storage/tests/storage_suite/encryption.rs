@@ -1,9 +1,11 @@
-//! The database is SQLCipher (ADR 0014 Q1, #300).
+//! The database is encrypted (ADR 0014 Q1, #300).
 //!
-//! Page-level encryption below SQLite's own machinery, so FTS5, WAL, the
-//! migrations and every repository work unchanged and the encryption is
-//! invisible above `Database::open`. What these tests hold down is the part
-//! that is *not* invisible:
+//! Page-level encryption below the engine's own machinery, so the search
+//! index, the WAL and every repository work unchanged and the encryption is
+//! invisible above `Store::open`. It was SQLCipher's AES-256-CBC plus an
+//! HMAC; it is the engine's own AES-256-GCM now, and what these tests hold
+//! down did not change with it -- which is the point of their being about
+//! properties rather than about a cipher:
 //!
 //! * **The bytes on disk are ciphertext.** Since ADR 0020 message bodies are
 //!   rows, so this file is now what stands between a stolen laptop and the
@@ -17,7 +19,7 @@
 use postio_model::{BodyState, Message};
 use postio_storage::key::{Purpose, StoreKey, Subkey};
 use postio_storage::repository::{MessageRepository, StoredBody};
-use postio_storage::{Database, test_support};
+use postio_storage::{Store, test_support};
 
 /// A database subkey from a fixed master key, so a test can reopen a store.
 fn key(seed: u8) -> Subkey {
@@ -31,7 +33,7 @@ const SECRET_BODY: &str = "The frobnicator arrives on Thursday, Grimswick.";
 /// Writes a message carrying the two markers above, and answers the store path.
 async fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std::path::PathBuf {
     let path = directory.join("postio.db");
-    let database = Database::open(&path, key).expect("open");
+    let database = Store::open(&path, key).await.expect("open");
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
@@ -55,6 +57,7 @@ async fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std
     // reading a database whose newest pages are still in `postio.db-wal`.
     connection
         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .await
         .expect("checkpoint");
     drop(connection);
     drop(database);
@@ -95,7 +98,7 @@ async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(2)).await;
 
-    let database = Database::open(&path, &key(2)).expect("reopen with the same key");
+    let database = Store::open(&path, &key(2)).await.expect("reopen with the same key");
     let connection = database.connect().await.expect("checkout");
     let (id, subject): (i64, Option<String>) = connection
         .query_row("SELECT id, subject FROM messages", [], |row| {
@@ -121,7 +124,7 @@ async fn a_wrong_key_is_refused_in_words_rather_than_reported_as_corruption() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(3)).await;
 
-    let error = Database::open(&path, &key(4)).expect_err("a different key must not open it");
+    let error = Store::open(&path, &key(4)).await.expect_err("a different key must not open it");
     let said = error.to_string();
 
     // The sentence reaches a person: `postio_session::open_store_at` puts it
@@ -144,9 +147,9 @@ async fn a_wrong_key_never_destroys_what_it_could_not_read() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = a_store_with_a_secret(directory.path(), &key(5)).await;
 
-    Database::open(&path, &key(6)).expect_err("the wrong key");
+    Store::open(&path, &key(6)).await.expect_err("the wrong key");
 
-    let database = Database::open(&path, &key(5)).expect("the right key still opens it");
+    let database = Store::open(&path, &key(5)).await.expect("the right key still opens it");
     let connection = database.connect().await.expect("checkout");
     let count: i64 = connection
         .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
@@ -161,10 +164,21 @@ async fn temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk() {
     // encrypted the wrong thing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let pragmas = postio_storage::db::read_pragmas(&connection).expect("read the pragmas");
+    // Asked of the connection rather than of a struct this crate fills in:
+    // there is no pragma-reading helper any more, and asking the engine is
+    // the stronger question anyway -- it answers what is actually set.
+    let temp_store: i64 = postio_storage::sql::one(
+        &connection,
+        "PRAGMA temp_store",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("read the pragma");
     assert_eq!(
-        pragmas.temp_store, 2,
-        "temp_store must be MEMORY (2), not FILE or DEFAULT"
+        temp_store, 2,
+        "temp_store must be MEMORY (2), not FILE or DEFAULT. The engine \
+         defaults it to 0, so `Store::connect` sets it on every connection."
     );
 }
 

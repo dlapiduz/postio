@@ -16,7 +16,7 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 use postio_sync::{DrainReport, Drainer, RetryPolicy};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 const INBOX: &str = "INBOX";
 const ARCHIVE: &str = "Archive";

@@ -11,7 +11,7 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 use postio_sync::discover::discover;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn an_account(connection: &Connection) -> Account {
     let mut account = Account::new(

@@ -13,7 +13,7 @@
 //! key itself is a constant (`test_support::key()` derives from a fixed
 //! master), so "the key was empty" was never the likely reading. What was
 //! left is the issue's own hypothesis: something in the codec or in
-//! libcrypto going wrong when many `Database::open` calls land at once.
+//! libcrypto going wrong when many `Store::open` calls land at once.
 //!
 //! This exercises that directly instead of waiting for a flake. A workspace
 //! run opens hundreds of these across many test binaries; this opens them in
