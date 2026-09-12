@@ -451,18 +451,14 @@ render that same answer.
 
 ## Dependencies
 
-- **`feature/mailbox-roles` is built and unmerged, and this feature needs it.**
-  Epic #962 and its five children (#963–#967, all closed) landed the
-  per-account role map — the `mailbox_roles` table, discovery reading it every
-  pass, the `MapMailboxRole` command, the settings rows, the docs — onto
-  `origin/feature/mailbox-roles`, which is 15 commits ahead of `main` with no
-  pull request and no commit since 2026-09-04. FR-033 and FR-035 are that
-  branch's work, not this one's. **That branch must merge before this feature
-  is planned**, or this feature will re-derive it and conflict with it.
-- **That branch carries an ADR number that `main` has since taken.** It adds
-  `docs/decisions/0027-mailbox-roles-are-mapped-per-account.md`; `main` now has
-  `0027-the-header-index-is-budgeted-per-message.md`. Renumbering is part of
-  merging it, not part of this feature.
+- **`feature/mailbox-roles` has merged, and this feature needs it.** Epic #962
+  and its five children (#963–#967) landed the per-account role map — the
+  `mailbox_roles` table (migration `0017`), discovery reading it every pass, the
+  `MapMailboxRole` command, the settings rows, ADR 0035 — in
+  [#1496](https://github.com/dlapiduz/postio/pull/1496) on 2026-09-12, after a
+  week unmerged. FR-033 and FR-035 are that work, not this feature's, and
+  FR-031's refusal record has a home in the `mailbox_roles` table because of it.
+  This branch is rebased onto it.
 - **ADR 0021 (exactly-once send)** is inherited unchanged, with one correction
   owed: its "What the user sees" table says every send state is reachable from
   the Drafts list, which FR-001 and FR-020 make false. The table is updated in
