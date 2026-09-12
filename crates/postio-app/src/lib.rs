@@ -166,21 +166,19 @@ pub fn run() -> glib::ExitCode {
         storage_ceiling,
     });
 
-    // The store's key, before the store. ADR 0014 Q3: a locked keyring means
-    // the mail does not open, and there is no "open it unencrypted anyway" —
-    // the same rule `secret.rs` has kept for passwords since it was written.
+    // **The window first, and the store behind it.** Until #1114 this read
+    // the keyring and opened the store here, before `app::build_with` was
+    // called at all -- so there was no application, let alone a window,
+    // until the store had already succeeded or been refused. That is fine
+    // when opening takes 30ms and indefensible when it does not: a schema
+    // migration held a launch on the live install for 12.6s, and a keyring
+    // prompt held another for 28s, both with nothing whatever on screen.
     //
-    // Blocking, and only here: there is no window yet to freeze and no
-    // runtime yet to defer to. The retry on the screen below runs the same
-    // read on a thread, because by then there *is* a window.
-    let first = postio_session::store_key_blocking(context.secrets.as_ref())
-        .map_err(|error| error.to_string())
-        .and_then(|key| open_with(&key, &context));
-    // Marked whether or not the store opened: a refused keyring still spent
-    // the time, and a phase that only appears on the happy path measures the
-    // wrong startup. #790 -- this and the widget tree used to share one
-    // phase, and the 228 ms they summed to got attributed to GTK.
-    timeline.mark(Phase::Store);
+    // Nothing about the failure path changes. ADR 0014 Q3 still means a
+    // store that will not open is a hard stop rather than a degraded mode;
+    // what moves is *when* that is decided, and therefore that the refusal
+    // now replaces the content of a window somebody is already looking at
+    // (#404's screen, exactly as before).
     let opened: Rc<std::cell::RefCell<Option<Opened>>> = Rc::new(std::cell::RefCell::new(None));
     // Whether `open_or_onboard` has already run for this window (#514): a
     // second `activate` -- a second launch of a single-instance app just
@@ -188,22 +186,14 @@ pub fn run() -> glib::ExitCode {
     // over the first. See `open_or_onboard`'s own doc comment for why it is
     // the one that checks and sets this, not `present` here.
     let fed: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
-    let refused = match first {
-        Ok(ready) => {
-            *opened.borrow_mut() = Some(ready);
-            None
-        }
-        Err(reason) => {
-            // Safe verbatim: no `SecretError` carries key material. The same
-            // sentence goes to the log and to the screen, because the log is
-            // for a bug report and the screen is for the person who has to
-            // unlock their keyring.
-            tracing::error!(reason, "the store did not open");
-            Some(reason)
-        }
-    };
+    // And whether the store is already being opened. `fed` cannot answer
+    // this: it is set at the far end of a chain that only starts once the
+    // store has landed, so a second `activate` arriving during the open
+    // would find it still false and start a second thread, a second runtime
+    // and a second set of engines over the same file.
+    let opening: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
 
-    let application = app::build_with(timeline);
+    let application = app::build_with(timeline.clone());
 
     // Connected *after* the frontend's own handler, so the window it makes is
     // already there to be fed. Signal handlers run in the order they were
@@ -212,6 +202,8 @@ pub fn run() -> glib::ExitCode {
         let opened = Rc::clone(&opened);
         let context = Rc::clone(&context);
         let fed = Rc::clone(&fed);
+        let opening = Rc::clone(&opening);
+        let timeline = timeline.clone();
         move |application| {
             let Some(window) = application.active_window().and_downcast::<Window>() else {
                 return;
@@ -220,7 +212,15 @@ pub fn run() -> glib::ExitCode {
             // a second `activate` (a second launch raising the window) just
             // replaces it with itself.
             notifications::install_action(application, &window);
-            present(&window, &opened, &context, refused.clone(), &fed);
+            if opened.borrow().is_some() {
+                // A second launch raising a window that already has its mail.
+                present(&window, &opened, &context, None, &fed);
+                return;
+            }
+            if opening.replace(true) {
+                return;
+            }
+            open_the_store(&window, &opened, &context, &fed, &timeline);
         }
     });
 
@@ -340,6 +340,13 @@ pub fn open_or_onboard(
                     std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
                 ),
             }
+            // Both branches, because both are a usable UI: mail to read, or
+            // the screen that asks for the account there is none of. The
+            // budget closes on the next frame either way, which since #1114
+            // is a later frame than the one the window first appeared in —
+            // the window arrives early and this is when it is worth
+            // something.
+            window.report_usable();
         }
     });
 }
@@ -1162,16 +1169,39 @@ const BACKFILL_PER_MAILBOX: u32 = 200;
 /// Held so a retry can rebuild everything the first attempt could not: which
 /// keyring, which folder is the archive, how hard to sync. None of it depends
 /// on the store, which is exactly why it survives the store not opening.
-struct Installation {
-    secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
-    state: SharedState,
-    mailbox_roles: postio_model::RoleOverrides,
-    sync_config: postio_config::SyncConfig,
+pub struct Installation {
+    /// The one keyring this installation reads every credential from.
+    pub secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
+    /// What the user is looking at, as the handlers see it.
+    pub state: SharedState,
+    /// `[mailboxes]`: which folder this server calls its archive.
+    pub mailbox_roles: postio_model::RoleOverrides,
+    /// `[sync]`: how hard to sync, and what to notify about.
+    pub sync_config: postio_config::SyncConfig,
     /// `[storage] max_bytes`, or `None` for the documented default of
     /// unbounded. Read here beside the other two sections, and for the same
     /// reason: the sweep that reads it runs before there is anywhere else to
     /// have put it.
-    storage_ceiling: Option<u64>,
+    pub storage_ceiling: Option<u64>,
+}
+
+impl Installation {
+    /// An installation with `secrets` and this build's defaults for
+    /// everything `config.toml` would otherwise supply.
+    ///
+    /// [`run`] fills those in from the file. This is for whoever is driving
+    /// the composition root without one — the tests that exist because
+    /// `postio-bl2` was eight capabilities wired to nothing, and the only way
+    /// to find out was to launch the binary.
+    pub fn new(secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>) -> Self {
+        Installation {
+            secrets,
+            state: SharedState::default(),
+            mailbox_roles: Default::default(),
+            sync_config: Default::default(),
+            storage_ceiling: None,
+        }
+    }
 }
 
 /// Everything downstream of the store key.
@@ -1180,31 +1210,154 @@ struct Installation {
 /// command bus, the bus feeds the runtime, the runtime feeds the wiring — and
 /// a half-built one is not a state anything downstream knows how to handle.
 /// Either the mail opens or a screen says why.
-struct Opened {
-    wiring: Wiring,
+pub struct Opened {
+    /// Everything the window and its panes read through.
+    pub wiring: Wiring,
     /// What the bus answers, asked before it was handed over: the window's
     /// action seam carries *every* gesture, and the ones another consumer
     /// owns must not come back as "not wired up in this build".
-    wired: Vec<postio_core::CommandId>,
+    pub wired: Vec<postio_core::CommandId>,
     /// Taken on the first `activate`. `EventStream` is not `Clone` — there is
     /// one queue and exactly one reader of it — and `activate` can fire again
     /// when a second launch raises the window.
-    events: Rc<std::cell::RefCell<Option<EventStream>>>,
+    pub events: Rc<std::cell::RefCell<Option<EventStream>>>,
     /// The tokio threads every read is polled on. Held to the end of `run`,
     /// which is what shuts it down.
-    bridge: postio_core::bridge::Bridge,
+    pub bridge: postio_core::bridge::Bridge,
 }
 
-/// Opens the store under `key` and builds the bus, the runtime and the wiring.
+/// What the opening thread has to say, in the order it says it.
 ///
-/// The whole of what a locked keyring was standing between the user and, so
-/// that a retry has one function to call rather than a sequence to reproduce.
-fn open_with(
-    key: &postio_storage::key::StoreKey,
+/// One channel rather than two, so the sentence on screen and the answer
+/// cannot arrive out of order — a `Stage` delivered after `Done` would put a
+/// plate over a window that already has its mail in it.
+enum Progress {
+    /// What is being waited on now, for the window to say so if the wait
+    /// outlasts the threshold.
+    Stage(postio_gtk::list_state::Waiting),
+    /// The store, or the sentence explaining why there is not one.
+    Done(Result<(Database, postio_storage::BlobStore), String>),
+}
+
+/// Read the keyring and open the store, on a thread, reporting as it goes.
+///
+/// **Not the runtime**, and not because one is unavailable — at this point in
+/// startup there genuinely is none, since `Bridge` is built out of the store
+/// this is opening. The retry on the `Unavailable` screen has made the same
+/// call on the same kind of plain thread since #404, for the same reason.
+///
+/// Everything sent back is `Send`: a `Database` is a pool behind an `Arc`, a
+/// `BlobStore` is a directory and some keys. The half of the old `open_with`
+/// that is *not* — the command bus, the event hub, the `Wiring` the window
+/// holds — is assembled on the main thread by [`assemble`] once this lands,
+/// and costs nothing measurable next to the I/O this does.
+fn open_the_store_on_a_thread(
+    secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
+) -> async_channel::Receiver<Progress> {
+    use postio_gtk::list_state::Waiting;
+
+    // Unbounded, and it matters: a bounded sender would block this thread on
+    // a main loop that is busy drawing, which is the one thing the whole
+    // arrangement exists to avoid.
+    let (sender, receiver) = async_channel::unbounded();
+    std::thread::spawn(move || {
+        // The keyring first, and it is the wait least under Postio's
+        // control: a D-Bus round trip to a service that may be showing a
+        // passphrase prompt of its own, behind another window. 28 seconds,
+        // once, on the live install.
+        let _ = sender.send_blocking(Progress::Stage(Waiting::Keyring));
+        let key = match postio_session::store_key_blocking(secrets.as_ref()) {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = sender.send_blocking(Progress::Done(Err(error.to_string())));
+                return;
+            }
+        };
+        let opened = postio_session::open_store_reporting(&key, &|stage| {
+            let _ = sender.send_blocking(Progress::Stage(match stage {
+                postio_session::Opening::Store => Waiting::Store,
+                postio_session::Opening::Migrating => Waiting::Migrating,
+                postio_session::Opening::Indexing => Waiting::Indexing,
+            }));
+        });
+        let _ = sender.send_blocking(Progress::Done(opened));
+    });
+    receiver
+}
+
+/// Open the store behind a window that is already on screen, and then feed it.
+///
+/// The whole of #1114's startup, in one place: the window says what it is
+/// waiting on while this runs, says nothing at all if it finishes quickly
+/// enough, and either fills with mail or is replaced by the screen that says
+/// why it could not be.
+fn open_the_store(
+    window: &Window,
+    opened: &Rc<std::cell::RefCell<Option<Opened>>>,
+    context: &Rc<Installation>,
+    fed: &Rc<std::cell::Cell<bool>>,
+    timeline: &Timeline,
+) {
+    let progress = open_the_store_on_a_thread(context.secrets.clone());
+    glib::spawn_future_local({
+        let window = window.clone();
+        let opened = Rc::clone(opened);
+        let context = Rc::clone(context);
+        let fed = Rc::clone(fed);
+        let timeline = timeline.clone();
+        async move {
+            let mut answer = Err(
+                // The thread went away without answering, which is a bug
+                // rather than a condition — but the screen still has to say
+                // something a person can act on.
+                "Postio stopped opening its local store before it answered.".to_owned(),
+            );
+            while let Ok(progress) = progress.recv().await {
+                match progress {
+                    Progress::Stage(waiting) => window.set_waiting_on(waiting),
+                    Progress::Done(done) => {
+                        answer = done;
+                        break;
+                    }
+                }
+            }
+            // Marked whether or not the store opened: a refused keyring still
+            // spent the time, and a phase that only appears on the happy path
+            // measures the wrong startup.
+            timeline.mark(Phase::Store);
+
+            let refused =
+                match answer.and_then(|(database, blobs)| assemble(database, blobs, &context)) {
+                    Ok(ready) => {
+                        *opened.borrow_mut() = Some(ready);
+                        None
+                    }
+                    Err(reason) => {
+                        // Safe verbatim: no `SecretError` carries key material.
+                        // The same sentence goes to the log and to the screen,
+                        // because the log is for a bug report and the screen is
+                        // for the person who has to unlock their keyring.
+                        tracing::error!(reason, "the store did not open");
+                        Some(reason)
+                    }
+                };
+            present(&window, &opened, &context, refused, &fed);
+        }
+    });
+}
+
+/// Build the bus, the runtime and the wiring over a store that is already
+/// open.
+///
+/// The half of startup that is main-thread work rather than I/O, split out
+/// when the other half moved to a thread (#1114): none of what it builds is
+/// `Send`, and none of it is slow — the cost this function has is the cost of
+/// starting a tokio runtime, which is microseconds beside a schema migration.
+fn assemble(
+    database: Database,
+    blobs: postio_storage::BlobStore,
     context: &Installation,
 ) -> Result<Opened, String> {
-    let (database, blobs) = open_store(key)?;
-
     // Filled in when the window is fed and an engine actually starts, which
     // is later than this and may not happen at all. `Refresh` reads it at the
     // moment it is pressed.
@@ -1254,9 +1407,15 @@ fn open_with(
 
 /// Puts either the mail or the reason there is none in front of the user.
 ///
-/// Called on `activate`, and again by the retry on the screen below — which
+/// Called once the store has answered — on `activate` since #1114, after the
+/// window is already up — and again by the retry on the screen below, which
 /// is why it is a function rather than the body of a closure.
-fn present(
+///
+/// `pub` so a test can drive the state that only exists because the window
+/// now comes first: a refusal arriving at a window somebody is already
+/// looking at, and a retry from it (#1114). `postio-bl2` is the bead for what
+/// a composition root only reachable by launching the binary costs.
+pub fn present(
     window: &Window,
     opened: &Rc<std::cell::RefCell<Option<Opened>>>,
     context: &Rc<Installation>,
@@ -1314,20 +1473,11 @@ fn present(
         let fed = Rc::clone(fed);
         move || {
             screen.set_busy(true);
-            // On a thread, not on this one. Reading the keyring is a D-Bus
-            // round trip against a service that may be showing the user a
-            // passphrase prompt of its own, and `store_key_blocking` waits
-            // out `KEYRING_TIMEOUT` for it. There is no runtime to defer to
-            // here — building one is what failed — so this is the plain
-            // thread the situation calls for.
-            let (sender, receiver) = async_channel::bounded(1);
-            let secrets = context.secrets.clone();
-            std::thread::spawn(move || {
-                let read = postio_session::store_key_blocking(secrets.as_ref())
-                    .map_err(|error| error.to_string());
-                let _ = sender.send_blocking(read);
-            });
-
+            // The same threaded open the first attempt made, so a retry that
+            // succeeds continues exactly as a normal start would — including
+            // saying which wait it is on, since a retry after a keyring
+            // prompt is precisely the case where one of them is long.
+            let progress = open_the_store_on_a_thread(context.secrets.clone());
             glib::spawn_future_local({
                 let screen = screen.clone();
                 let window = window.clone();
@@ -1335,17 +1485,26 @@ fn present(
                 let context = Rc::clone(&context);
                 let fed = Rc::clone(&fed);
                 async move {
-                    let read = match receiver.recv().await {
-                        Ok(read) => read,
-                        Err(_) => Err("Postio stopped reading the keyring before                                        it answered."
-                            .to_owned()),
-                    };
+                    let mut answer = Err(
+                        "Postio stopped opening its local store before it answered.".to_owned(),
+                    );
+                    while let Ok(progress) = progress.recv().await {
+                        match progress {
+                            // Recorded but not drawn: the `Unavailable`
+                            // screen has replaced the window's content, so
+                            // the list pane is not on screen to say anything.
+                            // It is set anyway, because a retry that succeeds
+                            // hands the window straight back to the panes and
+                            // the wait is then theirs to describe.
+                            Progress::Stage(waiting) => window.set_waiting_on(waiting),
+                            Progress::Done(done) => {
+                                answer = done;
+                                break;
+                            }
+                        }
+                    }
                     screen.set_busy(false);
-                    // The key is only half of it: the store still has to
-                    // open, and `open_with` is the same function the first
-                    // attempt ran, so a retry that succeeds continues exactly
-                    // as a normal start would.
-                    match read.and_then(|key| open_with(&key, &context)) {
+                    match answer.and_then(|(database, blobs)| assemble(database, blobs, &context)) {
                         Ok(ready) => {
                             tracing::info!("the store opened on a retry");
                             *opened.borrow_mut() = Some(ready);
@@ -1361,6 +1520,14 @@ fn present(
             });
         }
     });
+
+    // A screen with a retry button on it is a usable UI, and the one the
+    // budget has to be measured against when there is no mail to reach:
+    // ADR 0014 Q3 makes this a hard stop, so *this* is where a start that
+    // cannot open its store ends. Without it the timeline would stay open
+    // and report `startup incomplete` on a launch that finished, badly but
+    // completely.
+    window.report_usable();
 }
 
 /// What startup should do with the account this installation has, if any.

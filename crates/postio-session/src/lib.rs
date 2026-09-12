@@ -459,6 +459,41 @@ pub fn open_store(
     open_store_at(paths::store_path(), store_key)
 }
 
+/// What [`open_store_reporting`] is doing right now.
+///
+/// Three waits, because they are three different promises to somebody
+/// watching a window that is already on screen (#1114): reading the store,
+/// changing its shape, and rebuilding what can be rebuilt. The second and
+/// third are the ones that have legitimately taken tens of seconds on a real
+/// mailbox, and the ones a person most needs told about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opening {
+    /// Unlocking the encrypted database and reading it from disk.
+    Store,
+    /// Changing the store rather than reading it: ADR 0014's encryption
+    /// migration, the schema migrations, or a write-ahead log the last run
+    /// left oversized. One promise, because from the outside they are one —
+    /// something is being done to the mailbox's storage and the mail is not
+    /// being touched.
+    Migrating,
+    /// Building or rebuilding the local search index.
+    Indexing,
+}
+
+/// [`open_store`], saying what it is doing as it goes.
+///
+/// `report` runs on the calling thread, before the wait it names. Postio
+/// opens its store on a thread of its own now, with a window already on
+/// screen, so these are the sentences that window has to show — see
+/// `postio_gtk::list_state::Waiting`, which is the same four waits minus the
+/// keyring read, which happens before this is called at all.
+pub fn open_store_reporting(
+    store_key: &postio_storage::key::StoreKey,
+    report: &dyn Fn(Opening),
+) -> Result<(Database, BlobStore), String> {
+    open_store_at_reporting(paths::store_path(), store_key, report)
+}
+
 /// [`open_store`], over a store at a path the caller chooses.
 ///
 /// The default is [`paths::store_path`] and every shipping caller wants it;
@@ -474,6 +509,15 @@ pub fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Database, BlobStore), String> {
+    open_store_at_reporting(path, store_key, &|_| {})
+}
+
+/// [`open_store_at`], saying what it is doing — see [`open_store_reporting`].
+pub fn open_store_at_reporting(
+    path: impl Into<std::path::PathBuf>,
+    store_key: &postio_storage::key::StoreKey,
+    report: &dyn Fn(Opening),
+) -> Result<(Database, BlobStore), String> {
     // The database subkey. BLAKE3-derived from the master key, so the
     // database, the blob contents and the blob ids are cryptographically
     // separated without three keyring entries (ADR 0014 Q3). #301 takes the
@@ -486,6 +530,11 @@ pub fn open_store_at(
     // and gets "file is not a database". ADR 0014 Q4's migration is what turns
     // that into a store this build can read, and it answers
     // `AlreadyEncrypted` and does no work on every open after the first.
+    // ADR 0014 Q4's one-off: a plaintext store is rewritten encrypted before
+    // anything can read it. `AlreadyEncrypted` is the answer on every open
+    // after the first, so this is a cheap question with an expensive
+    // occasional answer -- which is exactly the shape the report exists for.
+    report(Opening::Migrating);
     match postio_storage::encrypt::encrypt_store(&path, store_key) {
         Ok(postio_storage::encrypt::Outcome::Encrypted(report)) => {
             tracing::info!(
@@ -521,7 +570,14 @@ pub fn open_store_at(
         }
     }
 
-    let database = match Database::open(&path, &database_key) {
+    let database = match Database::open_reporting(&path, &database_key, &|stage| {
+        report(match stage {
+            postio_storage::OpenStage::Opening => Opening::Store,
+            postio_storage::OpenStage::Migrating | postio_storage::OpenStage::ReclaimingLog => {
+                Opening::Migrating
+            }
+        })
+    }) {
         Ok(database) => database,
         // A wrong key is its own sentence. `Error::WrongStoreKey` says the
         // store belongs to another installation and is *intact*, where
@@ -556,6 +612,7 @@ pub fn open_store_at(
             ));
         }
     };
+    report(Opening::Indexing);
     if let Err(error) = ensure_search_index(&database) {
         // Recoverable: everything except search still works, and refusing to
         // open a mail client because its index would not build would be a

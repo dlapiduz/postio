@@ -46,17 +46,24 @@ pub enum Phase {
     Fonts,
     /// The generated tokens are installed on the display.
     Styles,
-    /// The store key is out of the keyring and the database is open.
-    ///
-    /// Blocking I/O, and the only phase that is: a D-Bus round trip to the
-    /// keyring and SQLCipher's key derivation, both before the main loop
-    /// starts. Separated from [`Window`](Phase::Window) by #790, which found
-    /// the two of them sharing one 228 ms phase that `docs/PERFORMANCE.md`
-    /// then attributed to GTK. They want telling apart: this half is I/O and
-    /// could be moved off the main thread, and the other half cannot.
-    Store,
     /// The window and its widget tree exist, but nothing is on screen yet.
     Window,
+    /// The compositor has shown the window. Pixels, but no mail in them yet.
+    ///
+    /// New in #1114, and the reason the rest of this list moved: Postio
+    /// presents its window *before* it opens its store, so "there is a window
+    /// on screen" and "there is a mailbox in it" are two different moments
+    /// with, on a real install, tens of seconds between them.
+    Shell,
+    /// The store key is out of the keyring and the database is open.
+    ///
+    /// I/O, and on a thread of its own since #1114 — a D-Bus round trip to
+    /// the keyring, SQLCipher's key derivation, the schema migrations and the
+    /// search-index rebuild, none of which the main loop waits for any more.
+    /// Separated from [`Window`](Phase::Window) by #790, which found the two
+    /// of them sharing one 228 ms phase that `docs/PERFORMANCE.md` then
+    /// attributed to GTK.
+    Store,
     /// The keyring has answered and the window is about to be pointed at the
     /// store: `postio_app::feed_the_window` has been entered.
     ///
@@ -76,18 +83,25 @@ pub enum Phase {
     /// it was — and the answer turned out to be a store read in here rather
     /// than anything GTK was doing.
     Feeds,
-    /// The compositor has shown the first frame. This is "usable UI".
+    /// The compositor has shown a frame with the mail in it. This is "usable
+    /// UI", and it is what the budget is measured against.
+    ///
+    /// Not the same as [`Shell`](Phase::Shell) since #1114. The window
+    /// arrives first and is fed afterwards, so a start that reached pixels in
+    /// 200 ms and mail in twelve seconds took twelve seconds to be usable —
+    /// and a budget that closed at the first frame would call it a pass.
     FirstFrame,
 }
 
 impl Phase {
     /// Every phase, in the order they occur.
-    pub const ALL: [Phase; 8] = [
+    pub const ALL: [Phase; 9] = [
         Phase::Init,
         Phase::Fonts,
         Phase::Styles,
-        Phase::Store,
         Phase::Window,
+        Phase::Shell,
+        Phase::Store,
         Phase::Account,
         Phase::Feeds,
         Phase::FirstFrame,
@@ -99,8 +113,9 @@ impl Phase {
             Phase::Init => "init",
             Phase::Fonts => "fonts",
             Phase::Styles => "styles",
-            Phase::Store => "store",
             Phase::Window => "window",
+            Phase::Shell => "shell",
+            Phase::Store => "store",
             Phase::Account => "account",
             Phase::Feeds => "feeds",
             Phase::FirstFrame => "first frame",
@@ -238,6 +253,40 @@ pub fn on_first_frame<W: IsA<gtk::Widget>>(widget: &W, f: impl Fn() + 'static) {
     widget.connect_map(move |widget| arm(widget.as_ref(), &pending));
 }
 
+/// Close the timeline once `window` is showing mail, and act on the
+/// benchmarking switches documented in this module.
+///
+/// Called by whoever fed the window, which is the composition root — not by
+/// `app::build_with`, which cannot know. Before #1114 the two were the same
+/// moment and this lived there; now the window is presented first and fed
+/// afterwards, so the frame that closes the budget is the one after the panes
+/// were pointed at the store.
+///
+/// A start that never gets a store never calls this, and the timeline stays
+/// open. That is the honest answer — there is no usable UI to have reached —
+/// and it is visible rather than silent: [`Timeline::report`] says `startup
+/// incomplete` and names the phases that did happen.
+pub fn report_usable<W: IsA<gtk::Window>>(window: &W, timeline: &Timeline) {
+    let timeline = timeline.clone();
+    let window = window.as_ref().clone();
+    let quitting = window.clone();
+    on_first_frame(&window, move || {
+        timeline.mark(Phase::FirstFrame);
+        if enabled(TRACE_ENV) {
+            // Through tracing rather than straight to stderr, so it is
+            // filtered and formatted like everything else. `POSTIO_LOG=off`
+            // now silences it, which is the correct reading of `off`; the
+            // benchmark path is `POSTIO_STARTUP_EXIT` and does not read this.
+            tracing::info!("{}", timeline.report());
+        }
+        if enabled(EXIT_ENV)
+            && let Some(application) = gtk::prelude::GtkWindowExt::application(&quitting)
+        {
+            application.quit();
+        }
+    });
+}
+
 fn millis(d: Duration) -> String {
     format!("{:.1}ms", d.as_secs_f64() * 1000.0)
 }
@@ -255,21 +304,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_store_is_its_own_phase_between_styles_and_the_window() {
+    fn the_store_is_its_own_phase_and_no_longer_precedes_the_window() {
         // #790: `window` measured 228ms of a 427ms startup and
         // `docs/PERFORMANCE.md` attributed it to GTK's first-realize cost.
         // It cannot be that -- `present()` is called *after* `Phase::Window`
         // is marked, so the shader compile lands in `first frame`. What
-        // actually sits in that gap is the blocking keyring read and the
-        // SQLCipher store open, which is I/O and can move off the main
-        // thread in a way a shader compile never can. It gets its own phase
-        // so the trace says which.
-        assert!(Phase::Styles < Phase::Store);
-        assert!(Phase::Store < Phase::Window);
+        // actually sat in that gap was the blocking keyring read and the
+        // SQLCipher store open, which is I/O. It got its own phase so the
+        // trace could say which.
+        //
+        // #1114 then moved that I/O off the main thread and behind the
+        // window, which is what this half of the assertion is: the store now
+        // opens *after* there are pixels, so a list in the old order would
+        // have `report` computing every cost from a phase that had not
+        // happened yet.
+        assert!(Phase::Window < Phase::Shell);
+        assert!(Phase::Shell < Phase::Store);
         assert_eq!(Phase::Store.label(), "store");
+        assert_eq!(Phase::Shell.label(), "shell");
+        for phase in [Phase::Store, Phase::Shell] {
+            assert!(
+                Phase::ALL.contains(&phase),
+                "a phase nothing reports is a phase nothing measures"
+            );
+        }
+    }
+
+    #[test]
+    fn pixels_and_usable_are_two_different_moments() {
+        // The distinction #1114 creates, and the one a budget cannot be
+        // allowed to blur: a start that put a window on screen in 200ms and
+        // mail in it twelve seconds later took twelve seconds to be usable.
+        // `total` has to be the second of those or the budget passes every
+        // launch it exists to catch.
+        let origin = Instant::now();
+        let timeline = Timeline::start_at(origin);
+        timeline.mark(Phase::Shell);
+        assert_eq!(
+            timeline.total(),
+            None,
+            "pixels are not a usable UI, and the budget has no verdict yet"
+        );
+        assert_eq!(timeline.within_budget(), None);
+
+        timeline.mark(Phase::FirstFrame);
+        assert!(timeline.total().is_some());
         assert!(
-            Phase::ALL.contains(&Phase::Store),
-            "a phase nothing reports is a phase nothing measures"
+            Phase::Shell < Phase::FirstFrame,
+            "and the window is on screen before the mail is in it"
         );
     }
 
