@@ -543,3 +543,87 @@ fn by_role_never_answers_with_a_folder_the_server_no_longer_has() {
         "a role points at a folder that can be opened, or at nothing"
     );
 }
+
+// ── A view is not storable (spec 003, FR-041) ───────────────────────────────
+
+/// The three roles that are views over messages filed elsewhere, not folders.
+///
+/// Before spec 003 this was enforced by accident: `Snoozed` could not be
+/// stored only because `0001_initial_schema.sql`'s `CHECK` happened not to
+/// list it, and nothing said why. A `CHECK` violation is also the wrong error
+/// for the caller -- it says "constraint failed", not "that role names no
+/// folder" -- so the repository refuses first and names the role.
+#[test]
+fn a_view_role_cannot_be_stored_as_a_mailbox() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = seeded_account(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    for role in [
+        MailboxRole::Flagged,
+        MailboxRole::Snoozed,
+        MailboxRole::Outbox,
+    ] {
+        let mut mailbox = Mailbox::new(account, "Somewhere", None);
+        mailbox.role = role;
+        let outcome = mailboxes.create(&mut mailbox);
+
+        let message = match outcome {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("{role:?} is a view over messages filed elsewhere; it stored anyway"),
+        };
+        assert!(
+            message.contains(role.as_str()),
+            "the error has to name the role, or the caller cannot tell which of \
+             its mailboxes was wrong: {message}"
+        );
+    }
+}
+
+#[test]
+fn a_view_role_cannot_be_stored_by_updating_a_folder_into_one() {
+    // The other way in. `create` refusing is worth nothing if `update` lets a
+    // real folder be re-roled into a view afterwards.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = seeded_account(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    let mut mailbox = Mailbox::new(account, "Projects", None);
+    mailboxes
+        .create(&mut mailbox)
+        .expect("an ordinary folder stores");
+
+    mailbox.role = MailboxRole::Outbox;
+    let message = match mailboxes.update(&mailbox) {
+        Err(error) => error.to_string(),
+        Ok(()) => panic!("a stored folder was re-roled into a view"),
+    };
+    // Tightened deliberately: SQLite's own `CHECK` already refuses this, so
+    // asserting only `is_err()` would pass without the repository doing
+    // anything and would never have been seen red. What is being tested is
+    // that the *caller* is told which role was wrong, which a constraint
+    // violation does not say.
+    assert!(
+        message.contains("outbox"),
+        "the error has to name the role rather than report a constraint: {message}"
+    );
+}
+
+#[test]
+fn every_reserved_role_still_stores() {
+    // The other half of the rule: refusing views must not refuse folders.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = seeded_account(&connection);
+    let mailboxes = MailboxRepository::new(&connection);
+
+    for role in MailboxRole::RESERVED {
+        let mut mailbox = Mailbox::new(account, role.as_str(), None);
+        mailbox.role = role;
+        mailboxes
+            .create(&mut mailbox)
+            .unwrap_or_else(|error| panic!("{role:?} is a folder and must store: {error}"));
+    }
+}

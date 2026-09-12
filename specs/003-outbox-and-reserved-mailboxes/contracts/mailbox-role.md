@@ -13,8 +13,21 @@ mailbox wearing it.
 
 | Kind | Roles | Names a server folder | Storable in `mailboxes.role` | A destination |
 |---|---|---|---|---|
-| `Folder` | `Inbox` `Archive` `Sent` `Drafts` `Trash` `Junk` `Regular` | yes | yes | yes |
-| `View` | `Flagged` `Snoozed` `Outbox` | **no** | **no** | **no** |
+| `Folder` | `Inbox` `Archive` `Sent` `Drafts` `Trash` `Junk` `Regular` `Flagged` | yes | yes | yes |
+| `View` | `Snoozed` `Outbox` | **no** | **no** | **no** |
+
+**`Flagged` is a folder, and it is the case that makes the rule precise.** The
+split is by whether RFC 6154 defines a `SPECIAL-USE` attribute, not by whether
+the sidebar synthesises a row. `\Flagged` *is* defined and
+`MailboxRole::from_special_use` honours it, so a server really can have that
+folder — Gmail's "Starred" is one, and `flagged` has always been in the
+schema's `CHECK` for that reason. The synthetic Flagged row exists for accounts
+whose server does not advertise one. `Snoozed` and `Outbox` have no attribute
+and no server can ever advertise them.
+
+This was got wrong once while building: classifying `Flagged` as a view would
+have made a real Gmail folder unstorable. The invariant check below is what
+caught it, on its first run.
 
 A **view** is a saved question about messages filed elsewhere. It has a name, a
 position and a count, and nothing else: no path, no UIDVALIDITY, no sync state,

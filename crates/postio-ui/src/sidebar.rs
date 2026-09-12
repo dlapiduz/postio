@@ -20,16 +20,23 @@ use postio_model::{Mailbox, MailboxRole};
 /// folders it does not happen to draw after them. Snoozed joins right after
 /// Flagged: the same client-only, no-`SPECIAL-USE` shape, and the same kind
 /// of "things you will come back to soon" list.
+///
+/// The Outbox sits between Drafts and Sent, which is the order the column
+/// reads in: what you are still writing, what is on its way, what has gone.
+/// Its place is fixed rather than earned, because the row is hidden when the
+/// Outbox is empty and a position that moved would reorder its neighbours
+/// every time a message was sent.
 pub fn role_order(role: MailboxRole) -> Option<u8> {
     match role {
         MailboxRole::Inbox => Some(0),
         MailboxRole::Flagged => Some(1),
         MailboxRole::Snoozed => Some(2),
         MailboxRole::Drafts => Some(3),
-        MailboxRole::Sent => Some(4),
-        MailboxRole::Archive => Some(5),
-        MailboxRole::Junk => Some(6),
-        MailboxRole::Trash => Some(7),
+        MailboxRole::Outbox => Some(4),
+        MailboxRole::Sent => Some(5),
+        MailboxRole::Archive => Some(6),
+        MailboxRole::Junk => Some(7),
+        MailboxRole::Trash => Some(8),
         MailboxRole::Regular => None,
     }
 }
@@ -86,6 +93,44 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_outbox_sits_between_drafts_and_sent() {
+        // Where a message on its way belongs in the reading of the column:
+        // after what you are still writing, before what has gone. Its
+        // position is fixed so that appearing and disappearing -- it is
+        // hidden when empty -- never reorders the rows around it.
+        assert_eq!(
+            role_order(MailboxRole::Outbox),
+            Some(4),
+            "the Outbox reads after Drafts and before Sent"
+        );
+        assert!(role_order(MailboxRole::Drafts) < role_order(MailboxRole::Outbox));
+        assert!(role_order(MailboxRole::Outbox) < role_order(MailboxRole::Sent));
+    }
+
+    #[test]
+    fn every_role_that_gets_a_row_has_a_distinct_place_in_the_order() {
+        let mut seen: Vec<u8> = [
+            MailboxRole::Inbox,
+            MailboxRole::Flagged,
+            MailboxRole::Snoozed,
+            MailboxRole::Drafts,
+            MailboxRole::Outbox,
+            MailboxRole::Sent,
+            MailboxRole::Archive,
+            MailboxRole::Junk,
+            MailboxRole::Trash,
+        ]
+        .into_iter()
+        .map(|role| role_order(role).expect("a special row has a place"))
+        .collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), before, "two roles share a position: {seen:?}");
+        assert_eq!(role_order(MailboxRole::Regular), None);
+    }
     use super::*;
     use postio_model::ids::{AccountId, MailboxId};
 

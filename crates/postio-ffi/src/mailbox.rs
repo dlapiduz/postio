@@ -25,6 +25,8 @@ pub enum MailboxRoleFfi {
     Flagged,
     /// The snoozed view.
     Snoozed,
+    /// The outbox view: drafts whose send is under way.
+    Outbox,
     /// An ordinary user folder.
     Regular,
 }
@@ -40,6 +42,7 @@ impl From<MailboxRole> for MailboxRoleFfi {
             MailboxRole::Junk => MailboxRoleFfi::Junk,
             MailboxRole::Flagged => MailboxRoleFfi::Flagged,
             MailboxRole::Snoozed => MailboxRoleFfi::Snoozed,
+            MailboxRole::Outbox => MailboxRoleFfi::Outbox,
             MailboxRole::Regular => MailboxRoleFfi::Regular,
         }
     }

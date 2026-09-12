@@ -148,7 +148,8 @@ So the schema already enforces FR-041 for `Snoozed`, by accident and without a
 name for what it is doing. `Outbox` joins that category.
 
 **Decision:** name it. `MailboxRole::kind()` answers `Folder` for the six
-reserved roles and `Regular`, `View` for `Flagged`, `Snoozed` and `Outbox`; the
+reserved roles, `Regular` **and `Flagged`** — RFC 6154 defines `\Flagged`, so a
+server can really have that folder — and `View` for `Snoozed` and `Outbox`; the
 storage repository refuses to write a `View` role with a typed error rather
 than leaving SQLite's `CHECK` as the only guard; and a `scripts/checks/`
 invariant keeps the `CHECK` list and the `Folder` set from drifting apart.

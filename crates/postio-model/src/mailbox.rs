@@ -7,6 +7,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AccountId, Generation, MailboxId, ModSeq, SignatureId, Uid};
 
+/// Whether a role names a folder on the server or a view over messages filed
+/// elsewhere.
+///
+/// The distinction was implicit and enforced three different ways before spec
+/// 003 named it: by `id > 0` in a widget, by an empty `path`, and — for
+/// [`MailboxRole::Snoozed`] — by a `CHECK` constraint that happened not to list
+/// it. A view has a name, a position and a count, and nothing else: no path, no
+/// UIDVALIDITY, no sync state, and no ability to receive a moved message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum RoleKind {
+    /// A real folder on the server.
+    Folder,
+    /// A saved question about messages filed elsewhere.
+    View,
+}
+
 /// What a mailbox is *for*, independent of what the server calls it.
 ///
 /// Postio routes archive, trash, junk and sent by role, never by name, because
@@ -35,6 +51,10 @@ pub enum MailboxRole {
     /// The sidebar's "Snoozed" view — client-only, the same as [`Self::Flagged`]
     /// wearing a folder's clothes; no `SPECIAL-USE` attribute names it.
     Snoozed,
+    /// The sidebar's "Outbox" view: this account's drafts whose send is under
+    /// way. Client-only like the two above — a message on its way is filed in
+    /// Drafts on the server, and no `SPECIAL-USE` attribute names this.
+    Outbox,
     /// An ordinary user folder.
     #[default]
     Regular,
@@ -130,8 +150,51 @@ impl MailboxRole {
             "junk" => Some(Self::Junk),
             "flagged" => Some(Self::Flagged),
             "snoozed" => Some(Self::Snoozed),
+            "outbox" => Some(Self::Outbox),
             "regular" => Some(Self::Regular),
             _ => None,
+        }
+    }
+
+    /// The roles every account must have a real folder for (spec 003 FR-026).
+    ///
+    /// [`Self::Regular`] is a folder but is not among them: an account is owed
+    /// an Inbox, not an arbitrary user folder.
+    pub const RESERVED: [Self; 6] = [
+        Self::Inbox,
+        Self::Archive,
+        Self::Sent,
+        Self::Drafts,
+        Self::Trash,
+        Self::Junk,
+    ];
+
+    /// Whether this role names a folder or is a view over messages filed
+    /// elsewhere.
+    ///
+    /// Exhaustive with no fallback arm, so a new role is a compile error until
+    /// it is classified — which is the point. A [`RoleKind::View`] must never
+    /// be stored (`MailboxRepository` refuses it, and the schema's `CHECK`
+    /// lists only the folder spellings) and must never be handed to anything
+    /// asking where a message could be put.
+    pub fn kind(self) -> RoleKind {
+        match self {
+            Self::Inbox
+            | Self::Archive
+            | Self::Sent
+            | Self::Drafts
+            | Self::Trash
+            | Self::Junk
+            | Self::Regular
+            // A folder, despite also being a sidebar view. RFC 6154 defines
+            // `\Flagged` as a `SPECIAL-USE` attribute and
+            // [`Self::from_special_use`] honours it, so a server really can
+            // have this folder -- Gmail's "Starred" is one. The synthetic
+            // Flagged row exists for accounts whose server does not.
+            | Self::Flagged => RoleKind::Folder,
+            // Neither has a `SPECIAL-USE` attribute, so discovery can never
+            // assign one and no server can advertise one.
+            Self::Snoozed | Self::Outbox => RoleKind::View,
         }
     }
 
@@ -146,6 +209,7 @@ impl MailboxRole {
             Self::Junk => "junk",
             Self::Flagged => "flagged",
             Self::Snoozed => "snoozed",
+            Self::Outbox => "outbox",
             Self::Regular => "regular",
         }
     }
@@ -415,5 +479,98 @@ mod tests {
         }
         assert_eq!(MailboxRole::from_name("Inbox"), None, "spelling is exact");
         assert_eq!(MailboxRole::from_name("nonsense"), None);
+    }
+
+    // ── Folder or view (spec 003, FR-037/FR-041) ─────────────────────────
+
+    #[test]
+    fn every_role_is_a_folder_or_a_view() {
+        // Exhaustive on purpose: adding a role without classifying it should
+        // not compile, and the count is asserted so a variant cannot be
+        // quietly dropped from this list instead.
+        let all = [
+            MailboxRole::Inbox,
+            MailboxRole::Archive,
+            MailboxRole::Sent,
+            MailboxRole::Drafts,
+            MailboxRole::Trash,
+            MailboxRole::Junk,
+            MailboxRole::Flagged,
+            MailboxRole::Snoozed,
+            MailboxRole::Outbox,
+            MailboxRole::Regular,
+        ];
+        assert_eq!(all.len(), 10, "a role was added without reaching this test");
+        for role in all {
+            // Total: the match in `kind` has no fallback arm.
+            let _ = role.kind();
+        }
+    }
+
+    #[test]
+    fn a_view_names_no_folder_and_a_folder_does() {
+        for role in [MailboxRole::Snoozed, MailboxRole::Outbox] {
+            assert_eq!(
+                role.kind(),
+                RoleKind::View,
+                "{role:?} is a saved question about messages filed elsewhere"
+            );
+        }
+        for role in [
+            MailboxRole::Inbox,
+            MailboxRole::Archive,
+            MailboxRole::Sent,
+            MailboxRole::Drafts,
+            MailboxRole::Trash,
+            MailboxRole::Junk,
+            MailboxRole::Regular,
+            MailboxRole::Flagged,
+        ] {
+            assert_eq!(
+                role.kind(),
+                RoleKind::Folder,
+                "{role:?} names a folder on the server"
+            );
+        }
+        // Flagged is the one that is both, and the reason the split is by
+        // `SPECIAL-USE` rather than by "does the sidebar synthesise a row".
+        // RFC 6154 defines `\Flagged`, so a server can really have this
+        // folder; `Snoozed` and `Outbox` have no attribute and never can.
+        assert_eq!(
+            MailboxRole::from_special_use("\\Flagged"),
+            Some(MailboxRole::Flagged)
+        );
+        assert_eq!(MailboxRole::from_special_use("\\Snoozed"), None);
+        assert_eq!(MailboxRole::from_special_use("\\Outbox"), None);
+    }
+
+    #[test]
+    fn the_reserved_roles_are_the_six_every_account_must_have() {
+        assert_eq!(
+            MailboxRole::RESERVED,
+            [
+                MailboxRole::Inbox,
+                MailboxRole::Archive,
+                MailboxRole::Sent,
+                MailboxRole::Drafts,
+                MailboxRole::Trash,
+                MailboxRole::Junk,
+            ]
+        );
+        // `Regular` is a folder but is not reserved: an account is not owed one.
+        assert_eq!(MailboxRole::Regular.kind(), RoleKind::Folder);
+        assert!(!MailboxRole::RESERVED.contains(&MailboxRole::Regular));
+        // Every reserved role is a folder -- a view could never be created.
+        for role in MailboxRole::RESERVED {
+            assert_eq!(role.kind(), RoleKind::Folder);
+        }
+    }
+
+    #[test]
+    fn the_outbox_round_trips_through_its_stored_identifier() {
+        // It can never be *stored*, but the spelling is the one config and
+        // the registry use, so it must survive the round trip like the rest.
+        assert_eq!(MailboxRole::Outbox.as_str(), "outbox");
+        assert_eq!(MailboxRole::from_name("outbox"), Some(MailboxRole::Outbox));
     }
 }

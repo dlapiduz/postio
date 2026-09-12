@@ -66,7 +66,8 @@ therefore no cached column; its count is computed (below).
 ```rust
 pub enum MailboxRole {
     Inbox, Archive, Sent, Drafts, Trash, Junk,   // reserved: a real folder
-    Flagged, Snoozed, Outbox,                    // views: never a folder
+    Flagged,                                     // a folder: RFC 6154 \Flagged
+    Snoozed, Outbox,                             // views: never a folder
     Regular,                                     // an ordinary folder
 }
 
@@ -79,7 +80,11 @@ impl MailboxRole {
 }
 ```
 
-`Outbox` joins `Flagged` and `Snoozed` as a `View`. `Regular` is a `Folder`.
+`Outbox` joins `Snoozed` as a `View`. **`Flagged` is a `Folder`**, despite also
+being a sidebar row: RFC 6154 defines `\Flagged` and `from_special_use` honours
+it, so a server can really have that folder (Gmail's "Starred"), which is why
+`flagged` has always been in the schema's `CHECK`. `Snoozed` and `Outbox` have
+no `SPECIAL-USE` attribute and never can.
 
 **The rule `kind()` exists to make checkable** (FR-037, FR-040, FR-041): a view
 names no server folder, can never be stored, and is never a destination. Today

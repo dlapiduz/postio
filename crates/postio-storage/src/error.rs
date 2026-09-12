@@ -40,6 +40,22 @@ pub enum Error {
         entity: &'static str,
     },
 
+    /// A mailbox was asked to be stored wearing a role that is a *view* over
+    /// messages filed elsewhere — `Flagged`, `Snoozed` or `Outbox`.
+    ///
+    /// A view has a name, a position and a count, and nothing else: no path,
+    /// no UIDVALIDITY, no sync state, and no folder on any server. The schema's
+    /// `CHECK` refuses these too, but a constraint violation reports
+    /// "constraint failed" and does not say *which* role was wrong — and this
+    /// is a caller bug worth naming, not a storage accident.
+    #[error(
+        "`{role}` is a view over messages filed elsewhere, not a folder; it cannot be stored as a mailbox"
+    )]
+    RoleIsAView {
+        /// The offending role, in its stored spelling.
+        role: &'static str,
+    },
+
     /// A state transition the domain forbids was asked for.
     ///
     /// First (and so far only) user: the cross-account move saga (#188),
