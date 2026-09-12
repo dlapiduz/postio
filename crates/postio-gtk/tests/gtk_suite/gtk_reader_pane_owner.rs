@@ -373,6 +373,7 @@ pub fn conversation_row(id: i64, thread: ThreadId) -> postio_gtk::list::Row {
         flagged: false,
         answered: false,
         send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: 2,
         participants: Vec::new(),

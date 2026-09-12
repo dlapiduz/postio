@@ -507,6 +507,7 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
             flagged: latest.flagged,
             answered: latest.answered,
             send_state: latest.send_state,
+            send_at: latest.send_at,
             has_attachments: latest.has_attachments,
             thread_count: row.message_count.max(1),
         },
@@ -535,6 +536,7 @@ fn summarise(
         flagged: row.flagged,
         answered: row.answered,
         send_state: row.send_state,
+        send_at: row.send_at,
         has_attachments: row.has_attachments,
         thread_count: thread_count.max(1),
     })

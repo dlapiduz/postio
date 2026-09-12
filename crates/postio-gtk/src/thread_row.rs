@@ -562,6 +562,7 @@ mod tests {
             flagged: false,
             answered: false,
             send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 3,
             participants: Vec::new(),

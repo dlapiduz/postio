@@ -1,0 +1,19 @@
+-- When a scheduled send is due, on the row the list draws.
+--
+-- Spec 003 FR-007. `Queued` covers two different things a person means: "go
+-- as soon as you can", and "go on Thursday morning". Both read as "Waiting to
+-- send" without this, which makes a message deliberately held look exactly
+-- like one the drainer has not reached yet -- and the second is worrying where
+-- the first is not.
+--
+-- The time itself lives on `operation_queue.next_attempt_at`, which is also
+-- the backoff clock: a send that failed and is waiting to retry has one too.
+-- That column cannot be read from a list query without joining the queue on
+-- the hot path, and it would answer the wrong question anyway -- a retry's
+-- next attempt is not something to show a person as a plan.
+--
+-- So this is written only where the user *chose* a time, by the same verb that
+-- schedules it, and is NULL for every other draft. Same trade as `send_state`
+-- beside it: a column rather than a join, because the alternative is paid by
+-- every folder.
+ALTER TABLE messages ADD COLUMN send_at INTEGER;

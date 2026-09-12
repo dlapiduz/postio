@@ -125,6 +125,7 @@ impl MessageSource for Store {
                     flagged: true,
                     answered: false,
                     send_state: None,
+                    send_at: None,
                     has_attachments: false,
                     thread_count: 1,
                     participants: Vec::new(),
