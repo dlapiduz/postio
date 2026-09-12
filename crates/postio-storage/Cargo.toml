@@ -64,9 +64,11 @@ tempfile = "3.27.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 turso = "=0.8.0-pre.11"
+# Tests only. The crate is async but brings no runtime of its own -- whoever
+# calls it supplies one, and postio-runtime is the only thing that does.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
-# One FFI call in `db.rs` stops libcrypto registering an `atexit` handler.
 unsafe_code = "deny"
 missing_docs = "warn"

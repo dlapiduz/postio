@@ -50,6 +50,34 @@ three things Postio must do better than the alternatives).
 
 ---
 
+
+### Answered by experiment (T004 / R1), 2026-09-12
+
+`crates/postio-storage/tests/turso_capabilities.rs` asks the engine directly.
+Three facts came back, and the third is the one that decides the design:
+
+1. **An fts index over a generated column works.** `CREATE INDEX … USING fts
+   (body_indexed)` where `body_indexed` is `GENERATED ALWAYS AS (…) VIRTUAL`
+   builds, populates, and matches. `STORED` is refused outright — "Stored
+   generated columns are not supported" — so only `VIRTUAL` is on the table.
+2. **Case is folded, diacritics are not.** `CAFÉ` finds `café`; `cafe` does
+   not. That is `SimpleTokenizer` + `LowerCaser` exactly as the plan assumed.
+3. **The fold has no SQL spelling.** A generated column may only be an SQL
+   expression, and the engine has no `nfd`, `normalize`, `unaccent` or
+   equivalent — `unicode()` returns a codepoint and `unistr()` decodes
+   escapes. So a generated column *could* carry the index and *cannot* compute
+   what needs to go in it.
+
+**Decision: `body_search` is an ordinary column, written by the application.**
+R1's mechanical answer is yes and it does not help. `postio_index::fold` is the
+single writer, and it applies the identical fold to the query — both paths or
+neither, or `café` and `cafe` stop meeting. The two tests that pin this are
+`fold_cannot_be_expressed_in_sql` and `the_engine_folds_case_but_not_diacritics`:
+if a normalising function ever lands, the first one fails and the column can
+become generated after all.
+
+**T033 and T034 are unblocked** and take the ordinary-column path.
+
 ## Q2. The shape of an async storage layer
 
 **Decision: repositories become `async fn`, and the crossing moves out.**
@@ -71,6 +99,23 @@ the reason is right.
 
 ---
 
+
+### A constraint found on the way (T004), 2026-09-12
+
+**An undrained `Rows` holds its connection exclusively.** The next statement on
+that connection fails with `Misuse("connection is busy with another
+operation")`. Under `rusqlite` the borrow checker enforced this at compile
+time, because a `Statement` borrowed its `Connection`; here it is a runtime
+error, and a quiet one — it surfaces as a failure in whatever ran *next*, not
+in the query that is still holding the gate.
+
+What it means for the port: **a read must be finished before a write on the
+same connection begins.** Collect rows into a `Vec` and drop the `Rows`, rather
+than writing inside a loop that is still iterating. Connections are cheap
+(`Store::connect` is not `async` and the engine pools them), so a second
+connection is also a legitimate answer where the read genuinely has to stay
+open.
+
 ## Q3. Connections: is there still a pool, and a write gate?
 
 **Decision: keep the write gate, drop the pool, and prove which is needed.**
@@ -86,6 +131,23 @@ background writer can starve an interactive one. `connection.rs` carries a
 application must still arbitrate.
 
 ---
+
+
+### Answered by experiment (T005 / R2), 2026-09-12
+
+A second connection attempting a short write while the first holds `BEGIN
+IMMEDIATE` **does not get through** — it either waits past the test's patience
+or is refused as busy. Asserted as completion rather than as a timing, for the
+same reason `bench.yml` times nothing: a shared runner cannot defend a
+millisecond figure.
+
+**Decision: the write gate stays.** The engine serialises writers, which is
+correctness; it does not choose *which* writer, which is the thing
+`WritePriority` exists for. A background backfill holding the writer while a
+person's archive keystroke waits behind it is exactly the shape the old gate
+was built to prevent, and nothing a layer down has taken that over.
+
+**T014 is unblocked** and ports the gate rather than deleting it.
 
 ## Q4. The four indexes on `WITHOUT ROWID` tables
 
