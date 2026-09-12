@@ -327,3 +327,86 @@ pub fn an_ordinary_conversation_still_offers_a_reply() {
 
     window.close();
 }
+
+/// A redraw queued just before the pane stops being what the reader shows
+/// must not land afterwards (#1497).
+///
+/// The one-document pane coalesces redraws behind a short timer, because the
+/// bodies of a thread arrive one per main-loop turn and drawing on arrival
+/// would hand WebKit one document per message. A `glib` timeout cannot be
+/// un-scheduled once armed, so the pane has to be told to stand down when the
+/// cursor moves away — otherwise the old thread's document is loaded over
+/// whatever the reader moved on to.
+///
+/// That is not only a wasted load. It is the wrong mail on screen: `j` onto
+/// an ordinary message painted the message and then, a beat later, replaced
+/// it with the thread that was there before.
+pub fn a_redraw_queued_before_the_pane_was_taken_does_not_land_after() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = gtk::Window::new();
+    let pane = ConversationView::new();
+    pane.set_reader_factory(|_message| Some(stub_reader()));
+    window.set_child(Some(&pane.widget()));
+    window.set_default_size(700, 600);
+    window.present();
+    crate::pump();
+
+    // A thread whose bodies have not all arrived, which is what makes the
+    // redraw a *deferred* one rather than an immediate draw.
+    pane.open(vec![message(1, true), message(2, true), message(3, true)]);
+    crate::pump();
+
+    // One body lands: a redraw is now queued behind the coalescing timer.
+    pane.set_thread_body(
+        MessageId::new(1),
+        postio_model::MessageBody {
+            text: Some("The interlock tripped at 04:10.".to_owned()),
+            html: None,
+        },
+    );
+
+    // The reader moves on to something else. This is what the window says
+    // when it puts a single message up.
+    pane.cancel_pending_redraw();
+
+    // Comfortably past the pane's own deadline for bodies that have not
+    // arrived, scaled like every other deadline in the suite -- a bare 400ms
+    // here is the wall-clock assertion this project keeps out of coalescing
+    // tests, and it failed once under a loaded full run before it was scaled.
+    let before = postio_ui::test_support::renders_issued();
+    let quiet_for = postio_test_support::scaled(std::time::Duration::from_millis(1200));
+    let until = std::time::Instant::now() + quiet_for;
+    while std::time::Instant::now() < until {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        postio_ui::test_support::renders_issued(),
+        before,
+        "a cancelled redraw still loaded a document over whatever the reader \
+         had moved on to"
+    );
+
+    // And the pane is not broken by having stood one down: a later arrival
+    // draws again, because cancelling is about *that* redraw and not about
+    // the pane giving up.
+    pane.set_thread_body(
+        MessageId::new(2),
+        postio_model::MessageBody {
+            text: Some("Confirmed, the gate held.".to_owned()),
+            html: None,
+        },
+    );
+    crate::settle_until("the pane to draw again after a cancelled redraw", || {
+        postio_ui::test_support::renders_issued() > before
+    });
+
+    window.close();
+}

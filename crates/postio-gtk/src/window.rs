@@ -586,6 +586,12 @@ impl Window {
             && let Some(pane) = self.imp().conversation.get()
         {
             pane.cancel_dwell();
+            // And any document it was about to draw, for the same reason one
+            // sentence up: it is not what is in front of the reader any more.
+            // A redraw is coalesced behind a short timer, so one queued just
+            // before the cursor moved off would otherwise land *after* the
+            // new message and replace it (#1497).
+            pane.cancel_pending_redraw();
         }
     }
 

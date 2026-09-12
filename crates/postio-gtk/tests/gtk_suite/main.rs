@@ -179,6 +179,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_composer_resume::reopening_restores_the_formatting_and_the_attachments_too as fn(),
     ),
     (
+        "gtk_conversation::a_redraw_queued_before_the_pane_was_taken_does_not_land_after",
+        gtk_conversation::a_redraw_queued_before_the_pane_was_taken_does_not_land_after as fn(),
+    ),
+    (
         "gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing",
         gtk_conversation::a_conversation_ending_in_a_draft_offers_continue_editing as fn(),
     ),

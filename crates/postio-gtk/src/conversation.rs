@@ -1137,6 +1137,15 @@ mod imp {
         /// When the pane stops waiting for bodies that have not arrived and
         /// draws what it has. See [`REDRAW_DEADLINE`].
         pub(super) redraw_deadline: Cell<Option<std::time::Instant>>,
+        /// Which round of redraws is current.
+        ///
+        /// A queued redraw is a `glib` timeout holding a clone of this pane,
+        /// and a timeout cannot be un-scheduled once armed. So it carries the
+        /// generation it was queued under and stands down when that has
+        /// moved on -- which is what
+        /// [`cancel_pending_redraw`](super::ConversationView::cancel_pending_redraw)
+        /// does when the pane stops being what the reader shows.
+        pub(super) redraw_generation: Cell<u64>,
         /// How many documents this pane has actually handed over. See
         /// [`super::ConversationView::thread_renders`].
         pub(super) thread_renders: Cell<u32>,
@@ -1190,6 +1199,7 @@ mod imp {
                 thread_cc: RefCell::new(std::collections::HashMap::new()),
                 redraw_queued: Cell::new(false),
                 redraw_deadline: Cell::new(None),
+                redraw_generation: Cell::new(0),
                 thread_renders: Cell::new(0),
                 thread_id: Cell::new(None),
                 expanded_in_document: RefCell::new(std::collections::HashMap::new()),
@@ -1465,10 +1475,18 @@ impl ConversationView {
         // Long enough to gather a burst of arrivals, short enough not to be
         // felt: what a person waits for is the first paint, and the store
         // reads this is coalescing are already slower than this.
+        let generation = imp.redraw_generation.get();
         glib::timeout_add_local_once(REDRAW_COALESCE, {
             let pane = self.clone();
             move || {
                 let imp = pane.imp();
+                // The pane stopped being what the reader shows while this was
+                // waiting, so the document it would draw is not the one in
+                // front of anybody. Drawing it anyway is #1497: a full WebKit
+                // load that replaces whatever the reader moved on to.
+                if imp.redraw_generation.get() != generation {
+                    return;
+                }
                 imp.redraw_queued.set(false);
                 let overdue = imp
                     .redraw_deadline
@@ -1484,6 +1502,24 @@ impl ConversationView {
                 }
             }
         });
+    }
+
+    /// Stop any redraw this pane has queued but not yet drawn.
+    ///
+    /// Called when the reading pane stops showing this conversation. A queued
+    /// redraw is a timeout holding a clone of the pane, so it cannot be
+    /// un-scheduled; bumping the generation is how it is told to stand down.
+    ///
+    /// #1497: without this, moving the cursor from a thread row onto an
+    /// ordinary message painted the message and then, a beat later, replaced
+    /// it with the old thread's document -- two full loads for one keystroke,
+    /// the second of them showing the wrong mail.
+    pub fn cancel_pending_redraw(&self) {
+        let imp = self.imp();
+        imp.redraw_generation
+            .set(imp.redraw_generation.get().wrapping_add(1));
+        imp.redraw_queued.set(false);
+        imp.redraw_deadline.set(None);
     }
 
     /// Compose every message that has a body into one document and hand it
