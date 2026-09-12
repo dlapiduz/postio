@@ -61,7 +61,7 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 ### Implementation for User Story 4
 
 - [X] T009 [US4] Create the mode table in `crates/postio-ui/src/finder.rs` — prefix, name, purpose per [contracts/mode-table.md](./contracts/mode-table.md) — and export it from `crates/postio-ui/src/lib.rs`
-- [ ] T010 [US4] Re-export the table from `crates/postio-gtk/src/finder.rs` and delete the prefix and description strings it duplicates, so the table is the only place the set is written down
+- [X] T010 [US4] Re-export the table from `crates/postio-gtk/src/finder.rs` and delete the prefix and description strings it duplicates, so the table is the only place the set is written down
 - [ ] T011 [US4] Render the hint in `crates/postio-gtk/src/finder.rs` — visible at rest and in an open empty box, out of the way once a query is being typed (FR-035)
 - [ ] T012 [US4] Show the active mode and how to leave it in `crates/postio-gtk/src/finder.rs`
 - [ ] T013 [US4] Suppress a mode that cannot act in the current context, in `crates/postio-gtk/src/finder.rs` (FR-033)
