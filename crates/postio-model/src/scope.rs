@@ -30,6 +30,18 @@ pub enum ListScope {
     Flagged(AccountId),
     /// Everything currently snoozed in an account, wherever it is filed.
     Snoozed(AccountId),
+    /// This account's drafts whose send is under way — queued, or being sent.
+    ///
+    /// A view, never a destination, like [`Self::Unified`]: a message cannot
+    /// be moved *into* the Outbox, because being there is a consequence of
+    /// having been sent. [`Self::mailbox`] answers `None` for it, which is
+    /// what makes that checkable rather than remembered.
+    ///
+    /// Per account, matching [`Self::Flagged`] and [`Self::Snoozed`]: the
+    /// sidebar already knows how to place and count one row per account, and
+    /// a unified Outbox would have to answer "which account is this sending
+    /// from" for every row.
+    Outbox(AccountId),
     /// One conversation, wherever its messages are filed.
     ///
     /// Not a narrowing of a mailbox: a thread routinely spans folders, and a
@@ -61,9 +73,10 @@ impl ListScope {
             |account: AccountId| mailboxes.iter().any(|folder| folder.account_id == account);
         match self {
             Self::Mailbox(id) => mailboxes.iter().any(|folder| folder.id == *id),
-            Self::Account(account) | Self::Flagged(account) | Self::Snoozed(account) => {
-                account_present(*account)
-            }
+            Self::Account(account)
+            | Self::Flagged(account)
+            | Self::Snoozed(account)
+            | Self::Outbox(account) => account_present(*account),
             Self::Unified | Self::Thread(_) => !mailboxes.is_empty(),
         }
     }
@@ -79,6 +92,9 @@ impl ListScope {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
+            // Never a destination: being in the Outbox is a consequence of
+            // having been sent, not somewhere a message can be put.
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => None,
         }
     }
@@ -140,12 +156,18 @@ impl ListScope {
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
             },
-            ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) => match arrival {
-                MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
-                    Reload
+            // The Outbox joins these two: all three are a question about one
+            // account's mail wherever it is filed, so none of them can insert
+            // at the top -- a row's membership depends on an answer that may
+            // have changed, not on where the mail arrived.
+            ListScope::Flagged(scoped) | ListScope::Snoozed(scoped) | ListScope::Outbox(scoped) => {
+                match arrival {
+                    MessagesRemoved | MessageListChanged | MessagesChanged if account == scoped => {
+                        Reload
+                    }
+                    _ => Ignore,
                 }
-                _ => Ignore,
-            },
+            }
             ListScope::Thread(_) => Ignore,
         }
     }

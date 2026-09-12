@@ -170,6 +170,7 @@ fn scope_name(scope: ListScope) -> String {
         ListScope::Unified => "unified".to_owned(),
         ListScope::Flagged(account) => format!("flagged in account {}", account.get()),
         ListScope::Snoozed(account) => format!("snoozed in account {}", account.get()),
+        ListScope::Outbox(account) => format!("outbox in account {}", account.get()),
         ListScope::Thread(id) => format!("thread {}", id.get()),
     }
 }

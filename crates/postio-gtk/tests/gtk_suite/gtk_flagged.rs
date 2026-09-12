@@ -88,6 +88,7 @@ impl MessageSource for Store {
             ListScope::Account(_)
             | ListScope::Unified
             | ListScope::Snoozed(_)
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {
@@ -229,6 +230,7 @@ impl MessageSource for LiveStore {
             ListScope::Mailbox(_)
             | ListScope::Account(_)
             | ListScope::Unified
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => 0,
         };
         Box::pin(async move {

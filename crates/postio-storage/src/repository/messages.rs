@@ -1912,7 +1912,22 @@ const STILL_SNOOZED: &str =
 
 fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     let (scope, snooze) = match query.scope {
-        ListScope::Mailbox(_) => ("messages.mailbox_id = ?1", NOT_YET_DUE),
+        // The Drafts exclusion rides on the generic mailbox scope, because
+        // the mirror row for a draft being sent is *in* the Drafts folder --
+        // the Outbox is not a second mailbox, it is a second predicate over
+        // this one (spec 003 FR-004).
+        //
+        // A column comparison, not a subquery. This clause is paid by every
+        // folder in the application on every open, and `send_state` is NULL
+        // for all but a handful of rows in the store. Filtering above SQL was
+        // the other option and it breaks paging: the cursor is a row value
+        // over `(received_at, id)` so SQLite can seek, and a page of 50 that
+        // then drops rows is not a page of 50.
+        ListScope::Mailbox(_) => (
+            "messages.mailbox_id = ?1 AND (messages.send_state IS NULL \
+             OR messages.send_state NOT IN ('queued', 'sending', 'sent'))",
+            NOT_YET_DUE,
+        ),
         ListScope::Account(_) => ("messages.account_id = ?1", NOT_YET_DUE),
         // Every account, so there is no account to name and no argument to
         // bind. `idx_messages_recency` is the index this leans on -- added
@@ -1924,6 +1939,17 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Snoozed(_) => ("messages.account_id = ?1", STILL_SNOOZED),
+        // The other half of the split. `idx_messages_send_state` is partial
+        // on exactly this predicate, so the Outbox is answered without
+        // touching the account's mail.
+        //
+        // `NOT_YET_DUE` like every ordinary scope: a draft cannot be snoozed,
+        // so the clause costs nothing and asking for the exception would be a
+        // second spelling of the same rule.
+        ListScope::Outbox(_) => (
+            "messages.account_id = ?1 AND messages.send_state IN ('queued', 'sending')",
+            NOT_YET_DUE,
+        ),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
     };
     // Numbered from however many arguments the scope itself bound, so a
@@ -1948,7 +1974,10 @@ fn scope_arguments(scope: &ListScope) -> Vec<i64> {
         // Nothing to bind: the scope is every account.
         ListScope::Unified => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
-        ListScope::Account(id) | ListScope::Flagged(id) | ListScope::Snoozed(id) => vec![id.get()],
+        ListScope::Account(id)
+        | ListScope::Flagged(id)
+        | ListScope::Snoozed(id)
+        | ListScope::Outbox(id) => vec![id.get()],
         ListScope::Thread(id) => vec![id.get()],
     }
 }

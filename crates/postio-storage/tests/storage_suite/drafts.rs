@@ -1690,3 +1690,157 @@ fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_found(
         None
     );
 }
+
+// ── The mirror row carries the send state (spec 003, T049) ──────────────────
+
+/// What `messages.send_state` says for the row standing for `draft`.
+fn mirrored_state(connection: &rusqlite::Connection, draft: DraftId) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT messages.send_state
+               FROM messages
+               JOIN drafts ON drafts.message_id = messages.id
+              WHERE drafts.id = ?1",
+            [draft.get()],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .expect("the draft has a mirror row")
+}
+
+#[test]
+fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
+    // The invariant the Outbox and Drafts predicates both rest on. They read
+    // `messages.send_state`; the truth is `drafts.state`; and a denormalised
+    // value that drifts from what it denormalises shows a message in the wrong
+    // folder, or in neither.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    // `Mailbox::new` guesses the role from the path, so "Drafts" is one.
+    test_support::mailbox(&connection, &account, "Drafts");
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    assert_eq!(
+        mirrored_state(&connection, draft.id).as_deref(),
+        Some("editing"),
+        "a draft being written is `editing` on both rows"
+    );
+
+    drafts.queue_send(&mut draft, at(0)).expect("send it");
+    assert_eq!(
+        mirrored_state(&connection, draft.id).as_deref(),
+        Some("queued"),
+        "pressing Send has to move the row the list draws, not only the draft"
+    );
+
+    for state in [
+        DraftState::Sending,
+        DraftState::Failed,
+        DraftState::Unconfirmed,
+    ] {
+        drafts
+            .set_state(draft.id, state)
+            .expect("the drainer moves it");
+        assert_eq!(
+            mirrored_state(&connection, draft.id).as_deref(),
+            Some(state.as_str()),
+            "the drainer moved the draft to {state:?} and the mirror row did not follow"
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_message_has_no_send_state_at_all() {
+    // The column is NULL for everything that is not a draft, which is what
+    // makes the partial index small and the Drafts exclusion cheap.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let inbox = test_support::mailbox(&connection, &account, "INBOX");
+
+    let mut message = Message::new(account.id, inbox.id, chrono::Utc::now());
+    message.subject = Some("Ordinary mail".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut message)
+        .expect("file it");
+
+    let state: Option<String> = connection
+        .query_row(
+            "SELECT send_state FROM messages WHERE id = ?1",
+            [message.id.get()],
+            |row| row.get(0),
+        )
+        .expect("the row");
+    assert_eq!(state, None, "mail that arrived is not a draft being sent");
+}
+
+// ── A draft is in exactly one of Drafts and the Outbox (FR-004) ─────────────
+
+#[test]
+fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
+    // The invariant, stated as a property over all five states rather than as
+    // five separate tests: never both lists, never neither. "Neither" is the
+    // failure #1491 reports -- a message you have sent that is nowhere -- and
+    // "both" is the one a careless predicate produces.
+    use postio_storage::repository::{ListQuery, ListScope};
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    let drafts_folder = test_support::mailbox(&connection, &account, "Drafts");
+    let drafts = DraftRepository::new(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    drafts.save(&mut draft).expect("save");
+    // The mirror row #166 wrote, found the way the composer finds it.
+    let mirror: MessageId = connection
+        .query_row(
+            "SELECT message_id FROM drafts WHERE id = ?1",
+            [draft.id.get()],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(MessageId::new)
+        .expect("the draft has a mirror row");
+
+    let listed = |scope| {
+        messages
+            .page(&ListQuery {
+                scope,
+                limit: 50,
+                after: None,
+            })
+            .expect("a page")
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
+    };
+
+    for state in [
+        DraftState::Editing,
+        DraftState::Queued,
+        DraftState::Sending,
+        DraftState::Failed,
+        DraftState::Unconfirmed,
+    ] {
+        drafts.set_state(draft.id, state).expect("move it");
+
+        let in_drafts = listed(ListScope::Mailbox(drafts_folder.id)).contains(&mirror);
+        let in_outbox = listed(ListScope::Outbox(account.id)).contains(&mirror);
+
+        assert!(
+            in_drafts ^ in_outbox,
+            "{state:?} is in {} lists; a draft belongs to exactly one",
+            usize::from(in_drafts) + usize::from(in_outbox)
+        );
+
+        // And which one, because "exactly one" is satisfied by the wrong one.
+        let expected_outbox = matches!(state, DraftState::Queued | DraftState::Sending);
+        assert_eq!(
+            in_outbox, expected_outbox,
+            "{state:?} is in the wrong one of the two"
+        );
+    }
+}
