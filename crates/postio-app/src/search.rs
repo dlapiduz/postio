@@ -651,7 +651,17 @@ fn install_results(
         let list = list.clone();
         let restore = restore.clone();
         let order = order.clone();
+        let window = window.clone();
+        let finder = finder.clone();
         move |count| {
+            // The list is showing this query's results, which is the fact
+            // `Window::set_searching` wants -- not "there is text in the box",
+            // which stays true after `Esc` has put the folder back.
+            //
+            // Without this the list never learned a search was on, so a query
+            // that matched nothing drew the *mailbox's* empty state: "nothing
+            // left to triage", over a mailbox with thousands in it.
+            window.set_searching(Some(&finder.query().text));
             // Only the first result set of a search remembers. Retyping
             // without leaving replaces the hits, and recording *those* as the
             // thing to go back to is how `Esc` ends up returning to a search.
@@ -705,6 +715,7 @@ fn install_results(
         let list = list.clone();
         let feeds = feeds.clone();
         let order = order.clone();
+        let window = window.clone();
         move || {
             if !feeds.messages.close_results() {
                 return;
@@ -715,6 +726,9 @@ fn install_results(
             // turn search into a date filter for ever after.
             order.set(postio_search::ResultOrder::default());
             list.set_result_order(None);
+            // The results have left the list, so the list is a mailbox again
+            // and its empty state is the mailbox's once more.
+            window.set_searching(None);
             let Some((name, unread, offset)) = restore.replace(None) else {
                 return;
             };
