@@ -616,7 +616,12 @@ impl Panel {
             return;
         };
 
-        let button = gtk::Button::with_label(&offer_text(term, documents));
+        // The term alone on the face, and the count in the description --
+        // which is the rule `refine_chip` states and the reason it gives:
+        // this column is 212px wide and a scannable shortlist beats a wide
+        // one. A first draft put `hannah — 66 messages` on the face and the
+        // offer came out visibly larger than every chip beside it.
+        let button = gtk::Button::with_label(term);
         button.add_css_class("postio-refine-chip");
         // The same control the refinements use, for the same reasons: the
         // keyboard reaches it, `Enter` activates it, and a screen reader

@@ -385,13 +385,19 @@ pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
         .label()
         .expect("the offer says something")
         .to_string();
+    assert_eq!(
+        label, "hannah",
+        "the term alone on the face: this column is 212px wide, and the count \
+         rides in the description exactly as a refine chip's hits do"
+    );
+    let spoken = button.tooltip_text().expect("the offer explains itself");
     assert!(
-        label.contains("hannah") && label.contains("66"),
-        "the offer says what it would find, so it is worth taking: {label}"
+        spoken.contains("hannah") && spoken.contains("66"),
+        "read aloud, the offer says what it would find: {spoken}"
     );
     assert!(
-        !label.contains('?'),
-        "a statement, not a question -- the app has already looked: {label}"
+        !spoken.contains('?'),
+        "a statement, not a question -- the app has already looked: {spoken}"
     );
 
     // -- taking it puts the other word in the box -------------------------
@@ -418,8 +424,8 @@ fn offer_button(view: &View) -> Option<gtk::Button> {
         while let Some(node) = child {
             if let Some(button) = node.downcast_ref::<gtk::Button>()
                 && button
-                    .label()
-                    .is_some_and(|label| label.contains('\u{2014}'))
+                    .tooltip_text()
+                    .is_some_and(|spoken| spoken.starts_with("Search for "))
             {
                 found.push(button.clone());
             }
