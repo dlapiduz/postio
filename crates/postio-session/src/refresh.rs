@@ -171,8 +171,8 @@ mod tests {
 
     #[tokio::test]
     async fn refreshing_runs_a_sync_pass_over_the_folder_in_view() {
-        let database = test_support::memory();
-        let report = postio_storage::seed::seed_small(&database, 3);
+        let database = test_support::memory().await;
+        let report = postio_storage::seed::seed_small(&database, 3).await;
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(directory.path(), &postio_storage::test_support::blob_keys())

@@ -204,12 +204,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn recorded_events_reach_the_store_with_the_account_stamped() {
-        let database = test_support::memory();
+    #[tokio::test]
+    async fn recorded_events_reach_the_store_with_the_account_stamped() {
+        let database = test_support::memory().await;
         let recorder = EgressRecorder::start(database.clone());
         let connection = database.connect().await.expect("checkout");
-        let account = test_support::account(&connection).id;
+        let account = test_support::account(&connection).await.id;
         drop(connection);
 
         recorder
@@ -223,6 +223,7 @@ mod tests {
             let connection = database.connect().await.expect("checkout");
             let rows = EgressLogRepository::new(&connection)
                 .recent(10)
+                .await
                 .expect("recent");
             if !rows.is_empty() || std::time::Instant::now() > deadline {
                 break rows;
@@ -239,9 +240,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shutdown_joins_the_writer_thread_before_returning() {
-        let database = test_support::memory();
+    #[tokio::test]
+    async fn shutdown_joins_the_writer_thread_before_returning() {
+        let database = test_support::memory().await;
         let recorder = EgressRecorder::start(database);
         recorder.record(event("imap.example.com"));
         // Give the writer thread a moment to reach its main loop, so
@@ -260,9 +261,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shutdown_is_idempotent() {
-        let database = test_support::memory();
+    #[tokio::test]
+    async fn shutdown_is_idempotent() {
+        let database = test_support::memory().await;
         let recorder = EgressRecorder::start(database);
         recorder.shutdown();
         recorder.shutdown();
