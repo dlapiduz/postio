@@ -69,7 +69,7 @@ const SUGGESTION_LIMIT: u32 = 8;
 /// what lets a composer test run without building a message list to ignore.
 pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 
-pub fn install(
+pub async fn install(
     window: &Window,
     account: AccountId,
     database: Store,
@@ -80,7 +80,7 @@ pub fn install(
 ) {
     let composer = window.composer();
     composer.set_account(account);
-    install_identities(window, &composer, &database, account);
+    install_identities(window, &composer, &database, account).await;
     install_signature_default(&composer, window, database.clone(), account);
 
     let last_id = install_autosave(&composer, database.clone(), account);
@@ -93,10 +93,10 @@ pub fn install(
     );
     install_send_later(&composer, database.clone(), Rc::clone(&last_id));
     install_resume(window, &composer, database.clone(), last_id);
-    install_recipient_suggestions(&composer, database.clone(), account);
-    install_reply_source(&composer, database, showing);
+    install_recipient_suggestions(&composer, database.clone(), account).await;
+    install_reply_source(&composer, database, showing).await;
     install_attach(&composer, blobs.clone(), runtime.clone());
-    install_inline_image(&composer, blobs.clone(), runtime);
+    install_inline_image(&composer, blobs.clone(), runtime).await;
     install_attachment_bytes(&composer, blobs);
 }
 
@@ -465,7 +465,7 @@ fn install_autosave(
         // is what knows how the last session ended, and this is its one caller,
         // before anything else consults the marker it flips.
         if postio_session::begin_session(&database).await {
-            recover(composer, &database, account, &last_id);
+            recover(composer, &database, account, &last_id).await;
         }
         last_id
 

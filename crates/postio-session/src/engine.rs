@@ -47,7 +47,7 @@ use postio_core::bridge::EventSink;
 // docs' whole argument. `start_joining` below already carries the allow for
 // the same reason.
 #[allow(clippy::too_many_arguments)]
-pub async fn start(
+pub fn start(
     account: &Account,
     database: &Store,
     blobs: BlobStore,
@@ -320,7 +320,7 @@ pub async fn start_all(
             backfill,
             watch,
             egress.for_account(account.id),
-        ).await {
+        ) {
             engines.push((account.id, engine));
         }
     }
@@ -371,7 +371,7 @@ pub async fn start_joining(
         backfill,
         watch,
         egress.for_account(account.id),
-    ).await)
+    ))
 }
 
 #[cfg(test)]

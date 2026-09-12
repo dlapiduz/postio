@@ -1118,7 +1118,7 @@ pub async fn fetch_body(
             };
             let bytes = block.text.len() as u64;
             messages.set_headers(request.message, Some(&block)).await?;
-            index_the_header_block(connection, request.message, Some(&block));
+            index_the_header_block(connection, request.message, Some(&block)).await;
             return Ok(Outcome::Stored { bytes });
         }
         // Every byte: asked for, or the only answer left for a row whose
@@ -1239,7 +1239,7 @@ pub async fn fetch_body(
             "a fetched body did not reach the search index"
         );
     }
-    index_the_header_block(connection, request.message, block.as_ref());
+    index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
@@ -1453,7 +1453,7 @@ async fn fetch_text_parts(
             "a fetched body did not reach the search index"
         );
     }
-    index_the_header_block(connection, request.message, block.as_ref());
+    index_the_header_block(connection, request.message, block.as_ref()).await;
     Ok(Outcome::Stored { bytes })
 }
 
@@ -1818,21 +1818,22 @@ mod tests {
         message
     }
 
-    #[test]
-    fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test]
+    async fn seed_queues_everything_a_mailbox_is_missing_newest_first() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         for (seconds, uid) in [(1, 1), (2, 2), (3, 3)] {
             messages
                 .create(&mut headers_only(account.id, inbox, seconds, uid))
+                .await
                 .expect("create");
         }
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        let queued = seed(&connection, &mut backfill, inbox, 10).expect("seed");
+        let queued = seed(&connection, &mut backfill, inbox, 10).await.expect("seed");
 
         assert_eq!(queued, 3);
         assert_eq!(backfill.progress().pending, 3);
@@ -1841,60 +1842,60 @@ mod tests {
         assert_eq!(claim.priority, Priority::Background);
     }
 
-    #[test]
-    fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test]
+    async fn seed_leaves_the_backlog_empty_when_nothing_is_missing() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (_account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
         assert_eq!(
-            seed(&connection, &mut backfill, inbox, 10).expect("seed"),
+            seed(&connection, &mut backfill, inbox, 10).await.expect("seed"),
             0
         );
         assert!(backfill.next_body().is_none());
     }
 
-    #[test]
-    fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test]
+    async fn request_body_jumps_the_queue_for_whatever_the_reading_pane_opened() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         let mut older = headers_only(account.id, inbox, 1, 1);
-        messages.create(&mut older).expect("create");
+        messages.create(&mut older).await.expect("create");
         let mut newer = headers_only(account.id, inbox, 2, 2);
-        messages.create(&mut newer).expect("create");
+        messages.create(&mut newer).await.expect("create");
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        seed(&connection, &mut backfill, inbox, 10).expect("seed");
+        seed(&connection, &mut backfill, inbox, 10).await.expect("seed");
 
         // The user opened the OLDER message; the interactive lane must still
         // put it ahead of the newer one the background lane would fetch first.
-        assert!(request_body(&connection, &mut backfill, older.id).expect("lookup"));
+        assert!(request_body(&connection, &mut backfill, older.id).await.expect("lookup"));
 
         let claim = backfill.next_body().expect("a claim");
         assert_eq!(claim.priority, Priority::Interactive);
         assert_eq!(claim.request.message, older.id);
     }
 
-    #[test]
-    fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test]
+    async fn request_body_for_a_message_with_nothing_to_fetch_is_a_no_op() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let messages = MessageRepository::new(&connection);
 
         let mut fully_fetched = headers_only(account.id, inbox, 1, 1);
         fully_fetched.sync.body_state = BodyState::Full;
-        messages.create(&mut fully_fetched).expect("create");
+        messages.create(&mut fully_fetched).await.expect("create");
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
 
-        assert!(!request_body(&connection, &mut backfill, fully_fetched.id).expect("lookup"));
+        assert!(!request_body(&connection, &mut backfill, fully_fetched.id).await.expect("lookup"));
         assert!(
-            !request_body(&connection, &mut backfill, MessageId::new(404)).expect("lookup"),
+            !request_body(&connection, &mut backfill, MessageId::new(404)).await.expect("lookup"),
             "no local row at all is the same answer, not an error"
         );
         assert!(backfill.next_body().is_none());

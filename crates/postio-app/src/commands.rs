@@ -189,7 +189,7 @@ pub fn drain(
             let Some(window) = window.upgrade() else {
                 return;
             };
-            apply(&window, &feeds, &event, &notifier, &state, &quiet);
+            apply(&window, &feeds, &event, &notifier, &state, &quiet).await;
         }
     });
 }

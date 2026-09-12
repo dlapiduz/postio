@@ -104,8 +104,11 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
             let wiring = wiring.clone();
             let dialog = dialog.clone();
             move || {
-                dialog.close();
-                crate::settings_accounts::refresh(&window, &wiring);
+                crate::blocking::now(async {
+                    dialog.close();
+                    crate::settings_accounts::refresh(&window, &wiring).await;
+            
+                })
             }
         };
         move |submission| {

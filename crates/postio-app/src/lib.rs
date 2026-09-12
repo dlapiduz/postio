@@ -206,22 +206,25 @@ pub fn run() -> glib::ExitCode {
         let opening = Rc::clone(&opening);
         let timeline = timeline.clone();
         move |application| {
-            let Some(window) = application.active_window().and_downcast::<Window>() else {
-                return;
-            };
-            // Exists before the first notification can, and re-registering on
-            // a second `activate` (a second launch raising the window) just
-            // replaces it with itself.
-            notifications::install_action(application, &window);
-            if opened.borrow().is_some() {
-                // A second launch raising a window that already has its mail.
-                present(&window, &opened, &context, None, &fed);
-                return;
-            }
-            if opening.replace(true) {
-                return;
-            }
-            open_the_store(&window, &opened, &context, &fed, &timeline);
+            crate::blocking::now(async {
+                let Some(window) = application.active_window().and_downcast::<Window>() else {
+                    return;
+                };
+                // Exists before the first notification can, and re-registering on
+                // a second `activate` (a second launch raising the window) just
+                // replaces it with itself.
+                notifications::install_action(application, &window);
+                if opened.borrow().is_some() {
+                    // A second launch raising a window that already has its mail.
+                    present(&window, &opened, &context, None, &fed).await;
+                    return;
+                }
+                if opening.replace(true) {
+                    return;
+                }
+                open_the_store(&window, &opened, &context, &fed, &timeline);
+        
+            })
         }
     });
 
@@ -243,7 +246,11 @@ pub fn run() -> glib::ExitCode {
     if let Some(ready) = opened.borrow_mut().take() {
         // The clean-shutdown marker (#491): a next start that finds it will
         // leave a parked draft parked instead of recovering it as a crash.
-        postio_session::end_session(&ready.wiring.database);
+        //
+        // Blocked on, because the GTK main loop has already returned and
+        // there is nothing left to keep responsive -- this is the last write
+        // of the process.
+        crate::blocking::now(postio_session::end_session(&ready.wiring.database));
         ready.bridge.shutdown();
     }
     code
@@ -339,7 +346,7 @@ pub async fn open_or_onboard(
                             .with_egress(wiring.egress.clone()),
                     ),
                     std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-                ),
+                ).await,
             }
             // Both branches, because both are a usable UI: mail to read, or
             // the screen that asks for the account there is none of. The
@@ -637,17 +644,17 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
             let feeds = feeds.clone();
             std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
         },
-    );
+    ).await;
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
-    reading::install(window, wiring, &feeds, showing);
+    reading::install(window, wiring, &feeds, showing).await;
 
     // ADR 0012 Q4: the first-run keyboard orientation, after the first sync.
     // Installed here rather than in `postio-gtk` because the two questions
     // it turns on -- has this been seen, and has a sync finished -- are a
     // store read and an engine event, and the view layer has neither.
-    orientation::install(window, wiring, &feeds);
+    orientation::install(window, wiring, &feeds).await;
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
@@ -661,22 +668,22 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // The settings panel's account rows: enable/disable, remove-with-undo,
     // rebuild-index, and each account's mailbox role map.
-    settings_accounts::install(window, wiring, reindexing.clone(), &feeds);
+    settings_accounts::install(window, wiring, reindexing.clone(), &feeds).await;
     // And its connection list: the egress log, auditable (#151).
-    settings_egress::install(window, wiring);
+    settings_egress::install(window, wiring).await;
     // The privacy pane's unsubscribe-activation log (#971).
-    settings_privacy::install(window, wiring);
+    settings_privacy::install(window, wiring).await;
 
     // A folder's own context menu: skip/resume background backfill (ADR
     // 0016, #350).
-    sidebar_backfill::install(window, wiring);
+    sidebar_backfill::install(window, wiring).await;
 
     // *Add account*, from the palette or its binding. Here rather than in
     // `open_account` because it is a surface over the shell, and the shell
     // is what this function builds -- an application with no account to feed
     // is already on the first-run screen, where adding a second one is not a
     // question anybody can ask.
-    add_account::install(window, wiring);
+    add_account::install(window, wiring).await;
 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
@@ -684,10 +691,10 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     let search =
         search::install(window, wiring, &feeds, reindexing).await.map(|view| &*Box::leak(Box::new(view)));
 
-    catch_up_the_body_index(wiring);
-    repair_the_header_blocks(wiring);
-    catch_up_the_header_index(wiring);
-    reclaim_disk(wiring);
+    catch_up_the_body_index(wiring).await;
+    repair_the_header_blocks(wiring).await;
+    catch_up_the_header_index(wiring).await;
+    reclaim_disk(wiring).await;
 
     // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
     // through `Wiring::storage_ceiling` -- this is the other half. Lowering
@@ -949,7 +956,7 @@ pub async fn start_syncing(window: &Window, wiring: &Wiring) {
     };
 
     for (account, sync) in engines {
-        adopt_engine(window, wiring, account, sync);
+        adopt_engine(window, wiring, account, sync).await;
     }
 }
 
@@ -990,12 +997,12 @@ pub async fn attach_account(
         &wiring.egress,
     ).await?;
     if let Some(sync) = started {
-        adopt_engine(window, wiring, account.id, sync);
+        adopt_engine(window, wiring, account.id, sync).await;
     }
     // The surfaces that list accounts, now that there is one more. Nothing
     // else reads the account table while the window is up; when something
     // does, this is where it joins.
-    settings_accounts::refresh(window, wiring);
+    settings_accounts::refresh(window, wiring).await;
     Ok(())
 }
 
@@ -1023,8 +1030,8 @@ async fn adopt_engine(
     // after the bus was built. The first engine fills the slot; the
     // others are reached through their own account's work.
     wiring.engine.fill(sync.clone());
-    seed_the_backfill(account, sync.clone(), wiring);
-    fetch_what_is_opened(window, sync, wiring.runtime.clone());
+    seed_the_backfill(account, sync.clone(), wiring).await;
+    fetch_what_is_opened(window, sync, wiring.runtime.clone()).await;
 }
 
 /// Every account that participates in sync.
@@ -1158,7 +1165,7 @@ impl Installation {
     /// the composition root without one — the tests that exist because
     /// `postio-bl2` was eight capabilities wired to nothing, and the only way
     /// to find out was to launch the binary.
-    pub async fn new(secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>) -> Self {
+    pub fn new(secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>) -> Self {
         Installation {
             secrets,
             state: SharedState::default(),
@@ -1327,7 +1334,7 @@ pub fn open_the_store(
                         Some(reason)
                     }
                 };
-            present(&window, &opened, &context, refused, &fed);
+            present(&window, &opened, &context, refused, &fed).await;
         }
     });
 }
@@ -1401,7 +1408,7 @@ fn assemble(
 /// now comes first: a refusal arriving at a window somebody is already
 /// looking at, and a retry from it (#1114). `postio-bl2` is the bead for what
 /// a composition root only reachable by launching the binary costs.
-pub fn present(
+pub async fn present(
     window: &Window,
     opened: &Rc<std::cell::RefCell<Option<Opened>>>,
     context: &Rc<Installation>,
@@ -1435,7 +1442,7 @@ pub fn present(
             Rc::clone(&ready.events),
             notifier,
             Rc::clone(fed),
-        );
+        ).await;
         return;
     }
 
@@ -1494,7 +1501,7 @@ pub fn present(
                         Ok(ready) => {
                             tracing::info!("the store opened on a retry");
                             *opened.borrow_mut() = Some(ready);
-                            present(&window, &opened, &context, None, &fed);
+                            present(&window, &opened, &context, None, &fed).await;
                         }
                         Err(reason) => {
                             tracing::warn!(reason, "the store still did not open");
@@ -1576,7 +1583,7 @@ pub async fn startup_route(
     database: &Store,
     secrets: &dyn postio_account::secret::SecretStore,
 ) -> Startup {
-    reap_pending_accounts(database);
+    reap_pending_accounts(database).await;
     let Some(account) = first_account(database).await else {
         return Startup::Onboard(None);
     };

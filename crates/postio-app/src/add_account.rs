@@ -55,27 +55,30 @@ use crate::onboarding::{JmapOfferSlot, ProbeCancellation, probe, submit};
 /// Through `connect_command` rather than the command bus: the bus answers
 /// verbs over mail, and this one is answered by the composition root, which
 /// is the only place that may build a probe and write an account row.
-pub fn install(window: &Window, wiring: &Wiring) {
+pub async fn install(window: &Window, wiring: &Wiring) {
     // Weak: this handler is stored on the window itself, so a strong clone
     // is a cycle with no third party in it at all (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.connect_command({
         let wiring = wiring.clone();
         move |id| {
-            if id == CommandId::AddAccount {
-                let Some(window) = weak.upgrade() else {
-                    return;
-                };
-                // Built per opening, not once: a transport is cheap, and one
-                // shared between dialogues would outlive the cancellation
-                // that is supposed to end its work.
-                open(
-                    &window,
-                    &wiring,
-                    // Discovery probes are outbound connections too (#151).
-                    Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
-                );
-            }
+            crate::blocking::now(async {
+                if id == CommandId::AddAccount {
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    // Built per opening, not once: a transport is cheap, and one
+                    // shared between dialogues would outlive the cancellation
+                    // that is supposed to end its work.
+                    open(
+                        &window,
+                        &wiring,
+                        // Discovery probes are outbound connections too (#151).
+                        Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
+                    ).await;
+                }
+        
+            })
         }
     });
 }
@@ -87,7 +90,7 @@ pub fn install(window: &Window, wiring: &Wiring) {
 /// [`crate::onboarding::install`]: a probe that builds its own transport can
 /// only be reached by dialling the network, and no test in the default suite
 /// may.
-pub fn open(
+pub async fn open(
     window: &Window,
     wiring: &Wiring,
     transport: Arc<dyn DiscoveryTransport>,
@@ -137,8 +140,11 @@ pub fn open(
             let wiring = wiring.clone();
             let dialog = dialog.clone();
             move |address: &str| {
-                dialog.close();
-                join(&window, &wiring, address);
+                crate::blocking::now(async {
+                    dialog.close();
+                    join(&window, &wiring, address).await;
+            
+                })
             }
         };
         move |submission| {

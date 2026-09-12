@@ -44,7 +44,7 @@ pub async fn install(window: &Window, wiring: &Wiring) {
                     tracing::warn!(%error, "could not change whether a folder backs up locally");
                     return;
                 }
-                refresh(&window, &database, id);
+                refresh(&window, &database, id).await;
         
             })
         }

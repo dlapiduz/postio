@@ -86,19 +86,22 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
     // viewport height: "read fresh on every open rather than cached" (#871).
     // Nothing else needs these numbers -- they are drawn in this panel and
     // nowhere else.
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 
     {
         let weak = glib::object::ObjectExt::downgrade(window);
         let wiring = wiring.clone();
         let panel = window.settings();
         gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
-            if !gtk::prelude::WidgetExt::is_visible(panel) {
-                return;
-            }
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring);
-            }
+            crate::blocking::now(async {
+                if !gtk::prelude::WidgetExt::is_visible(panel) {
+                    return;
+                }
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+        
+            })
         });
     }
 
@@ -119,7 +122,7 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
                     tracing::warn!(%error, "could not change whether an account is enabled");
                 }
                 if let Some(window) = weak.upgrade() {
-                    refresh(&window, &wiring);
+                    refresh(&window, &wiring).await;
                 }
         
             })
@@ -156,12 +159,15 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let window = window.downgrade();
         let wiring = wiring.clone();
         move |event| {
-            if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
-                return;
-            }
-            if let Some(window) = window.upgrade() {
-                refresh(&window, &wiring);
-            }
+            crate::blocking::now(async {
+                if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
+                    return;
+                }
+                if let Some(window) = window.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
+        
+            })
         }
     });
 
@@ -194,7 +200,7 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
                 edit => edit_account(&wiring, id, edit).await,
             }
             if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring);
+                refresh(&window, &wiring).await;
             }
             })
         }
@@ -204,9 +210,12 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id| {
-            if let Some(window) = weak.upgrade() {
-                test_connection(&window, &wiring, id);
-            }
+            crate::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    test_connection(&window, &wiring, id).await;
+                }
+        
+            })
         }
     });
 
@@ -214,9 +223,12 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, draft| {
-            if let Some(window) = weak.upgrade() {
-                save_signature(&window, &wiring, id, draft);
-            }
+            crate::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    save_signature(&window, &wiring, id, draft).await;
+                }
+        
+            })
         }
     });
 
@@ -224,9 +236,12 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, signature| {
-            if let Some(window) = weak.upgrade() {
-                delete_signature(&window, &wiring, id, signature);
-            }
+            crate::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    delete_signature(&window, &wiring, id, signature).await;
+                }
+        
+            })
         }
     });
 }
@@ -272,7 +287,7 @@ async fn save_signature(
 
     match written {
         Ok(()) => {
-            refresh(window, wiring);
+            refresh(window, wiring).await;
             // Back to the account, with the list it now belongs to.
             window.settings().open_account_detail(id);
         }
@@ -332,7 +347,7 @@ async fn delete_signature(
     drop(connection);
     match removed {
         Ok(_) => {
-            refresh(window, wiring);
+            refresh(window, wiring).await;
             window.settings().open_account_detail(id);
         }
         Err(error) => window
@@ -681,7 +696,7 @@ async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::Account
         }
     }
     drop(connection);
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 
     let restore_window = window.clone();
     let restore_wiring = wiring.clone();
@@ -692,7 +707,7 @@ async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::Account
             {
                 tracing::warn!(%error, "could not undo removing an account");
             }
-            refresh(&restore_window, &restore_wiring);
+            refresh(&restore_window, &restore_wiring).await;
     
         })
     });
@@ -738,7 +753,7 @@ async fn set_default(window: &Window, wiring: &Wiring, id: AccountId) {
     {
         tracing::warn!(%error, "could not set the default account");
     }
-    refresh(window, wiring);
+    refresh(window, wiring).await;
 }
 
 fn rebuild_index(window: &Window, wiring: &Wiring, reindexing: &Reindexing, id: AccountId) {

@@ -39,10 +39,14 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     // Has some earlier run already shown it? The answer is in SQLite, so it
     // arrives asynchronously — which is exactly why [`Orientation`] takes
     // its four inputs in any order rather than assuming this one is first.
-    let answer = crate::search::ask(&wiring.database, &wiring.runtime, |connection| async move {
+    // `ask` spawns onto the runtime, so the closure must own everything it
+    // touches rather than borrowing `wiring`.
+    let answer = crate::search::ask(&wiring.database, &wiring.runtime, move |connection| async move {
         SettingsRepository::new(&connection).get(SEEN_KEY).await.ok()
-
     });
+    // Cloned, not borrowed: `act` awaits now, so the block holds this across
+    // an await point and a `'static` task cannot carry a borrow.
+    let wiring = wiring.clone();
     glib::spawn_future_local(glib::clone!(
         #[weak]
         window,
@@ -57,7 +61,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
             // worse than one that quietly never appears.
             let seen = !matches!(answer.recv().await, Ok(Some(None)));
             let effect = state.borrow_mut().remembered(seen);
-            act(&window, &wiring, effect);
+            act(&window, &wiring, effect).await;
         }
     ));
 
@@ -72,10 +76,13 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move |status| {
-            if status.last_sync.is_some() {
-                let effect = state.borrow_mut().synced();
-                act(&window, &wiring, effect);
-            }
+            crate::blocking::now(async {
+                if status.last_sync.is_some() {
+                    let effect = state.borrow_mut().synced();
+                    act(&window, &wiring, effect).await;
+                }
+        
+            })
         }
     ));
 
@@ -92,20 +99,23 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move || {
-            let effect = state.borrow_mut().retire();
-            act(&window, &wiring, effect);
+            crate::blocking::now(async {
+                let effect = state.borrow_mut().retire();
+                act(&window, &wiring, effect).await;
+        
+            })
         }
     ));
 }
 
 /// Carry out what the state machine decided.
-fn act(window: &Window, wiring: &Wiring, effect: Effect) {
+async fn act(window: &Window, wiring: &Wiring, effect: Effect) {
     match effect {
         Effect::Nothing => {}
         Effect::Show => window.orientation().set_visible(true),
         Effect::Retire => {
             window.orientation().set_visible(false);
-            remember(wiring);
+            remember(wiring).await;
         }
     }
 }
