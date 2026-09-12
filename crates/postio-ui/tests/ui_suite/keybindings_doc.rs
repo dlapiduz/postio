@@ -1,4 +1,5 @@
-//! `docs/keybindings.md` is generated from the command registry.
+//! `docs/keybindings.md` is generated from the command registry and the
+//! finder's mode table.
 //!
 //! A hand-written key reference is wrong within a release — that is the whole
 //! reason the registry exists (docs/PRODUCT.md §8: one table, every surface). So the
@@ -7,6 +8,13 @@
 //!
 //! The `?` cheat sheet renders the same table at runtime; this is the copy
 //! somebody reads before they have installed anything.
+//!
+//! It lives in `postio-ui` rather than `postio-core` because the document is
+//! rendered from two tables now: the registry, and `postio_ui::finder::MODES`
+//! for the modes of the one box. A prefix is not a command and cannot be in
+//! the registry — it selects which question is being asked and has no
+//! invocation, no context of its own and nothing to undo — so the one place
+//! that can see both is the crate that depends on the other.
 
 use postio_config::paths::Platform;
 use std::fmt::Write as _;
@@ -61,9 +69,10 @@ fn render() -> String {
     out.push_str(
         "# Keyboard reference\n\
          \n\
-         <!-- Generated from `postio-core`'s command registry by\n\
-         `crates/postio-core/tests/keybindings_doc.rs`. Do not edit by hand:\n\
-         change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core`. -->\n\
+         <!-- Generated from `postio-core`'s command registry and the one\n\
+         box's mode table by `crates/postio-ui/tests/ui_suite/keybindings_doc.rs`.\n\
+         Do not edit by hand:\n\
+         change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`. -->\n\
          \n\
          Every command below is also in the `Ctrl+K` palette and the `?` cheat\n\
          sheet, because all three are generated from one table.\n\
@@ -132,6 +141,27 @@ fn render() -> String {
         );
     }
 
+    out.push_str(
+        "\n\
+         ## The one box\n\
+         \n\
+         `/` opens one box in the header, and it answers more than one\n\
+         question. Typing searches mail; a character typed into an empty box\n\
+         chooses what else to ask, and is absorbed into a marker on the field\n\
+         rather than staying in the query. Backspace at the start gives the\n\
+         mode back and keeps what was typed.\n\
+         \n\
+         | Typed | What it does |\n\
+         |---|---|\n",
+    );
+    for mode in postio_ui::finder::MODES {
+        let typed = match mode.prefix {
+            Some(prefix) => format!("`{prefix}`"),
+            None => "*(nothing)*".to_owned(),
+        };
+        let _ = writeln!(out, "| {typed} | {} |", mode.purpose);
+    }
+
     out
 }
 
@@ -150,7 +180,7 @@ fn the_keyboard_reference_matches_the_registry() {
 
     let on_disk = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
-            "{}: {error}\nrun `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core` to generate it",
+            "{}: {error}\nrun `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui` to generate it",
             path.display()
         )
     });
@@ -158,7 +188,7 @@ fn the_keyboard_reference_matches_the_registry() {
     assert_eq!(
         on_disk, rendered,
         "docs/keybindings.md is out of date with the registry; \
-         run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-core`"
+         run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`"
     );
 }
 
