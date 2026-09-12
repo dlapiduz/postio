@@ -23,6 +23,44 @@ members = [
     "crates/postio-test-support",
 ]
 
+# What a bare `cargo build` or `cargo check` compiles: everything above
+# except the FFI layer.
+#
+# `postio-ffi` links a `staticlib` *and* a `cdylib`, and its `uniffi` takes
+# the `cli` feature, so it pulls `uniffi_bindgen`, `clap` and
+# `cargo_metadata` into every build — for a macOS frontend that does not
+# ship yet (#1306). Until it does, that is a cost each fresh worktree pays
+# before its first `cargo check` can answer.
+#
+# No coverage is lost: `--workspace` ignores this list, and `--workspace` is
+# what `issue-land.sh`'s check, every compile job in `ci.yml`, and
+# `check-crate-boundaries.py`'s `cargo metadata` already use.
+#
+# **A new member belongs in both lists.** Leaving it out here means a bare
+# cargo command silently stops building it; that is deliberate for this one
+# crate and an accident anywhere else (#1500).
+default-members = [
+    "crates/postio-model",
+    "crates/postio-storage",
+    "crates/postio-search",
+    "crates/postio-body",
+    "crates/postio-index",
+    "crates/postio-config",
+    "crates/postio-account",
+    "crates/postio-jmap",
+    "crates/postio-gmail",
+    "crates/postio-ui",
+    "crates/postio-smtp",
+    "crates/postio-sync",
+    "crates/postio-core",
+    "crates/postio-runtime",
+    "crates/postio-session",
+    "crates/postio-gtk",
+    "crates/postio-app",
+    "crates/postio-bench",
+    "crates/postio-test-support",
+]
+
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
