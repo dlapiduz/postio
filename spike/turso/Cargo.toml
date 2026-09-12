@@ -4,20 +4,24 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[[bin]]
+name = "schema"
+path = "src/main.rs"
+
+[[bin]]
+name = "uncompressed"
+path = "src/uncompressed.rs"
+
 [dependencies]
-# The Rust rewrite of SQLite, at the only version published: a prerelease.
-# `fts` is a default feature; encryption is per-database and behind an
-# experimental switch.
 turso = "=0.8.0-pre.11"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Postio's own storage layer, to produce the head schema rather than a
-# hand-copied one: a store is built the way the application builds it, and
-# `sqlite_schema` is then the exact thing a rebuilt store would contain --
-# tables, indexes, triggers and the FTS5 virtual tables together.
 postio-session = { path = "../../crates/postio-session" }
-postio-storage = { path = "../../crates/postio-storage" }
+postio-storage = { path = "../../crates/postio-storage", features = ["test-support"] }
+postio-index = { path = "../../crates/postio-index" }
+postio-model = { path = "../../crates/postio-model", features = ["test-corpus"] }
 rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl"] }
 tempfile = "3"
+chrono = "0.4"
 
 [workspace]

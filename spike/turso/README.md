@@ -59,6 +59,47 @@ through `fts_match`, `fts_score` and `fts_highlight` rather than `MATCH`,
 missing" and "there is no full-text search" are different findings and only
 the first is true.
 
+## What it looks like with compression removed
+
+`cargo run --release --bin uncompressed` builds both stores over the same
+4,000 messages — text from the real `.eml` corpus, not generated, because
+`body.rs` warns that *"generated mail compresses 6-7x and that number means
+nothing"*.
+
+### The body column
+
+```
+plaintext, as Turso would need it      1292504 bytes
+zstd + dictionary, as stored today      930929 bytes   1.39x smaller
+```
+
+The column, not the file: comparing whole stores would compare a full Postio
+schema — 40 tables, 56 indexes, 15 triggers — against a single three-column
+table, and say nothing about compression. Repeated corpus text flatters a
+dictionary, so 1.39x is an *upper* bound on what is given up; the reference
+figure stays `body.rs`'s **2.19x on a real account's 1.43 GB text axis**.
+
+### The searches, over the same field
+
+```
+invoice    fts5      0 hits   370µs     turso      0   105µs
+meeting    fts5    105 hits   221µs     turso    105    97µs
+thé        fts5   3472 hits   546µs     turso      0    90µs
+the*       fts5   3472 hits   337µs     turso   3472    95µs
+```
+
+Three of four agree, and Turso is consistently faster on this corpus.
+
+**`thé` is the finding.** FTS5 under `unicode61 remove_diacritics 2` folds it
+to `the` and matches 3,472 messages. Turso's tokenizer is tantivy's
+`SimpleTokenizer` plus `LowerCaser` — no diacritic folding — so it matches
+nothing. Searching `Muller` would not find `Müller`, and `Jose` would not find
+`José`. For a mail client with European correspondents that is a visible
+regression, and it is not configurable through the index method.
+
+Prefix (`the*`) works identically in both, which is worth saying: the gap is
+specific, not general.
+
 ## What a rewrite would actually cost
 
 1. **`postio-index` and `postio-search`, rewritten.** Not ported — the

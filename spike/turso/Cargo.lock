@@ -3034,6 +3034,7 @@ dependencies = [
  "postio-model",
  "rusqlite",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tracing",
  "zeroize",
@@ -4417,6 +4418,9 @@ dependencies = [
 name = "turso-spike"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "postio-index",
+ "postio-model",
  "postio-session",
  "postio-storage",
  "rusqlite",
