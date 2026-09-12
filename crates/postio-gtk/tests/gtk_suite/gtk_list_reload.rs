@@ -70,6 +70,7 @@ impl MailboxSource for Filling {
             unread: self.total.get(),
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }
@@ -263,6 +264,7 @@ impl MailboxSource for Reordering {
             unread: total,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

@@ -368,6 +368,17 @@ pub struct MailboxCounts {
     pub flagged: u32,
     /// Messages currently snoozed (`snoozed_until` in the future).
     pub snoozed: u32,
+    /// Messages here that have stopped and are waiting for a person.
+    ///
+    /// Only Drafts ever has one: a send that failed, or one nobody can
+    /// confirm (spec 003 FR-022). Every other folder's mail arrived on its
+    /// own and is not waiting on anybody.
+    ///
+    /// Not maintained by the count triggers, unlike the four above — it is a
+    /// question about draft state rather than about message rows, and
+    /// `MailboxRepository::draft_counts` is what answers it. The sidebar's
+    /// feed fills it in before the row is drawn.
+    pub attention: u32,
 }
 
 /// A folder on the server, mirrored locally.

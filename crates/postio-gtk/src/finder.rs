@@ -1518,6 +1518,7 @@ mod tests {
             unread,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         mailbox
     }

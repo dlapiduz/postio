@@ -284,6 +284,17 @@ button.postio-compose {
   color: var(--postio-selected-accent-text);
 }
 
+/* A count that includes something waiting for a person: a send that failed,
+   or one nobody can confirm (spec 003 FR-022). The accent's warning cousin,
+   the same call `.postio-onboarding-failed` and the account pane's refusal
+   make -- nothing has gone wrong with Postio, something is waiting on you.
+   Not red, and not a badge: this is a number that has become worth reading,
+   not an alarm. */
+.postio-folder-count.postio-sidebar-count-attention {
+  color: var(--postio-ink);
+  font-weight: 500;
+}
+
 /* The ordinary section's disclosure chevron (#324) — flat, dim, and no
    wider than it has to be, so a row with children reads the same height as
    one without. Its own click, not the row's: opacity does the hiding when

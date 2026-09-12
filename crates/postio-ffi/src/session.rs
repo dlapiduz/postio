@@ -2104,6 +2104,8 @@ impl Session {
                     // zero keeps the row hidden, which is right until
                     // something can count it.
                     outbox: 0,
+                    drafts: 0,
+                    attention: 0,
                 };
                 found.extend(postio_ui::sidebar::view_rows(account.id, &found, counts));
                 // Ordered and split here rather than in the frontend.

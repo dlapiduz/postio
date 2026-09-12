@@ -79,6 +79,27 @@ pub struct ViewCounts {
     pub snoozed: u32,
     /// Drafts whose send is under way.
     pub outbox: u32,
+    /// What the Drafts row should show: everything not in flight. Not
+    /// `mailboxes.total_count`, which counts every message row filed there.
+    pub drafts: u32,
+    /// How many of those have stopped and need a person (FR-022).
+    pub attention: u32,
+}
+
+/// How many of `mailbox`'s messages have stopped and need a person.
+///
+/// `None` for every folder but Drafts, and `None` for a Drafts folder where
+/// nothing needs anybody — a marker that is always drawn is a marker nobody
+/// reads (FR-023).
+///
+/// Separate from [`count_for`] rather than replacing it: the two answer
+/// different questions, and the row draws both. "Drafts 5" says how much is
+/// there; it does not say that one of them failed to send an hour ago.
+pub fn attention_for(mailbox: &Mailbox) -> Option<u32> {
+    if mailbox.role != MailboxRole::Drafts {
+        return None;
+    }
+    (mailbox.counts.attention > 0).then_some(mailbox.counts.attention)
 }
 
 /// Whether `mailbox` is a view over messages filed elsewhere rather than a
@@ -160,6 +181,9 @@ fn view(account: AccountId, role: MailboxRole, count: u32) -> Mailbox {
         } else {
             0
         },
+        // A view holds no drafts of its own: the Outbox lists what is on its
+        // way, which is the opposite of stopped and waiting for somebody.
+        attention: 0,
     };
     row
 }
@@ -254,6 +278,69 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_drafts_row_says_how_many_need_a_person() {
+        // FR-022. A Drafts badge of 5 says nothing about whether one of them
+        // failed to send an hour ago. Two numbers: what is there, and what has
+        // stopped and is waiting for you.
+        let account = AccountId::new(1);
+        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
+        drafts.counts = MailboxCounts {
+            total: 4,
+            attention: 2,
+            ..MailboxCounts::default()
+        };
+
+        assert_eq!(
+            count_for(&drafts),
+            Some(4),
+            "the total is what Drafts holds"
+        );
+        assert_eq!(
+            attention_for(&drafts),
+            Some(2),
+            "and separately, how many of them need you"
+        );
+        let _ = account;
+    }
+
+    #[test]
+    fn nothing_needing_a_person_draws_no_attention_mark() {
+        // FR-023. A marker that is always there is a marker nobody reads.
+        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
+        drafts.counts = MailboxCounts {
+            total: 2,
+            attention: 0,
+            ..MailboxCounts::default()
+        };
+        assert_eq!(attention_for(&drafts), None);
+    }
+
+    #[test]
+    fn only_drafts_has_an_attention_count() {
+        // Every other folder's mail arrived; none of it is waiting on the
+        // user to finish or retry something.
+        for role in [
+            MailboxRole::Inbox,
+            MailboxRole::Sent,
+            MailboxRole::Archive,
+            MailboxRole::Junk,
+            MailboxRole::Trash,
+            MailboxRole::Regular,
+        ] {
+            let mut mailbox = folder(9, "Somewhere", role);
+            mailbox.counts = MailboxCounts {
+                total: 3,
+                attention: 3,
+                ..MailboxCounts::default()
+            };
+            assert_eq!(
+                attention_for(&mailbox),
+                None,
+                "{role:?} should not draw an attention count"
+            );
+        }
+    }
 
     // ── The view rows (spec 003, US4) ────────────────────────────────────
 
@@ -269,6 +356,8 @@ mod tests {
                 flagged: 3,
                 snoozed: 2,
                 outbox: 0,
+                drafts: 0,
+                attention: 0,
             },
         );
 
@@ -303,6 +392,8 @@ mod tests {
                     flagged: 0,
                     snoozed: 0,
                     outbox,
+                    drafts: 0,
+                    attention: 0,
                 },
             )
             .into_iter()
@@ -338,6 +429,8 @@ mod tests {
                 flagged: 3,
                 snoozed: 0,
                 outbox: 0,
+                drafts: 0,
+                attention: 0,
             },
         )
         .into_iter()
@@ -365,6 +458,8 @@ mod tests {
                 flagged: 0,
                 snoozed: 0,
                 outbox: 0,
+                drafts: 0,
+                attention: 0,
             },
         )
         .into_iter()
@@ -391,6 +486,8 @@ mod tests {
                 flagged: 1,
                 snoozed: 1,
                 outbox: 1,
+                drafts: 0,
+                attention: 0,
             },
         ));
 

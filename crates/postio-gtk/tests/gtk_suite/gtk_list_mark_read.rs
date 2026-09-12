@@ -68,6 +68,7 @@ impl MailboxSource for Mailbox120 {
             unread: TOTAL - u32::from(self.read.get().is_some()),
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

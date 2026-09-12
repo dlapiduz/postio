@@ -180,6 +180,7 @@ fn show_folders(window: &Window) {
             unread,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         mailbox
     };

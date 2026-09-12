@@ -55,6 +55,7 @@ impl Store {
                 unread: 0,
                 flagged,
                 snoozed: 0,
+                attention: 0,
             };
             mailbox
         };
@@ -216,6 +217,7 @@ impl MailboxSource for LiveStore {
             unread: 0,
             flagged: *self.flagged.borrow(),
             snoozed: *self.snoozed.borrow(),
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

@@ -339,7 +339,9 @@ pub(crate) fn age(elapsed: Duration) -> String {
 // the same one-row-per-role rule rather than deciding either for itself. The
 // names are re-exported so nothing in this crate had to change, and so every
 // comment that names `sections` still reads.
-pub use postio_ui::sidebar::{count_for, display_name, primary_within, role_order, sections};
+pub use postio_ui::sidebar::{
+    attention_for, count_for, display_name, primary_within, role_order, sections,
+};
 
 /// One row of the accounts strip.
 ///
@@ -2170,12 +2172,31 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // the special section is a primary by construction, so the role name is
     // always the right answer here.
     name.set_text(&display_name(mailbox, &[]));
-    match count_for(mailbox) {
-        Some(value) => {
-            count.set_text(&value.to_string());
+    match (count_for(mailbox), attention_for(mailbox)) {
+        // Two numbers on one row: what is there, and what has stopped and is
+        // waiting for you (FR-022). The second is drawn only when there is
+        // one -- a marker that is always present is a marker nobody reads.
+        (Some(value), Some(waiting)) => {
+            count.set_text(&format!("{value} · {waiting}"));
+            count.add_css_class("postio-sidebar-count-attention");
             count.set_visible(true);
         }
-        None => count.set_visible(false),
+        (Some(value), None) => {
+            count.set_text(&value.to_string());
+            count.remove_css_class("postio-sidebar-count-attention");
+            count.set_visible(true);
+        }
+        (None, Some(waiting)) => {
+            // Nothing being written, but something that failed. The row still
+            // has to say so, or the only mail needing a person is invisible.
+            count.set_text(&waiting.to_string());
+            count.add_css_class("postio-sidebar-count-attention");
+            count.set_visible(true);
+        }
+        (None, None) => {
+            count.remove_css_class("postio-sidebar-count-attention");
+            count.set_visible(false);
+        }
     }
 
     // The row announces both halves, and says what the number *is*. Sighted
@@ -2193,9 +2214,16 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
 /// the tree (#501).
 fn announce(name: &str, mailbox: &Mailbox) -> String {
     let name = name.to_string();
-    let Some(count) = count_for(mailbox) else {
-        return name;
+    // Said first, because it is the half a person can act on: "2 need you"
+    // is the reason to open Drafts, and "5 drafts" is not.
+    let waiting = match attention_for(mailbox) {
+        Some(waiting) => format!(", {waiting} needing you"),
+        None => String::new(),
     };
+    let Some(count) = count_for(mailbox) else {
+        return format!("{name}{waiting}");
+    };
+    let name = format!("{name}{waiting}");
     match mailbox.role {
         MailboxRole::Drafts => format!("{name}, {count} drafts"),
         MailboxRole::Flagged => format!("{name}, {count} flagged"),
@@ -2506,6 +2534,7 @@ mod tests {
             unread,
             flagged,
             snoozed: 0,
+            attention: 0,
         }
     }
 

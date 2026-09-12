@@ -72,6 +72,7 @@ impl MailboxSource for Sample {
                 unread,
                 flagged: 0,
                 snoozed: 0,
+                attention: 0,
             };
             mailbox.last_synced_at = Some(Utc::now() - chrono::Duration::seconds(12));
             mailbox
