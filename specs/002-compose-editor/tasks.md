@@ -181,7 +181,13 @@ appearance and quote work depend on.
 
   **The quote opening *when clicked* is a test now (2026-09-12), not a person's job.** It was the one remaining item with a real way to fail: the fold sits inside the editing surface, where a click's ordinary job is to place a caret, and `<summary contenteditable="false">` is the mitigation. Whether that is enough is a question about WebKit, not about our markup — so it belongs in a test answered once rather than in a release ritual. `gtk_editor_bridge` now clicks the summary in a live WebView and reads `details.open` back: folded, open after the click, folded again after the second. Verified constraining by clicking the paragraph instead, which leaves it shut.
 
-  **What is left genuinely needs hands**: the caret sitting above the quote with typing going where you look, and a scheme change keeping the caret and the undo history. Both are about where a blinking caret is and what survives a change around it — a still cannot show either, and neither can a DOM query
+  **What is left genuinely needs hands, and on 2026-09-12 one of the two was tried as a test and abandoned for a principled reason worth recording.**
+
+  *The caret above the quote, and typing going where you look.* The `gtk_suite` drives the WebView through JavaScript, and the only typing paths it has are `test_type` — which does `selectAll` first, so it replaces the body and cannot express *where* — and a bare `execCommand('insertText')`, which **requires a selection that does not exist**: after `composer.open()`, with the body focused and `contenteditable`, `window.getSelection().rangeCount` is `0` and `insertText` returns `false` having changed nothing. A real key event would create that caret on its way in; the harness reaches past the mechanism the check is about, so a test written here would be testing the harness. **This one is a person at a display, and now for a stated reason rather than by default.**
+
+  The attempt left something behind: `Editor::caret_offset` answered `0` both for "at the start" and for "there is no caret", so the obvious assertion — offset is 0, therefore the caret is at the top — passes against a WebView with no caret in it. It answers `-1` for the second case now. The detach tests were never fooled: they guard with `cursor > 0` and only get a caret because `test_set_body` leaves a selection behind.
+
+  *A scheme change keeping the caret and the undo history.* Untried, and downstream of the same obstacle — it is a question about a caret surviving, and there is no caret to survive without a real keystroke
 
 **Checkpoint**: the composer reads as part of Postio in both schemes.
 

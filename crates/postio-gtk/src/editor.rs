@@ -647,12 +647,20 @@ impl Editor {
     }
 
     /// The caret's character offset into the body's text, for assertions.
+    ///
+    /// **`-1` means there is no caret at all**, which is not the same as one
+    /// at the start and used to be reported as the same `0`. A WebView that
+    /// has only been loaded and focused has no selection — `execCommand`
+    /// against it returns `false` and changes nothing — and a test asserting
+    /// `offset == 0` against that passes while proving nothing. Something has
+    /// to have edited or clicked into the surface first; `test_type` leaves a
+    /// selection behind, which is how the detach tests get one.
     #[doc(hidden)]
     pub fn caret_offset(&self) -> i32 {
         self.wait_ready();
         self.run_blocking(
             "(() => { const s = window.getSelection(); \
-               if (s.rangeCount === 0) return '0'; \
+               if (s.rangeCount === 0) return '-1'; \
                const r = s.getRangeAt(0).cloneRange(); \
                r.selectNodeContents(document.body); \
                r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset); \
