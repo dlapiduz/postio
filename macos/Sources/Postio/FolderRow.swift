@@ -55,6 +55,7 @@ struct FolderRow: View {
         case .junk: "Junk"
         case .flagged: "Flagged"
         case .snoozed: "Snoozed"
+        case .outbox: "Outbox"
         case .regular: folder.name
         }
     }
@@ -69,6 +70,10 @@ struct FolderRow: View {
         case .junk: "xmark.bin"
         case .flagged: "flag"
         case .snoozed: "clock"
+        // On its way out, which is what the row is for. Not `paperplane`:
+        // that is Sent, and the difference between "gone" and "going" is the
+        // whole reason this row exists.
+        case .outbox: "tray.and.arrow.up"
         case .regular: "folder"
         }
     }
