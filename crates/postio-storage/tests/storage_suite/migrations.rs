@@ -4,7 +4,11 @@
 //! ("fresh DB migrates to head", "re-running is a no-op", "every migration
 //! applies cleanly in order") has a test here.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+
 use rusqlite::Connection;
+use rusqlite::trace::{TraceEvent, TraceEventCodes};
 
 use postio_storage::migrations::{self, Migration};
 use postio_storage::{Error, migrate, schema_version};
@@ -212,6 +216,7 @@ fn a_failing_migration_rolls_back_completely() {
             name: "broken",
             sql: "CREATE TABLE ok_so_far (id INTEGER PRIMARY KEY);
                   CREATE TABLE oops (this is not sql);",
+            foreign_key_check: &[],
         },
     ];
 
@@ -263,6 +268,7 @@ fn editing_an_already_applied_migration_is_refused() {
         version: 1,
         name: migrations::all()[0].name,
         sql: "CREATE TABLE rewritten_history (id INTEGER PRIMARY KEY);",
+        foreign_key_check: &[],
     }];
     let error = migrations::migrate_with(&mut connection, &tampered).expect_err("must fail");
     assert!(
@@ -279,11 +285,13 @@ fn migrating_an_out_of_order_list_is_refused() {
             version: 2,
             name: "second",
             sql: "CREATE TABLE a (id INTEGER PRIMARY KEY);",
+            foreign_key_check: &[],
         },
         Migration {
             version: 1,
             name: "first",
             sql: "CREATE TABLE b (id INTEGER PRIMARY KEY);",
+            foreign_key_check: &[],
         },
     ];
     let error = migrations::migrate_with(&mut connection, &out_of_order).expect_err("must fail");
@@ -1006,4 +1014,202 @@ fn the_drafts_table_accepts_unconfirmed_and_still_refuses_nonsense() {
             [],
         )
         .expect_err("the CHECK is still a CHECK");
+}
+
+// ---------------------------------------------------------------------------
+// #1506: what the run could have broken is what gets checked
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// SQL the connection under test executed. rusqlite's trace hook is a
+    /// bare `fn` rather than a closure, so this cannot be captured and has to
+    /// live where that function can reach it. Thread-local for the reason
+    /// `test_support::counting` gives: this binary keeps libtest's thread
+    /// pool, and a global would make two overlapping cases quietly wrong.
+    static TRACED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn trace_sql(event: TraceEvent<'_>) {
+    if let TraceEvent::Stmt(_, sql) = event {
+        TRACED.with(|seen| seen.borrow_mut().push(sql.to_string()));
+    }
+}
+
+/// Migrate, and report every `foreign_key_check` the run issued.
+///
+/// Sequential rather than wrapped around a closure: `migrate_with` wants the
+/// connection mutably, so the trace cannot be installed through a borrow held
+/// across the call.
+fn checks_while_migrating(
+    connection: &mut Connection,
+    list: &[Migration],
+) -> (Result<migrations::MigrationReport, Error>, Vec<String>) {
+    TRACED.with(|seen| seen.borrow_mut().clear());
+    connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(trace_sql));
+    let result = migrations::migrate_with(connection, list);
+    connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, None);
+    let checks = TRACED.with(|seen| {
+        seen.borrow()
+            .iter()
+            .filter(|sql| sql.contains("foreign_key_check"))
+            .cloned()
+            .collect()
+    });
+    (result, checks)
+}
+
+/// A throwaway pair of tables and a migration that orphans a row in the
+/// child, with `declares` naming whatever that migration admits to.
+fn orphaning_list(declares: &'static [&'static str]) -> [Migration; 2] {
+    [
+        Migration {
+            version: 1,
+            name: "two_tables",
+            sql: "CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                  CREATE TABLE child (
+                      id        INTEGER PRIMARY KEY,
+                      parent_id INTEGER REFERENCES parent(id)
+                  );
+                  INSERT INTO parent (id) VALUES (1);",
+            foreign_key_check: &[],
+        },
+        Migration {
+            version: 2,
+            name: "orphan",
+            // Only possible because the runner turns foreign keys off for the
+            // duration -- which is the whole reason the check afterwards
+            // exists.
+            sql: "INSERT INTO child (id, parent_id) VALUES (1, 404);",
+            foreign_key_check: declares,
+        },
+    ]
+}
+
+#[test]
+fn a_run_that_could_not_break_a_reference_checks_nothing() {
+    let mut connection = empty();
+    let head = migrations::all();
+    migrations::migrate_with(&mut connection, &head[..15]).expect("up to 0015");
+
+    let (result, checks) = checks_while_migrating(&mut connection, head);
+
+    assert_eq!(result.expect("migrate to head").applied, 2);
+    assert!(
+        checks.is_empty(),
+        "0016 adds a column to `accounts` and 0017 creates an empty table. \
+         Neither can leave a row pointing at a parent that is not there, so \
+         nothing should have been scanned -- this exact pair cost 4.81s of a \
+         5.14s launch on an 82,000-message store when the check was \
+         whole-database (#1506). Ran: {checks:?}"
+    );
+}
+
+#[test]
+fn a_rebuild_checks_its_own_table_and_the_children_that_reference_it() {
+    let mut connection = empty();
+    let head = migrations::all();
+    migrations::migrate_with(&mut connection, &head[..3]).expect("up to 0003");
+
+    let (result, checks) = checks_while_migrating(&mut connection, &head[..4]);
+    assert_eq!(result.expect("apply 0004").applied, 1);
+
+    assert_eq!(
+        checks.len(),
+        3,
+        "0004 rebuilds `drafts`, so three tables are at risk and three is \
+         what should be read: {checks:?}"
+    );
+    for table in ["drafts", "attachments", "recipients"] {
+        assert!(
+            checks.iter().any(|sql| sql.contains(table)),
+            "{table} is exposed by the rebuild and was not checked: {checks:?}"
+        );
+    }
+}
+
+#[test]
+fn a_migration_that_leaves_an_orphan_still_fails_the_run() {
+    let mut connection = empty();
+    let error = migrations::migrate_with(&mut connection, &orphaning_list(&["child"]))
+        .expect_err("a row pointing at a parent that is not there must fail the run");
+
+    assert!(
+        matches!(
+            &error,
+            Error::MigrationBrokeReferences { table, rows: 1, .. } if table == "child"
+        ),
+        "expected the child table named, got {error:?}"
+    );
+}
+
+#[test]
+fn the_scope_is_real_a_table_nobody_declared_is_not_read() {
+    // The control for the case above, and the honest cost of scoping: the
+    // same orphan goes unnoticed when its migration does not admit to
+    // touching `child`. That is what makes the field load-bearing rather
+    // than decorative, and why it has no default for a new migration to
+    // inherit by accident.
+    let mut connection = empty();
+    let (result, checks) = checks_while_migrating(&mut connection, &orphaning_list(&[]));
+
+    assert!(
+        result.is_ok(),
+        "with nothing declared there is nothing to read, so the run cannot \
+         have noticed: {result:?}"
+    );
+    assert!(
+        checks.is_empty(),
+        "and it should not have read anything at all: {checks:?}"
+    );
+}
+
+#[test]
+fn declaring_a_table_is_what_makes_it_read() {
+    // The other half of the control: naming a big table still reads it, so a
+    // future rebuild of `messages` gets the same protection 0004 has.
+    let mut connection = empty();
+    let head = migrations::all();
+    migrations::migrate_with(&mut connection, &head[..16]).expect("up to 0016");
+
+    let mut list: Vec<Migration> = head[..16].to_vec();
+    list.push(Migration {
+        version: 17,
+        name: "pretends_to_touch_messages",
+        sql: "SELECT 1;",
+        foreign_key_check: &["messages"],
+    });
+
+    let (result, checks) = checks_while_migrating(&mut connection, &list);
+    result.expect("apply the stand-in");
+
+    assert_eq!(checks.len(), 1, "one declared table, one read: {checks:?}");
+    assert!(
+        checks[0].contains("messages"),
+        "and it should be the one named: {checks:?}"
+    );
+}
+
+#[test]
+fn every_declared_table_is_a_table_that_exists() {
+    // A typo here would be silent: the runner would ask SQLite about a table
+    // that is not there instead of the one at risk.
+    let connection = migrated();
+    let tables = table_names(&connection);
+    let declared: BTreeSet<&str> = migrations::all()
+        .iter()
+        .flat_map(|migration| migration.foreign_key_check.iter().copied())
+        .collect();
+
+    assert!(
+        !declared.is_empty(),
+        "0004 declares three tables; an empty set means the field stopped \
+         being filled in and every one of these tests would pass vacuously"
+    );
+    for table in declared {
+        assert!(
+            tables.iter().any(|name| name == table),
+            "{table} is declared for a foreign-key check and does not exist \
+             at head; the tables are {tables:?}"
+        );
+    }
 }

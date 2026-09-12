@@ -44,6 +44,8 @@
 //! # }
 //! ```
 
+use std::collections::BTreeSet;
+
 use rusqlite::Connection;
 
 use crate::error::{Error, Result};
@@ -57,10 +59,46 @@ pub struct Migration {
     pub name: &'static str,
     /// The SQL to execute. May contain several statements.
     pub sql: &'static str,
+    /// The tables whose rows this migration could have left pointing at a
+    /// parent that is not there.
+    ///
+    /// Foreign keys are **off** for the whole run — see [`migrate_with`] —
+    /// so nothing raises a constraint failure as the SQL executes. Step 12 of
+    /// SQLite's rebuild procedure is what turns a migration that broke a
+    /// reference into a loud failure instead of a database that is quietly
+    /// wrong, and this is the list it runs over: one
+    /// `PRAGMA foreign_key_check(<table>)` per name here, once the run has
+    /// finished.
+    ///
+    /// Name every table whose **rows** this migration could have
+    /// invalidated: the ones it writes, and — when it rebuilds a table —
+    /// every child that references the table being rebuilt, since those hold
+    /// the rows left pointing at something that was dropped. 0004 is the
+    /// worked example and so far the only one: it rebuilds `drafts`, so it
+    /// names `drafts` for its own references, and `attachments` and
+    /// `recipients` for theirs.
+    ///
+    /// **Empty is a claim, not an omission.** The field has no default, so a
+    /// new migration cannot forget it — the compiler asks. A column added
+    /// with `ALTER TABLE`, an index dropped and recreated, or a table created
+    /// empty cannot invalidate a row that already exists, and that is sixteen
+    /// of the seventeen below. A migration that creates a table *and
+    /// populates it* names that table.
+    ///
+    /// This is a list rather than a `bool` because checking is not free: the
+    /// pragma reads every row of the table it names, through SQLCipher. The
+    /// whole-database form it replaced cost **4.81 s of a 5.14 s migration
+    /// launch** on an 82,000-message store, to check two `ALTER TABLE
+    /// accounts ADD COLUMN`s that could not have broken a reference (#1506).
+    pub foreign_key_check: &'static [&'static str],
 }
 
 impl Migration {
     /// A stable digest of [`Self::sql`], used to detect an edited migration.
+    ///
+    /// Over [`Self::sql`] alone, which is why [`Self::foreign_key_check`]
+    /// could be added to every entry below without every existing store
+    /// refusing to open.
     ///
     /// FNV-1a: not cryptographic, and does not need to be — this guards against
     /// an honest mistake by a developer, not against an attacker who already
@@ -90,86 +128,107 @@ static MIGRATIONS: [Migration; 17] = [
         version: 1,
         name: "initial_schema",
         sql: include_str!("0001_initial_schema.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 2,
         name: "text_is_flowed",
         sql: include_str!("0002_text_is_flowed.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 3,
         name: "draft_message_id",
         sql: include_str!("0003_draft_message_id.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 4,
         name: "draft_unconfirmed",
         sql: include_str!("0004_draft_unconfirmed.sql"),
+        // The one rebuild in the list, and so the one entry here that names
+        // anything. `drafts` for the references it carries itself, and its
+        // two children because `DROP TABLE drafts` is what could have left
+        // their rows pointing at nothing.
+        foreign_key_check: &["drafts", "attachments", "recipients"],
     },
     Migration {
         version: 5,
         name: "list_indexes_cover_their_filters",
         sql: include_str!("0005_list_indexes_cover_their_filters.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 6,
         name: "body_headers_truncated",
         sql: include_str!("0006_body_headers_truncated.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 7,
         name: "body_encoding_problems",
         sql: include_str!("0007_body_encoding_problems.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 8,
         name: "unsubscribe_activations",
         sql: include_str!("0008_unsubscribe_activations.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 9,
         name: "read_receipt_requested",
         sql: include_str!("0009_read_receipt_requested.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 10,
         name: "attachment_draft_index_is_partial",
         sql: include_str!("0010_attachment_draft_index_is_partial.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 11,
         name: "contacts_rank_index_matches_the_ordering",
         sql: include_str!("0011_contacts_rank_index_matches_the_ordering.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 12,
         name: "oauth_refresh_grant_lifetime",
         sql: include_str!("0012_oauth_refresh_grant_lifetime.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 13,
         name: "default_account",
         sql: include_str!("0013_default_account.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 14,
         name: "snoozed_due_index_is_partial",
         sql: include_str!("0014_snoozed_due_index_is_partial.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 15,
         name: "body_line_count",
         sql: include_str!("0015_body_line_count.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 16,
         name: "account_max_message_size",
         sql: include_str!("0016_account_max_message_size.sql"),
+        foreign_key_check: &[],
     },
     Migration {
         version: 17,
         name: "mailbox_roles",
         sql: include_str!("0017_mailbox_roles.sql"),
+        foreign_key_check: &[],
     },
 ];
 
@@ -326,12 +385,25 @@ fn apply_all(connection: &mut Connection, migrations: &[Migration], from: u32) -
     // Step 12 of the rebuild procedure. Enforcement was off for the run, so
     // nothing above raised a constraint failure; this is what turns a
     // migration that broke a reference into a loud failure instead of a
-    // database that is quietly wrong. Only when something was applied — on
-    // the ordinary "already at head" path there is nothing to check and the
-    // scan is not free.
-    if applied > 0 {
-        let mut statement = connection.prepare("PRAGMA foreign_key_check")?;
-        let broken: Vec<(String, String)> = statement
+    // database that is quietly wrong.
+    //
+    // Over the tables the migrations that ran said they could have broken,
+    // rather than over the database. The whole-database form reads every row
+    // of every child table through SQLCipher, which on a real store is the
+    // entire cost of a migration launch: two `ALTER TABLE accounts ADD
+    // COLUMN`s took 5.14s on an 82,000-message store and 4.81s of that was
+    // this pragma, looking for violations a column add cannot create
+    // (#1506). Sixteen of the seventeen shipped migrations declare nothing
+    // and now read nothing; 0004, the one rebuild, reads the three small
+    // tables it puts at risk.
+    for table in tables_to_check(migrations, from) {
+        let broken: Vec<(String, String)> = connection
+            // The name is a `&'static str` from the list above rather than
+            // anything a user or a database can reach, and
+            // `every_declared_table_is_a_table_that_exists` keeps it a real
+            // one; quoted regardless, because the day a migration names a
+            // table with an awkward name should be a working day.
+            .prepare(&format!("PRAGMA foreign_key_check(\"{table}\")"))?
             .query_map([], |row| Ok((row.get(0)?, row.get(2)?)))?
             .collect::<std::result::Result<_, _>>()?;
         if let Some((table, parent)) = broken.first() {
@@ -344,6 +416,19 @@ fn apply_all(connection: &mut Connection, migrations: &[Migration], from: u32) -
     }
 
     Ok(applied)
+}
+
+/// The tables to read once everything past `from` has been applied.
+///
+/// A set: two migrations in one run may put the same table at risk, and it
+/// only wants reading once. Ordered, so a run checks tables in the same
+/// order every time and a failure is reproducible.
+fn tables_to_check(migrations: &[Migration], from: u32) -> BTreeSet<&'static str> {
+    migrations
+        .iter()
+        .filter(|migration| migration.version > from)
+        .flat_map(|migration| migration.foreign_key_check.iter().copied())
+        .collect()
 }
 
 /// Applies one migration and records it, atomically.
@@ -569,6 +654,7 @@ mod tests {
             version: 1,
             name: "a",
             sql: "SELECT 1;",
+            foreign_key_check: &[],
         };
         let renamed = Migration {
             name: "b",
@@ -590,6 +676,7 @@ mod tests {
             version: 2,
             name: "gap",
             sql: "",
+            foreign_key_check: &[],
         }];
         assert!(matches!(
             check_ordering(&gap),
