@@ -310,7 +310,13 @@ impl Palette {
             // Standard symbolic names, so a theme that has them draws them and
             // one that does not degrades to no mark rather than to a wrong
             // one -- `pipe_icon` answers `None` and `mark` draws nothing.
-            sending_mark: probe.display().pipe_icon("mail-send-symbolic"),
+            // `send-to-symbolic`, not `mail-send-symbolic`: the latter is a
+            // wide tray whose mass splits, so its arrow pokes above the
+            // timestamp's cap height while its base sits below the baseline
+            // and it reads as misaligned beside the star and the paperclip.
+            // Both occupy the same 12px box -- measured -- so this is the
+            // glyph's shape rather than where it is put.
+            sending_mark: probe.display().pipe_icon("send-to-symbolic"),
             failed_mark: probe.display().pipe_icon("dialog-warning-symbolic"),
             unconfirmed_mark: probe.display().pipe_icon("dialog-question-symbolic"),
             archive: probe.display().action_icon(icon(RowAction::Archive, false)),

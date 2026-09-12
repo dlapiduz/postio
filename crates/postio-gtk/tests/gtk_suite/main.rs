@@ -113,6 +113,7 @@ mod gtk_rail;
 mod gtk_reader_account;
 mod gtk_reader_actions;
 mod gtk_reader_fonts;
+mod gtk_reader_outgoing;
 mod gtk_reader_pane_owner;
 mod gtk_reader_scroll;
 mod gtk_reader_styles;
@@ -212,6 +213,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread",
         gtk_reader_styles::a_page_key_actually_turns_the_page_of_a_thread as fn(),
+    ),
+    (
+        "gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies",
+        gtk_reader_outgoing::a_message_being_sent_offers_sending_verbs_and_not_replies as fn(),
     ),
     (
         "gtk_reader_styles::one_senders_stylesheet_cannot_restyle_another_message",

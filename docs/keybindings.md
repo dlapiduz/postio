@@ -79,6 +79,8 @@ command from inside a text field.
 | `ctrl+s` | Save draft | Composer |  | `save_draft` |
 | `ctrl+d` | Discard draft | Composer | Asks first | `discard_draft` |
 | `ctrl+shift+m` | Mark as sent | List, composer |  | `mark_sent` |
+| `ctrl+shift+r` | Retry send | List, composer |  | `retry_send` |
+| `ctrl+shift+x` | Cancel send | List, composer |  | `cancel_send` |
 | `ctrl+shift+a` | Attach file… | Composer |  | `attach_file` |
 | `ctrl+shift+o` | Detach composer | Composer |  | `detach_composer` |
 | `ctrl+shift+c` | Cc and Bcc | Composer |  | `copy_fields` |

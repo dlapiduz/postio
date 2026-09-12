@@ -72,6 +72,8 @@ const WIRED: &[CommandId] = &[
     // compares the two lists directly.
     CommandId::AddLabel,
     CommandId::MarkSent,
+    CommandId::RetrySend,
+    CommandId::CancelSend,
     CommandId::Undo,
     CommandId::MapMailboxRole,
 ];
@@ -295,6 +297,8 @@ impl Actions {
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft)?],
+            Command::RetrySend { draft } => vec![self.retry_send(*draft)?],
+            Command::CancelSend { draft } => vec![self.cancel_send(*draft)?],
             Command::MapMailboxRole {
                 account,
                 role,
@@ -1697,6 +1701,128 @@ impl Actions {
         })
     }
 
+    /// Put a send that stopped back on the queue (spec 003 FR-024).
+    ///
+    /// `queue_send` is what the composer calls, so this is that path rather
+    /// than a shortcut: the draft's state and the `Send` operation are
+    /// written in one transaction, which is what keeps a queued row from
+    /// being one nothing will ever pick up.
+    fn retry_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect()?;
+        let drafts = DraftRepository::new(&connection);
+        let mut draft = self.stopped_send(&connection, &drafts, draft)?;
+
+        // Only the states that mean "it did not go". `Editing` belongs to the
+        // composer, where the user can see what they are about to post, and
+        // `Queued`/`Sending` are already on their way -- retrying those would
+        // be a second copy of the same message, which ADR 0021 exists to
+        // prevent.
+        if !matches!(draft.state, DraftState::Failed | DraftState::Unconfirmed) {
+            return Err(CommandError::rejected(
+                "Only a send that stopped can be sent again",
+            ));
+        }
+        if !draft.has_recipients() {
+            return Err(CommandError::rejected("That draft has no recipients"));
+        }
+
+        let account = draft.account_id;
+        drafts
+            .queue_send(&mut draft, Utc::now())
+            .map_err(store_failure)?;
+        Ok(Applied {
+            account,
+            kind: UndoKind::RetriedSend,
+            // The Outbox row appears when this succeeds, and the Drafts
+            // attention count drops: both are sidebar numbers.
+            mailboxes_changed: true,
+            count: 1,
+            messages: Vec::new(),
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: Vec::new(),
+            // The way back is `CancelSend`, which is a command a person can
+            // reach rather than an inverse invented to satisfy undo's shape.
+            inverse: Vec::new(),
+        })
+    }
+
+    /// Take a queued send back off the queue, leaving the draft editable.
+    ///
+    /// Refused once the drainer has it: ADR 0021 keeps exactly-once by never
+    /// cancelling a submission that may already have reached the server, and
+    /// `cancel_send` reports which of the three happened rather than
+    /// answering a bare bool.
+    fn cancel_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        use postio_storage::repository::CancelSendOutcome;
+
+        let (connection, _permit) = self.connect()?;
+        let drafts = DraftRepository::new(&connection);
+        let draft = self.stopped_send(&connection, &drafts, draft)?;
+        let account = draft.account_id;
+
+        match drafts
+            .cancel_send(draft.id, Utc::now())
+            .map_err(store_failure)?
+        {
+            CancelSendOutcome::Cancelled => Ok(Applied {
+                account,
+                kind: UndoKind::CancelledSend,
+                // And here the Outbox row may be the one that disappears.
+                mailboxes_changed: true,
+                count: 1,
+                messages: Vec::new(),
+                removed: Vec::new(),
+                arrived: None,
+                reloaded: Vec::new(),
+                changed: Vec::new(),
+                inverse: Vec::new(),
+            }),
+            CancelSendOutcome::NotQueued => Err(CommandError::rejected(
+                "That message is not waiting to be sent",
+            )),
+            // Not a failure of ours, and the wording says so: the message may
+            // already have arrived, and claiming otherwise is the one thing
+            // exactly-once must never do.
+            CancelSendOutcome::AlreadyInFlight => Err(CommandError::rejected(
+                "That message is already being sent, so it is too late to stop it",
+            )),
+        }
+    }
+
+    /// The draft `RetrySend` and `CancelSend` act on: the one named, or the
+    /// one behind the row in view.
+    ///
+    /// Shared because both verbs are reached the same two ways -- from the
+    /// Outbox, where a row is selected and there is no composer, and from the
+    /// composer, where the draft is named outright.
+    fn stopped_send(
+        &self,
+        connection: &PooledConnection,
+        drafts: &DraftRepository<'_>,
+        draft: Option<DraftId>,
+    ) -> Result<postio_model::Draft, CommandError> {
+        match draft {
+            Some(id) => drafts
+                .get(id)
+                .map_err(store_failure)?
+                .ok_or_else(|| CommandError::rejected("That draft is no longer here")),
+            None => {
+                let rows = match self.aim(connection, &MessageTarget::Selection)? {
+                    Aim::Rows(rows) => rows,
+                    Aim::Bulk { .. } => {
+                        return Err(CommandError::rejected("Pick the message this is about"));
+                    }
+                };
+                drafts
+                    .by_message(rows[0].id)
+                    .map_err(store_failure)?
+                    .ok_or_else(|| CommandError::rejected("That row is not a message being sent"))
+            }
+        }
+    }
+
     fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
         let (connection, _permit) = self.connect()?;
         let drafts = DraftRepository::new(&connection);
@@ -2818,6 +2944,119 @@ mod tests {
                 .state,
             DraftState::Sent,
             "the question is settled, so it stops being offered as unsent"
+        );
+    }
+
+    #[test]
+    fn a_failed_send_can_be_put_back_on_the_queue() {
+        // Spec 003 FR-024's other half. The count of what needs a person only
+        // goes down if there is a way to deal with one, and until now the only
+        // way was to open the draft and press Send -- which the Outbox cannot
+        // offer, because a message on its way has no composer open.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            draft.to = vec![postio_model::EmailAddress::new(
+                None::<String>,
+                "quinn@example.net",
+            )];
+            let id = drafts.save(&mut draft).expect("save");
+            drafts
+                .set_state(id, DraftState::Failed)
+                .expect("a send that stopped");
+            id
+        };
+
+        world
+            .run(Command::RetrySend { draft: Some(id) })
+            .expect("retrying applies");
+
+        let connection = world.database.connection().expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        assert_eq!(
+            drafts.get(id).expect("read").expect("still there").state,
+            DraftState::Queued,
+            "a retried send is on its way again, which is what the Outbox lists"
+        );
+        // And it is the queue that will carry it, not just a column: a state
+        // with no operation behind it is the stuck row `inspect_outbox`
+        // exists to name.
+        let queued: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM operation_queue \
+                 WHERE target_kind = 'draft' AND target_id = ?1 \
+                   AND op_type = 'send' AND state = 'pending'",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .expect("count the queue");
+        assert_eq!(queued, 1, "retrying enqueued nothing, so nothing will send");
+    }
+
+    #[test]
+    fn a_draft_being_written_is_not_something_to_retry() {
+        // The same guard `mark_sent` has, for the same reason: "send it
+        // again" about a message that was never sent is not a retry, it is a
+        // send, and it belongs to the composer where the user can see what
+        // they are about to post.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            drafts.save(&mut draft).expect("save")
+        };
+
+        let error = world
+            .run(Command::RetrySend { draft: Some(id) })
+            .expect_err("an editable draft is not a stopped send");
+        assert!(matches!(error, CommandError::Rejected(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_queued_send_can_be_taken_back_off_the_queue() {
+        // ADR 0021: cancelling is only honest before the submission starts.
+        let world = world();
+        let id = {
+            let connection = world.database.connection().expect("a connection");
+            let drafts = postio_storage::repository::DraftRepository::new(&connection);
+            let mut draft = postio_model::Draft::new(world.account.id);
+            draft.to = vec![postio_model::EmailAddress::new(
+                None::<String>,
+                "quinn@example.net",
+            )];
+            drafts.save(&mut draft).expect("save");
+            drafts
+                .queue_send(&mut draft, chrono::Utc::now())
+                .expect("queue it");
+            draft.id
+        };
+
+        world
+            .run(Command::CancelSend { draft: Some(id) })
+            .expect("cancelling applies");
+
+        let connection = world.database.connection().expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        assert_eq!(
+            drafts.get(id).expect("read").expect("still there").state,
+            DraftState::Editing,
+            "a cancelled send is editable again, not lost"
+        );
+        let left: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM operation_queue \
+                 WHERE target_kind = 'draft' AND target_id = ?1 AND op_type = 'send' \
+                   AND state IN ('pending', 'in_flight')",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .expect("count the queue");
+        assert_eq!(
+            left, 0,
+            "the operation is still queued, so it will still send"
         );
     }
 

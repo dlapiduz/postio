@@ -815,6 +815,45 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::RetrySend,
+        title: "Retry send",
+        // `mod+shift+r`, beside `mod+shift+m` for the same family: a message
+        // that left the composer and did not arrive. Free in every context --
+        // `r` alone is not bound, and the extension table takes none of the
+        // `mod+shift` range beyond the `s` that #495 caught.
+        default_binding: "mod+shift+r",
+        alternate_bindings: &[],
+        // List, because the Outbox and Drafts are lists and that is where a
+        // stopped send is looked at. Composer, because the same draft can be
+        // open there with its failure showing (#1487).
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It puts a message back on its way rather than destroying one, and
+        // the thing it acts on is already not arriving.
+        destructive: false,
+        // The inverse is `CancelSend`, which is a real command a person can
+        // reach rather than an invented one -- so unlike `MarkSent` this does
+        // have a way back, and it is the command below.
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::CancelSend,
+        title: "Cancel send",
+        default_binding: "mod+shift+x",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Composer]),
+        // It stops something from happening rather than losing anything: the
+        // draft is left editable, which is the state it came from. Opening a
+        // queued draft has done exactly this since #433, silently; this is
+        // the same act with a name.
+        destructive: false,
+        // Asking again is `RetrySend`, and the draft is still there either
+        // way. Refused outright once the submission is in flight, which is a
+        // rejection rather than something to undo (ADR 0021).
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::AttachFile,
         title: "Attach file…",
         default_binding: "mod+shift+a",

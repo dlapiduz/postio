@@ -717,6 +717,9 @@ impl Fill {
                     .as_ref()
                     .and_then(|message| message.from.first().map(|from| from.address.clone()));
                 let list_identifier = fetched.as_ref().and_then(list_identifier);
+                let send_state = MessageRepository::new(connection)
+                    .send_state(message)
+                    .unwrap_or_default();
                 let envelope = fetched.map(Envelope::from);
                 Some(Loaded {
                     body,
@@ -724,6 +727,7 @@ impl Fill {
                     parts,
                     envelope,
                     sender,
+                    send_state,
                     list_identifier,
                 })
             }
@@ -817,6 +821,9 @@ impl Fill {
                         reader.set_encoding_problems(encoding_problems);
                         // Same reason, same convention (#971).
                         reader.set_unsubscribe(loaded.list_identifier.as_deref());
+                        // And last, because it is what decides whether that
+                        // banner is allowed to stand at all (#1525).
+                        reader.set_send_state(loaded.send_state);
                     }
                     crate::compose::Body::Absent(reason) => {
                         let root = root_type(
@@ -1063,6 +1070,12 @@ struct Loaded {
     /// through, because a repaint has no list row — and one answer that all
     /// three callers share cannot disagree with itself.
     sender: Option<String>,
+    /// Whether this message is one being sent, and in which state (#1525).
+    ///
+    /// `None` for ordinary mail. It decides which verbs the reading pane
+    /// offers, because Reply, Forward and Archive are all answers to
+    /// somebody else's mail.
+    send_state: Option<postio_model::DraftState>,
     /// The unsubscribe banner's list, per #971: `List-Id` when the message
     /// has one, the sender's domain otherwise. `None` only when the message
     /// itself is gone, since every message has at least one of the two.
@@ -1166,6 +1179,9 @@ fn paint(
             window
                 .reader()
                 .set_unsubscribe(loaded.list_identifier.as_deref());
+            // Outside that guard for the same reason, and after the banner
+            // it can withdraw (#1525).
+            window.reader().set_send_state(loaded.send_state);
         }
         crate::compose::Body::Absent(reason) => {
             // The chips still go on. They are drawn from `BODYSTRUCTURE`
