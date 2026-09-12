@@ -12,10 +12,12 @@
 
 use chrono::{DateTime, Utc};
 use postio_model::{AccountId, Contact, ContactId, ContactSource, EmailAddress, Message};
-use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 use super::{from_millis, to_millis};
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::{Error, Result};
 
 /// Reads and writes [`Contact`] rows.
@@ -39,16 +41,17 @@ impl<'a> ContactRepository<'a> {
     /// `last_seen_at` only ever moves forward — a message that arrives late is
     /// still a sighting, but it does not make the correspondent look more
     /// recent than they are.
-    pub fn record(
+    pub async fn record(
         &self,
         account_id: Option<AccountId>,
         address: &EmailAddress,
         at: DateTime<Utc>,
     ) -> Result<ContactId> {
-        let transaction = super::Scope::open(self.connection)?;
-        let id = record_in(&transaction, account_id, address, at)?;
-        transaction.commit()?;
-        Ok(id)
+        sql::in_scope(self.connection, |transaction| async move {
+            let id = record_in(&transaction, account_id, address, at).await?;
+            Ok(id)
+        })
+        .await
     }
 
     /// Records every address on a message, in one transaction.
@@ -56,7 +59,7 @@ impl<'a> ContactRepository<'a> {
     /// Returns how many distinct correspondents were seen. Appearing twice in
     /// one message — as a `To` and again as a `Cc`, or with two spellings — is
     /// one sighting: the score is "how many messages", not "how many headers".
-    pub fn record_message(&self, message: &Message) -> Result<usize> {
+    pub async fn record_message(&self, message: &Message) -> Result<usize> {
         let at = message.best_date();
         let account_id = Some(message.account_id);
 
@@ -78,25 +81,29 @@ impl<'a> ContactRepository<'a> {
             addresses.push(address);
         }
 
-        let transaction = super::Scope::open(self.connection)?;
-        for address in &addresses {
-            record_in(&transaction, account_id, address, at)?;
-        }
-        transaction.commit()?;
-        Ok(addresses.len())
+        sql::in_scope(self.connection, |transaction| async move {
+            for address in &addresses {
+                record_in(&transaction, account_id, address, at).await?;
+            }
+            Ok(addresses.len())
+        })
+        .await
     }
 
     /// One contact.
-    pub fn get(&self, id: ContactId) -> Result<Option<Contact>> {
-        let mut statement = self.connection.prepare(&format!(
+    pub async fn get(&self, id: ContactId) -> Result<Option<Contact>> {
+        sql::first(
+            self.connection,
+            &format!(
             "SELECT {CONTACT_COLUMNS} FROM contacts WHERE id = ?1"
-        ))?;
-        let mut rows = statement.query([id.get()])?;
-        Ok(rows.next()?.map(read_contact).transpose()?)
-    }
+        ),
+            [id.get()],
+            read_contact,
+        )
+        .await}
 
     /// The contact for an address, matched case-insensitively.
-    pub fn by_address(
+    pub async fn by_address(
         &self,
         account_id: Option<AccountId>,
         address: &str,
@@ -106,16 +113,21 @@ impl<'a> ContactRepository<'a> {
               WHERE {} AND address_normalized = ?{}",
             account_filter(account_id),
             first_free(account_id)
-        ))?;
+        )).await?;
         let mut arguments = account_argument(account_id);
-        arguments.push(Value::Text(address.to_lowercase()));
-        let mut rows = statement.query(params_from_iter(arguments))?;
-        Ok(rows.next()?.map(read_contact).transpose()?)
+        arguments.push(turso::Value::Text(address.to_lowercase()));
+        let mut rows = statement.query(arguments).await?;
+        let found = match rows.next().await? {
+            Some(row) => Some(read_contact(&row)?),
+            None => None,
+        };
+        drop(rows);
+        Ok(found)
     }
 
     /// Every contact, most familiar first.
-    pub fn list(&self, account_id: Option<AccountId>) -> Result<Vec<Contact>> {
-        self.search(account_id, "", u32::MAX)
+    pub async fn list(&self, account_id: Option<AccountId>) -> Result<Vec<Contact>> {
+        self.search(account_id, "", u32::MAX).await
     }
 
     /// Autocomplete: contacts whose address or name starts with `prefix`.
@@ -146,7 +158,7 @@ impl<'a> ContactRepository<'a> {
     /// A suppressed contact (ADR 0007 Q2) never matches, in either band: it
     /// is a deleted `mail` contact whose row survives only to stop the next
     /// sighting from resurrecting it, so autocomplete must treat it as gone.
-    pub fn search(
+    pub async fn search(
         &self,
         account_id: Option<AccountId>,
         prefix: &str,
@@ -169,13 +181,18 @@ impl<'a> ContactRepository<'a> {
                        last_seen_at DESC, times_seen DESC, id
               LIMIT ?{limit_index}",
             account_filter(account_id)
-        ))?;
+        )).await?;
 
         let mut arguments = account_argument(account_id);
-        arguments.push(Value::Text(prefix));
-        arguments.push(Value::Integer(i64::from(limit)));
-        let rows = statement.query_map(params_from_iter(arguments), read_contact)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        arguments.push(turso::Value::Text(prefix));
+        arguments.push(turso::Value::Integer(i64::from(limit)));
+        let mut rows = statement.query(arguments).await?;
+        let mut contacts = Vec::new();
+        while let Some(row) = rows.next().await? {
+            contacts.push(read_contact(&row)?);
+        }
+        drop(rows);
+        Ok(contacts)
     }
 
     /// Creates a contact directly, with no sighting required.
@@ -185,7 +202,7 @@ impl<'a> ContactRepository<'a> {
     /// 'user'` (and unsuppressed, if it had been deleted) rather than a
     /// second row for the same address. `times_seen`/`last_seen_at` are left
     /// alone either way — creating or promoting a contact is not a sighting.
-    pub fn create(
+    pub async fn create(
         &self,
         account_id: Option<AccountId>,
         address: &EmailAddress,
@@ -193,19 +210,18 @@ impl<'a> ContactRepository<'a> {
     ) -> Result<ContactId> {
         let normalized = address.normalized();
         let mut arguments = account_argument(account_id);
-        arguments.push(Value::Text(normalized.clone()));
-        let existing: Option<i64> = self
-            .connection
-            .query_row(
-                &format!(
+        arguments.push(turso::Value::Text(normalized.clone()));
+        let existing: Option<i64> = sql::first(
+            self.connection,
+            &format!(
                     "SELECT id FROM contacts WHERE {} AND address_normalized = ?{}",
                     account_filter(account_id),
                     first_free(account_id)
                 ),
-                params_from_iter(arguments),
-                |row| row.get(0),
-            )
-            .optional()?;
+            arguments,
+            |row| row.col(0),
+        )
+        .await?;
 
         match existing {
             Some(id) => {
@@ -214,8 +230,8 @@ impl<'a> ContactRepository<'a> {
                         SET source = 'user', suppressed = 0,
                             name = coalesce(?2, name)
                       WHERE id = ?1",
-                    params![id, name],
-                )?;
+                    bind![id, name],
+                ).await?;
                 Ok(ContactId::new(id))
             }
             None => {
@@ -223,14 +239,14 @@ impl<'a> ContactRepository<'a> {
                     "INSERT INTO contacts (account_id, name, address, address_name,
                                            address_normalized, source)
                      VALUES (?1, ?2, ?3, ?4, ?5, 'user')",
-                    params![
+                    bind![
                         account_id.map(AccountId::get),
                         name,
                         address.address,
                         address.name,
                         normalized,
                     ],
-                )?;
+                ).await?;
                 Ok(ContactId::new(self.connection.last_insert_rowid()))
             }
         }
@@ -240,14 +256,14 @@ impl<'a> ContactRepository<'a> {
     ///
     /// A deliberate edit is the promotion ADR 0007 Q1 describes: a `mail`
     /// row the user touches becomes `source = 'user'` on the same row.
-    pub fn set_name(&self, id: ContactId, name: Option<&str>) -> Result<()> {
+    pub async fn set_name(&self, id: ContactId, name: Option<&str>) -> Result<()> {
         let changed = self.connection.execute(
             "UPDATE contacts
                 SET name = ?2,
                     source = CASE WHEN source = 'mail' THEN 'user' ELSE source END
               WHERE id = ?1",
-            params![id.get(), name],
-        )?;
+            bind![id.get(), name],
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "contact",
@@ -266,28 +282,25 @@ impl<'a> ContactRepository<'a> {
     /// but it drops out of autocomplete, the `@` finder and any contact list.
     /// A `user`-sourced contact has no sighting to resurrect it from, so
     /// deleting one removes the row for real.
-    pub fn delete(&self, id: ContactId) -> Result<bool> {
-        let source: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT source FROM contacts WHERE id = ?1",
-                [id.get()],
-                |row| row.get(0),
-            )
-            .optional()?;
+    pub async fn delete(&self, id: ContactId) -> Result<bool> {
+        let source: Option<String> = sql::first(
+            self.connection,
+            "SELECT source FROM contacts WHERE id = ?1",
+            [id.get()],
+            |row| row.col(0),
+        )
+        .await?;
         match source.as_deref() {
             None => Ok(false),
             Some("user") => {
-                let deleted = self
-                    .connection
-                    .execute("DELETE FROM contacts WHERE id = ?1", [id.get()])?;
+                let deleted = self.connection.execute("DELETE FROM contacts WHERE id = ?1", [id.get()]).await?;
                 Ok(deleted > 0)
             }
             Some(_) => {
                 let changed = self.connection.execute(
                     "UPDATE contacts SET suppressed = 1 WHERE id = ?1",
                     [id.get()],
-                )?;
+                ).await?;
                 Ok(changed > 0)
             }
         }
@@ -295,7 +308,7 @@ impl<'a> ContactRepository<'a> {
 }
 
 /// `record`, without a transaction of its own.
-fn record_in(
+async fn record_in(
     connection: &Connection,
     account_id: Option<AccountId>,
     address: &EmailAddress,
@@ -310,33 +323,35 @@ fn record_in(
     // nothing. This runs once per correspondent on every message a sync pass
     // writes, which makes it the hottest read in the contact path (#728).
     let existing: Option<i64> = match account_id {
-        Some(id) => connection
-            .prepare_cached(
+        Some(id) => {
+            sql::first(
+                connection,
                 "SELECT id FROM contacts WHERE account_id = ?1 AND address_normalized = ?2",
-            )?
-            .query_row(params![id.get(), &normalized], |row| row.get(0)),
-        None => connection
-            .prepare_cached(
+                bind![id.get(), normalized],
+                |row| row.col(0),
+            )
+            .await?
+        }
+        None => {
+            sql::first(
+                connection,
                 "SELECT id FROM contacts WHERE account_id IS NULL AND address_normalized = ?1",
-            )?
-            .query_row(params![&normalized], |row| row.get(0)),
-    }
-    .map(Some)
-    .or_else(|error| match error {
-        rusqlite::Error::QueryReturnedNoRows => Ok(None),
-        other => Err(other),
-    })?;
+                bind![normalized],
+                |row| row.col(0),
+            )
+            .await?
+        }
+    };
 
     match existing {
         Some(id) => {
-            connection
-                .prepare_cached(
+            connection.prepare_cached(
                     "UPDATE contacts
                     SET address = ?2, address_name = ?3, times_seen = times_seen + 1,
                         last_seen_at = max(coalesce(last_seen_at, ?4), ?4)
                   WHERE id = ?1",
-                )?
-                .execute(params![id, address.address, address.name, to_millis(at)])?;
+                ).await?
+                .execute(bind![id, address.address, address.name, to_millis(at)]).await?;
             Ok(ContactId::new(id))
         }
         None => {
@@ -344,14 +359,14 @@ fn record_in(
                 "INSERT INTO contacts (account_id, name, address, address_name,
                                        address_normalized, times_seen, last_seen_at)
                  VALUES (?1, NULL, ?2, ?3, ?4, 1, ?5)",
-                params![
+                bind![
                     account_id.map(AccountId::get),
                     address.address,
                     address.name,
                     normalized,
                     to_millis(at),
                 ],
-            )?;
+            ).await?;
             Ok(ContactId::new(connection.last_insert_rowid()))
         }
     }
@@ -372,9 +387,9 @@ fn account_filter(account_id: Option<AccountId>) -> &'static str {
 /// own. Keeping the account at `?1` whenever it is bound is what stops the two
 /// shapes of every query here from disagreeing about the numbering.
 /// The leading parameter list: the account id, when there is one.
-fn account_argument(account_id: Option<AccountId>) -> Vec<Value> {
+fn account_argument(account_id: Option<AccountId>) -> Vec<turso::Value> {
     account_id
-        .map(|id| vec![Value::Integer(id.get())])
+        .map(|id| vec![turso::Value::Integer(id.get())])
         .unwrap_or_default()
 }
 
@@ -385,18 +400,18 @@ fn first_free(account_id: Option<AccountId>) -> usize {
     }
 }
 
-pub(super) fn read_contact(row: &Row<'_>) -> rusqlite::Result<Contact> {
-    let source: String = row.get(7)?;
+pub(super) fn read_contact(row: &Row) -> Result<Contact> {
+    let source: String = row.col(7)?;
     Ok(Contact {
-        id: ContactId::new(row.get(0)?),
-        account_id: row.get::<_, Option<i64>>(1)?.map(AccountId::new),
-        name: row.get(2)?,
-        address: EmailAddress::new(row.get::<_, Option<String>>(4)?, row.get::<_, String>(3)?),
-        times_seen: row.get(5)?,
-        last_seen_at: row.get::<_, Option<i64>>(6)?.map(from_millis),
+        id: ContactId::new(row.col(0)?),
+        account_id: row.col::<Option<i64>>(1)?.map(AccountId::new),
+        name: row.col(2)?,
+        address: EmailAddress::new(row.col::<Option<String>>(4)?, row.col::<String>(3)?),
+        times_seen: row.col(5)?,
+        last_seen_at: row.col::<Option<i64>>(6)?.map(from_millis),
         source: ContactSource::from_name(&source).unwrap_or_else(|| {
             unreachable!("the `source` CHECK constraint admits no other value: {source}")
         }),
-        suppressed: row.get::<_, i64>(8)? != 0,
+        suppressed: row.col::<i64>(8)? != 0,
     })
 }

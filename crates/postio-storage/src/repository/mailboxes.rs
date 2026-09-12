@@ -4,9 +4,12 @@ use postio_model::{
     AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, RoleKind,
     SignatureId, Uid,
 };
-use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::{Error, Result};
 
 /// Reads and writes [`Mailbox`] rows.
@@ -88,18 +91,17 @@ impl<'a> MailboxRepository<'a> {
     }
 
     /// Inserts a mailbox and its sync-state row, assigning its id.
-    pub fn create(&self, mailbox: &mut Mailbox) -> Result<MailboxId> {
+    pub async fn create(&self, mailbox: &mut Mailbox) -> Result<MailboxId> {
         refuse_a_view(mailbox.role)?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
-        let transaction = super::Scope::open(self.connection)?;
-
+        sql::in_scope(self.connection, |transaction| async move {
         transaction.execute(
             "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
                                     flagged_count, last_synced_at, signature_id,
                                     backfill_excluded)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            params![
+            bind![
                 account_id,
                 optional_id(mailbox.parent_id),
                 mailbox.name,
@@ -115,26 +117,26 @@ impl<'a> MailboxRepository<'a> {
                 optional_signature_id(mailbox.signature_id),
                 mailbox.backfill_excluded,
             ],
-        )?;
+        ).await?;
         let id = MailboxId::new(transaction.last_insert_rowid());
         mailbox.id = id;
 
         // Always written, even when every value is NULL: the sync engine can
         // then UPDATE its state without first having to wonder whether the row
         // exists, and "never synced" stays a readable, explicit state.
-        write_sync_state(&transaction, id, account_id, mailbox)?;
+        write_sync_state(&transaction, id, account_id, mailbox).await?;
 
-        transaction.commit()?;
         Ok(id)
+        })
+        .await
     }
 
     /// Writes a mailbox and its sync state back.
-    pub fn update(&self, mailbox: &Mailbox) -> Result<()> {
+    pub async fn update(&self, mailbox: &Mailbox) -> Result<()> {
         refuse_a_view(mailbox.role)?;
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
-        let transaction = super::Scope::open(self.connection)?;
-
+        sql::in_scope(self.connection, |transaction| async move {
         let changed = transaction.execute(
             "UPDATE mailboxes
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
@@ -142,7 +144,7 @@ impl<'a> MailboxRepository<'a> {
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
                     signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16
               WHERE id = ?1",
-            params![
+            bind![
                 id,
                 account_id,
                 optional_id(mailbox.parent_id),
@@ -160,7 +162,7 @@ impl<'a> MailboxRepository<'a> {
                 mailbox.backfill_excluded,
                 mailbox.counts.snoozed,
             ],
-        )?;
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "mailbox",
@@ -168,14 +170,15 @@ impl<'a> MailboxRepository<'a> {
             });
         }
 
-        write_sync_state(&transaction, mailbox.id, account_id, mailbox)?;
-        transaction.commit()?;
+        write_sync_state(&transaction, mailbox.id, account_id, mailbox).await?;
         Ok(())
+        })
+        .await
     }
 
     /// One mailbox.
-    pub fn get(&self, id: MailboxId) -> Result<Option<Mailbox>> {
-        self.one("WHERE m.id = ?1", [id.get()])
+    pub async fn get(&self, id: MailboxId) -> Result<Option<Mailbox>> {
+        self.one("WHERE m.id = ?1", [id.get()]).await
     }
 
     /// Whether `id` is excluded from the background backfill lane (ADR 0016,
@@ -188,15 +191,14 @@ impl<'a> MailboxRepository<'a> {
     /// — the caller's own query over `messages` already answers "nothing to
     /// seed" for that case, and failing open toward "still backfills" is the
     /// safer direction for a mechanism nobody asked to turn off.
-    pub fn backfill_excluded(&self, id: MailboxId) -> Result<bool> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT backfill_excluded FROM mailboxes WHERE id = ?1",
-                [id.get()],
-                |row| row.get(0),
-            )
-            .optional()?
+    pub async fn backfill_excluded(&self, id: MailboxId) -> Result<bool> {
+        Ok(sql::first(
+            self.connection,
+            "SELECT backfill_excluded FROM mailboxes WHERE id = ?1",
+            [id.get()],
+            |row| row.col(0),
+        )
+        .await?
             .unwrap_or(false))
     }
 
@@ -209,25 +211,25 @@ impl<'a> MailboxRepository<'a> {
     /// Does not touch anything already pulled, and does not affect an
     /// interactive, on-open fetch — only what [`MailboxRepository::backfill_excluded`]
     /// answers for the background lane's own seeding pass.
-    pub fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
+    pub async fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
         let changed = self.connection.execute(
             "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
-            params![id.get(), excluded],
-        )?;
+            bind![id.get(), excluded],
+        ).await?;
         Ok(changed > 0)
     }
 
     /// The mailbox at `path` within an account.
-    pub fn by_path(&self, account_id: AccountId, path: &str) -> Result<Option<Mailbox>> {
-        let mut statement = self.connection.prepare(&format!(
+    pub async fn by_path(&self, account_id: AccountId, path: &str) -> Result<Option<Mailbox>> {
+        sql::first(
+            self.connection,
+            &format!(
             "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 AND m.path = ?2"
-        ))?;
-        let mut rows = statement.query(params![account_id.get(), path])?;
-        rows.next()?
-            .map(read_mailbox)
-            .transpose()
-            .map_err(Into::into)
-    }
+        ),
+            bind![account_id.get(), path],
+            read_mailbox,
+        )
+        .await}
 
     /// The account's mailbox for a special-use role.
     ///
@@ -239,54 +241,55 @@ impl<'a> MailboxRepository<'a> {
     /// Never a retired row. A folder the server no longer lists is one an
     /// APPEND or a MOVE will be refused for, so a role that only a retired row
     /// still wears is a role this account does not have (#943).
-    pub fn by_role(&self, account_id: AccountId, role: MailboxRole) -> Result<Option<Mailbox>> {
-        let mut statement = self.connection.prepare(&format!(
+    pub async fn by_role(&self, account_id: AccountId, role: MailboxRole) -> Result<Option<Mailbox>> {
+        sql::first(
+            self.connection,
+            &format!(
             "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
               WHERE m.account_id = ?1 AND m.role = ?2 AND m.selectable = 1
               ORDER BY m.path LIMIT 1"
-        ))?;
-        let mut rows = statement.query(params![account_id.get(), role.as_str()])?;
-        rows.next()?
-            .map(read_mailbox)
-            .transpose()
-            .map_err(Into::into)
-    }
+        ),
+            bind![account_id.get(), role.as_str()],
+            read_mailbox,
+        )
+        .await}
 
     /// Every mailbox in an account, ordered by path.
     ///
     /// Path order is hierarchy order for the sidebar: a folder sorts
     /// immediately before its children.
-    pub fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Mailbox>> {
-        let mut statement = self.connection.prepare(&format!(
+    pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Mailbox>> {
+        sql::all(
+            self.connection,
+            &format!(
             "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 ORDER BY m.path"
-        ))?;
-        let rows = statement.query_map([account_id.get()], read_mailbox)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        ),
+            [account_id.get()],
+            read_mailbox,
+        )
+        .await}
 
     /// Deletes a mailbox and its messages, returning whether there was one.
-    pub fn delete(&self, id: MailboxId) -> Result<bool> {
-        let deleted = self
-            .connection
-            .execute("DELETE FROM mailboxes WHERE id = ?1", [id.get()])?;
+    pub async fn delete(&self, id: MailboxId) -> Result<bool> {
+        let deleted = self.connection.execute("DELETE FROM mailboxes WHERE id = ?1", [id.get()]).await?;
         Ok(deleted > 0)
     }
 
     /// The cached counts on a mailbox row.
-    pub fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
+    pub async fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
         let mut statement = self.connection.prepare(
             "SELECT total_count, unread_count, flagged_count, snoozed_count
                FROM mailboxes WHERE id = ?1",
-        )?;
-        let mut rows = statement.query([id.get()])?;
-        let Some(row) = rows.next()? else {
+        ).await?;
+        let mut rows = statement.query([id.get()]).await?;
+        let Some(row) = rows.next().await? else {
             return Ok(None);
         };
         Ok(Some(MailboxCounts {
-            total: row.get(0)?,
-            unread: row.get(1)?,
-            flagged: row.get(2)?,
-            snoozed: row.get(3)?,
+            total: row.col(0)?,
+            unread: row.col(1)?,
+            flagged: row.col(2)?,
+            snoozed: row.col(3)?,
             // Not a message count: filled by the sidebar's feed.
             attention: 0,
         }))
@@ -300,19 +303,19 @@ impl<'a> MailboxRepository<'a> {
     /// `counts.snoozed` is never a server's to report — `STATUS` has no
     /// concept of it — so the only real caller is [`Self::recount`], whose
     /// own live scan computes a genuine value.
-    pub fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
+    pub async fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
         let changed = self.connection.execute(
             "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
                 snoozed_count = ?5
               WHERE id = ?1",
-            params![
+            bind![
                 id.get(),
                 counts.total,
                 counts.unread,
                 counts.flagged,
                 counts.snoozed
             ],
-        )?;
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "mailbox",
@@ -337,10 +340,11 @@ impl<'a> MailboxRepository<'a> {
     /// `a_seeded_store_still_agrees_with_a_recount` in
     /// `tests/mailbox_counts.rs`, which is what would notice if the two ever
     /// drifted apart. postio-qhz.8.
-    pub fn recount(&self, id: MailboxId) -> Result<MailboxCounts> {
+    pub async fn recount(&self, id: MailboxId) -> Result<MailboxCounts> {
         let now_millis = "(strftime('%s','now') * 1000)";
         let not_snoozed = format!("(snoozed_until IS NULL OR snoozed_until <= {now_millis})");
-        let counts = self.connection.query_row(
+        let counts = sql::one(
+            self.connection,
             &format!(
                 "SELECT coalesce(sum(deleted_locally = 0 AND {not_snoozed}), 0),
                         coalesce(sum(deleted_locally = 0 AND {not_snoozed} AND seen = 0), 0),
@@ -352,16 +356,17 @@ impl<'a> MailboxRepository<'a> {
             [id.get()],
             |row| {
                 Ok(MailboxCounts {
-                    total: row.get::<_, i64>(0)? as u32,
-                    unread: row.get::<_, i64>(1)? as u32,
-                    flagged: row.get::<_, i64>(2)? as u32,
-                    snoozed: row.get::<_, i64>(3)? as u32,
+                    total: row.col::<i64>(0)? as u32,
+                    unread: row.col::<i64>(1)? as u32,
+                    flagged: row.col::<i64>(2)? as u32,
+                    snoozed: row.col::<i64>(3)? as u32,
                     // Not a message count: filled by the sidebar's feed.
                     attention: 0,
                 })
             },
-        )?;
-        self.set_counts(id, counts)?;
+        )
+        .await?;
+        self.set_counts(id, counts).await?;
         Ok(counts)
     }
 
@@ -371,7 +376,7 @@ impl<'a> MailboxRepository<'a> {
     /// triggers maintain these columns on every write, so this is for
     /// repairing an account whose counts have drifted, not something a
     /// normal write path should call.
-    pub fn recount_account(&self, account_id: AccountId) -> Result<()> {
+    pub async fn recount_account(&self, account_id: AccountId) -> Result<()> {
         self.connection.execute(
             &format!(
                 "UPDATE mailboxes
@@ -388,7 +393,7 @@ impl<'a> MailboxRepository<'a> {
                   WHERE account_id = ?1"
             ),
             [account_id.get()],
-        )?;
+        ).await?;
         Ok(())
     }
 
@@ -407,66 +412,69 @@ impl<'a> MailboxRepository<'a> {
     /// its mail. The sidebar refreshes on every arrival, so a read that grew
     /// with the mailbox would be paid on the surface redrawn most often
     /// (Principle V; spec 003 SC-008).
-    pub fn draft_counts(&self, account_id: AccountId) -> Result<DraftCounts> {
-        self.connection
-            .query_row(
-                "SELECT
+    pub async fn draft_counts(&self, account_id: AccountId) -> Result<DraftCounts> {
+        sql::one(
+            self.connection,
+            "SELECT
                      coalesce(sum(send_state IN ('queued', 'sending')), 0),
                      coalesce(sum(send_state IN ('failed', 'unconfirmed')), 0),
                      coalesce(sum(send_state NOT IN ('queued', 'sending', 'sent')), 0)
                    FROM messages
                   WHERE account_id = ?1 AND send_state IS NOT NULL
                     AND deleted_locally = 0",
-                [account_id.get()],
-                |row| {
+            [account_id.get()],
+            |row| {
                     Ok(DraftCounts {
-                        outbox: row.get::<_, i64>(0)? as u32,
-                        attention: row.get::<_, i64>(1)? as u32,
-                        drafts: row.get::<_, i64>(2)? as u32,
+                        outbox: row.col::<i64>(0)? as u32,
+                        attention: row.col::<i64>(1)? as u32,
+                        drafts: row.col::<i64>(2)? as u32,
                     })
                 },
-            )
-            .map_err(Into::into)
+        )
+        .await
     }
 
     /// Every folder's counts in one account, summed.
     ///
     /// The unified strip's numbers, read from the cached columns rather than
     /// counted -- the same rule the per-folder counts follow.
-    pub fn account_counts(&self, account_id: AccountId) -> Result<MailboxCounts> {
-        self.connection
-            .query_row(
-                "SELECT coalesce(sum(total_count), 0), coalesce(sum(unread_count), 0),
+    pub async fn account_counts(&self, account_id: AccountId) -> Result<MailboxCounts> {
+        sql::one(
+            self.connection,
+            "SELECT coalesce(sum(total_count), 0), coalesce(sum(unread_count), 0),
                     coalesce(sum(flagged_count), 0), coalesce(sum(snoozed_count), 0)
                FROM mailboxes WHERE account_id = ?1",
-                [account_id.get()],
-                |row| {
+            [account_id.get()],
+            |row| {
                     Ok(MailboxCounts {
-                        total: row.get::<_, i64>(0)? as u32,
-                        unread: row.get::<_, i64>(1)? as u32,
-                        flagged: row.get::<_, i64>(2)? as u32,
-                        snoozed: row.get::<_, i64>(3)? as u32,
+                        total: row.col::<i64>(0)? as u32,
+                        unread: row.col::<i64>(1)? as u32,
+                        flagged: row.col::<i64>(2)? as u32,
+                        snoozed: row.col::<i64>(3)? as u32,
                         // Not a message count: filled by the sidebar's feed.
                         attention: 0,
                     })
                 },
-            )
-            .map_err(Into::into)
+        )
+        .await
     }
 
-    fn one<P: rusqlite::Params>(&self, filter: &str, parameters: P) -> Result<Option<Mailbox>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} {filter}"
-        ))?;
-        let mut rows = statement.query(parameters)?;
-        rows.next()?
-            .map(read_mailbox)
-            .transpose()
-            .map_err(Into::into)
+    async fn one(
+        &self,
+        filter: &str,
+        parameters: impl turso::IntoParams,
+    ) -> Result<Option<Mailbox>> {
+        sql::first(
+            self.connection,
+            &format!("SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} {filter}"),
+            parameters,
+            read_mailbox,
+        )
+        .await
     }
 }
 
-fn write_sync_state(
+async fn write_sync_state(
     connection: &Connection,
     id: MailboxId,
     account_id: i64,
@@ -480,57 +488,52 @@ fn write_sync_state(
                 uid_validity = excluded.uid_validity,
                 uid_next = excluded.uid_next,
                 highest_mod_seq = excluded.highest_mod_seq",
-        params![
+        bind![
             id.get(),
             account_id,
             mailbox.generation.map(|value| i64::from(value.get())),
             mailbox.uid_next.map(|value| i64::from(value.get())),
             mailbox.highest_mod_seq.map(|value| value.get() as i64),
         ],
-    )?;
+    ).await?;
     Ok(())
 }
 
-fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
-    let role: String = row.get(6)?;
-    let delimiter: Option<String> = row.get(5)?;
+fn read_mailbox(row: &Row) -> Result<Mailbox> {
+    let role: String = row.col(6)?;
+    let delimiter: Option<String> = row.col(5)?;
 
     Ok(Mailbox {
-        id: MailboxId::new(row.get(0)?),
-        account_id: AccountId::new(row.get(1)?),
-        parent_id: row.get::<_, Option<i64>>(2)?.map(MailboxId::new),
-        name: row.get(3)?,
-        path: row.get(4)?,
+        id: MailboxId::new(row.col(0)?),
+        account_id: AccountId::new(row.col(1)?),
+        parent_id: row.col::<Option<i64>>(2)?.map(MailboxId::new),
+        name: row.col(3)?,
+        path: row.col(4)?,
         delimiter: delimiter.and_then(|value| value.chars().next()),
-        role: MailboxRole::from_name(&role).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                6,
-                rusqlite::types::Type::Text,
-                Box::new(unknown_enum("mailboxes.role", role)),
-            )
-        })?,
-        selectable: row.get(7)?,
-        subscribed: row.get(8)?,
+        role: MailboxRole::from_name(&role)
+            .ok_or_else(|| unknown_enum("mailboxes.role", role))?,
+        selectable: row.col(7)?,
+        subscribed: row.col(8)?,
         counts: MailboxCounts {
-            total: row.get(9)?,
-            unread: row.get(10)?,
-            flagged: row.get(11)?,
-            snoozed: row.get(18)?,
+            total: row.col(9)?,
+            unread: row.col(10)?,
+            flagged: row.col(11)?,
+            snoozed: row.col(18)?,
             // Not a message count: filled by the sidebar's feed.
             attention: 0,
         },
         generation: row
-            .get::<_, Option<i64>>(13)?
+            .col::<Option<i64>>(13)?
             .map(|value| Generation::new(value as u32)),
         uid_next: row
-            .get::<_, Option<i64>>(14)?
+            .col::<Option<i64>>(14)?
             .map(|value| Uid::new(value as u32)),
         highest_mod_seq: row
-            .get::<_, Option<i64>>(15)?
+            .col::<Option<i64>>(15)?
             .map(|value| ModSeq::new(value as u64)),
-        last_synced_at: row.get::<_, Option<i64>>(12)?.map(from_millis),
-        signature_id: row.get::<_, Option<i64>>(16)?.map(SignatureId::new),
-        backfill_excluded: row.get(17)?,
+        last_synced_at: row.col::<Option<i64>>(12)?.map(from_millis),
+        signature_id: row.col::<Option<i64>>(16)?.map(SignatureId::new),
+        backfill_excluded: row.col(17)?,
     })
 }
 

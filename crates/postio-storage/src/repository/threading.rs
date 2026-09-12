@@ -40,9 +40,12 @@ use postio_model::{
     AccountId, Assignment, MailboxId, Message, RfcMessageId, Thread, ThreadCue, ThreadId,
     ThreadIndex, assign, claimed_ids,
 };
-use rusqlite::{Connection, params};
 
 use super::{MessageRepository, ThreadRepository};
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::Result;
 
 /// Files messages into threads.
@@ -86,25 +89,23 @@ impl<'a> ThreadingRepository<'a> {
     /// Writes `messages.thread_id`, so the caller does not have to. Idempotent
     /// for a message already filed: re-filing it re-derives the same answer
     /// and claims the same ids.
-    pub fn thread(&self, message: &Message) -> Result<Threaded> {
+    pub async fn thread(&self, message: &Message) -> Result<Threaded> {
         let cue = ThreadCue::of(message);
-        let scope = super::Scope::open(self.connection)?;
-        let index = SqlIndex {
-            connection: &scope,
-            account_id: self.account_id,
-        };
-        let assignment = assign(&cue, &index);
+        sql::in_scope(self.connection, |scope| async move {
+            let index = LoadedIndex::load(&scope, self.account_id, &cue, None).await?;
+            let assignment = assign(&cue, &index);
 
-        let result = self.apply(&scope, message, &cue, assignment)?;
-        scope.commit()?;
-        Ok(result)
+            let result = self.apply(&scope, message, &cue, assignment).await?;
+            Ok(result)
+        })
+        .await
     }
 
     /// The write side of [`ThreadingRepository::thread`] and
     /// [`ThreadingRepository::reconsider`] alike: given an already-decided
     /// [`Assignment`], create or merge threads as it requires, then file
     /// `message` into the result and claim its ids.
-    fn apply(
+    async fn apply(
         &self,
         connection: &Connection,
         message: &Message,
@@ -117,7 +118,7 @@ impl<'a> ThreadingRepository<'a> {
             Assignment::New => {
                 let mut thread = Thread::new(self.account_id);
                 thread.subject = (!cue.subject.is_empty()).then(|| cue.subject.clone());
-                (threads.create(&mut thread)?, true, Vec::new())
+                (threads.create(&mut thread).await?, true, Vec::new())
             }
             Assignment::Join(id) => (id, false, Vec::new()),
             Assignment::Merge { into, absorb } => {
@@ -127,16 +128,16 @@ impl<'a> ThreadingRepository<'a> {
                     // delete — so the other order silently drops every id the
                     // absorbed thread had claimed, and the conversation comes
                     // apart again on the next reply.
-                    self.relink(connection, *other, into)?;
-                    threads.merge(into, *other)?;
+                    self.relink(connection, *other, into).await?;
+                    threads.merge(into, *other).await?;
                 }
                 (into, false, absorb)
             }
         };
 
-        threads.add_message(thread_id, message.id)?;
+        threads.add_message(thread_id, message.id).await?;
         for id in claimed_ids(cue) {
-            self.claim(connection, id, thread_id)?;
+            self.claim(connection, id, thread_id).await?;
         }
 
         Ok(Threaded {
@@ -151,18 +152,17 @@ impl<'a> ThreadingRepository<'a> {
     /// Last claim wins. That only happens when two threads have already been
     /// merged, or when a message is re-filed, and in both cases the newer
     /// answer is the right one.
-    fn claim(&self, connection: &Connection, id: &RfcMessageId, thread_id: ThreadId) -> Result<()> {
+    async fn claim(&self, connection: &Connection, id: &RfcMessageId, thread_id: ThreadId) -> Result<()> {
         // Cached: a sync pass runs this once per id every message claims, so
         // it is one of the handful of statements a first sync compiles
         // hundreds of thousands of times (#728).
-        connection
-            .prepare_cached(
+        connection.prepare_cached(
                 "INSERT INTO thread_links (account_id, rfc_message_id, thread_id)
              VALUES (?1, ?2, ?3)
              ON CONFLICT (account_id, rfc_message_id) DO UPDATE
                 SET thread_id = excluded.thread_id",
-            )?
-            .execute(params![self.account_id.get(), id.as_str(), thread_id.get()])?;
+            ).await?
+            .execute(bind![self.account_id.get(), id.as_str(), thread_id.get()]).await?;
         Ok(())
     }
 
@@ -171,37 +171,39 @@ impl<'a> ThreadingRepository<'a> {
     /// `OR REPLACE` because the two threads may well claim the same id — that
     /// is often *why* they merged — and the surviving row is the one that
     /// points at the thread that survived.
-    fn relink(&self, connection: &Connection, absorbed: ThreadId, into: ThreadId) -> Result<()> {
+    async fn relink(&self, connection: &Connection, absorbed: ThreadId, into: ThreadId) -> Result<()> {
         connection.execute(
             "UPDATE OR REPLACE thread_links SET thread_id = ?2 WHERE thread_id = ?1",
-            params![absorbed.get(), into.get()],
-        )?;
+            bind![absorbed.get(), into.get()],
+        ).await?;
         Ok(())
     }
 
     /// Every id a thread claims, for diagnostics and tests.
-    pub fn claims(&self, thread_id: ThreadId) -> Result<Vec<RfcMessageId>> {
+    pub async fn claims(&self, thread_id: ThreadId) -> Result<Vec<RfcMessageId>> {
         let mut statement = self.connection.prepare(
             "SELECT rfc_message_id FROM thread_links
               WHERE account_id = ?1 AND thread_id = ?2 ORDER BY rfc_message_id",
-        )?;
-        let rows = statement.query_map(params![self.account_id.get(), thread_id.get()], |row| {
-            row.get::<_, String>(0)
-        })?;
-        Ok(rows
-            .collect::<std::result::Result<Vec<_>, _>>()?
+        ).await?;
+        let rows = sql::mapped(&mut statement, bind![self.account_id.get(), thread_id.get()], |row| {
+            row.col::<String>(0)
+        }).await?;
+        Ok(rows.into_iter()
             .into_iter()
             .map(RfcMessageId::new)
             .collect())
     }
 
     /// The thread claiming `id`, if any.
-    pub fn thread_of(&self, id: &RfcMessageId) -> Result<Option<ThreadId>> {
-        let index = SqlIndex {
-            connection: self.connection,
-            account_id: self.account_id,
-        };
-        Ok(index.thread_of(id))
+    pub async fn thread_of(&self, id: &RfcMessageId) -> Result<Option<ThreadId>> {
+        sql::first(
+            self.connection,
+            "SELECT thread_id FROM thread_links
+              WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE",
+            bind![self.account_id.get(), id.as_str()],
+            |row| Ok(ThreadId::new(row.col(0)?)),
+        )
+        .await
     }
 
     /// Re-derives where `message` belongs against the index as it stands now,
@@ -215,13 +217,13 @@ impl<'a> ThreadingRepository<'a> {
     /// which is exactly what [`postio_model::threading`]'s `is_reply` guard
     /// exists to prevent. A no-op, cheaply, whenever that guard applies, or
     /// when re-deriving lands back on the thread `message` is already in.
-    pub fn reconsider(&self, message: &Message) -> Result<Option<Threaded>> {
+    pub async fn reconsider(&self, message: &Message) -> Result<Option<Threaded>> {
         let Some(current) = message.thread_id else {
             return Ok(None);
         };
 
         let threads = ThreadRepository::new(self.connection);
-        let Some(current_thread) = threads.get(current)? else {
+        let Some(current_thread) = threads.get(current).await? else {
             return Ok(None);
         };
         if current_thread.message_count != 1 {
@@ -229,36 +231,32 @@ impl<'a> ThreadingRepository<'a> {
         }
 
         let cue = ThreadCue::of(message);
-        let scope = super::Scope::open(self.connection)?;
-        // `current` was created *for* this exact message, so its own thread
-        // row necessarily matches `cue`'s subject and would answer every
-        // question `assign` asks right back with itself — a self-match, not
-        // a better one. Excluding it is what makes "nothing better than what
-        // it already has" ([`Assignment::New`]) distinguishable from "still
-        // itself".
-        let index = ExcludingIndex {
-            inner: SqlIndex {
-                connection: &scope,
-                account_id: self.account_id,
-            },
-            exclude: current,
-        };
-        let assignment = assign(&cue, &index);
-        if matches!(assignment, Assignment::New) {
-            return Ok(None);
-        }
+        sql::in_scope(self.connection, |scope| async move {
+            // `current` was created *for* this exact message, so its own thread
+            // row necessarily matches `cue`'s subject and would answer every
+            // question `assign` asks right back with itself — a self-match, not
+            // a better one. Excluding it is what makes "nothing better than what
+            // it already has" ([`Assignment::New`]) distinguishable from "still
+            // itself".
+            let index =
+                LoadedIndex::load(&scope, self.account_id, &cue, Some(current)).await?;
+            let assignment = assign(&cue, &index);
+            if matches!(assignment, Assignment::New) {
+                return Ok(None);
+            }
 
-        let mut result = self.apply(&scope, message, &cue, assignment)?;
-        // This message was `current`'s only member, so `apply` (via
-        // `add_message`) just emptied it. Fold the now-empty thread away
-        // properly — claims included — rather than leaving a zero-message row
-        // behind for the thread list to have to filter out forever after.
-        self.relink(&scope, current, result.thread_id)?;
-        ThreadRepository::new(&scope).merge(result.thread_id, current)?;
-        result.merged.push(current);
+            let mut result = self.apply(&scope, message, &cue, assignment).await?;
+            // This message was `current`'s only member, so `apply` (via
+            // `add_message`) just emptied it. Fold the now-empty thread away
+            // properly — claims included — rather than leaving a zero-message row
+            // behind for the thread list to have to filter out forever after.
+            self.relink(&scope, current, result.thread_id).await?;
+            ThreadRepository::new(&scope).merge(result.thread_id, current).await?;
+            result.merged.push(current);
 
-        scope.commit()?;
-        Ok(Some(result))
+            Ok(Some(result))
+        })
+        .await
     }
 
     /// Runs [`reconsider`](Self::reconsider) over every message in
@@ -269,14 +267,14 @@ impl<'a> ThreadingRepository<'a> {
     /// unlike [`ThreadingRepository::thread`], this scans, and the design this
     /// crate follows is that adding a message never costs more than its own
     /// reference chain. See postio-tn9.2.
-    pub fn rethread_orphans(&self, mailbox_id: MailboxId) -> Result<usize> {
+    pub async fn rethread_orphans(&self, mailbox_id: MailboxId) -> Result<usize> {
         let messages = MessageRepository::new(self.connection);
         let mut moved = 0;
-        for id in messages.subject_only_orphans(mailbox_id)? {
-            let Some(message) = messages.get(id)? else {
+        for id in messages.subject_only_orphans(mailbox_id).await? {
+            let Some(message) = messages.get(id).await? else {
                 continue;
             };
-            if self.reconsider(&message)?.is_some() {
+            if self.reconsider(&message).await?.is_some() {
                 moved += 1;
             }
         }
@@ -284,73 +282,103 @@ impl<'a> ThreadingRepository<'a> {
     }
 }
 
-/// The model's [`ThreadIndex`], over SQLite.
-struct SqlIndex<'a> {
-    connection: &'a Connection,
-    account_id: AccountId,
+/// The model's [`ThreadIndex`], loaded.
+///
+/// # Why the lookups happen before the decision, not during it
+///
+/// [`ThreadIndex`] is synchronous, and it is in `postio-model`, which knows
+/// nothing about databases and must go on knowing nothing: the threading rule
+/// is pure so that it can be tested exhaustively against two maps, which is
+/// the model's own description of what a storage layer is for this purpose.
+///
+/// The engine is async, so an implementation that queried inside `thread_of`
+/// would have to make the model's trait async and the model's purity with it.
+/// It does not need to. Everything `assign` can ask about is derivable from
+/// the cue before it is called -- the links it will look up, and the one
+/// subject it may fall back to -- so this loads exactly those answers first
+/// and then answers from memory.
+///
+/// It is also fewer round trips than the version that queried per reference:
+/// one statement for the links, one for the subject, against a lookup per
+/// reference on every message a sync pass files (#728).
+#[derive(Debug, Default)]
+struct LoadedIndex {
+    by_id: std::collections::HashMap<String, ThreadId>,
+    by_subject: Vec<ThreadId>,
+    /// A thread to pretend does not exist. [`ThreadingRepository::reconsider`]
+    /// asks "does anything *besides* the thread this message is already in
+    /// explain it better", and a thread born from this exact message always
+    /// matches its own subject -- so without this, `assign` would find its own
+    /// thread first and call the question answered.
+    exclude: Option<ThreadId>,
 }
 
-impl ThreadIndex for SqlIndex<'_> {
-    fn thread_of(&self, id: &RfcMessageId) -> Option<ThreadId> {
-        // A lookup that fails is not the same as an id nobody claims, but the
-        // model's trait has nowhere to put an error and the consequence of
-        // treating one as the other is a thread that does not merge — which the
-        // next message on the chain will fix. A broken database announces
-        // itself on the write that follows.
-        // Cached: the hottest read in the write path -- once per reference on
-        // every message a sync pass files (#728).
-        self.connection
-            .prepare_cached(
+impl LoadedIndex {
+    /// Read the answers `assign` could ask for, for this cue.
+    async fn load(
+        connection: &Connection,
+        account_id: AccountId,
+        cue: &ThreadCue,
+        exclude: Option<ThreadId>,
+    ) -> Result<Self> {
+        let mut by_id = std::collections::HashMap::new();
+        for link in cue.links() {
+            let found: Option<i64> = sql::first(
+                connection,
                 "SELECT thread_id FROM thread_links
                   WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE",
+                bind![account_id.get(), link.as_str()],
+                |row| row.col(0),
             )
-            .and_then(|mut statement| {
-                statement.query_row(params![self.account_id.get(), id.as_str()], |row| {
-                    row.get::<_, i64>(0)
-                })
-            })
-            .ok()
-            .map(ThreadId::new)
+            .await?;
+            if let Some(thread) = found {
+                by_id.insert(link.as_str().to_owned(), ThreadId::new(thread));
+            }
+        }
+
+        // Only consulted when nothing linked, and only for a usable subject —
+        // the same condition `assign` applies, so a subject it would never ask
+        // about is never queried for.
+        let by_subject = if cue.subject_is_usable() {
+            sql::all(
+                connection,
+                "SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id",
+                bind![account_id.get(), cue.subject.as_str()],
+                |row| Ok(ThreadId::new(row.col(0)?)),
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            by_id,
+            by_subject,
+            exclude,
+        })
     }
 
-    fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId> {
-        let Ok(mut statement) = self.connection.prepare_cached(
-            "SELECT id FROM threads WHERE account_id = ?1 AND subject = ?2 ORDER BY id",
-        ) else {
-            return Vec::new();
-        };
-        let Ok(rows) = statement.query_map(params![self.account_id.get(), subject], |row| {
-            row.get::<_, i64>(0)
-        }) else {
-            return Vec::new();
-        };
-        rows.filter_map(|row| row.ok().map(ThreadId::new)).collect()
+    fn allowed(&self, thread: ThreadId) -> bool {
+        self.exclude != Some(thread)
     }
 }
 
-/// A [`ThreadIndex`] that never answers with `exclude`.
-///
-/// [`ThreadingRepository::reconsider`] asks "does anything *besides* the
-/// thread this message is already in explain it better", and a thread born
-/// from this exact message always matches its own subject — so without this,
-/// [`assign`] would find its own thread first and call the question answered.
-struct ExcludingIndex<'a> {
-    inner: SqlIndex<'a>,
-    exclude: ThreadId,
-}
-
-impl ThreadIndex for ExcludingIndex<'_> {
+impl ThreadIndex for LoadedIndex {
     fn thread_of(&self, id: &RfcMessageId) -> Option<ThreadId> {
-        self.inner
-            .thread_of(id)
-            .filter(|found| *found != self.exclude)
+        self.by_id
+            .get(id.as_str())
+            .copied()
+            .filter(|found| self.allowed(*found))
     }
 
-    fn threads_with_subject(&self, subject: &str) -> Vec<ThreadId> {
-        self.inner
-            .threads_with_subject(subject)
-            .into_iter()
-            .filter(|found| *found != self.exclude)
+    fn threads_with_subject(&self, _subject: &str) -> Vec<ThreadId> {
+        // The subject was fixed when this was loaded -- it is the cue's own,
+        // and `assign` asks about no other.
+        self.by_subject
+            .iter()
+            .copied()
+            .filter(|found| self.allowed(*found))
             .collect()
     }
 }
+
