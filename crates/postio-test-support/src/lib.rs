@@ -212,9 +212,14 @@ pub fn settle_until_within(
                     start.elapsed(),
                 );
             }
+            // The deadline, not this crate's default. `settle_until_within`
+            // is called with 120s by `gtk_suite`'s own wrapper, and saying
+            // "{BASE_MILLIS}ms" there described a budget that was never in
+            // force — which read as a deadline firing twenty-four times late
+            // and sent #1452 looking for a pump that had blocked (#957).
             panic!(
                 "timed out after {:?} waiting for {label}\n\
-                 (deadline is {PATIENCE_VAR}={} x {BASE_MILLIS}ms; \
+                 (the deadline was {limit:?}, which {PATIENCE_VAR}={} scales; \
                  raise it for a slow machine rather than editing this test)",
                 start.elapsed(),
                 std::env::var(PATIENCE_VAR).unwrap_or_else(|_| "1".into()),
@@ -281,6 +286,33 @@ mod tests {
             Duration::from_millis(20),
             "something behind a pump that stopped answering",
             || std::thread::sleep(Duration::from_millis(300)),
+            || false,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "deadline was 20ms")]
+    fn a_timeout_reports_the_deadline_it_actually_had() {
+        // #957. `gtk_suite` has its own `settle_until` that waits **120
+        // seconds**, deliberately -- those cases wait on WebKit loading a
+        // document, which is a different order of thing from "a widget
+        // should have updated by now". Every timeout it produced said
+        //
+        //   (deadline is POSTIO_TEST_PATIENCE=1 x 5000ms; raise it for a
+        //    slow machine rather than editing this test)
+        //
+        // naming this crate's default rather than the deadline that expired.
+        // The arithmetic in that sentence belongs to `patience()`; a limit
+        // passed in has to speak for itself.
+        //
+        // It has already cost one investigation. #1452 read "a 5s deadline
+        // that fired at 120s" as evidence that a pump had blocked, and added
+        // the branch above for it -- when the 120s was simply the deadline,
+        // arriving on time and describing itself wrongly.
+        settle_until_within(
+            Duration::from_millis(20),
+            "something whose deadline is not the crate default",
+            || {},
             || false,
         );
     }
