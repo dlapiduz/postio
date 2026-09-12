@@ -80,7 +80,7 @@ pub use self::dispatch::{
 };
 pub use self::fetch::fetch_headers;
 pub use self::idle::idle;
-pub use self::mailboxes::list_mailboxes;
+pub use self::mailboxes::{create_mailbox, list_mailboxes};
 pub use self::mutate::{append, copy_messages, expunge, move_messages, store_flags};
 pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
