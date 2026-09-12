@@ -172,6 +172,33 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
         "and Enter runs nothing"
     );
 
+    // ── a mode says which one, and how to get out of it ──────────────────
+    // The marker already says which question is being asked. Backing out of
+    // it was reachable only by trying Backspace and seeing what happened, so
+    // the key hint that reads `/` on the resting field says the way back
+    // while a mode is on.
+    finder.set_query(Query {
+        mode: Mode::Command,
+        text: String::new(),
+    });
+    pump();
+    assert_eq!(
+        finder.way_back().as_deref(),
+        Some("\u{232b}"),
+        "a mode with no way out shown is a room with no handle on the inside"
+    );
+
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: String::new(),
+    });
+    pump();
+    assert_eq!(
+        finder.way_back(),
+        None,
+        "search is not a mode to back out of -- it is what the box already is"
+    );
+
     // ── Backspace at the start gives the mode back, keeping the words ────
     finder.set_query(Query {
         mode: Mode::Command,
