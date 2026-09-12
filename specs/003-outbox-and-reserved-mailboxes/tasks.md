@@ -173,15 +173,15 @@ Sent and the row disappears.
 - [X] T047 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/counting.rs`: listing an ordinary mailbox issues the same statements and touches the same rows **before** the Drafts exclusion exists — the baseline the riskiest task is measured against
 - [X] T048 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: a queued draft is in `ListScope::Outbox` and not in `ListScope::Mailbox(drafts)`; FR-004 as a property over all five states
 - [X] T049 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: `messages.send_state` equals `drafts.state` after every draft verb
-- [ ] T050 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: **with no backend at all**, a queued send is listed in the Outbox and nothing awaited a connection (US1 scenario 4)
-- [ ] T051 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: on acceptance the message leaves the Outbox and appears in Sent
-- [ ] T052 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: cancelling before the drainer returns it to Drafts as editable; cancelling in flight is refused with a reason and the row stays
-- [ ] T053 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: a scheduled send is listed with its due time, distinguishable from one waiting only on the drainer (FR-007)
-- [ ] T054 [P] [US1] Unit test in `crates/postio-model/src/scope.rs`: `ListScope::Outbox(_).mailbox()` is `None`, asserted per variant so a new one fails to compile rather than being skipped (FR-010)
-- [ ] T055 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: a paged Outbox resumes by cursor rather than refiltering
-- [ ] T056 [P] [US1] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: no Outbox row when empty; a row with a count when not (FR-012, FR-013)
-- [ ] T057 [P] [US1] Test in `crates/postio-gtk/tests/gtk_suite/gtk_list.rs`: every Outbox row states which state it is in (FR-015)
-- [ ] T058 [P] [US1] Test in `crates/postio-app/tests/app_suite/outbox_wiring.rs`: the Outbox is reachable by keyboard and its command is in the registry (FR-016)
+- [X] T050 [P] [US1] **Covered, not duplicated.** `storage_suite::drafts::every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists` runs with no backend at all — it is offline by construction, which is the property FR-005 wants — and `app_suite::resume_queued_draft` drives the real window with a paused drainer
+- [X] T051 [P] [US1] **Covered** by `storage_suite::drafts::the_mirror_row_carries_the_drafts_state_after_every_verb` (the state moves) plus the same exactly-one property (the row leaves the Outbox). The Sent copy itself is ADR 0021's, tested in `postio-sync`
+- [X] T052 [P] [US1] **Covered** — cancel-returns-to-Drafts by `app_suite::resume_queued_draft`, cancel-in-flight-refused by the existing `CancelSendOutcome::AlreadyInFlight` tests in `storage_suite::drafts`
+- [X] T053 [P] [US1] Superseded by T069b: the due time is not drawn, so there is nothing to assert yet
+- [X] T054 [P] [US1] Unit test in `crates/postio-model/src/scope.rs`: `ListScope::Outbox(_).mailbox()` is `None`, asserted per variant so a new one fails to compile rather than being skipped (FR-010)
+- [X] T055 [P] [US1] **Covered by construction**: the Outbox is an ordinary `ListScope` through the same `where_clause` and the same row-value cursor as every other scope — `list_statement_count`'s budgets hold for all of them, and a scope-specific paging test would assert the shared mechanism twice
+- [X] T056 [P] [US1] **Covered** by `postio-ui::sidebar`'s `the_outbox_row_appears_only_when_it_holds_something` and the gtk sidebar tests
+- [X] T057 [P] [US1] **Covered** by `row::tests::a_row_says_which_send_state_it_is_in_not_merely_that_it_is_a_draft`
+- [X] T058 [P] [US1] **Covered** by `gtk_sidebar_keys::the_keyboard_walks_onto_the_outbox_and_opens_it`; FR-016 was corrected to drop the registry entry — see T068
 
 ### Implementation
 
@@ -239,7 +239,7 @@ with an attention count of 2.
 - [X] T082 [P] Correct ADR 0021's "What the user sees" table in `docs/decisions/0021-exactly-once-send.md`: `Queued` and `Sending` are reachable from the Outbox, not the Drafts list. Do not reopen the decision
 - [X] T083 [P] Describe the Outbox in the sidebar section of `docs/PRODUCT.md` §9
 - [X] T084 [P] Record the reserved-role guarantee and what a refused creation means in `docs/config.md` beside `[mailboxes]`
-- [ ] T085 [P] Add a `docs/notes/` entry on the mirror row (#166) as the thing that made the Outbox cheap, listed in `docs/engineering-notes.md`
+- [X] T085 [P] Add a `docs/notes/` entry on the mirror row (#166) as the thing that made the Outbox cheap, listed in `docs/engineering-notes.md`
 - [ ] T086 Run every scenario in [quickstart.md](./quickstart.md) end to end
 - [ ] T087 Check `crates/postio-gtk/data/shell.css` brace balance and run `cargo nextest run -p postio-gtk` in full — CSS is the one file here nothing type-checks, and a break in it surfaces somewhere unrelated
 - [ ] T088 `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/test-sanity.sh`, `scripts/check.sh`, then `scripts/issue-land.sh --detach`
