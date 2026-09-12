@@ -894,7 +894,7 @@ mod tests {
 
     /// A real account row, since `DraftRepository::save`'s first insert
     /// requires one to reference.
-    fn seed_account(database: &Store) -> AccountId {
+    async fn seed_account(database: &Store) -> AccountId {
         let connection = database.connect().await.unwrap();
         let mut account = postio_model::Account::new(
             "Test",
@@ -902,6 +902,7 @@ mod tests {
         );
         AccountRepository::new(&connection)
             .create(&mut account)
+            .await
             .unwrap();
         account.id
     }
@@ -911,15 +912,16 @@ mod tests {
     // Pure data: no display, no `adw::init()`. See the module doc above for
     // why a GTK-touching test does not belong beside these.
 
-    #[test]
-    fn a_message_with_no_body_yet_names_offline_only_when_the_engine_is() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_with_no_body_yet_names_offline_only_when_the_engine_is() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.unwrap();
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.sync.body_state = postio_model::BodyState::HeadersOnly;
         let id = MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .unwrap();
         drop(connection);
 
@@ -927,14 +929,14 @@ mod tests {
 
         assert!(
             matches!(
-                load_body_or_reason(&connection, id, false),
+                load_body_or_reason(&connection, id, false).await,
                 Body::Absent(postio_gtk::reader::Absent::Partial)
             ),
             "online and not yet fetched is the ordinary backfill wait"
         );
         assert!(
             matches!(
-                load_body_or_reason(&connection, id, true),
+                load_body_or_reason(&connection, id, true).await,
                 Body::Absent(postio_gtk::reader::Absent::Offline)
             ),
             "offline and not yet fetched has to say so, not promise a backfill \
@@ -942,18 +944,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_message_whose_body_already_arrived_ignores_whether_the_engine_is_offline() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_message_whose_body_already_arrived_ignores_whether_the_engine_is_offline() {
         // Offline-ness only changes the story for a body that has not landed
         // yet. A message with real bytes on disk must read the same whether
         // or not the engine happens to be connected right now.
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.unwrap();
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.sync.body_state = postio_model::BodyState::Full;
         let id = MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .unwrap();
         drop(connection);
 
@@ -962,11 +965,11 @@ mod tests {
         // No blobs were ever named for it, so this is the "fetched, naming
         // no blobs" case -- `Absent::Empty` -- either way.
         assert!(matches!(
-            load_body_or_reason(&connection, id, false),
+            load_body_or_reason(&connection, id, false).await,
             Body::Absent(postio_gtk::reader::Absent::Empty)
         ));
         assert!(matches!(
-            load_body_or_reason(&connection, id, true),
+            load_body_or_reason(&connection, id, true).await,
             Body::Absent(postio_gtk::reader::Absent::Empty)
         ));
     }
@@ -977,16 +980,17 @@ mod tests {
     /// look like an ordinary, readable message -- there is nothing here that
     /// can be edited, and pretending otherwise is the dead end #175 exists
     /// to close.
-    #[test]
-    fn a_foreign_drafts_row_says_so_even_once_its_body_has_arrived() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_foreign_drafts_row_says_so_even_once_its_body_has_arrived() {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.unwrap();
-        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.flags.insert(postio_model::Flag::Draft);
         message.sync.body_state = postio_model::BodyState::Full;
         let id = MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .unwrap();
         drop(connection);
 
@@ -996,7 +1000,7 @@ mod tests {
         // exactly what makes it another client's draft rather than one this
         // machine is editing.
         assert!(matches!(
-            load_body_or_reason(&connection, id, false),
+            load_body_or_reason(&connection, id, false).await,
             Body::Absent(postio_gtk::reader::Absent::ForeignDraft)
         ));
     }
@@ -1019,15 +1023,15 @@ mod tests {
     /// The scenarios are twins — the same two runs of the app, differing
     /// only in whether the first one exited cleanly, which is precisely the
     /// question recovery has to answer.
-    #[test]
-    fn recovery_reopens_a_crashed_draft_and_leaves_a_parked_one_alone() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn recovery_reopens_a_crashed_draft_and_leaves_a_parked_one_alone() {
         if !gui_ready() {
             eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
             return;
         }
 
-        a_crashed_session_reopens_its_draft();
-        a_clean_exit_leaves_the_next_start_on_the_inbox();
+        a_crashed_session_reopens_its_draft().await;
+        a_clean_exit_leaves_the_next_start_on_the_inbox().await;
     }
 
     /// `adw::init()` and the style/icon setup the scenarios share.
@@ -1045,7 +1049,7 @@ mod tests {
         true
     }
 
-    fn a_clean_exit_leaves_the_next_start_on_the_inbox() {
+    async fn a_clean_exit_leaves_the_next_start_on_the_inbox() {
         // #491, reported directly: "i reopened the app and it opened in a
         // compose window from a draft. cold start should start with the
         // inbox". `DraftState::Editing` is not evidence of a crash — Esc on
@@ -1066,12 +1070,14 @@ mod tests {
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
         let account =
-            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+            seed_account(&Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap()).await;
+        // The ambient one: this test is a `#[tokio::test]`, and building a
+        // second runtime inside one panics on drop.
+        let runtime = tokio::runtime::Handle::current();
 
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
-            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1083,12 +1089,12 @@ mod tests {
                 account,
                 database.clone(),
                 blobs,
-                runtime.handle().clone(),
+                runtime.clone(),
                 crate::reading::Showing::default(),
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            );
+            ).await;
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -1101,12 +1107,12 @@ mod tests {
             settle();
             // The orderly exit path `run()` takes after `application.run()`
             // returns.
-            postio_session::end_session(&database);
+            postio_session::end_session(&database).await;
         }
 
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
-            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1118,12 +1124,12 @@ mod tests {
                 account,
                 database.clone(),
                 blobs,
-                runtime.handle().clone(),
+                runtime.clone(),
                 crate::reading::Showing::default(),
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            );
+            ).await;
             settle();
 
             assert!(
@@ -1135,6 +1141,7 @@ mod tests {
             let connection = database.connect().await.unwrap();
             let parked = DraftRepository::new(&connection)
                 .list_for_account(account)
+                .await
                 .expect("drafts read");
             assert_eq!(parked.len(), 1);
             assert_eq!(parked[0].subject, "Finish this on Thursday");
@@ -1142,7 +1149,7 @@ mod tests {
         }
     }
 
-    fn a_crashed_session_reopens_its_draft() {
+    async fn a_crashed_session_reopens_its_draft() {
         let state_dir_guard = tempfile::tempdir().expect("a state directory");
         let state_dir = state_dir_guard.path();
         // SAFETY: as above — sequential, and its own directory.
@@ -1154,10 +1161,12 @@ mod tests {
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
         let account =
-            seed_account(&Database::open(&db_path, &postio_storage::test_support::key()).unwrap());
+            seed_account(&Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap()).await;
         // Only `install_attach` ever spawns onto this; nothing in this test
         // attaches a file, so it exists purely to give `install` a handle.
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        // The ambient one: this test is a `#[tokio::test]`, and building a
+        // second runtime inside one panics on drop.
+        let runtime = tokio::runtime::Handle::current();
 
         // ── Run one: open, type, autosave, and stop cold ─────────────────
         //
@@ -1166,7 +1175,7 @@ mod tests {
         // block is the whole simulation: the transaction `save()` already
         // committed is what has to survive it, not an orderly exit.
         {
-            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1178,12 +1187,12 @@ mod tests {
                 account,
                 database,
                 blobs,
-                runtime.handle().clone(),
+                runtime.clone(),
                 crate::reading::Showing::default(),
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            );
+            ).await;
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -1197,7 +1206,7 @@ mod tests {
 
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
-            let database = Database::open(&db_path, &postio_storage::test_support::key()).unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1209,12 +1218,12 @@ mod tests {
                 account,
                 database,
                 blobs,
-                runtime.handle().clone(),
+                runtime.clone(),
                 crate::reading::Showing::default(),
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            );
+            ).await;
             settle();
 
             let composer = window.composer();

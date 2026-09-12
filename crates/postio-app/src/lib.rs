@@ -658,7 +658,7 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
 
     // Dragging messages out to another application. Nothing is written until
     // a drop actually asks, so this costs nothing until it is used.
-    export::install(window, wiring);
+    export::install(window, wiring).await;
 
     // Which accounts are rebuilding their local search index right now
     // (#981) -- shared between the settings panel, which owns the set, and
@@ -1619,18 +1619,18 @@ mod tests {
 
     /// A store with one enabled account in it, and the key its credential
     /// would be filed under.
-    fn provisioned() -> (Store, AccountKey) {
-        let database = postio_storage::test_support::memory();
+    async fn provisioned() -> (Store, AccountKey) {
+        let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("a connection");
-        let account = postio_storage::test_support::account(&connection);
+        let account = postio_storage::test_support::account(&connection).await;
         drop(connection);
         let key = AccountKey::new(account.address.address.clone());
         (database, key)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_account_with_its_password_is_opened() {
-        let (database, key) = provisioned();
+        let (database, key) = provisioned().await;
         let secrets = MemorySecretStore::new();
         secrets
             .store(&key, &Password::new("app-specific"))
@@ -1643,12 +1643,12 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_account_whose_password_never_landed_goes_back_to_onboarding() {
         // The bug this test exists for: onboarding wrote the row, the keyring
         // write failed, and every launch after that opened an account that
         // could not authenticate and could not be repaired.
-        let (database, _) = provisioned();
+        let (database, _) = provisioned().await;
 
         match startup_route(&database, &MemorySecretStore::new()).await {
             Startup::Onboard(Some(prefill)) => assert_eq!(
@@ -1659,12 +1659,12 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_locked_keyring_goes_back_to_onboarding_too() {
         // Not the same fault, and the same dead end: a credential that cannot
         // be read is a credential the account does not have. The store here
         // *has* the item; it just will not open.
-        let (database, key) = provisioned();
+        let (database, key) = provisioned().await;
         let locked = MemorySecretStore::locked();
         assert!(
             locked.retrieve(&key).await.is_err(),
@@ -1677,9 +1677,9 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_empty_password_is_no_password() {
-        let (database, key) = provisioned();
+        let (database, key) = provisioned().await;
         let secrets = MemorySecretStore::new();
         secrets
             .store(&key, &Password::new(""))
@@ -1692,19 +1692,21 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_pending_deletion_account_is_reaped_before_startup_decides_anything() {
         // #464: "Remove" in the settings panel only marks the row, so
         // something has to actually delete it -- once, at the next launch,
         // before an engine could otherwise start against it.
-        let (database, _key) = provisioned();
+        let (database, _key) = provisioned().await;
         let connection = database.connect().await.expect("a connection");
         let id = postio_storage::repository::AccountRepository::new(&connection)
             .list()
+            .await
             .expect("list")[0]
             .id;
         postio_storage::repository::AccountRepository::new(&connection)
             .mark_pending_deletion(id)
+            .await
             .expect("mark");
         drop(connection);
 
@@ -1720,15 +1722,16 @@ mod tests {
         assert!(
             postio_storage::repository::AccountRepository::new(&connection)
                 .get(id)
+                .await
                 .expect("get")
                 .is_none(),
             "startup_route must actually reap it, not merely skip past it"
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_fresh_installation_has_nothing_to_prefill_with() {
-        let database = postio_storage::test_support::memory();
+        let database = postio_storage::test_support::memory().await;
 
         assert!(matches!(
             startup_route(&database, &MemorySecretStore::new()).await,

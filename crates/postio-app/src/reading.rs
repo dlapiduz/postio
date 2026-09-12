@@ -1724,7 +1724,7 @@ mod tests {
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
-    use postio_storage::test_support::TempDatabase;
+    use postio_storage::test_support::TempStore;
     use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
@@ -1779,15 +1779,15 @@ mod tests {
     /// test (`world` itself, and separately the read right after
     /// `part_bytes` returns). WAL is what production reads run under, so it
     /// is also the concurrency this test is supposed to be proving.
-    fn world() -> (
-        TempDatabase,
+    async fn world() -> (
+        TempStore,
         BlobStore,
         Engine,
         MessageId,
         tempfile::TempDir,
     ) {
-        let database = test_support::temp();
-        let report = seed_small(&database, 11);
+        let database = test_support::temp().await;
+        let report = seed_small(&database, 11).await;
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -1854,6 +1854,7 @@ mod tests {
                   WHERE mailbox_id = ?1",
                 [inbox.id.get()],
             )
+            .await
             .expect("the fixture writes");
         let newest = MessageRepository::new(&connection)
             .page(&ListQuery {
@@ -1861,6 +1862,7 @@ mod tests {
                 limit: 1,
                 after: None,
             })
+            .await
             .expect("a page")
             .first()
             .expect("the inbox has mail")
@@ -1870,6 +1872,7 @@ mod tests {
                 "UPDATE messages SET uid = 1, uid_validity = 1, remote_id = '1:1' WHERE id = ?1",
                 [newest.get()],
             )
+            .await
             .expect("the fixture writes");
         drop(connection);
 
@@ -1904,19 +1907,20 @@ mod tests {
     /// The distinction is ADR 0017's payload axis: a row that has these takes
     /// one `BODY.PEEK[2]`, and a row that does not falls back to every byte,
     /// because a fetched section arrives encoded with nothing to say how.
-    fn a_part_fetchable_by_section(database: &Store, message: MessageId) -> AttachmentId {
-        a_part_not_here(database, message);
+    async fn a_part_fetchable_by_section(database: &Store, message: MessageId) -> AttachmentId {
+        a_part_not_here(database, message).await;
         let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).expect("a read").expect("the message");
+        let mut row = messages.get(message).await.expect("a read").expect("the message");
         row.attachments[0].part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
         // The row id changes under this: `update` replaces a message's
         // attachment rows rather than editing them, which is the very reason
         // `part_bytes` resolves an id to a MIME path before it fetches
         // anything. So the id is read back after the write, not before.
-        update_with_retry(&messages, &mut row);
+        update_with_retry(&messages, &mut row).await;
         messages
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -1930,10 +1934,10 @@ mod tests {
     /// The store's row and the server's message have to describe the same
     /// part, which the seed cannot arrange on its own: it fills a screenshot
     /// from the corpus and knows nothing about any server.
-    fn a_part_not_here(database: &Store, message: MessageId) -> AttachmentId {
+    async fn a_part_not_here(database: &Store, message: MessageId) -> AttachmentId {
         let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).expect("a read").expect("the message");
+        let mut row = messages.get(message).await.expect("a read").expect("the message");
         assert!(
             row.raw_blob_id.is_none(),
             "the fixture already has this message's bytes, so this proves nothing"
@@ -1944,10 +1948,11 @@ mod tests {
         // The MIME path the mock's message puts the attachment at.
         part.part_id = Some("2".to_owned());
         row.attachments = vec![part];
-        update_with_retry(&messages, &mut row);
+        update_with_retry(&messages, &mut row).await;
 
         messages
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -1964,10 +1969,10 @@ mod tests {
     /// being raced holding the table, not a fault -- the same "look again"
     /// shape `wait_for_body` already uses for exactly this kind of
     /// contention. See #162.
-    fn update_with_retry(messages: &MessageRepository, row: &mut postio_model::Message) {
+    async fn update_with_retry(messages: &MessageRepository<'_>, row: &mut postio_model::Message) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
-            match messages.update(row) {
+            match messages.update(row).await {
                 Ok(()) => return,
                 Err(error) if std::time::Instant::now() < deadline => {
                     let _ = error;
@@ -1978,15 +1983,15 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_nobody_has_is_fetched_before_it_is_saved() {
         // postio-v62's last criterion, arranged so it cannot pass without the
         // fetch: `part_bytes` is the only thing here that talks to the engine,
         // and the message has no raw blob until it does. A version of this
         // that called `request_body` itself first would prove only that bytes
         // already on disk can be read, which was never in doubt.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_not_here(&database, message).await;
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -2009,13 +2014,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_with_no_engine_says_so_rather_than_saving_nothing() {
         // The account is not syncing. Writing an empty file would look like a
         // successful save and would not be one.
-        let (database, blobs, _engine, message, _directory) = world();
+        let (database, blobs, _engine, message, _directory) = world().await;
 
-        let part = a_part_not_here(&database, message);
+        let part = a_part_not_here(&database, message).await;
 
         let refused = part_bytes(&database, &blobs, None, message, part)
             .await
@@ -2027,13 +2032,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn save_all_parts_fetches_what_it_needs_for_every_leaf() {
         // Same shape as `a_part_nobody_has_is_fetched_before_it_is_saved`, but
         // through the `S` path: nothing here is downloaded yet, so `S` must
         // fetch before it writes.
-        let (database, blobs, engine, message, _directory) = world();
-        let attachment = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
         let node = postio_gtk::parts::Node {
             part_id: "2".to_owned(),
             depth: 1,
@@ -2065,13 +2070,13 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn save_all_parts_counts_a_failure_without_abandoning_the_rest() {
         // A container has no bytes -- `export_part` refuses it -- but the
         // batch must still reach the leaf that comes after it, and the
         // caller has to be told one part did not make it.
-        let (database, blobs, engine, message, _directory) = world();
-        let attachment = a_part_not_here(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let attachment = a_part_not_here(&database, message).await;
         let container = postio_gtk::parts::Node {
             part_id: String::new(),
             depth: 0,
@@ -2115,15 +2120,15 @@ mod tests {
     // The payload axis (ADR 0017, #377)
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn opening_a_part_fetches_that_section_and_nothing_around_it() {
         // The column the receive path never wrote. The message here is
         // `multipart/mixed` with a forty-byte payload, but the shape is the
         // one that matters: on the reference account the same fetch used to
         // drag the whole message, and ~90% of a mailbox by weight is
         // attachments FTS5 cannot index.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_fetchable_by_section(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_fetchable_by_section(&database, message).await;
 
         let bytes = part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -2134,6 +2139,7 @@ mod tests {
         let connection = database.connect().await.expect("a connection");
         let row = MessageRepository::new(&connection)
             .get(message)
+            .await
             .expect("a read")
             .expect("the message");
         assert!(
@@ -2154,10 +2160,11 @@ mod tests {
     /// say — names a row that no longer exists. The MIME path is the name
     /// that survives, which is the same reason `part_bytes` converts to it
     /// first thing.
-    fn the_part_as_stored(database: &Store, message: MessageId, part_id: &str) -> AttachmentId {
+    async fn the_part_as_stored(database: &Store, message: MessageId, part_id: &str) -> AttachmentId {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
+            .await
             .expect("a read")
             .expect("the message")
             .attachments
@@ -2167,13 +2174,13 @@ mod tests {
             .id
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_part_already_on_this_machine_is_read_without_an_engine_at_all() {
         // The second open. Passing `None` for the engine is the strongest
         // form of "no network fetch" this seam can state: any path that
         // reached for the server would refuse instead of answering.
-        let (database, blobs, engine, message, _directory) = world();
-        let part = a_part_fetchable_by_section(&database, message);
+        let (database, blobs, engine, message, _directory) = world().await;
+        let part = a_part_fetchable_by_section(&database, message).await;
 
         part_bytes(&database, &blobs, Some(engine), message, part)
             .await
@@ -2187,7 +2194,7 @@ mod tests {
         // runs failed here holding the old id (#109). The panel a person
         // clicks re-reads the row on the store's events, so resolving from
         // the store as it is *now* is what the second open actually does.
-        let part = the_part_as_stored(&database, message, "2");
+        let part = the_part_as_stored(&database, message, "2").await;
         let bytes = part_bytes(&database, &blobs, None, message, part)
             .await
             .expect("the second open must not need a server");

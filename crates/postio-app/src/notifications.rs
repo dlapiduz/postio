@@ -561,38 +561,39 @@ mod tests {
         assert_eq!(title, "Bob — Work");
     }
 
-    #[test]
-    fn account_label_is_none_with_exactly_one_enabled_account() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_label_is_none_with_exactly_one_enabled_account() {
+        let database = postio_storage::test_support::memory().await;
         let account = {
             let connection = database.connect().await.expect("a connection");
-            postio_storage::test_support::account(&connection)
+            postio_storage::test_support::account(&connection).await
         };
         assert_eq!(
-            account_label(&database, account.id),
+            account_label(&database, account.id).await,
             None,
             "a single-account install must read exactly as it did before #189"
         );
     }
 
-    #[test]
-    fn account_label_names_the_account_once_a_second_is_enabled() {
-        let database = postio_storage::test_support::memory();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_label_names_the_account_once_a_second_is_enabled() {
+        let database = postio_storage::test_support::memory().await;
         let (first, second) = {
             let connection = database.connect().await.expect("a connection");
-            let first = postio_storage::test_support::account(&connection);
+            let first = postio_storage::test_support::account(&connection).await;
             let mut second = postio_model::Account::new(
                 "Work",
                 EmailAddress::new(None::<String>, "grace@example.com"),
             );
             AccountRepository::new(&connection)
                 .create(&mut second)
+                .await
                 .expect("create the second account");
             (first, second)
         };
-        assert_eq!(account_label(&database, second.id), Some("Work".to_owned()));
+        assert_eq!(account_label(&database, second.id).await, Some("Work".to_owned()));
         assert_eq!(
-            account_label(&database, first.id),
+            account_label(&database, first.id).await,
             Some(first.display_name.clone()),
             "both accounts get named once there is more than one"
         );
