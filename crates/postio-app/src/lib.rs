@@ -1291,7 +1291,12 @@ fn open_the_store_on_a_thread(
 /// waiting on while this runs, says nothing at all if it finishes quickly
 /// enough, and either fills with mail or is replaced by the screen that says
 /// why it could not be.
-fn open_the_store(
+///
+/// `pub` for the reason [`present`] is: this is what `activate` calls, and a
+/// composition root reachable only by launching the binary is what
+/// `postio-bl2` cost. The one line a test still cannot reach is the call
+/// itself, inside `run`'s `connect_activate`.
+pub fn open_the_store(
     window: &Window,
     opened: &Rc<std::cell::RefCell<Option<Opened>>>,
     context: &Rc<Installation>,
