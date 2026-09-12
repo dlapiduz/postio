@@ -70,6 +70,7 @@ mod settings_credential_wiring;
 mod settings_reindex_wiring;
 mod sidebar_backfill_wiring;
 mod signature_default_wiring;
+mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
 mod sync_window;
@@ -134,6 +135,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
+    ),
+    (
+        "startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is",
+        startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is as fn(),
     ),
     (
         "navigation_cost::switching_surfaces_stays_within_a_blink",
