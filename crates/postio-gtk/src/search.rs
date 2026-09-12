@@ -2093,6 +2093,8 @@ mod tests {
             total_hits_capped: false,
             elapsed: Duration::from_millis(11),
             corpus_complete: true,
+            // Fourteen hits, so there is nothing to suggest instead.
+            suggestion: None,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
 
