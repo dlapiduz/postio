@@ -48,6 +48,35 @@ pub fn the_sidebar_lists_folders_and_says_where_sync_stands() {
     sidebar.set_mailboxes(&canvas_mailboxes(12));
     pump();
 
+    // ── a role resolves to the row the sidebar is showing ────────────────
+    // What `g i` and its family are pointed at. Read from this list rather
+    // than from a second lookup, so the key and the click cannot disagree
+    // about which row they mean.
+    assert_eq!(
+        sidebar.mailbox_for_role(MailboxRole::Inbox),
+        Some(MailboxId::new(1))
+    );
+    assert_eq!(
+        sidebar.mailbox_for_role(MailboxRole::Drafts),
+        Some(MailboxId::new(3))
+    );
+    assert_eq!(
+        sidebar.mailbox_for_role(MailboxRole::Sent),
+        Some(MailboxId::new(4))
+    );
+    assert_eq!(
+        sidebar.mailbox_for_role(MailboxRole::Flagged),
+        Some(MailboxId::new(2)),
+        "Flagged is a row a person can stand on, so a role lookup finds it -- \
+         `Folders::default_mailbox` skips it for a different question (#813)"
+    );
+    assert_eq!(
+        sidebar.mailbox_for_role(MailboxRole::Junk),
+        None,
+        "this account has no junk folder, and saying so is what lets `g` plus \
+         its letter report that rather than appear broken"
+    );
+
     assert_eq!(
         labels(&sidebar),
         [
