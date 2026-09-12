@@ -304,19 +304,21 @@ mod tests {
     use super::*;
     use crate::test_support;
 
-    fn a_saga(connection: &Connection) -> CrossAccountMoveId {
-        let (account, inbox) = test_support::account_with_inbox(connection);
+    async fn a_saga(connection: &Connection) -> CrossAccountMoveId {
+        let (account, inbox) = test_support::account_with_inbox(connection).await;
         let mut second = postio_model::Account::new(
             "Second",
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
         );
         crate::repository::AccountRepository::new(connection)
             .create(&mut second)
+            .await
             .expect("second account");
-        let target = test_support::mailbox(connection, &second, "INBOX");
+        let target = test_support::mailbox(connection, &second, "INBOX").await;
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         let message_id = crate::repository::MessageRepository::new(connection)
             .create(&mut message)
+            .await
             .expect("a message");
         CrossAccountMoveRepository::new(connection)
             .create(&NewCrossAccountMove {
@@ -329,77 +331,83 @@ mod tests {
                 raw_blob_id: None,
                 rfc_message_id: Some("<pair@example.com>".to_string()),
             })
+            .await
             .expect("a saga")
     }
 
-    #[test]
-    fn the_phase_walk_is_forward_only_and_done_needs_confirmed() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+    #[tokio::test]
+    async fn the_phase_walk_is_forward_only_and_done_needs_confirmed() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
 
         // The transition that would lose mail: deleting the source while
         // the copy is unproven. Refused however it is asked for.
         assert!(
-            sagas.transition(id, MovePhase::Done).is_err(),
+            sagas.transition(id, MovePhase::Done).await.is_err(),
             "copying -> done skips the proof, and the proof is the point"
         );
         sagas
             .transition(id, MovePhase::Unconfirmed)
+            .await
             .expect("copying -> unconfirmed: the append ran, arrival unproven");
         assert!(
-            sagas.transition(id, MovePhase::Done).is_err(),
+            sagas.transition(id, MovePhase::Done).await.is_err(),
             "unconfirmed -> done is exactly the guess the ADR forbids"
         );
         sagas
             .confirm(id, Some(&RemoteId::new("1:4242")))
+            .await
             .expect("unconfirmed -> confirmed, with the identity recorded");
-        let saga = sagas.get(id).expect("read").expect("the saga");
+        let saga = sagas.get(id).await.expect("read").expect("the saga");
         assert_eq!(saga.phase, MovePhase::Confirmed);
         assert_eq!(saga.confirmed_remote_id, Some(RemoteId::new("1:4242")));
 
         sagas
             .transition(id, MovePhase::Done)
+            .await
             .expect("confirmed -> done is the one legal ending that deletes");
         assert!(
-            sagas.transition(id, MovePhase::Copying).is_err(),
+            sagas.transition(id, MovePhase::Copying).await.is_err(),
             "done is terminal; a saga never runs backwards"
         );
     }
 
-    #[test]
-    fn an_aborted_saga_is_terminal_and_deletes_nothing() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+    #[tokio::test]
+    async fn an_aborted_saga_is_terminal_and_deletes_nothing() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
 
         sagas
             .transition(id, MovePhase::Aborted)
+            .await
             .expect("a saga may abort from copying");
         assert!(
-            sagas.transition(id, MovePhase::Confirmed).is_err(),
+            sagas.transition(id, MovePhase::Confirmed).await.is_err(),
             "aborted is terminal"
         );
-        let saga = sagas.get(id).expect("read").expect("the saga");
+        let saga = sagas.get(id).await.expect("read").expect("the saga");
         assert!(
             saga.source_message.is_some(),
             "aborting touched no rows: the source copy is intact (Q13)"
         );
     }
 
-    #[test]
-    fn removing_the_target_account_leaves_the_saga_naming_nobody() {
+    #[tokio::test]
+    async fn removing_the_target_account_leaves_the_saga_naming_nobody() {
         // Q13: the CASCADE that removes an account must not silently vanish
         // a half-finished saga — SET NULL leaves the row to be aborted by
         // whoever reads it next, with the source intact.
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let sagas = CrossAccountMoveRepository::new(&connection);
-        let id = a_saga(&connection);
+        let id = a_saga(&connection).await;
         let target = sagas
             .get(id)
+            .await
             .expect("read")
             .expect("the saga")
             .target_account
@@ -407,9 +415,10 @@ mod tests {
 
         crate::repository::AccountRepository::new(&connection)
             .delete(target)
+            .await
             .expect("remove the target account");
 
-        let saga = sagas.get(id).expect("read").expect("the saga survives");
+        let saga = sagas.get(id).await.expect("read").expect("the saga survives");
         assert_eq!(
             saga.target_account, None,
             "the target is gone, not the saga"

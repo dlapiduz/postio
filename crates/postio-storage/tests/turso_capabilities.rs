@@ -45,7 +45,7 @@ async fn count(connection: &postio_storage::Connection, sql: &str) -> i64 {
 async fn opening_a_fresh_path_puts_the_schema_at_head() {
     let (_dir, path) = temp("fresh.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
-    let connection = store.connect().expect("connect");
+    let connection = store.connect().await.expect("connect");
 
     let mut rows = connection
         .query(
@@ -82,7 +82,7 @@ async fn opening_a_fresh_path_puts_the_schema_at_head() {
 async fn the_store_keeps_no_plaintext_on_disk() {
     let (_dir, path) = temp("secret.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
-    let connection = store.connect().expect("connect");
+    let connection = store.connect().await.expect("connect");
 
     // A string that cannot plausibly occur in schema text or engine padding.
     const NEEDLE: &str = "asparagus-turntable-9417-zzyzx";
@@ -143,7 +143,7 @@ async fn another_key_is_refused() {
 async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
     let (_dir, path) = temp("r1.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
-    let connection = store.connect().expect("connect");
+    let connection = store.connect().await.expect("connect");
 
     connection
         .execute_batch(
@@ -194,7 +194,7 @@ async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
 async fn fold_cannot_be_expressed_in_sql() {
     let (_dir, path) = temp("fold.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
-    let connection = store.connect().expect("connect");
+    let connection = store.connect().await.expect("connect");
 
     for spelling in ["nfd(?1)", "unaccent(?1)", "normalize(?1, 'NFD')", "icu_fold(?1)"] {
         let outcome = connection
@@ -219,7 +219,7 @@ async fn fold_cannot_be_expressed_in_sql() {
 async fn the_engine_folds_case_but_not_diacritics() {
     let (_dir, path) = temp("accents.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
-    let connection = store.connect().expect("connect");
+    let connection = store.connect().await.expect("connect");
 
     connection
         .execute_batch(
@@ -271,8 +271,8 @@ async fn r2_whether_a_long_write_blocks_a_short_one() {
     let (_dir, path) = temp("r2.db");
     let store = Store::open(&path, &a_key()).await.expect("open");
 
-    let long = store.connect().expect("connect");
-    let short = store.connect().expect("connect");
+    let long = store.connect().await.expect("connect");
+    let short = store.connect().await.expect("connect");
 
     long.execute("BEGIN IMMEDIATE", ())
         .await

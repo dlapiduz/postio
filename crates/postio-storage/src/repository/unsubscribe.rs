@@ -78,14 +78,14 @@ mod tests {
     use crate::test_support;
     use chrono::Utc;
 
-    #[test]
-    fn an_activation_round_trips_and_lists_newest_first() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let account = test_support::account(&connection).id;
+    #[tokio::test]
+    async fn an_activation_round_trips_and_lists_newest_first() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let account = test_support::account(&connection).await.id;
         let log = UnsubscribeRepository::new(&connection);
 
-        assert_eq!(log.for_account(account).expect("empty list"), vec![]);
+        assert_eq!(log.for_account(account).await.expect("empty list"), vec![]);
 
         let mut first = UnsubscribeActivation::new(
             account,
@@ -94,13 +94,13 @@ mod tests {
         );
         let mut second =
             UnsubscribeActivation::new(account, "new-newsletter.example.com", Utc::now());
-        log.record(&mut first).expect("record");
-        log.record(&mut second).expect("record");
+        log.record(&mut first).await.expect("record");
+        log.record(&mut second).await.expect("record");
 
         assert!(first.id.is_assigned());
         assert_ne!(first.id, second.id);
 
-        let listed = log.for_account(account).expect("list");
+        let listed = log.for_account(account).await.expect("list");
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].list_identifier, "new-newsletter.example.com");
         assert_eq!(
@@ -109,27 +109,28 @@ mod tests {
         );
     }
 
-    #[test]
-    fn activations_are_scoped_to_their_own_account() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let mine_account = test_support::account(&connection).id;
+    #[tokio::test]
+    async fn activations_are_scoped_to_their_own_account() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let mine_account = test_support::account(&connection).await.id;
         let mut theirs_owner = postio_model::Account::new(
             "Second",
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
         );
         crate::repository::AccountRepository::new(&connection)
             .create(&mut theirs_owner)
+            .await
             .expect("second account");
         let log = UnsubscribeRepository::new(&connection);
 
         let mut mine = UnsubscribeActivation::new(mine_account, "mine.example.com", Utc::now());
         let mut theirs =
             UnsubscribeActivation::new(theirs_owner.id, "theirs.example.com", Utc::now());
-        log.record(&mut mine).expect("record");
-        log.record(&mut theirs).expect("record");
+        log.record(&mut mine).await.expect("record");
+        log.record(&mut theirs).await.expect("record");
 
-        let listed = log.for_account(mine_account).expect("list");
+        let listed = log.for_account(mine_account).await.expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].list_identifier, "mine.example.com");
     }

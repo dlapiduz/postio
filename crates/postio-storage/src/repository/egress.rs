@@ -88,12 +88,12 @@ mod tests {
     use crate::test_support;
     use chrono::Utc;
 
-    #[test]
-    fn a_connection_round_trips_and_lists_newest_first() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+    #[tokio::test]
+    async fn a_connection_round_trips_and_lists_newest_first() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
         let log = EgressLogRepository::new(&connection);
-        assert_eq!(log.count().expect("count"), 0);
+        assert_eq!(log.count().await.expect("count"), 0);
 
         let first = EgressEvent {
             at: Utc::now() - chrono::Duration::minutes(2),
@@ -111,11 +111,11 @@ mod tests {
             port: 993,
             outcome: EgressOutcome::Connected,
         };
-        log.record(&first).expect("record");
-        log.record(&second).expect("record");
+        log.record(&first).await.expect("record");
+        log.record(&second).await.expect("record");
 
-        assert_eq!(log.count().expect("count"), 2);
-        let recent = log.recent(10).expect("recent");
+        assert_eq!(log.count().await.expect("count"), 2);
+        let recent = log.recent(10).await.expect("recent");
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].host, "imap.example.com");
         assert_eq!(recent[0].outcome, EgressOutcome::Connected);

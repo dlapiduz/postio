@@ -28,7 +28,7 @@
 //! # use postio_storage::key::{Purpose, StoreKey};
 //! # let key = StoreKey::generate().derive(Purpose::Database);
 //! let store = postio_storage::Store::open("postio.db", &key).await?;
-//! let connection = store.connect()?;
+//! let connection = store.connect().await?;
 //! # let _ = connection;
 //! # Ok(())
 //! # }
