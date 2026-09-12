@@ -27,6 +27,8 @@ tracing = "0.1"
 
 [dev-dependencies]
 postio-storage = { workspace = true, features = ["test-support"] }
+# Tests only: the engine is async, so its tests need a runtime.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true

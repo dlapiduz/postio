@@ -12,6 +12,8 @@
 
 use postio_storage::Store;
 use postio_storage::key::{Purpose, StoreKey};
+use postio_storage::sql;
+use postio_storage::sql::RowExt as _;
 use postio_storage::store::CIPHER;
 
 fn temp(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -332,4 +334,103 @@ async fn the_documented_cipher_is_one_the_engine_accepts() {
     // If CIPHER were not a name the engine knows, opening would fail here.
     Store::open(&path, &a_key()).await.expect("open");
     assert_eq!(CIPHER, "aes256gcm");
+}
+
+/// The planner will not read through a partial index.
+///
+/// It *enforces* one correctly -- a duplicate inside the predicate is refused
+/// and a row outside it is allowed -- so this is a performance limit, not a
+/// correctness one. But it is a sharp one: a query that matches a partial
+/// index exactly still gets a full scan, and this schema had twenty-two
+/// partial indexes when the engine changed.
+///
+/// What was done about it is in `schema.rs`: the sixteen non-unique ones
+/// dropped their predicates, which costs index size and nothing else, and the
+/// six unique ones kept theirs and gained a non-unique read companion.
+///
+/// **When this test starts failing, that work can be undone.** That is what it
+/// is for.
+#[tokio::test]
+async fn the_planner_does_not_use_a_partial_index() {
+    let (_dir, path) = temp("partial.db");
+    let store = Store::open(&path, &a_key()).await.expect("open");
+    let connection = store.connect().await.expect("connect");
+
+    connection
+        .execute_batch(
+            "CREATE TABLE plain (a INTEGER, b TEXT);
+             CREATE INDEX plain_idx ON plain (a, b);
+             CREATE TABLE partial (a INTEGER, b TEXT);
+             CREATE INDEX partial_idx ON partial (a, b) WHERE a IS NOT NULL;",
+        )
+        .await
+        .expect("create");
+
+    let plan = |table: &'static str| {
+        let connection = connection.clone();
+        async move {
+            let steps: Vec<String> = sql::all(
+                &connection,
+                &format!("EXPLAIN QUERY PLAN SELECT b FROM {table} WHERE a = 1 AND b = 'z'"),
+                (),
+                |row| row.col(3),
+            )
+            .await
+            .expect("explain");
+            steps.join(" | ")
+        }
+    };
+
+    // "USING INDEX" or "USING COVERING INDEX", whichever the planner picks --
+    // the claim is that it reaches an index at all.
+    let plain = plan("plain").await;
+    assert!(
+        plain.contains("INDEX"),
+        "a plain index should be used; plan was {plain}",
+    );
+
+    let partial = plan("partial").await;
+    assert!(
+        !partial.contains("INDEX"),
+        "the planner has learned to read through a partial index -- plan was \
+         {partial}. schema.rs can drop its read companions and restore the \
+         predicates it removed.",
+    );
+}
+
+/// ...but it does enforce one, which is why the unique ones stayed partial.
+#[tokio::test]
+async fn a_partial_unique_index_is_still_enforced() {
+    let (_dir, path) = temp("partial-unique.db");
+    let store = Store::open(&path, &a_key()).await.expect("open");
+    let connection = store.connect().await.expect("connect");
+
+    connection
+        .execute_batch(
+            "CREATE TABLE scoped (account INTEGER, key TEXT);
+             CREATE UNIQUE INDEX scoped_idx ON scoped (account, key)
+                 WHERE account IS NOT NULL;",
+        )
+        .await
+        .expect("create");
+
+    connection
+        .execute("INSERT INTO scoped VALUES (1, 'k')", ())
+        .await
+        .expect("the first row");
+    assert!(
+        connection
+            .execute("INSERT INTO scoped VALUES (1, 'k')", ())
+            .await
+            .is_err(),
+        "a duplicate inside the predicate must be refused",
+    );
+    connection
+        .execute("INSERT INTO scoped VALUES (NULL, 'k')", ())
+        .await
+        .expect("a row the predicate excludes is not constrained");
+    connection
+        .execute("INSERT INTO scoped VALUES (NULL, 'k')", ())
+        .await
+        .expect("...twice, which is the whole point of the predicate");
 }
