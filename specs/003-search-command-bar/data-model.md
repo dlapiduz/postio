@@ -22,10 +22,16 @@ shares them rather than re-deriving them (R5).
 alongside `purpose` — "Command" beside "Run a command". Reading
 `postio-gtk::finder::Mode` showed the field had no reader: a hint lists the
 prefix and what it does, and so does the documentation, so the name would be
-drawn nowhere. `check-uncalled-pub-fn.py` would have caught it, which is the
-check earning its keep before a line of it was written. What the existing enum
-does carry is `marker`, which *is* read — it is what the field shows once a
-mode is active — so that takes the third column.
+drawn nowhere. What the existing enum does carry is `marker`, which *is*
+read — it is what the field shows once a mode is active — so that takes the
+third column.
+
+An earlier draft of this note credited `check-uncalled-pub-fn.py` with the
+catch. It would not have made it: that check collects *every identifier named
+by production code* and treats a definition as called when its bare name
+appears anywhere, so a `name` accessor is masked by the thousands of unrelated
+`name`s in the workspace. It is a useful check and it is name-based, which is
+worth knowing before relying on it to notice something dead.
 
 **The set** is what ships today, unchanged: search (no prefix), `>` command,
 `#` mailbox, `+` label, `@` contact.
