@@ -441,6 +441,14 @@ pub struct Wired {
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
 pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
+    // Everything from here to the return is synchronous main-thread work,
+    // and the first frame is waiting on all of it. The two marks around it
+    // are what let a startup trace say so: before #1479 the whole stretch
+    // between the window and the paint was one `first frame` phase, and on a
+    // real store it was 84% of a 1250 ms startup with nothing to say about
+    // which part. A window nothing is measuring ignores both marks.
+    window.mark_startup(postio_gtk::startup::Phase::Account);
+
     // The composer's editing surface is ADR 0003's `WebView`, and its first
     // load starts a WebKit web process: measured, 28.7ms on the first open of
     // a composer against 0.2ms on every one after it. Without this it all
@@ -683,6 +691,11 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
             });
         }
     });
+
+    // The panes are pointed at the store and every gesture has a handler.
+    // Nothing between here and the compositor's first frame is Postio's, so
+    // whatever `first frame` costs from this mark on is GTK's own paint.
+    window.mark_startup(postio_gtk::startup::Phase::Feeds);
 
     Some(Wired { feeds, search })
 }
