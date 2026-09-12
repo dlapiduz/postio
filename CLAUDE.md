@@ -58,6 +58,18 @@ red first, exactly as an issue's would be. And work *discovered* on the way
 that is not in the spec is still filed through `scripts/issue-file.sh`: the
 exemption is for the planned work, not for everything the branch touches.
 
+**A spec and an ADR are not both needed.** A `spec.md` records the decisions it
+takes and the alternatives it rejected, which is what an ADR is for, so a
+spec-driven feature does not also get a parallel ADR saying the same thing in a
+different file — that is two homes for one fact, and they drift. Cite an
+existing ADR the spec *inherits*; **fold in** one that is only about this
+feature — copy what still holds into the spec and delete the ADR in the same
+branch, leaving no orphan; and write a **new** ADR only for a decision that
+outlives this feature and that other work must obey (a boundary, a schema rule,
+a cross-crate contract), keeping it to that rule and letting the spec carry the
+feature's reasoning. A Proposed ADR whose experiment the spec settles is
+resolved by the spec, not left Proposed beside it.
+
 The branch lands to `main` once, as one pull request reviewed against the spec.
 If it grows long enough that `main` moves under it, rebase it as you go, the
 same as an initiative branch.
