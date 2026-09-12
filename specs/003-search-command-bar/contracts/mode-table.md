@@ -10,13 +10,16 @@ in #1157.
 
 ## The table
 
-| Prefix | Name | Purpose |
+| Prefix | Marker | Purpose |
 |---|---|---|
-| *(none)* | Search | Search all mail |
-| `>` | Command | Run a command |
-| `#` | Mailbox | Go to a folder |
-| `+` | Label | Label the selection |
-| `@` | Contact | Find a correspondent |
+| *(none)* | `/` | Search all mail |
+| `>` | `>` | Run a command |
+| `#` | `#` | Go to a folder |
+| `+` | `+` | Add a label |
+| `@` | `@` | Find a correspondent |
+
+The purposes are the strings `Mode::placeholder()` already returns, verbatim —
+this table is a lift of what ships, not a rewording of it.
 
 The prefixes are what ships and are **not** being changed by this feature.
 
@@ -24,7 +27,7 @@ The prefixes are what ships and are **not** being changed by this feature.
 
 1. **One enumeration.** The bar's hint, the cheat sheet and the documentation all read this table. A mode added later appears in all three from one edit — FR-032, SC-010.
 2. **Prefixes are unique**, and exactly one mode has none.
-3. **Name and purpose are user-facing text**, in a user's words, not identifiers.
+3. **Marker and purpose are user-facing text**, in a user's words, not identifiers. There is deliberately no separate `name`: nothing would render it, and an unread `pub fn` is what `check-uncalled-pub-fn.py` refuses.
 4. **No GTK.** The table is plain data in `postio-ui`, which `check-crate-boundaries.py` keeps free of toolkit dependencies, so the macOS frontend consumes it rather than re-deriving it.
 5. **A mode that cannot act where the user stands is not advertised there** — FR-033.
 

@@ -25,8 +25,8 @@ binaries are put on a private compositor automatically.
 ## 1. The registry knows the destinations — cheapest layer
 
 ```bash
-cargo test -p postio-core --lib                                    # [n] passed
-cargo nextest run -p postio-core --test core_suite command_registry # [n] passed
+cargo test -p postio-core --lib                                    # 81 passed
+cargo nextest run -p postio-core --test core_suite command_registry # part of core_suite's 137
 ```
 
 Expect: every new id has a title and a non-empty default binding; no binding
@@ -57,10 +57,16 @@ section 5 is what checks that.
 ## 4. The bar and the keys, where a person would see them
 
 ```bash
-cargo nextest run -p postio-gtk --test gtk_suite gtk_finder         # [n] passed
+cargo nextest run -p postio-gtk --test gtk_suite gtk_finder         # 4 passed (271 skipped)
 cargo nextest run -p postio-gtk --test gtk_suite gtk_cheatsheet     # [n] passed
-cargo test -p postio-app --test app_suite                           # [n] passed
+cargo test -p postio-app --test app_suite                           # 89 passed, 1 failed -- see below
 ```
+
+**One failure in that third command is expected and is not yours.**
+`render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing`
+fails in a full run and passes alone: it is order-dependent, it predates this
+feature, and it is #1497. The baseline when this feature started was
+`89 passed; 1 failed`. If you see two failures, the second one is yours.
 
 The third is the one that matters, and the reason is in
 [research.md](./research.md) R8: the GTK cases hand the finder a fixture and

@@ -28,7 +28,7 @@ A Cargo workspace. Crate sources are `crates/<crate>/src/`, unit tests live besi
 
 **Purpose**: Establish that the built parts really are built, because everything in this plan rests on that claim.
 
-- [ ] T001 Run the built-state baseline and record every count in `specs/003-search-command-bar/quickstart.md`, replacing each `[n]` placeholder: `cargo test -p postio-core --lib`, `cargo nextest run -p postio-core --test core_suite`, `cargo nextest run -p postio-gtk --test gtk_suite gtk_finder`, `cargo test -p postio-app --test app_suite`
+- [X] T001 Run the built-state baseline and record every count in `specs/003-search-command-bar/quickstart.md`, replacing each `[n]` placeholder: `cargo test -p postio-core --lib`, `cargo nextest run -p postio-core --test core_suite`, `cargo nextest run -p postio-gtk --test gtk_suite gtk_finder`, `cargo test -p postio-app --test app_suite`
 - [ ] T002 Confirm `scripts/check.sh` is clean before anything moves between crates, so a later crate-boundary failure is known to be this feature's doing
 
 ---

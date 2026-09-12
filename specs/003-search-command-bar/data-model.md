@@ -15,8 +15,17 @@ shares them rather than re-deriving them (R5).
 | Field | Type | Meaning | Rules |
 |---|---|---|---|
 | `prefix` | `Option<char>` | The character that reaches the mode from an empty box | `None` for search, which is what typing does with no prefix. Every other mode's prefix is unique across the table |
-| `name` | `&'static str` | What the mode is called where it is listed | Non-empty |
+| `marker` | `&'static str` | What is drawn in the field once the mode is active | Non-empty; search wears the `/` the canvas already draws |
 | `purpose` | `&'static str` | What the mode is for, in a user's words | Non-empty; this is what the hint and the docs both show |
+
+**Corrected during implementation.** This table first carried a `name`
+alongside `purpose` — "Command" beside "Run a command". Reading
+`postio-gtk::finder::Mode` showed the field had no reader: a hint lists the
+prefix and what it does, and so does the documentation, so the name would be
+drawn nowhere. `check-uncalled-pub-fn.py` would have caught it, which is the
+check earning its keep before a line of it was written. What the existing enum
+does carry is `marker`, which *is* read — it is what the field shows once a
+mode is active — so that takes the third column.
 
 **The set** is what ships today, unchanged: search (no prefix), `>` command,
 `#` mailbox, `+` label, `@` contact.
