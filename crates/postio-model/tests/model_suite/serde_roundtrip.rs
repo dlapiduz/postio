@@ -91,6 +91,7 @@ fn sample_mailbox() -> Mailbox {
             unread: 3,
             flagged: 1,
             snoozed: 0,
+            attention: 0,
         },
         generation: Some(Generation::new(12)),
         uid_next: Some(Uid::new(900)),

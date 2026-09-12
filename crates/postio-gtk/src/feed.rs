@@ -634,18 +634,20 @@ pub trait MailboxSource {
     /// one: it has no row to carry a count, and the Drafts badge needs a
     /// number the cached column deliberately does not hold (spec 003 T066).
     ///
-    /// **Defaults to nothing in flight**, which is a true answer for a source
-    /// with no drafts — which every fixture in this workspace is. The one
-    /// source over a real store overrides it; a fixture that grows drafts and
-    /// forgets to will draw no Outbox row, which is what
-    /// `resume_queued_draft` in `app_suite` is there to notice.
+    /// **Defaults to `None`, meaning "I do not know"** — not to zero.
+    ///
+    /// The difference matters. Zero is an answer: it says this account has no
+    /// drafts, and the sidebar acts on it by replacing what the Drafts row
+    /// shows. A fixture that has never heard of drafts is not saying that, and
+    /// treating its silence as zero empties the badge of a folder with mail in
+    /// it. `None` leaves the cached counts alone.
     fn draft_counts(&self, _account: AccountId) -> DraftCountsFuture {
-        Box::pin(async { Ok(ViewCounts::default()) })
+        Box::pin(async { Ok(None) })
     }
 }
 
 /// The answer to a request for an account's draft counts.
-pub type DraftCountsFuture = Pin<Box<dyn Future<Output = Result<ViewCounts, String>>>>;
+pub type DraftCountsFuture = Pin<Box<dyn Future<Output = Result<Option<ViewCounts>, String>>>>;
 
 /// The status line, folded out of the runtime's events.
 ///
@@ -895,12 +897,20 @@ struct FolderInner {
     /// The folders as last read — including the view rows — so picking one
     /// can name it without another round trip.
     mailboxes: RefCell<Vec<Mailbox>>,
-    /// How many of the account's drafts are on their way, as last read.
+    /// What the sidebar draws beside Drafts and the Outbox, as last read.
     ///
     /// Held beside the folders rather than derived from them: the Outbox is
-    /// not a mailbox, so no folder's cached count adds up to this. Read in the
-    /// same pass as the folders so the sidebar redraws once, with both.
-    outbox: Cell<u32>,
+    /// not a mailbox, so no folder's cached count adds up to it, and what
+    /// Drafts should show excludes what is on its way, which `total_count`
+    /// deliberately does not. Read in the same pass as the folders so the
+    /// sidebar redraws once, with both.
+    ///
+    /// `None` until a source has actually answered. Not `ViewCounts::default()`:
+    /// the trait's default answers "nothing in flight", which is true for a
+    /// source with no drafts and is *not* a true answer for how many Drafts
+    /// holds -- and overwriting a real cached total with a default zero empties
+    /// the badge of a folder that has mail in it.
+    drafts: Cell<Option<ViewCounts>>,
     trackers: RefCell<Trackers>,
     generation: Cell<u64>,
     /// Whether a reload is already queued for this turn of the main loop.
@@ -969,8 +979,8 @@ impl FolderInner {
                 // POSTIO-GLIB-SAFE: a channel receive, like the folder reads
                 // above -- `MailboxSource::draft_counts` returns something
                 // pollable on the main context by the same contract.
-                if let Ok(counts) = counting.await {
-                    self.outbox.set(counts.outbox);
+                if let Ok(Some(counts)) = counting.await {
+                    self.drafts.set(Some(counts));
                 }
             }
             self.arrived(generation, all);
@@ -1012,8 +1022,22 @@ impl FolderInner {
                 // Summed over the account's folders like the two above, but
                 // asked for rather than derived: the Outbox is not a mailbox
                 // and has no cached column to sum.
-                outbox: self.outbox.get(),
+                outbox: self.drafts.get().map_or(0, |counts| counts.outbox),
+                drafts: 0,
+                attention: 0,
             };
+            // The Drafts row's two numbers, which no cached column holds:
+            // what Drafts shows excludes what is on its way, and nothing on a
+            // mailbox row counts what has stopped and is waiting for somebody.
+            if let Some(drafts) = self.drafts.get() {
+                for mailbox in mailboxes
+                    .iter_mut()
+                    .filter(|m| m.role == MailboxRole::Drafts)
+                {
+                    mailbox.counts.total = drafts.drafts;
+                    mailbox.counts.attention = drafts.attention;
+                }
+            }
             mailboxes.extend(postio_ui::sidebar::view_rows(account, &mailboxes, counts));
         }
         self.sidebar.set_mailboxes(&mailboxes);
@@ -1055,7 +1079,7 @@ impl Folders {
             account: Cell::new(None),
             sections: RefCell::new(Vec::new()),
             mailboxes: RefCell::new(Vec::new()),
-            outbox: Cell::new(0),
+            drafts: Cell::new(None),
             trackers: RefCell::new(Trackers::default()),
             generation: Cell::new(0),
             queued: Cell::new(false),

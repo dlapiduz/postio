@@ -79,6 +79,7 @@ impl MailboxSource for SixMessageThread {
             unread: 0,
             flagged: 0,
             snoozed: 0,
+            attention: 0,
         };
         Box::pin(async move { Ok(vec![inbox]) })
     }

@@ -170,13 +170,15 @@ impl MailboxSource for Sources {
                         attention = counts.attention,
                         "draft counts read"
                     );
-                    Ok(postio_ui::sidebar::ViewCounts {
+                    Ok(Some(postio_ui::sidebar::ViewCounts {
                         // Filled by `Folders::arrived` from the account's own
                         // folders; this answer is only about drafts.
                         flagged: 0,
                         snoozed: 0,
                         outbox: counts.outbox,
-                    })
+                        drafts: counts.drafts,
+                        attention: counts.attention,
+                    }))
                 }
                 Ok(Err(reason)) => Err(reason),
                 Err(_) => Err("the runtime stopped before the draft counts arrived".to_string()),

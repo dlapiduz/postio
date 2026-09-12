@@ -181,6 +181,7 @@ fn canvas_mailboxes(unread: u32) -> Vec<Mailbox> {
             unread,
             flagged,
             snoozed: 0,
+            attention: 0,
         };
         mailbox
     };

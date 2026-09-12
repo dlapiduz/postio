@@ -217,15 +217,15 @@ with an attention count of 2.
 ### Tests
 
 - [ ] T072 [P] [US2] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: Drafts holds `editing`, `failed` and `unconfirmed` and nothing in flight (FR-020)
-- [ ] T073 [P] [US2] Test in `crates/postio-storage/tests/storage_suite/mailboxes.rs`: the attention count is `failed` plus `unconfirmed`, and the Drafts total excludes in-flight rows (FR-022)
-- [ ] T074 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: no attention marker when nothing needs one (FR-023)
+- [X] T073 [P] [US2] Test in `crates/postio-storage/tests/storage_suite/mailboxes.rs`: the attention count is `failed` plus `unconfirmed`, and the Drafts total excludes in-flight rows (FR-022)
+- [X] T074 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs`: no attention marker when nothing needs one (FR-023)
 - [ ] T075 [P] [US2] Test in `crates/postio-gtk/tests/gtk_suite/gtk_list.rs`: each Drafts row states which state it is in (FR-021)
 - [ ] T076 [P] [US2] Test in `crates/postio-session/tests/session_suite/outbox.rs`: retrying a failed draft moves it to the Outbox and lowers the attention count by one (FR-024)
 
 ### Implementation
 
-- [ ] T077 [US2] Surface the attention count through the shared model in `crates/postio-ui/src/sidebar.rs`, separate from the total
-- [ ] T078 [US2] Draw the total and the attention marker on the Drafts row in `crates/postio-gtk/src/sidebar.rs`, and announce what each number means
+- [X] T077 [US2] Surface the attention count through the shared model in `crates/postio-ui/src/sidebar.rs`, separate from the total
+- [X] T078 [US2] Draw the total and the attention marker on the Drafts row in `crates/postio-gtk/src/sidebar.rs`, and announce what each number means
 - [ ] T079 [US2] Make retry reach the Outbox from a failed draft in `crates/postio-app/src/compose.rs`, emitting `DraftStateChanged`
 - [ ] T080 [US2] Confirm opening a failed draft says why it failed in `crates/postio-app/src/compose.rs` (FR-025, #1487's work) and add the assertion if it is missing
 

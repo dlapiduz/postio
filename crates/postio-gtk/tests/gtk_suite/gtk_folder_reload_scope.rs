@@ -85,6 +85,7 @@ impl MailboxSource for Store {
                 unread: 0,
                 flagged: FLAGGED_TOTAL,
                 snoozed: SNOOZED_TOTAL,
+                attention: 0,
             };
             mailbox
         };

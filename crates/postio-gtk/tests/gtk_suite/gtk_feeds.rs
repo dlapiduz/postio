@@ -55,6 +55,7 @@ impl Store {
                 unread,
                 flagged: 0,
                 snoozed: 0,
+                attention: 0,
             };
             // A folder that has synced, so the status line has an age to show.
             //

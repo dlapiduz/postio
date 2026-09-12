@@ -287,6 +287,8 @@ impl<'a> MailboxRepository<'a> {
             unread: row.get(1)?,
             flagged: row.get(2)?,
             snoozed: row.get(3)?,
+            // Not a message count: filled by the sidebar's feed.
+            attention: 0,
         }))
     }
 
@@ -354,6 +356,8 @@ impl<'a> MailboxRepository<'a> {
                     unread: row.get::<_, i64>(1)? as u32,
                     flagged: row.get::<_, i64>(2)? as u32,
                     snoozed: row.get::<_, i64>(3)? as u32,
+                    // Not a message count: filled by the sidebar's feed.
+                    attention: 0,
                 })
             },
         )?;
@@ -442,6 +446,8 @@ impl<'a> MailboxRepository<'a> {
                         unread: row.get::<_, i64>(1)? as u32,
                         flagged: row.get::<_, i64>(2)? as u32,
                         snoozed: row.get::<_, i64>(3)? as u32,
+                        // Not a message count: filled by the sidebar's feed.
+                        attention: 0,
                     })
                 },
             )
@@ -510,6 +516,8 @@ fn read_mailbox(row: &Row<'_>) -> rusqlite::Result<Mailbox> {
             unread: row.get(10)?,
             flagged: row.get(11)?,
             snoozed: row.get(18)?,
+            // Not a message count: filled by the sidebar's feed.
+            attention: 0,
         },
         generation: row
             .get::<_, Option<i64>>(13)?

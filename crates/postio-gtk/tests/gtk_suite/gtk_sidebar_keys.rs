@@ -203,6 +203,8 @@ pub fn the_keyboard_walks_onto_the_outbox_and_opens_it() {
             flagged: 2,
             snoozed: 0,
             outbox: 1,
+            drafts: 0,
+            attention: 0,
         },
     ));
     window.sidebar().set_mailboxes(&all);
