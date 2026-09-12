@@ -1183,6 +1183,21 @@ impl Window {
         self.imp().compose_button.get().cloned()
     }
 
+    /// What the window is currently saying to the person at the keyboard.
+    ///
+    /// The text rather than the widget: a caller wanting to know whether
+    /// something was said wants to read it, and handing out the overlay would
+    /// let anything show a toast without going through the two methods that
+    /// decide how one is phrased.
+    pub fn announced(&self) -> Option<String> {
+        self.imp()
+            .toast
+            .get()
+            .and_then(|toast| toast.showing())
+            .and_then(|shown| shown.title())
+            .map(|title| title.to_string())
+    }
+
     /// A plain statement to the person at the keyboard, with nothing to undo.
     ///
     /// Not [`Window::show_action_completed`] with `undoable: false`, though
