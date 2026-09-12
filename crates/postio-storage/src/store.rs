@@ -145,7 +145,7 @@ impl Store {
     /// [`Error::WrongStoreKey`] says so in a sentence that is actionable
     /// (#404).
     async fn prove_the_key_fits(&self) -> Result<()> {
-        let connection = self.connect()?;
+        let connection = self.connect_bare()?;
         match connection
             .query("SELECT count(*) FROM sqlite_schema", ())
             .await
@@ -156,21 +156,43 @@ impl Store {
     }
 
     async fn apply_schema(&self) -> Result<()> {
-        let connection = self.connect()?;
-        // Off while the batch runs: the schema declares tables alphabetically,
-        // so a foreign key routinely names a table that does not exist yet.
+        let connection = self.connect_bare()?;
         connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
-        connection.execute("PRAGMA foreign_keys = ON", ()).await?;
         Ok(())
     }
 
-    /// A connection onto the store.
+    /// A connection onto the store, with foreign keys on.
     ///
     /// Cheap: the engine pools these itself, and the returned handle is
     /// `Clone + Send + Sync`. Make one per unit of work rather than holding
     /// one open across awaits that do not touch the database.
-    pub fn connect(&self) -> Result<Connection> {
+    ///
+    /// # Why this is `async` when the engine's own `connect` is not
+    ///
+    /// Because of the pragma. **Foreign keys are per connection and default
+    /// to off**, so a connection that skipped this would see every `ON DELETE
+    /// CASCADE` and `ON DELETE SET NULL` in the schema silently not happen --
+    /// deleting an account would leave its mailboxes, and a cross-account move
+    /// would go on naming an account that is gone. Found exactly that way: the
+    /// saga test asserted the target went NULL and it did not.
+    ///
+    /// Paying an `async` on every checkout to make that impossible is the
+    /// right trade. The alternative -- a `connect_raw` for callers who know
+    /// better -- is an invitation to be wrong quietly.
+    pub async fn connect(&self) -> Result<Connection> {
+        let connection = self.database.connect()?;
+        connection.execute("PRAGMA foreign_keys = ON", ()).await?;
+        Ok(connection)
+    }
+
+    /// A connection with nothing configured on it.
+    ///
+    /// Only for opening: [`apply_schema`](Self::apply_schema) needs foreign
+    /// keys *off* while it runs, because the schema declares tables
+    /// alphabetically and a key routinely names a table that does not exist
+    /// yet.
+    fn connect_bare(&self) -> Result<Connection> {
         self.database.connect().map_err(Into::into)
     }
 

@@ -70,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn a_setting_round_trips_and_replaces() {
         let store = test_support::memory().await;
-        let connection = store.connect().expect("connect");
+        let connection = store.connect().await.expect("connect");
         let settings = SettingsRepository::new(&connection);
 
         assert_eq!(settings.get("session_state").await.expect("read"), None);

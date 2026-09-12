@@ -28,7 +28,7 @@
 //! ```
 //! # async fn example() {
 //! let store = postio_storage::test_support::memory().await;
-//! let connection = store.connect().expect("connect");
+//! let connection = store.connect().await.expect("connect");
 //! # let _ = connection;
 //! # }
 //! ```
