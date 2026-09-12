@@ -213,3 +213,27 @@ with weights, which is simpler.
 **Decision: keep two indexes (metadata, body) for the first implementation**,
 matching today's structure so the equivalence test in SC-002 has a like-for-like
 target. Weights are a follow-up, not part of this feature.
+
+
+## Q8. Partial indexes (found during T032, 2026-09-12)
+
+**The planner will not read through a partial index. It does enforce one.**
+
+Established directly in `turso_capabilities.rs`: a plain index on `(a, b)` is
+used for `WHERE a = ? AND b = ?`; the same index with `WHERE a IS NOT NULL`
+gets `SCAN`. A partial UNIQUE index still refuses a duplicate inside its
+predicate and still allows the row outside it, so this is a performance limit
+and not a correctness one.
+
+It is a sharp one here: the schema had **22** partial indexes, and
+`idx_messages_uid` is on the path `upsert_batch` takes once per message — a
+scan there is a scan per message of every sync.
+
+**What was done.** The sixteen non-unique ones dropped their predicates, which
+costs a little index size and nothing else. The six unique ones kept theirs,
+because the predicate is what makes `idx_identities_one_default` mean "one
+default *per account*" rather than "one default", and gained a non-unique read
+companion each. That is one more index to write on those six tables.
+
+`the_planner_does_not_use_a_partial_index` fails the day this lifts, which is
+when the companions can go and the predicates can come back.

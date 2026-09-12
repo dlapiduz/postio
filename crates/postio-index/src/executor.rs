@@ -1586,11 +1586,11 @@ mod tests {
     /// 18k contacts, which is 4.5 s for a 320-match query. The plan is the
     /// deterministic thing to pin: a timing assertion at that scale is a
     /// bench's job (`search_budget.rs` seeds contacts for exactly that).
-    #[test]
-    fn hydrate_probes_contacts_by_address_key() {
-        let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("checkout");
-        crate::index::ensure_schema(&connection).expect("schema");
+    #[tokio::test]
+    async fn hydrate_probes_contacts_by_address_key() {
+        let database = postio_storage::test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        crate::index::ensure_schema(&connection).await.expect("schema");
 
         let query = postio_search::parse("invoice", at(0).date_naive());
         let request = SearchRequest {
@@ -1604,18 +1604,25 @@ mod tests {
 
         let sql = plan.hydrate_sql("?, ?, ?");
         let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .await
             .expect("prepare the hydrate statement");
-        let steps: Vec<String> = sql::mapped(&mut statement, rusqlite::bind![1i64, 10i64, 11i64, 12i64], |row| {
+        let steps: Vec<String> = sql::mapped(&mut statement, bind![1i64, 10i64, 11i64, 12i64], |row| {
                 row.col(3)
             })
-            .expect("explain")
-            .flatten()
-            .collect();
+            .await
+            .expect("explain");
 
+        // Either the scoped index or the shared one, and either the
+        // constraint's own index or its read companion: the claim is that the
+        // probe is *keyed on the address*, not which of the four keys it.
+        // The companions exist because this engine's planner will not read
+        // through a partial index -- see
+        // `turso_capabilities.rs::the_planner_does_not_use_a_partial_index`.
         assert!(
-            steps.iter().any(|step| step
-                .contains("idx_contacts_account_address (account_id=? AND address_normalized=?)")),
-            "the per-account contacts probe is not keyed on the address; plan:\n{steps:#?}"
+            steps
+                .iter()
+                .any(|step| step.contains("idx_contacts_") && step.contains("address_normalized=?")),
+            "the contacts probe is not keyed on the address; plan:\n{steps:#?}"
         );
         assert!(
             !steps.iter().any(|step| step.starts_with("SCAN c")),

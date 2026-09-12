@@ -569,23 +569,35 @@ pub async fn clear_account_header_index(connection: &Connection, account_id: i64
     ).await? as usize)
 }
 
-/// Rebuilds `messages_fts` from `search_documents`.
+/// Rebuilds the metadata index from `search_documents`.
 ///
-/// This is FTS5's own `'rebuild'` command: it discards and regenerates the
-/// index's internal b-trees from the content table, without touching
-/// `search_documents` itself. Use it after a bulk import that bypassed the
-/// triggers (a batch insert with triggers temporarily disabled, for
-/// instance), or as a maintenance operation if the index is ever suspected
-/// to have drifted from its content.
+/// Dropped and recreated, which is what "rebuild" means for an index. It was
+/// FTS5's own `'rebuild'` command -- a message to a virtual table, telling it
+/// to regenerate its b-trees from its content table. There is no virtual
+/// table to send a message to now: the index is an ordinary index on an
+/// ordinary table, and the engine builds it from the rows the same way it
+/// would any other.
 ///
-/// It does **not** rebuild `message_bodies_fts`, and cannot: that table has no
-/// content table to regenerate from, which is the whole point of it. What
-/// catches a body up is [`messages_missing_body_text`] and the pass that
-/// reads the blob store, because the blob store is where the text is.
+/// Use it after a bulk import that bypassed the triggers, or as a maintenance
+/// operation if the index is ever suspected of having drifted.
+///
+/// It does **not** rebuild the body index, and does not need to: that one is
+/// on `messages.body_search`, a column of the same table, and is maintained
+/// by the same writes. What catches a body up is
+/// [`messages_missing_body_text`] and the pass behind it.
 pub async fn rebuild(connection: &Connection) -> Result<()> {
-    connection.execute_batch("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');").await?;
+    connection
+        .execute_batch(
+            "DROP INDEX IF EXISTS search_documents_fts;
+             CREATE INDEX search_documents_fts ON search_documents
+                 USING fts (sender, recipients, subject, filenames, list_id);",
+        )
+        .await?;
     Ok(())
 }
+
+/// The schema text, for a test that applies it one statement at a time.
+pub const SCHEMA_FOR_TEST: &str = SCHEMA;
 
 const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS search_documents (
@@ -753,11 +765,6 @@ BEGIN
                      FROM attachments WHERE message_id = new.message_id AND filename IS NOT NULL)
     WHERE message_id = new.message_id AND new.message_id IS NOT NULL;
 END;
-END;
-END;
-    INSERT INTO messages_fts (rowid, sender, recipients, subject, filenames, list_id)
-    VALUES (new.message_id, new.sender, new.recipients, new.subject, new.filenames, new.list_id);
-END;
 
 -- Everything that was already here.
 --
@@ -770,9 +777,9 @@ END;
 --
 -- `ON CONFLICT DO NOTHING` rather than a guard on the whole statement: this
 -- runs on every start, and the second run has to be a cheap no-op rather than
--- a second copy of every document. The `INSERT` into `search_documents` fires
--- the FTS triggers below, so `messages_fts` follows without being touched
--- here.
+-- a second copy of every document. The index on `search_documents` follows
+-- the rows without being touched here -- it is an index, and the engine
+-- maintains it the way it maintains any other.
 INSERT INTO search_documents (message_id, subject, sender, recipients, filenames, list_id)
 SELECT
     m.id,
@@ -803,43 +810,52 @@ mod tests {
     use postio_storage::repository::MessageRepository;
     use postio_storage::test_support;
 
-    fn matches(connection: &Connection, query: &str) -> Vec<i64> {
-        let mut statement = connection.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?1 ORDER BY rowid")
-            .expect("prepare");
-        sql::mapped(&mut statement, [query], |row| row.col(0))
-            .expect("query")
-            .collect::<Result<_>>()
-            .expect("rows")
+    /// Metadata matches, through the index rather than through a virtual
+    /// table: `fts_match` takes the columns it is searching, and the planner
+    /// resolves that set to `search_documents_fts`.
+    async fn matches(connection: &Connection, query: &str) -> Vec<i64> {
+        sql::all(
+            connection,
+            "SELECT message_id FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+              ORDER BY message_id",
+            [query],
+            |row| row.col(0),
+        )
+        .await
+        .expect("query")
     }
 
-    #[test]
-    fn a_new_message_is_searchable_by_subject() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn a_new_message_is_searchable_by_subject() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.subject = Some("Quarterly report".to_string());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "quarterly"), vec![message.id.get()]);
-        assert!(matches(&connection, "unrelated").is_empty());
+        assert_eq!(matches(&connection, "quarterly").await, vec![message.id.get()]);
+        assert!(matches(&connection, "unrelated").await.is_empty());
     }
 
-    #[test]
-    fn a_new_message_is_searchable_by_list_id() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn a_new_message_is_searchable_by_list_id() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.list_id = Some("harbour-dev.lists.example.org".to_string());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
         // `matches` runs an unquoted MATCH; a bare hyphen has its own
@@ -847,34 +863,35 @@ mod tests {
         // the query-builder layer instead — see `fts_literal` and
         // `list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address`
         // in `tests/executor.rs` for that path end to end.
-        assert_eq!(matches(&connection, "lists"), vec![message.id.get()]);
-        assert!(matches(&connection, "unrelated").is_empty());
+        assert_eq!(matches(&connection, "lists").await, vec![message.id.get()]);
+        assert!(matches(&connection, "unrelated").await.is_empty());
     }
 
-    #[test]
-    fn recipients_become_searchable_sender_and_recipients_text() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn recipients_become_searchable_sender_and_recipients_text() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.to = vec![EmailAddress::new(Some("Bob"), "bob@example.com")];
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "lovelace"), vec![message.id.get()]);
-        assert_eq!(matches(&connection, "bob"), vec![message.id.get()]);
+        assert_eq!(matches(&connection, "lovelace").await, vec![message.id.get()]);
+        assert_eq!(matches(&connection, "bob").await, vec![message.id.get()]);
     }
 
-    #[test]
-    fn attachment_filenames_become_searchable() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn attachment_filenames_become_searchable() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         let mut attachment = Attachment::new(message.id, "application/pdf", 1024);
@@ -882,138 +899,149 @@ mod tests {
         message.attachments = vec![attachment];
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "invoice"), vec![message.id.get()]);
+        assert_eq!(matches(&connection, "invoice").await, vec![message.id.get()]);
     }
 
-    /// Body matches, which live in their own contentless index now (#407)
-    /// rather than in `messages_fts`.
-    fn body_matches(connection: &Connection, query: &str) -> Vec<i64> {
-        let mut statement = connection.prepare(
-                "SELECT rowid FROM message_bodies_fts
-                  WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
-            )
-            .expect("prepare");
-        sql::mapped(&mut statement, [query], |row| row.col(0))
-            .expect("query")
-            .collect::<Result<_>>()
-            .expect("rows")
+    /// Body matches, which are an index on `messages.body_search` now (#407,
+    /// `specs/004-turso-store`) rather than a contentless table of their own.
+    ///
+    /// The query goes through the same fold the write path applied, which is
+    /// the rule `postio_model::fold` exists to keep: both sides or neither.
+    async fn body_matches(connection: &Connection, query: &str) -> Vec<i64> {
+        let folded = postio_model::fold::fold(query);
+        sql::all(
+            connection,
+            "SELECT id FROM messages WHERE fts_match(body_search, ?1) ORDER BY id",
+            [folded.as_str()],
+            |row| row.col(0),
+        )
+        .await
+        .expect("query")
     }
 
-    #[test]
-    fn index_body_makes_body_text_searchable() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn index_body_makes_body_text_searchable() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        index_body(&connection, message.id.get(), Some("the rebuild is O(n^2)")).expect("index");
+        index_body(&connection, message.id.get(), Some("the rebuild is O(n^2)")).await.expect("index");
 
-        assert_eq!(body_matches(&connection, "rebuild"), vec![message.id.get()]);
+        assert_eq!(body_matches(&connection, "rebuild").await, vec![message.id.get()]);
         assert!(
-            matches(&connection, "rebuild").is_empty(),
+            matches(&connection, "rebuild").await.is_empty(),
             "and not in the metadata index, which no longer carries bodies"
         );
     }
 
-    #[test]
-    fn updating_a_subject_updates_the_index() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn updating_a_subject_updates_the_index() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.subject = Some("Draft subject".to_string());
         let repository = MessageRepository::new(&connection);
-        repository.create(&mut message).expect("create message");
+        repository.create(&mut message).await.expect("create message");
 
         message.subject = Some("Final subject".to_string());
-        repository.update(&mut message).expect("update message");
+        repository.update(&mut message).await.expect("update message");
 
-        assert!(matches(&connection, "draft").is_empty());
-        assert_eq!(matches(&connection, "final"), vec![message.id.get()]);
+        assert!(matches(&connection, "draft").await.is_empty());
+        assert_eq!(matches(&connection, "final").await, vec![message.id.get()]);
     }
 
-    #[test]
-    fn deleting_a_message_removes_it_from_the_index() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn deleting_a_message_removes_it_from_the_index() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.subject = Some("Ephemeral".to_string());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
-        assert_eq!(matches(&connection, "ephemeral"), vec![message.id.get()]);
+        assert_eq!(matches(&connection, "ephemeral").await, vec![message.id.get()]);
 
         MessageRepository::new(&connection)
             .delete(&[message.id])
+            .await
             .expect("delete message");
 
-        assert!(matches(&connection, "ephemeral").is_empty());
+        assert!(matches(&connection, "ephemeral").await.is_empty());
         let count: i64 = sql::one(
-            connection,
+            &connection,
             "SELECT count(*) FROM search_documents",
-            [],
-            |row| {
-                row.col(0)
-            },
+            (),
+            |row| row.col(0),
         )
         .await
             .expect("count");
         assert_eq!(count, 0, "the shadow row must be cleaned up too");
     }
 
-    #[test]
-    fn ensure_schema_is_idempotent() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("first application");
-        ensure_schema(&connection).expect("second application must be a no-op, not an error");
+    #[tokio::test]
+    async fn ensure_schema_is_idempotent() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("first application");
+        ensure_schema(&connection).await.expect("second application must be a no-op, not an error");
     }
 
-    #[test]
-    fn rebuild_restores_the_index_after_it_is_hand_emptied() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+    #[tokio::test]
+    async fn rebuild_restores_the_index_after_it_is_hand_emptied() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.subject = Some("Rebuildable".to_string());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("create message");
 
-        connection.execute_batch("DELETE FROM messages_fts;")
-            .expect("empty the index directly, simulating drift");
-        assert!(matches(&connection, "rebuildable").is_empty());
+        // Drift, simulated the only way an index method allows: drop the
+        // index. There is no shadow table to empty -- which is itself the
+        // point of the change, since the drift this test was written for
+        // (#407) was a shadow table falling out of step with its content.
+        connection
+            .execute_batch("DROP INDEX search_documents_fts;")
+            .await
+            .expect("drop the index, simulating drift");
 
-        rebuild(&connection).expect("rebuild");
+        rebuild(&connection).await.expect("rebuild");
 
-        assert_eq!(matches(&connection, "rebuildable"), vec![message.id.get()]);
+        assert_eq!(matches(&connection, "rebuildable").await, vec![message.id.get()]);
     }
 
-    #[test]
-    fn index_body_on_an_unknown_message_is_a_harmless_no_op() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
+    #[tokio::test]
+    async fn index_body_on_an_unknown_message_is_a_harmless_no_op() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
 
-        index_body(&connection, 999, Some("text")).expect("no-op, not an error");
+        index_body(&connection, 999, Some("text")).await.expect("no-op, not an error");
     }
 
     /// A second account in the same store, for the scoping tests below.
-    fn second_account(
+    async fn second_account(
         connection: &Connection,
     ) -> (postio_model::Account, postio_model::ids::MailboxId) {
         let mut account = postio_model::Account::new(
@@ -1022,23 +1050,24 @@ mod tests {
         );
         postio_storage::repository::AccountRepository::new(connection)
             .create(&mut account)
+            .await
             .expect("second account");
-        let mailbox = postio_storage::test_support::mailbox(connection, &account, "INBOX");
+        let mailbox = postio_storage::test_support::mailbox(connection, &account, "INBOX").await;
         (account, mailbox.id)
     }
 
-    #[test]
-    fn clearing_and_recandidating_a_bodys_index_touches_only_that_account() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (first, first_inbox) = test_support::account_with_inbox(&connection);
-        let (second, second_inbox) = second_account(&connection);
+    #[tokio::test]
+    async fn clearing_and_recandidating_a_bodys_index_touches_only_that_account() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (first, first_inbox) = test_support::account_with_inbox(&connection).await;
+        let (second, second_inbox) = second_account(&connection).await;
 
         let messages = MessageRepository::new(&connection);
         let mut a = Message::new(first.id, first_inbox, Utc::now());
         a.sync.body_state = postio_model::BodyState::Full;
-        messages.create(&mut a).expect("create a");
+        messages.create(&mut a).await.expect("create a");
         index_body_of(
             &connection,
             a.id.get(),
@@ -1047,11 +1076,12 @@ mod tests {
                 html: None,
             },
         )
+        .await
         .expect("index a's body");
 
         let mut b = Message::new(second.id, second_inbox, Utc::now());
         b.sync.body_state = postio_model::BodyState::Full;
-        messages.create(&mut b).expect("create b");
+        messages.create(&mut b).await.expect("create b");
         index_body_of(
             &connection,
             b.id.get(),
@@ -1060,39 +1090,43 @@ mod tests {
                 html: None,
             },
         )
+        .await
         .expect("index b's body");
 
         // Both are indexed, so neither is a candidate for either account yet.
         assert!(
             messages_missing_body_text_for_account(&connection, first.id.get(), 10)
+                .await
                 .expect("candidates")
                 .is_empty()
         );
 
-        let cleared = clear_account_body_index(&connection, first.id.get()).expect("clear");
+        let cleared = clear_account_body_index(&connection, first.id.get()).await.expect("clear");
         assert_eq!(cleared, 1, "only the first account's one message");
 
         assert_eq!(
             messages_missing_body_text_for_account(&connection, first.id.get(), 10)
+                .await
                 .expect("candidates"),
             vec![a.id.get()],
             "the cleared account's message is a candidate again"
         );
         assert!(
             messages_missing_body_text_for_account(&connection, second.id.get(), 10)
+                .await
                 .expect("candidates")
                 .is_empty(),
             "the other account's index was never touched"
         );
     }
 
-    #[test]
-    fn clearing_and_recandidating_headers_touches_only_that_account() {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        ensure_schema(&connection).expect("schema");
-        let (first, first_inbox) = test_support::account_with_inbox(&connection);
-        let (second, second_inbox) = second_account(&connection);
+    #[tokio::test]
+    async fn clearing_and_recandidating_headers_touches_only_that_account() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        ensure_schema(&connection).await.expect("schema");
+        let (first, first_inbox) = test_support::account_with_inbox(&connection).await;
+        let (second, second_inbox) = second_account(&connection).await;
 
         let messages = MessageRepository::new(&connection);
         let block = postio_model::headers::Block {
@@ -1100,32 +1134,38 @@ mod tests {
             truncated: false,
         };
         let mut a = Message::new(first.id, first_inbox, Utc::now());
-        messages.create(&mut a).expect("create a");
+        messages.create(&mut a).await.expect("create a");
         messages
             .set_headers(a.id, Some(&block))
+            .await
             .expect("store a's block");
         index_headers(&connection, a.id.get(), &postio_model::Headers::default())
+            .await
             .expect("index a's headers");
 
         let mut b = Message::new(second.id, second_inbox, Utc::now());
-        messages.create(&mut b).expect("create b");
+        messages.create(&mut b).await.expect("create b");
         messages
             .set_headers(b.id, Some(&block))
+            .await
             .expect("store b's block");
         index_headers(&connection, b.id.get(), &postio_model::Headers::default())
+            .await
             .expect("index b's headers");
 
-        let cleared = clear_account_header_index(&connection, first.id.get()).expect("clear");
+        let cleared = clear_account_header_index(&connection, first.id.get()).await.expect("clear");
         assert_eq!(cleared, 1, "only the first account's one message");
 
         assert_eq!(
             messages_missing_header_rows_for_account(&connection, first.id.get(), 10)
+                .await
                 .expect("candidates"),
             vec![a.id.get()],
             "the cleared account's message is a candidate again"
         );
         assert!(
             messages_missing_header_rows_for_account(&connection, second.id.get(), 10)
+                .await
                 .expect("candidates")
                 .is_empty(),
             "the other account's index was never touched"

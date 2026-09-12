@@ -560,19 +560,17 @@ CREATE TABLE unsubscribe_activations (
 
 CREATE UNIQUE INDEX idx_addresses_normalized ON addresses (address_normalized);
 
-CREATE INDEX idx_attachments_blob ON attachments (blob_id) WHERE blob_id IS NOT NULL;
+CREATE INDEX idx_attachments_blob ON attachments (blob_id);
 
 CREATE INDEX idx_attachments_draft
-    ON attachments (draft_id, position)
-    WHERE draft_id IS NOT NULL;
+    ON attachments (draft_id, position);
 
-CREATE INDEX idx_attachments_filename ON attachments (filename) WHERE filename IS NOT NULL;
+CREATE INDEX idx_attachments_filename ON attachments (filename);
 
 CREATE INDEX idx_attachments_message ON attachments (message_id, position);
 
 CREATE INDEX idx_attachments_pending
-    ON attachments (message_id)
-    WHERE blob_id IS NULL AND part_id IS NOT NULL;
+    ON attachments (message_id);
 
 CREATE UNIQUE INDEX idx_contacts_account_address
     ON contacts (account_id, address_normalized) WHERE account_id IS NOT NULL;
@@ -591,11 +589,11 @@ CREATE INDEX idx_cross_account_moves_phase ON cross_account_moves (phase);
 
 CREATE INDEX idx_drafts_account_updated ON drafts (account_id, updated_at DESC);
 
-CREATE INDEX idx_drafts_message ON drafts (message_id) WHERE message_id IS NOT NULL;
+CREATE INDEX idx_drafts_message ON drafts (message_id);
 
 CREATE INDEX idx_drafts_state ON drafts (state, updated_at);
 
-CREATE INDEX idx_drafts_thread ON drafts (thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX idx_drafts_thread ON drafts (thread_id);
 
 CREATE INDEX idx_egress_log_at ON egress_log (at DESC);
 
@@ -618,41 +616,37 @@ CREATE INDEX idx_messages_account_list
     ON messages (account_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
 
 CREATE INDEX idx_messages_body_state
-    ON messages (mailbox_id, received_at DESC)
-    WHERE body_state IN ('not_fetched', 'headers_only');
+    ON messages (mailbox_id, received_at DESC);
 
 CREATE INDEX idx_messages_flagged
-    ON messages (account_id, received_at DESC, id DESC) WHERE flagged = 1;
+    ON messages (account_id, received_at DESC, id DESC);
 
 CREATE INDEX idx_messages_in_reply_to
-    ON messages (account_id, in_reply_to) WHERE in_reply_to IS NOT NULL;
+    ON messages (account_id, in_reply_to);
 
 CREATE INDEX idx_messages_list
     ON messages (mailbox_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
 
-CREATE INDEX idx_messages_list_id ON messages (account_id, list_id) WHERE list_id IS NOT NULL;
+CREATE INDEX idx_messages_list_id ON messages (account_id, list_id);
 
 CREATE INDEX idx_messages_mailbox_remote_id ON messages (mailbox_id, remote_id);
 
 CREATE INDEX idx_messages_mod_seq ON messages (mailbox_id, mod_seq);
 
 CREATE INDEX idx_messages_partial
-    ON messages (mailbox_id, received_at DESC)
-    WHERE body_state = 'partial';
+    ON messages (mailbox_id, received_at DESC);
 
 CREATE INDEX idx_messages_recency
     ON messages (received_at DESC, id DESC, deleted_locally, snoozed_until);
 
 CREATE INDEX idx_messages_rfc_message_id
-    ON messages (account_id, rfc_message_id) WHERE rfc_message_id IS NOT NULL;
+    ON messages (account_id, rfc_message_id);
 
 CREATE INDEX idx_messages_send_state
-    ON messages (account_id, send_state)
- WHERE send_state IS NOT NULL;
+    ON messages (account_id, send_state);
 
 CREATE INDEX idx_messages_snoozed_due
-    ON messages (account_id, snoozed_until, mailbox_id)
-    WHERE snoozed_until IS NOT NULL;
+    ON messages (account_id, snoozed_until, mailbox_id);
 
 CREATE INDEX idx_messages_thread
     ON messages (thread_id, received_at, id, deleted_locally, snoozed_until);
@@ -670,8 +664,7 @@ CREATE INDEX idx_operation_queue_target ON operation_queue (target_kind, target_
 
 CREATE INDEX idx_recipients_address ON recipients (address_id, kind);
 
-CREATE INDEX idx_recipients_draft ON recipients (draft_id, kind, position)
-    WHERE draft_id IS NOT NULL;
+CREATE INDEX idx_recipients_draft ON recipients (draft_id, kind, position);
 
 CREATE INDEX idx_recipients_message ON recipients (message_id, kind, position);
 
@@ -698,10 +691,48 @@ CREATE INDEX idx_threads_account_subject ON threads (account_id, subject);
 
 CREATE INDEX idx_threads_last_at ON threads (last_at DESC, id DESC);
 
-CREATE INDEX idx_threads_subject ON threads (subject) WHERE subject IS NOT NULL;
+CREATE INDEX idx_threads_subject ON threads (subject);
 
 CREATE INDEX idx_unsubscribe_activations_account
     ON unsubscribe_activations (account_id, activated_at DESC);
+
+
+-- Read companions for the partial UNIQUE indexes above.
+--
+-- # Why these exist
+--
+-- The engine **enforces** a partial unique index correctly -- a duplicate
+-- inside the predicate is refused and a row outside it is allowed -- but its
+-- planner will not *read* through one: a query that matches a partial index
+-- exactly still gets `SCAN`. Verified directly in
+-- `turso_capabilities.rs::the_planner_does_not_use_a_partial_index`.
+--
+-- Every non-unique partial index in this schema simply dropped its predicate,
+-- which costs a little index size and nothing else. The six unique ones
+-- cannot: the predicate is what makes them mean "one default identity *per
+-- account*" rather than "one default identity", and dropping it would change
+-- what the schema forbids.
+--
+-- So the constraint keeps its partial index and the read path gets a
+-- non-unique twin. That is one more index to write on each of these tables,
+-- which is the price of the planner limitation and is written down here so
+-- the day it lifts, these can go.
+--
+-- `idx_messages_uid` is the one that made this non-optional: `upsert_batch`
+-- looks a message up by `(mailbox_id, uid_validity, uid)` once per message,
+-- so a scan there is a scan per message of a sync.
+CREATE INDEX idx_messages_uid_read ON messages (mailbox_id, uid_validity, uid);
+
+CREATE INDEX idx_contacts_account_address_read
+    ON contacts (account_id, address_normalized);
+
+CREATE INDEX idx_contacts_shared_address_read ON contacts (address_normalized);
+
+CREATE INDEX idx_identities_default_read ON identities (account_id, is_default);
+
+CREATE INDEX idx_settings_account_key_read ON settings (account_id, key);
+
+CREATE INDEX idx_settings_global_key_read ON settings (key);
 
 CREATE TRIGGER messages_count_delete AFTER DELETE ON messages
 WHEN OLD.deleted_locally = 0
