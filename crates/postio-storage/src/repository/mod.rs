@@ -29,48 +29,47 @@
 
 mod settings;
 
-// Ported back one at a time -- see specs/004-turso-store tasks T016-T026.
-// mod accounts;
-// mod contact_groups;
-// mod contacts;
-// mod cross_account;
-// mod drafts;
-// mod egress;
-// mod labels;
-// mod mailbox_roles;
-// mod mailboxes;
-// mod messages;
-// mod operations;
-// mod sync_state;
-// mod threading;
-// mod threads;
-// mod unsubscribe;
+mod accounts;
+mod contact_groups;
+mod contacts;
+mod cross_account;
+mod drafts;
+mod egress;
+mod labels;
+mod mailbox_roles;
+mod mailboxes;
+mod messages;
+mod operations;
+mod sync_state;
+mod threading;
+mod threads;
+mod unsubscribe;
 
-// pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
-// pub use contact_groups::ContactGroupRepository;
-// pub use contacts::ContactRepository;
-// pub use cross_account::{
-//     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
-// };
-// pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
-// pub use egress::EgressLogRepository;
-// pub use labels::LabelRepository;
-// pub use mailbox_roles::MailboxRoleRepository;
-// pub use mailboxes::{DraftCounts, MailboxRepository};
-// pub use operations::{OperationQueueRepository, QueuedOperation};
+pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
+pub use contact_groups::ContactGroupRepository;
+pub use contacts::ContactRepository;
+pub use cross_account::{
+    CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
+};
+pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
+pub use egress::EgressLogRepository;
+pub use labels::LabelRepository;
+pub use mailbox_roles::MailboxRoleRepository;
+pub use mailboxes::{DraftCounts, MailboxRepository};
+pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use settings::SettingsRepository;
-// pub use sync_state::SyncStateRepository;
-// pub use threading::{Threaded, ThreadingRepository};
-// pub use threads::{
-//     DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
-//     ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
-// };
-// pub use unsubscribe::UnsubscribeRepository;
+pub use sync_state::SyncStateRepository;
+pub use threading::{Threaded, ThreadingRepository};
+pub use threads::{
+    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
+    ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
+};
+pub use unsubscribe::UnsubscribeRepository;
 
-// pub use messages::{
-//     BackfillCandidate, ColumnFlag, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
-//     MessageListRow, MessageRepository, MessageSet, StorageFootprint, StoredBody, UpsertReport,
-// };
+pub use messages::{
+    BackfillCandidate, ColumnFlag, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
+    MessageListRow, MessageRepository, MessageSet, StorageFootprint, StoredBody, UpsertReport,
+};
 
 use chrono::{DateTime, Utc};
 use crate::store::Connection;

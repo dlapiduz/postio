@@ -24,8 +24,113 @@ use turso::{Connection, IntoParams, Row, Value};
 
 use crate::error::{Error, Result};
 
+/// What a column can be read as.
+///
+/// Deliberately inference-friendly: `row.col(3)?` works out its own type from
+/// what the surrounding struct field wants, which is what makes a row mapper
+/// readable. The named accessors below are for the places where there is
+/// nothing to infer from.
+pub(crate) trait FromColumn: Sized {
+    /// Read this type out of `value`, or say what was there instead.
+    fn from_column(value: Value, index: usize) -> Result<Self>;
+}
+
+impl FromColumn for Value {
+    fn from_column(value: Value, _index: usize) -> Result<Self> {
+        Ok(value)
+    }
+}
+
+impl FromColumn for String {
+    fn from_column(value: Value, index: usize) -> Result<Self> {
+        match value {
+            Value::Text(text) => Ok(text),
+            other => Err(wrong_type(index, "TEXT", &other)),
+        }
+    }
+}
+
+impl FromColumn for Vec<u8> {
+    fn from_column(value: Value, index: usize) -> Result<Self> {
+        match value {
+            Value::Blob(bytes) => Ok(bytes),
+            // A TEXT column read as bytes: the bodies moved from BLOB to TEXT
+            // and some callers still want the raw bytes.
+            Value::Text(text) => Ok(text.into_bytes()),
+            other => Err(wrong_type(index, "BLOB", &other)),
+        }
+    }
+}
+
+impl FromColumn for bool {
+    fn from_column(value: Value, index: usize) -> Result<Self> {
+        Ok(i64::from_column(value, index)? != 0)
+    }
+}
+
+impl FromColumn for f64 {
+    fn from_column(value: Value, index: usize) -> Result<Self> {
+        match value {
+            Value::Real(number) => Ok(number),
+            Value::Integer(number) => Ok(number as f64),
+            other => Err(wrong_type(index, "REAL", &other)),
+        }
+    }
+}
+
+/// `None` for NULL, and otherwise whatever `T` reads.
+///
+/// The whole reason this trait exists rather than the engine's sealed
+/// `FromValue`: there, a NULL is an error.
+impl<T: FromColumn> FromColumn for Option<T> {
+    fn from_column(value: Value, index: usize) -> Result<Self> {
+        match value {
+            Value::Null => Ok(None),
+            other => T::from_column(other, index).map(Some),
+        }
+    }
+}
+
+/// Every integer width the schema and the model between them use.
+///
+/// A narrowing that does not fit is an error rather than a wrap: the column
+/// was written by this crate, so a `u32` that will not hold what came back
+/// means the row is wrong, and silently truncating a UID or a port would be
+/// worse than saying so.
+macro_rules! integer_column {
+    ($($ty:ty),* $(,)?) => {$(
+        impl FromColumn for $ty {
+            fn from_column(value: Value, index: usize) -> Result<Self> {
+                let number = match value {
+                    Value::Integer(number) => number,
+                    // `sum()` and `avg()` come back REAL; so does an integer
+                    // column that went through arithmetic.
+                    Value::Real(number) => number as i64,
+                    other => return Err(wrong_type(index, "INTEGER", &other)),
+                };
+                <$ty>::try_from(number).map_err(|_| Error::ColumnType {
+                    column: format!("column {index}"),
+                    reason: format!(
+                        "{number} does not fit in {}",
+                        std::any::type_name::<$ty>()
+                    ),
+                })
+            }
+        }
+    )*};
+}
+
+integer_column!(i64, i32, i16, i8, u64, u32, u16, u8, usize, isize);
+
 /// Typed column access, with NULL as `None` rather than as an error.
 pub(crate) trait RowExt {
+    /// A column, as whatever the caller needs it to be.
+    ///
+    /// The workhorse. `row.col(0)?` infers from context exactly the way
+    /// `rusqlite`'s `row.get(0)?` did, which is what keeps a twenty-field row
+    /// mapper readable.
+    fn col<T: FromColumn>(&self, index: usize) -> Result<T>;
+
     /// The raw value, for a caller that wants to branch on its type.
     fn value(&self, index: usize) -> Result<Value>;
 
@@ -68,6 +173,10 @@ fn describe(value: &Value) -> &'static str {
 }
 
 impl RowExt for Row {
+    fn col<T: FromColumn>(&self, index: usize) -> Result<T> {
+        T::from_column(self.value(index)?, index)
+    }
+
     fn value(&self, index: usize) -> Result<Value> {
         self.get_value(index).map_err(Into::into)
     }
@@ -171,6 +280,52 @@ where
     };
     drop(rows);
     Ok(mapped)
+}
+
+/// Every row of an already-prepared statement, mapped.
+///
+/// [`all`] is the one to reach for; this is for the handful of queries whose
+/// SQL is built at runtime and prepared separately — a placeholder list whose
+/// length is the caller's, most often. Collects and drops for the same reason
+/// [`all`] does.
+pub(crate) async fn mapped<T, F>(
+    statement: &mut turso::Statement,
+    params: impl IntoParams,
+    mut map: F,
+) -> Result<Vec<T>>
+where
+    F: FnMut(&Row) -> Result<T>,
+{
+    let mut rows = statement.query(params).await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(map(&row)?);
+    }
+    drop(rows);
+    Ok(out)
+}
+
+/// The first row, mapped, where there must be one.
+///
+/// What `query_row` meant: an aggregate, or a lookup by a key the caller has
+/// already established exists. [`Error::NotFound`] rather than a panic,
+/// because "must" here is the caller's belief and not something the type
+/// system checked.
+pub(crate) async fn one<T, F>(
+    connection: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+    map: F,
+) -> Result<T>
+where
+    F: FnOnce(&Row) -> Result<T>,
+{
+    first(connection, sql, params, map)
+        .await?
+        .ok_or(Error::NotFound {
+            entity: "row",
+            id: 0,
+        })
 }
 
 /// A single-column aggregate: `count(*)`, `max(id)`, `sum(size)`.
@@ -289,3 +444,109 @@ where
         }
     }
 }
+
+/// What a value binds to, as a parameter.
+///
+/// # Why not `turso::params!`
+///
+/// Because it moves. `params![account.display_name, account.address.address]`
+/// against a `&Account` does not compile, and the engine's `IntoValue` is a
+/// blanket impl over `TryInto<Value>` that no local trait can widen. The
+/// alternative was `.clone()` or `.as_str()` on several hundred call sites,
+/// each one a chance to pick the wrong one.
+///
+/// So this borrows, exactly the way `rusqlite::params!` did, and [`bind!`]
+/// produces the `[Value; N]` the engine wants.
+pub(crate) trait Bind {
+    /// This value, as the engine's `Value`.
+    fn bind(&self) -> Value;
+}
+
+impl Bind for String {
+    fn bind(&self) -> Value {
+        Value::Text(self.clone())
+    }
+}
+
+impl Bind for str {
+    fn bind(&self) -> Value {
+        Value::Text(self.to_owned())
+    }
+}
+
+impl Bind for bool {
+    fn bind(&self) -> Value {
+        Value::Integer(i64::from(*self))
+    }
+}
+
+impl Bind for f64 {
+    fn bind(&self) -> Value {
+        Value::Real(*self)
+    }
+}
+
+impl Bind for Vec<u8> {
+    fn bind(&self) -> Value {
+        Value::Blob(self.clone())
+    }
+}
+
+impl Bind for [u8] {
+    fn bind(&self) -> Value {
+        Value::Blob(self.to_vec())
+    }
+}
+
+impl Bind for Value {
+    fn bind(&self) -> Value {
+        self.clone()
+    }
+}
+
+impl<T: Bind + ?Sized> Bind for &T {
+    fn bind(&self) -> Value {
+        (**self).bind()
+    }
+}
+
+impl<T: Bind> Bind for Option<T> {
+    fn bind(&self) -> Value {
+        match self {
+            Some(value) => value.bind(),
+            None => Value::Null,
+        }
+    }
+}
+
+/// Every integer width a column or a model field is spelled in.
+///
+/// Widening to `i64` because that is the only integer the engine stores. A
+/// `u64` too large for `i64` is clamped rather than refused: the only one in
+/// this schema is a `ModSeq`, which no server has ever issued anywhere near
+/// that high, and failing a sync write over it would be worse than storing a
+/// saturated value.
+macro_rules! bind_integer {
+    ($($ty:ty),* $(,)?) => {$(
+        impl Bind for $ty {
+            fn bind(&self) -> Value {
+                Value::Integer(i64::try_from(*self).unwrap_or(i64::MAX))
+            }
+        }
+    )*};
+}
+
+bind_integer!(i64, i32, i16, i8, u64, u32, u16, u8, usize, isize);
+
+/// Positional parameters, borrowing rather than moving.
+///
+/// `bind![a, b, c]` where `turso::params![a, b, c]` would have moved. See
+/// [`Bind`].
+macro_rules! bind {
+    () => { () };
+    ($($value:expr),* $(,)?) => {
+        [$($crate::sql::Bind::bind(&$value)),*]
+    };
+}
+
+pub(crate) use bind;

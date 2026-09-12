@@ -28,8 +28,6 @@ use postio_model::{
     Generation, LabelId, LocalSyncState, MailboxId, Message, MessageId, ModSeq, OperationRange,
     RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
-use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 /// Which messages a list shows.
 ///
@@ -39,6 +37,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 pub use postio_model::ListScope;
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::{Error, Result};
 
 /// How many rows a page holds when the caller does not say.
@@ -348,7 +350,7 @@ impl MessageSet {
                     format!("messages.mailbox_id = ?{first} AND messages.deleted_locally = 0");
                 sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
-                arguments.extend(except.iter().map(|id| id.get()));
+                arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
                 (sql, arguments)
             }
             // The unified view's rows are conversations too, so the
@@ -360,7 +362,7 @@ impl MessageSet {
                     format!("messages.account_id IN ({ids}) AND messages.deleted_locally = 0");
                 sql.push_str(&without_conversations(except, first + accounts.len()));
                 let mut arguments: Vec<i64> = accounts.iter().map(|id| id.get()).collect();
-                arguments.extend(except.iter().map(|id| id.get()));
+                arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
                 (sql, arguments)
             }
             // The subquery is bounded by two integers, so SQLite seeks the
@@ -398,7 +400,7 @@ impl MessageSet {
                     ));
                 }
                 let mut arguments = vec![account.get()];
-                arguments.extend(except.iter().map(|id| id.get()));
+                arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
                 (sql, arguments)
             }
             MessageSet::InSourceMailbox { set, mailbox } => {
@@ -641,14 +643,6 @@ impl StorageFootprint {
 #[derive(Debug)]
 pub struct MessageRepository<'a> {
     connection: &'a Connection,
-    /// Compression dictionaries this repository has already loaded.
-    ///
-    /// Interior mutability so `body` and `set_body` stay `&self` like every
-    /// other method here. Held per repository rather than globally: a pass
-    /// that reads a batch of bodies builds one repository and loads the
-    /// dictionary once, and a repository built for a single read never loads
-    /// one it does not need. See [`crate::body::Dictionaries`].
-    dictionaries: std::cell::RefCell<crate::body::Dictionaries>,
 }
 
 const MESSAGE_COLUMNS: &str = "\
@@ -688,7 +682,6 @@ impl<'a> MessageRepository<'a> {
     pub fn new(connection: &'a Connection) -> Self {
         Self {
             connection,
-            dictionaries: std::cell::RefCell::default(),
         }
     }
 
@@ -697,13 +690,14 @@ impl<'a> MessageRepository<'a> {
     /// The body and the header block are *not* written: they belong to the blob
     /// store, and their keys are set with
     /// [`MessageRepository::set_body`].
-    pub fn create(&self, message: &mut Message) -> Result<MessageId> {
-        let transaction = super::Scope::open(self.connection)?;
-        let id = insert(&transaction, message)?;
-        message.id = id;
-        write_children(&transaction, message)?;
-        transaction.commit()?;
-        Ok(id)
+    pub async fn create(&self, message: &mut Message) -> Result<MessageId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let id = insert(&transaction, message).await?;
+            message.id = id;
+            write_children(&transaction, message).await?;
+            Ok(id)
+        })
+        .await
     }
 
     /// Writes a message back, replacing its recipients, attachments and labels.
@@ -711,11 +705,12 @@ impl<'a> MessageRepository<'a> {
     /// Takes `&mut` because the attachment rows are rewritten and therefore
     /// re-issued: the value would otherwise be left holding ids that no longer
     /// exist.
-    pub fn update(&self, message: &mut Message) -> Result<()> {
-        let transaction = super::Scope::open(self.connection)?;
-        write_update(&transaction, message)?;
-        transaction.commit()?;
-        Ok(())
+    pub async fn update(&self, message: &mut Message) -> Result<()> {
+        sql::in_scope(self.connection, |transaction| async move {
+            write_update(&transaction, message).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Inserts or updates every message in `batch`, in one transaction, and
@@ -772,114 +767,115 @@ impl<'a> MessageRepository<'a> {
     /// It lifts as soon as the operation settles — `Done` or `Failed`. A move
     /// the server refused must stop hiding the message, or a failed archive
     /// loses mail silently, which is worse than the bug this fixes.
-    pub fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
-        let transaction = super::Scope::open(self.connection)?;
-        let mut report = UpsertReport::default();
+    pub async fn upsert_batch(&self, batch: &mut Vec<Message>) -> Result<UpsertReport> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let mut report = UpsertReport::default();
 
-        // Read once for the batch rather than per message: a store holds a
-        // handful of drafts, and a page holds hundreds of messages.
-        let mine = own_draft_copies(&transaction)?;
-        let before = batch.len();
-        batch.retain(|message| match &message.server.remote_id {
-            Some(remote_id) => !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned())),
-            // Nowhere to have landed, so nothing to be a second copy of.
-            None => true,
-        });
-        report.own_drafts = before - batch.len();
-
-        // The same shape again, on the messages the user has already moved
-        // out of this mailbox and the server has not been told about yet.
-        let shadowed = shadowed_by_pending_operation(&transaction)?;
-        let before = batch.len();
-        batch.retain(|message| match &message.server.remote_id {
-            Some(remote_id) => {
-                !shadowed.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
-            }
-            // No server identity, so no queue row can be shadowing it: the
-            // snapshot is of server coordinates, and this message has none.
-            None => true,
-        });
-        report.shadowed_by_pending = before - batch.len();
-
-        // Read once for the batch, like the two snapshots above.
-        let unacknowledged = unacknowledged_flag_changes(&transaction)?;
-        let awaiting_identity = local_copies_awaiting_identity(&transaction)?;
-
-        for message in batch.iter_mut() {
-            // The identity is what names a message (#543); the wire pair is
-            // the fallback for rows synced before it existed. Matching the
-            // pair first would let a backend whose uids are synthetic
-            // enumeration hints (#544) insert a second copy of a message it
-            // already holds.
-            let by_identity = match &message.server.remote_id {
-                Some(remote_id) => find_by_remote_id(&transaction, message.mailbox_id, remote_id)?,
-                None => None,
-            };
-            let existing = match (by_identity, message.server.uid, message.server.uid_validity) {
-                (Some(id), _, _) => Some(id),
-                (None, Some(uid), Some(validity)) => find_by_generation_uid(
-                    &transaction,
-                    message.mailbox_id,
-                    Generation::new(validity.get()),
-                    uid,
-                )?,
-                _ => None,
-            };
-            // Last, and only for a row with no server coordinates to match
-            // on: the copy this client wrote before the server had named it
-            // (#942). Tried after both server-identity routes so a message
-            // the server *can* place is never resolved by a `Message-ID`.
-            let existing = existing.or_else(|| {
-                let rfc = message.rfc_message_id.as_ref()?;
-                awaiting_identity
-                    .get(&(message.mailbox_id, rfc.as_str().to_ascii_lowercase()))
-                    .copied()
+            // Read once for the batch rather than per message: a store holds a
+            // handful of drafts, and a page holds hundreds of messages.
+            let mine = own_draft_copies(&transaction).await?;
+            let before = batch.len();
+            batch.retain(|message| match &message.server.remote_id {
+                Some(remote_id) => !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned())),
+                // Nowhere to have landed, so nothing to be a second copy of.
+                None => true,
             });
+            report.own_drafts = before - batch.len();
 
-            match existing {
-                Some(id) => {
-                    message.id = id;
-                    // The server's flags, plus whatever the queue is still
-                    // holding on this message's behalf (#317). Without this a
-                    // `CHANGEDSINCE` pass that runs before the drainer writes
-                    // the server's stale copy over a local read, the row goes
-                    // bold again, and the operation eventually sets a `\Seen`
-                    // whose effect nobody ever sees.
-                    if let Some(changes) = unacknowledged.get(&id) {
-                        message.flags = with_unacknowledged(&message.flags, changes);
-                        report.flags_preserved += 1;
-                    }
-                    // Labels are local-only today: nothing on the wire
-                    // carries them, so a `Message` built from a fetch has
-                    // none, and `write_update` replaces the whole set. That
-                    // deleted every label a person had put on a message the
-                    // next time its mailbox synced (#780) -- a feature undone
-                    // by a layer that never knew about it, which is the shape
-                    // `postio-bl2` names.
-                    //
-                    // An empty set therefore means "this sync has nothing to
-                    // say about labels", not "the server says none". When a
-                    // sync does learn to carry them it will supply a set, and
-                    // that set wins here without this needing to change.
-                    if message.labels.is_empty() {
-                        message.labels = read_labels(&transaction, id)?;
-                        if !message.labels.is_empty() {
-                            report.labels_preserved += 1;
-                        }
-                    }
-                    write_update(&transaction, message)?;
-                    report.updated += 1;
+            // The same shape again, on the messages the user has already moved
+            // out of this mailbox and the server has not been told about yet.
+            let shadowed = shadowed_by_pending_operation(&transaction).await?;
+            let before = batch.len();
+            batch.retain(|message| match &message.server.remote_id {
+                Some(remote_id) => {
+                    !shadowed.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
                 }
-                None => {
-                    message.id = insert(&transaction, message)?;
-                    write_children(&transaction, message)?;
-                    report.inserted += 1;
+                // No server identity, so no queue row can be shadowing it: the
+                // snapshot is of server coordinates, and this message has none.
+                None => true,
+            });
+            report.shadowed_by_pending = before - batch.len();
+
+            // Read once for the batch, like the two snapshots above.
+            let unacknowledged = unacknowledged_flag_changes(&transaction).await?;
+            let awaiting_identity = local_copies_awaiting_identity(&transaction).await?;
+
+            for message in batch.iter_mut() {
+                // The identity is what names a message (#543); the wire pair is
+                // the fallback for rows synced before it existed. Matching the
+                // pair first would let a backend whose uids are synthetic
+                // enumeration hints (#544) insert a second copy of a message it
+                // already holds.
+                let by_identity = match &message.server.remote_id {
+                    Some(remote_id) => find_by_remote_id(&transaction, message.mailbox_id, remote_id).await?,
+                    None => None,
+                };
+                let existing = match (by_identity, message.server.uid, message.server.uid_validity) {
+                    (Some(id), _, _) => Some(id),
+                    (None, Some(uid), Some(validity)) => find_by_generation_uid(
+                        &transaction,
+                        message.mailbox_id,
+                        Generation::new(validity.get()),
+                        uid,
+                    ).await?,
+                    _ => None,
+                };
+                // Last, and only for a row with no server coordinates to match
+                // on: the copy this client wrote before the server had named it
+                // (#942). Tried after both server-identity routes so a message
+                // the server *can* place is never resolved by a `Message-ID`.
+                let existing = existing.or_else(|| {
+                    let rfc = message.rfc_message_id.as_ref()?;
+                    awaiting_identity
+                        .get(&(message.mailbox_id, rfc.as_str().to_ascii_lowercase()))
+                        .copied()
+                });
+
+                match existing {
+                    Some(id) => {
+                        message.id = id;
+                        // The server's flags, plus whatever the queue is still
+                        // holding on this message's behalf (#317). Without this a
+                        // `CHANGEDSINCE` pass that runs before the drainer writes
+                        // the server's stale copy over a local read, the row goes
+                        // bold again, and the operation eventually sets a `\Seen`
+                        // whose effect nobody ever sees.
+                        if let Some(changes) = unacknowledged.get(&id) {
+                            message.flags = with_unacknowledged(&message.flags, changes);
+                            report.flags_preserved += 1;
+                        }
+                        // Labels are local-only today: nothing on the wire
+                        // carries them, so a `Message` built from a fetch has
+                        // none, and `write_update` replaces the whole set. That
+                        // deleted every label a person had put on a message the
+                        // next time its mailbox synced (#780) -- a feature undone
+                        // by a layer that never knew about it, which is the shape
+                        // `postio-bl2` names.
+                        //
+                        // An empty set therefore means "this sync has nothing to
+                        // say about labels", not "the server says none". When a
+                        // sync does learn to carry them it will supply a set, and
+                        // that set wins here without this needing to change.
+                        if message.labels.is_empty() {
+                            message.labels = read_labels(&transaction, id).await?;
+                            if !message.labels.is_empty() {
+                                report.labels_preserved += 1;
+                            }
+                        }
+                        write_update(&transaction, message).await?;
+                        report.updated += 1;
+                    }
+                    None => {
+                        message.id = insert(&transaction, message).await?;
+                        write_children(&transaction, message).await?;
+                        report.inserted += 1;
+                    }
                 }
             }
-        }
 
-        transaction.commit()?;
-        Ok(report)
+            Ok(report)
+        })
+        .await
     }
 
     /// Whether this message is one being sent, and in which state.
@@ -911,43 +907,49 @@ impl<'a> MessageRepository<'a> {
     ///
     /// The body and headers are empty: those bytes are in the blob store. See
     /// [`MessageRepository::body`].
-    pub fn get(&self, id: MessageId) -> Result<Option<Message>> {
+    pub async fn get(&self, id: MessageId) -> Result<Option<Message>> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
-        ))?;
-        let mut rows = statement.query([id.get()])?;
-        let Some(row) = rows.next()? else {
+        )).await?;
+        let mut rows = statement.query([id.get()]).await?;
+        let Some(row) = rows.next().await? else {
             return Ok(None);
         };
-        let mut message = read_message(row)?;
+        let mut message = read_message(&row)?;
         drop(rows);
         drop(statement);
 
-        read_recipients(self.connection, &mut message)?;
-        message.attachments = read_attachments(self.connection, id)?;
-        message.labels = read_labels(self.connection, id)?;
+        read_recipients(self.connection, &mut message).await?;
+        message.attachments = read_attachments(self.connection, id).await?;
+        message.labels = read_labels(self.connection, id).await?;
         Ok(Some(message))
     }
 
     /// One window of the message list, newest first.
-    pub fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
+    pub async fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
         let sql = self.explain(query);
-        let mut statement = self.connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(page_arguments(query)), read_list_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        sql::all(
+            self.connection,
+            &sql,
+            page_arguments(query),
+            read_list_row,
+        )
+        .await}
 
     /// One window at a row offset, for a list model that scrolls by index.
     ///
     /// Prefer [`MessageRepository::page`]: an offset is counted from the top of
     /// the list every time, so a message arriving while the user scrolls shifts
     /// every row down and this window silently skips one.
-    pub fn page_at(&self, query: &ListQuery, offset: u32) -> Result<Vec<MessageListRow>> {
+    pub async fn page_at(&self, query: &ListQuery, offset: u32) -> Result<Vec<MessageListRow>> {
         let sql = format!("{} OFFSET {offset}", self.explain(query));
-        let mut statement = self.connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(page_arguments(query)), read_list_row)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        sql::all(
+            self.connection,
+            &sql,
+            page_arguments(query),
+            read_list_row,
+        )
+        .await}
 
     /// The list rows for `ids`, in the order given.
     ///
@@ -965,7 +967,7 @@ impl<'a> MessageRepository<'a> {
     /// deleted between the search and this read is a shorter answer, not an
     /// error — the index and the store are allowed to disagree for a moment,
     /// and the list can render 199 rows perfectly well.
-    pub fn rows_for(&self, ids: &[MessageId]) -> Result<Vec<MessageListRow>> {
+    pub async fn rows_for(&self, ids: &[MessageId]) -> Result<Vec<MessageListRow>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -977,13 +979,12 @@ impl<'a> MessageRepository<'a> {
             let sql = format!(
                 "SELECT {LIST_COLUMNS} FROM messages WHERE messages.id IN ({placeholders})"
             );
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(
-                params_from_iter(chunk.iter().map(|id| id.get())),
+            let mut statement = self.connection.prepare(&sql).await?;
+            let rows = sql::mapped(&mut statement, 
+                chunk.iter().map(|id| id.get()).collect::<Vec<_>>(),
                 read_list_row,
-            )?;
+            ).await?;
             for row in rows {
-                let row = row?;
                 found.insert(row.id, row);
             }
         }
@@ -992,17 +993,22 @@ impl<'a> MessageRepository<'a> {
     }
 
     /// How many messages the list would show. Ignores the window.
-    pub fn count(&self, query: &ListQuery) -> Result<u32> {
+    pub async fn count(&self, query: &ListQuery) -> Result<u32> {
         let sql = format!(
             "SELECT count(*) FROM messages WHERE {}",
             where_clause(query, false)
         );
         let mut arguments = scope_arguments(&query.scope);
         let count: i64 =
-            self.connection
-                .query_row(&sql, params_from_iter(arguments.drain(..)), |row| {
-                    row.get(0)
-                })?;
+            sql::one(
+                self.connection,
+                &sql,
+                arguments,
+                |row| {
+                    row.col(0)
+                },
+            )
+            .await?;
         Ok(count as u32)
     }
 
@@ -1021,14 +1027,14 @@ impl<'a> MessageRepository<'a> {
     }
 
     /// Replaces a message's flags.
-    pub fn set_flags(&self, id: MessageId, flags: &FlagSet, source: FlagSource) -> Result<()> {
+    pub async fn set_flags(&self, id: MessageId, flags: &FlagSet, source: FlagSource) -> Result<()> {
         let flags = flags.persistable();
         let changed = self.connection.execute(
             "UPDATE messages
                 SET flags = ?2, seen = ?3, flagged = ?4, answered = ?5, draft = ?6,
                     deleted = ?7, flags_dirty = ?8
               WHERE id = ?1",
-            params![
+            bind![
                 id.get(),
                 flag_text(&flags),
                 flags.is_seen(),
@@ -1038,7 +1044,7 @@ impl<'a> MessageRepository<'a> {
                 flags.is_deleted(),
                 source == FlagSource::Local,
             ],
-        )?;
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1054,7 +1060,7 @@ impl<'a> MessageRepository<'a> {
     /// it, and keeping it would make the next resync match the wrong message.
     /// The rows are marked as having pending operations, because the move still
     /// has to reach the server.
-    pub fn move_to(&self, ids: &[MessageId], mailbox_id: MailboxId) -> Result<usize> {
+    pub async fn move_to(&self, ids: &[MessageId], mailbox_id: MailboxId) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1066,8 +1072,8 @@ impl<'a> MessageRepository<'a> {
             placeholders(ids.len(), 2)
         );
         let mut arguments = vec![mailbox_id.get()];
-        arguments.extend(ids.iter().map(|id| id.get()));
-        Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+        arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
+        Ok(self.connection.execute(&sql, arguments).await? as usize)
     }
 
     /// The distinct folders the rows a [`MessageSet`] names are in right now.
@@ -1082,15 +1088,14 @@ impl<'a> MessageRepository<'a> {
     /// `enqueue_set` writes, so the move has to be grouped by source folder
     /// and each group enqueued with its own origin. Narrowing a group is
     /// [`MessageSet::within`], which keeps every group a predicate.
-    pub fn mailboxes_of_set(&self, set: &MessageSet) -> Result<Vec<MailboxId>> {
+    pub async fn mailboxes_of_set(&self, set: &MessageSet) -> Result<Vec<MailboxId>> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT DISTINCT messages.mailbox_id FROM messages WHERE {predicate}");
-        let mut statement = self.connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(arguments), |row| {
-            row.get::<_, i64>(0).map(MailboxId::new)
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        let mut statement = self.connection.prepare(&sql).await?;
+        let rows = sql::mapped(&mut statement, arguments, |row| {
+            row.col::<i64>(0).map(MailboxId::new)
+        }).await?;
+        Ok(rows)
     }
 
     /// Moves every message a [`MessageSet`] names into `mailbox_id`,
@@ -1105,7 +1110,7 @@ impl<'a> MessageRepository<'a> {
     /// it: a UID belongs to the mailbox that issued it.
     ///
     /// [`move_to`]: MessageRepository::move_to
-    pub fn move_set(&self, set: &MessageSet, mailbox_id: MailboxId) -> Result<usize> {
+    pub async fn move_set(&self, set: &MessageSet, mailbox_id: MailboxId) -> Result<usize> {
         let (predicate, arguments) = set.predicate(2);
         let sql = format!(
             "UPDATE messages
@@ -1115,9 +1120,7 @@ impl<'a> MessageRepository<'a> {
         );
         let mut parameters = vec![mailbox_id.get()];
         parameters.extend(arguments);
-        Ok(self
-            .connection
-            .execute(&sql, params_from_iter(parameters))?)
+        Ok(self.connection.execute(&sql, parameters).await? as usize)
     }
 
     /// How many messages a [`MessageSet`] names.
@@ -1125,12 +1128,16 @@ impl<'a> MessageRepository<'a> {
     /// One indexed `count(*)`. The undo toast needs a number — *Archived
     /// 81,717 messages* — and this is the only thing about a bulk action that
     /// has to know one.
-    pub fn count_set(&self, set: &MessageSet) -> Result<u32> {
+    pub async fn count_set(&self, set: &MessageSet) -> Result<u32> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT count(*) FROM messages WHERE {predicate}");
-        let count: i64 = self
-            .connection
-            .query_row(&sql, params_from_iter(arguments), |row| row.get(0))?;
+        let count: i64 = sql::one(
+            self.connection,
+            &sql,
+            arguments,
+            |row| row.col(0),
+        )
+        .await?;
         Ok(count as u32)
     }
 
@@ -1160,7 +1167,7 @@ impl<'a> MessageRepository<'a> {
     /// undo entry have to cover the same rows this does.
     ///
     /// [`set_flags`]: MessageRepository::set_flags
-    pub fn set_flag_on_set(
+    pub async fn set_flag_on_set(
         &self,
         set: &MessageSet,
         flag: ColumnFlag,
@@ -1182,16 +1189,14 @@ impl<'a> MessageRepository<'a> {
         );
         let mut parameters = vec![i64::from(present)];
         parameters.extend(arguments);
-        Ok(self
-            .connection
-            .execute(&sql, params_from_iter(parameters))?)
+        Ok(self.connection.execute(&sql, parameters).await? as usize)
     }
 
     /// Hides messages pending a remote delete or move, or brings them back.
     ///
     /// This is what makes delete feel instant and undo possible: the row stays,
     /// the list stops showing it.
-    pub fn set_deleted_locally(&self, ids: &[MessageId], deleted: bool) -> Result<usize> {
+    pub async fn set_deleted_locally(&self, ids: &[MessageId], deleted: bool) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1201,8 +1206,8 @@ impl<'a> MessageRepository<'a> {
             placeholders(ids.len(), 2)
         );
         let mut arguments = vec![i64::from(deleted)];
-        arguments.extend(ids.iter().map(|id| id.get()));
-        Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+        arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
+        Ok(self.connection.execute(&sql, arguments).await? as usize)
     }
 
     /// Hides messages from every ordinary list until `until`, then they
@@ -1212,7 +1217,7 @@ impl<'a> MessageRepository<'a> {
     /// Never touched by `insert`/`write_update`: a fresh or resynced row is
     /// never born snoozed, so there is nothing for a header sync to clobber.
     /// See migration 0021's own comment for the rest of that reasoning.
-    pub fn snooze(&self, ids: &[MessageId], until: DateTime<Utc>) -> Result<usize> {
+    pub async fn snooze(&self, ids: &[MessageId], until: DateTime<Utc>) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1221,12 +1226,12 @@ impl<'a> MessageRepository<'a> {
             placeholders(ids.len(), 2)
         );
         let mut arguments = vec![to_millis(until)];
-        arguments.extend(ids.iter().map(|id| id.get()));
-        Ok(self.connection.execute(&sql, params_from_iter(arguments))?)
+        arguments.extend(ids.iter().map(|id| id.get()).collect::<Vec<_>>());
+        Ok(self.connection.execute(&sql, arguments).await? as usize)
     }
 
     /// Cancels a snooze immediately, without waiting for its time to arrive.
-    pub fn unsnooze(&self, ids: &[MessageId]) -> Result<usize> {
+    pub async fn unsnooze(&self, ids: &[MessageId]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1234,9 +1239,7 @@ impl<'a> MessageRepository<'a> {
             "UPDATE messages SET snoozed_until = NULL WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self
-            .connection
-            .execute(&sql, params_from_iter(ids.iter().map(|id| id.get())))?)
+        Ok(self.connection.execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>()).await? as usize)
     }
 
     /// Clears every snooze whose time has passed as of `now` in `account`,
@@ -1257,7 +1260,7 @@ impl<'a> MessageRepository<'a> {
     /// `postio_runtime`'s `POLL_INTERVAL` sweep is the caller, so a message
     /// coming due while the app is open turns into a visible row promptly
     /// rather than only the next time something else writes that row.
-    pub fn wake_due(&self, account: AccountId, now: DateTime<Utc>) -> Result<Vec<MailboxId>> {
+    pub async fn wake_due(&self, account: AccountId, now: DateTime<Utc>) -> Result<Vec<MailboxId>> {
         let now_millis = to_millis(now);
         // Cached: the engine's poll tick runs this every five seconds for the
         // life of the process, and the SQL never changes. Preparing it afresh
@@ -1267,19 +1270,17 @@ impl<'a> MessageRepository<'a> {
             "SELECT DISTINCT mailbox_id FROM messages
               WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2
               ORDER BY mailbox_id",
-        )?;
-        let woken: Vec<MailboxId> = statement
-            .query_map(params![account.get(), now_millis], |row| {
-                Ok(MailboxId::new(row.get(0)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        ).await?;
+        let woken: Vec<MailboxId> = sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
+                Ok(MailboxId::new(row.col(0)?))
+            }).await?;
 
         if !woken.is_empty() {
             self.connection.execute(
                 "UPDATE messages SET snoozed_until = NULL
                   WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
-                params![account.get(), now_millis],
-            )?;
+                bind![account.get(), now_millis],
+            ).await?;
         }
         Ok(woken)
     }
@@ -1288,7 +1289,7 @@ impl<'a> MessageRepository<'a> {
     ///
     /// For an expunge the server has confirmed. Recipients, attachments and
     /// label links cascade; the blobs are swept separately.
-    pub fn delete(&self, ids: &[MessageId]) -> Result<usize> {
+    pub async fn delete(&self, ids: &[MessageId]) -> Result<usize> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -1296,17 +1297,15 @@ impl<'a> MessageRepository<'a> {
             "DELETE FROM messages WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self
-            .connection
-            .execute(&sql, params_from_iter(ids.iter().map(|id| id.get())))?)
+        Ok(self.connection.execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>()).await? as usize)
     }
 
     /// Puts a message in a thread, or takes it out of one.
-    pub fn set_thread(&self, id: MessageId, thread_id: Option<ThreadId>) -> Result<()> {
+    pub async fn set_thread(&self, id: MessageId, thread_id: Option<ThreadId>) -> Result<()> {
         let changed = self.connection.execute(
             "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
-            params![id.get(), thread_id.map(ThreadId::get)],
-        )?;
+            bind![id.get(), thread_id.map(ThreadId::get)],
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1317,14 +1316,14 @@ impl<'a> MessageRepository<'a> {
     }
 
     /// The message with this server identity, if it is known locally.
-    pub fn by_uid(
+    pub async fn by_uid(
         &self,
         mailbox_id: MailboxId,
         generation: Generation,
         uid: Uid,
     ) -> Result<Option<Message>> {
-        match find_by_generation_uid(self.connection, mailbox_id, generation, uid)? {
-            Some(id) => self.get(id),
+        match find_by_generation_uid(self.connection, mailbox_id, generation, uid).await? {
+            Some(id) => self.get(id).await,
             None => Ok(None),
         }
     }
@@ -1332,40 +1331,38 @@ impl<'a> MessageRepository<'a> {
     /// Every UID known locally for a mailbox under `uid_validity`, ascending.
     ///
     /// What a resync diffs the server's UID list against.
-    pub fn uids_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<Vec<Uid>> {
-        let mut statement = self.connection.prepare(
+    pub async fn uids_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<Vec<Uid>> {
+        sql::all(
+            self.connection,
             "SELECT uid FROM messages
               WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IS NOT NULL
               ORDER BY uid",
-        )?;
-        let rows = statement.query_map(
-            params![mailbox_id.get(), i64::from(generation.get())],
-            |row| Ok(Uid::new(row.get::<_, i64>(0)? as u32)),
-        )?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+            bind![mailbox_id.get(), i64::from(generation.get())],
+            |row| Ok(Uid::new(row.col::<i64>(0)? as u32)),
+        )
+        .await}
 
     /// Every message in an account carrying this `Message-ID`.
     ///
     /// A list, not an `Option`: `Message-ID` is not unique in the wild. Threads
     /// have to cope with two messages claiming the same one, and so does
     /// deduplication.
-    pub fn ids_by_rfc_message_id(
+    pub async fn ids_by_rfc_message_id(
         &self,
         account_id: AccountId,
         rfc_message_id: &RfcMessageId,
     ) -> Result<Vec<MessageId>> {
-        let mut statement = self.connection.prepare(
+        sql::all(
+            self.connection,
             "SELECT id FROM messages
               WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE
               ORDER BY id",
-        )?;
-        let rows = statement
-            .query_map(params![account_id.get(), rfc_message_id.as_str()], |row| {
-                Ok(MessageId::new(row.get(0)?))
-            })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+            bind![account_id.get(), rfc_message_id.as_str()],
+            |row| {
+                Ok(MessageId::new(row.col(0)?))
+            },
+        )
+        .await}
 
     /// A message's decoded text, HTML and header block.
     ///
@@ -1373,57 +1370,32 @@ impl<'a> MessageRepository<'a> {
     /// never been downloaded answers `Some(StoredBody::default())` — the row
     /// is there and holds no parts, which is not the same as no row.
     ///
-    /// Decompression happens here (ADR 0020) and is what puts this on the
-    /// reading pane's 16 ms path, so it reads exactly the three columns it
-    /// needs rather than a whole row.
+    /// Reads exactly the three columns it needs rather than a whole row: this
+    /// is the reading pane's 16 ms path.
     ///
-    /// # Errors
-    ///
-    /// [`Error::UnreadableBody`] if a stored value will not decode. Loudly,
-    /// rather than as an absent body: those are opposite facts to a reader.
-    pub fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
-        let mut statement = self.connection.prepare(
-            "SELECT body_text, body_html, body_headers, body_dictionary_id,
+    /// There is no decompression step any more. The parts were zstd frames
+    /// against a shared dictionary until the engine changed, and the full-text
+    /// index is an index on `body_text` now rather than a virtual table beside
+    /// it — an index cannot tokenise compressed bytes, so the column has to be
+    /// the text (`specs/004-turso-store`).
+    pub async fn body(&self, id: MessageId) -> Result<Option<StoredBody>> {
+        sql::first(
+            self.connection,
+            "SELECT body_text, body_html, body_headers,
                     body_headers_truncated, body_encoding_problems
                FROM messages WHERE id = ?1",
-        )?;
-        let mut rows = statement.query([id.get()])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
-        };
-        let text: Option<Vec<u8>> = row.get(0)?;
-        let html: Option<Vec<u8>> = row.get(1)?;
-        let headers: Option<Vec<u8>> = row.get(2)?;
-        let dictionary_id: Option<i64> = row.get(3)?;
-        let headers_truncated: bool = row.get(4)?;
-        let encoding_problems: bool = row.get(5)?;
-        drop(rows);
-        drop(statement);
-
-        // Loaded once for all three parts: they were written together against
-        // one dictionary, so there is one to load.
-        let dictionary = match dictionary_id {
-            None => None,
-            Some(dictionary_id) => Some(
-                self.dictionaries
-                    .borrow_mut()
-                    .get(self.connection, dictionary_id)?,
-            ),
-        };
-        let dictionary = dictionary.as_ref().map(|loaded| loaded.as_slice());
-
-        let decode = |stored: Option<Vec<u8>>| -> Result<Option<String>> {
-            stored
-                .map(|stored| crate::body::decompress(&stored, dictionary))
-                .transpose()
-        };
-        Ok(Some(StoredBody {
-            text: decode(text)?,
-            html: decode(html)?,
-            headers: decode(headers)?,
-            headers_truncated,
-            encoding_problems,
-        }))
+            [id.get()],
+            |row| {
+                Ok(StoredBody {
+                    text: row.col(0)?,
+                    html: row.col(1)?,
+                    headers: row.col(2)?,
+                    headers_truncated: row.col(3)?,
+                    encoding_problems: row.col(4)?,
+                })
+            },
+        )
+        .await
     }
 
     /// A message's header block, parsed.
@@ -1458,8 +1430,8 @@ impl<'a> MessageRepository<'a> {
     /// [`Error::UnreadableBody`] if the stored block will not decode, for the
     /// reason [`body`](Self::body) gives: an absent block and an unreadable
     /// one are opposite facts to a caller deciding whether a header is missing.
-    pub fn headers(&self, id: MessageId) -> Result<Option<postio_model::Headers>> {
-        let Some(body) = self.body(id)? else {
+    pub async fn headers(&self, id: MessageId) -> Result<Option<postio_model::Headers>> {
+        let Some(body) = self.body(id).await? else {
             return Ok(None);
         };
         Ok(Some(match body.headers {
@@ -1496,23 +1468,24 @@ impl<'a> MessageRepository<'a> {
     /// no progress, trip the caller's guard, and stop the pass before it
     /// reached the older messages it *could* have fixed. Those rows are
     /// [`messages_needing_a_header_fetch`](Self::messages_needing_a_header_fetch)'s.
-    pub fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
-        let mut statement = self.connection.prepare(
+    pub async fn messages_missing_headers(&self, limit: u32) -> Result<Vec<HeaderRepair>> {
+        sql::all(
+            self.connection,
             "SELECT id, raw_blob_id FROM messages
               WHERE body_headers IS NULL
                 AND raw_blob_id IS NOT NULL
                 AND body_state IN ('partial', 'full')
               ORDER BY received_at DESC
               LIMIT ?1",
-        )?;
-        let rows = statement.query_map([limit], |row| {
+            [limit],
+            |row| {
             Ok(HeaderRepair {
-                message_id: MessageId::new(row.get(0)?),
-                raw_blob_id: row.get::<_, Option<String>>(1)?.map(BlobId::new),
+                message_id: MessageId::new(row.col(0)?),
+                raw_blob_id: row.col::<Option<String>>(1)?.map(BlobId::new),
             })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        },
+        )
+        .await}
 
     /// Messages whose block can only be had from the server.
     ///
@@ -1525,12 +1498,13 @@ impl<'a> MessageRepository<'a> {
     /// Separate from [`messages_missing_headers`](Self::messages_missing_headers)
     /// because the answer is a network fetch rather than a local read, and the
     /// two must not share a batch — see that method for why.
-    pub fn messages_needing_a_header_fetch(
+    pub async fn messages_needing_a_header_fetch(
         &self,
         mailbox_id: MailboxId,
         limit: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        let mut statement = self.connection.prepare(
+        sql::all(
+            self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
@@ -1543,60 +1517,39 @@ impl<'a> MessageRepository<'a> {
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
               LIMIT ?2",
-        )?;
-        let rows = statement.query_map(params![mailbox_id.get(), limit], |row| {
+            bind![mailbox_id.get(), limit],
+            |row| {
             read_backfill_candidate(row, mailbox_id)
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        },
+        )
+        .await}
 
     /// Writes just the header block, leaving the body beside it alone.
     ///
     /// # Why this is not `set_body` with the other fields refilled
     ///
-    /// The row carries **one** `body_dictionary_id` for `body_text`,
-    /// `body_html` and `body_headers` together, and an ADR 0020 frame can only
-    /// be read with the dictionary it was written against. So a repair that
-    /// compressed the block against the newest dictionary and updated that id
-    /// would leave the text and html beside it unreadable — losing a message's
-    /// words to a pass whose whole job was to add its headers.
-    ///
-    /// This compresses against **the dictionary the row already names**,
-    /// whatever that is, and never touches the id. A row that has none stores
-    /// the block uncompressed against none, exactly as its body is.
-    pub fn set_headers(
+    /// Because `set_body` replaces every part, and a header repair has only
+    /// the headers: routing through it would clear the text and html of every
+    /// message it touched. The reason used to be sharper still -- all three
+    /// columns shared one compression dictionary, so rewriting one against a
+    /// newer dictionary made the other two unreadable -- and that half is gone
+    /// with the compression. The remaining half is enough.
+    pub async fn set_headers(
         &self,
         id: MessageId,
         block: Option<&postio_model::headers::Block>,
     ) -> Result<()> {
-        let dictionary_id: Option<i64> = self.connection.query_row(
-            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )?;
-        let dictionary = match dictionary_id {
-            None => None,
-            Some(dictionary_id) => Some(
-                self.dictionaries
-                    .borrow_mut()
-                    .get(self.connection, dictionary_id)?,
-            ),
-        };
-        let encoded = block
-            .map(|block| {
-                crate::body::compress(&block.text, dictionary.as_ref().map(|d| d.as_slice()))
-            })
-            .transpose()?;
+        let encoded = block.map(|block| block.text.clone());
         let changed = self.connection.execute(
             "UPDATE messages
                 SET body_headers = ?2, body_headers_truncated = ?3
               WHERE id = ?1",
-            params![
+            bind![
                 id.get(),
                 encoded,
                 block.is_some_and(|block| block.truncated),
             ],
-        )?;
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1606,7 +1559,7 @@ impl<'a> MessageRepository<'a> {
         Ok(())
     }
 
-    /// Stores a message's decoded content on its row, compressed.
+    /// Stores a message's decoded content on its row.
     ///
     /// Takes the new [`BodyState`] with it: the content and "how much of this
     /// message is local" are one fact, and writing them separately would leave
@@ -1616,45 +1569,35 @@ impl<'a> MessageRepository<'a> {
     /// what was there, so a refetch that finds no HTML part does not leave the
     /// previous fetch's HTML behind to be read as this message's.
     ///
+    /// Writes `body_search` with them, and that is not optional: it is
+    /// `body_text` folded for the full-text index, and this is the only place
+    /// a body is written. The engine's tokenizer lowercases and does not
+    /// remove diacritics, so `postio_index::fold` does — on this path and on
+    /// the query path, both or neither (FR-012).
+    ///
     /// # Errors
     ///
-    /// [`Error::NotFound`] if no such message, and [`Error::UnreadableBody`]
-    /// if a value cannot be compressed.
-    pub fn set_body(&self, id: MessageId, body: &StoredBody, body_state: BodyState) -> Result<()> {
-        // The dictionary to write against, if one has been trained. Whichever
-        // one this is gets named on the row, and stays readable for ever after:
-        // the schema refuses to delete a dictionary a row still names.
-        let dictionary = self.dictionaries.borrow_mut().newest(self.connection)?;
-        let (dictionary_id, dictionary_bytes) = match &dictionary {
-            None => (None, None),
-            Some((id, bytes)) => (Some(*id), Some(bytes.as_slice())),
-        };
-
-        let encode = |value: &Option<String>| -> Result<Option<Vec<u8>>> {
-            value
-                .as_deref()
-                .map(|value| crate::body::compress(value, dictionary_bytes))
-                .transpose()
-        };
+    /// [`Error::NotFound`] if no such message.
+    pub async fn set_body(&self, id: MessageId, body: &StoredBody, body_state: BodyState) -> Result<()> {
         let changed = self.connection.execute(
             "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
-                    body_dictionary_id = ?5, body_state = ?6,
+                    body_search = ?5, body_state = ?6,
                     body_headers_truncated = ?7, body_encoding_problems = ?8,
                     body_line_count = ?9
               WHERE id = ?1",
-            params![
+            bind![
                 id.get(),
-                encode(&body.text)?,
-                encode(&body.html)?,
-                encode(&body.headers)?,
-                dictionary_id,
+                body.text,
+                body.html,
+                body.headers,
+                body.text.as_deref().map(postio_model::fold::fold),
                 body_state.as_str(),
                 body.headers_truncated,
                 body.encoding_problems,
                 body.text.as_deref().map(line_count),
             ],
-        )?;
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1671,11 +1614,11 @@ impl<'a> MessageRepository<'a> {
     /// changing where its text is. Kept separate rather than folded in
     /// because reading the blob keys back only to write them again is how a
     /// concurrent text fetch gets clobbered by a payload fetch.
-    pub fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
+    pub async fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
         let changed = self.connection.execute(
             "UPDATE messages SET body_state = ?2 WHERE id = ?1",
-            params![id.get(), body_state.as_str()],
-        )?;
+            bind![id.get(), body_state.as_str()],
+        ).await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1698,7 +1641,7 @@ impl<'a> MessageRepository<'a> {
     /// `false` when no such part is on the message any more, which is the
     /// same answer `Outcome::Gone` gives for a whole message: nothing went
     /// wrong, there is simply nothing to write against.
-    pub fn set_attachment_blob(
+    pub async fn set_attachment_blob(
         &self,
         message_id: MessageId,
         part_id: &str,
@@ -1707,8 +1650,8 @@ impl<'a> MessageRepository<'a> {
         let changed = self.connection.execute(
             "UPDATE attachments SET blob_id = ?3
               WHERE message_id = ?1 AND part_id = ?2",
-            params![message_id.get(), part_id, blob_id.as_str()],
-        )?;
+            bind![message_id.get(), part_id, blob_id.as_str()],
+        ).await?;
         Ok(changed > 0)
     }
 
@@ -1722,13 +1665,14 @@ impl<'a> MessageRepository<'a> {
     ///
     /// A part with no `part_id` is not a candidate — there is no section to
     /// name in a `FETCH`, so nothing can be asked for.
-    pub fn needing_payloads_from(
+    pub async fn needing_payloads_from(
         &self,
         mailbox_id: MailboxId,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        let mut statement = self.connection.prepare(
+        sql::all(
+            self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
@@ -1743,12 +1687,12 @@ impl<'a> MessageRepository<'a> {
                                AND attachments.part_id IS NOT NULL)
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = statement.query_map(params![mailbox_id.get(), limit, offset], |row| {
+            bind![mailbox_id.get(), limit, offset],
+            |row| {
             read_backfill_candidate(row, mailbox_id)
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        },
+        )
+        .await}
 
     /// Messages in `mailbox_id` still missing all or part of their body,
     /// newest first and windowed to `limit` — what a cold start, or a resync
@@ -1762,12 +1706,13 @@ impl<'a> MessageRepository<'a> {
     ///
     /// A message with no `UID` yet is not a candidate: there is nothing to
     /// issue a `FETCH` against until the server has assigned one.
-    pub fn needing_backfill(
+    pub async fn needing_backfill(
         &self,
         mailbox_id: MailboxId,
         limit: u32,
     ) -> Result<Vec<BackfillCandidate>> {
         self.needing_backfill_from(mailbox_id, limit, 0)
+            .await
     }
 
     /// As [`needing_backfill`](Self::needing_backfill), skipping the newest
@@ -1784,13 +1729,14 @@ impl<'a> MessageRepository<'a> {
     /// engine's own loop is between awaits. A body landing between two calls
     /// shifts the window by one, and the next call corrects it — this is a
     /// backlog being refilled, not a page a user is reading.
-    pub fn needing_backfill_from(
+    pub async fn needing_backfill_from(
         &self,
         mailbox_id: MailboxId,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        let mut statement = self.connection.prepare(
+        sql::all(
+            self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
@@ -1801,12 +1747,12 @@ impl<'a> MessageRepository<'a> {
                 AND messages.deleted_locally = 0
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = statement.query_map(params![mailbox_id.get(), limit, offset], |row| {
+            bind![mailbox_id.get(), limit, offset],
+            |row| {
             read_backfill_candidate(row, mailbox_id)
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        },
+        )
+        .await}
 
     /// One message's backfill candidate, if it still needs (part of) its body.
     ///
@@ -1823,26 +1769,31 @@ impl<'a> MessageRepository<'a> {
     /// Three aggregates rather than one query: they are over different tables
     /// with different filters, and SQLite plans each against an index it
     /// already has. This runs when a status line redraws, not per row.
-    pub fn footprint(&self, account_id: AccountId) -> Result<StorageFootprint> {
-        let (messages, total_bytes) = self.connection.query_row(
+    pub async fn footprint(&self, account_id: AccountId) -> Result<StorageFootprint> {
+        let (messages, total_bytes) = sql::one(
+            self.connection,
             "SELECT count(*), coalesce(sum(size), 0) FROM messages
               WHERE account_id = ?1 AND deleted_locally = 0",
             [account_id.get()],
-            |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
-        )?;
+            |row| Ok((row.col::<i64>(0)? as u64, row.col::<i64>(1)? as u64)),
+        )
+        .await?;
 
-        let attachment_bytes: u64 = self.connection.query_row(
+        let attachment_bytes: u64 = sql::one(
+            self.connection,
             "SELECT coalesce(sum(a.size), 0) FROM attachments a
                JOIN messages m ON m.id = a.message_id
               WHERE m.account_id = ?1 AND m.deleted_locally = 0",
             [account_id.get()],
-            |row| Ok(row.get::<_, i64>(0)? as u64),
-        )?;
+            |row| Ok(row.col::<i64>(0)? as u64),
+        )
+        .await?;
 
         // What is local: a message's whole size once every part is here, and
         // only its text while its payloads are still on the server. `partial`
         // is the ordinary steady state under ADR 0017, not an edge case.
-        let local_bytes: u64 = self.connection.query_row(
+        let local_bytes: u64 = sql::one(
+            self.connection,
             "SELECT coalesce(sum(
                         CASE m.body_state
                           WHEN 'full' THEN m.size
@@ -1854,19 +1805,22 @@ impl<'a> MessageRepository<'a> {
                FROM messages m
               WHERE m.account_id = ?1 AND m.deleted_locally = 0",
             [account_id.get()],
-            |row| Ok(row.get::<_, i64>(0)? as u64),
-        )?;
+            |row| Ok(row.col::<i64>(0)? as u64),
+        )
+        .await?;
 
         // Complete when no selectable mailbox is still waiting for its first
         // full header pass. Anything less and the totals above are a floor.
-        let outstanding: i64 = self.connection.query_row(
+        let outstanding: i64 = sql::one(
+            self.connection,
             "SELECT count(*) FROM mailboxes mb
                LEFT JOIN sync_state s ON s.mailbox_id = mb.id
               WHERE mb.account_id = ?1 AND mb.selectable = 1
                 AND (s.last_full_sync_at IS NULL)",
             [account_id.get()],
-            |row| row.get(0),
-        )?;
+            |row| row.col(0),
+        )
+        .await?;
 
         Ok(StorageFootprint {
             messages,
@@ -1882,14 +1836,16 @@ impl<'a> MessageRepository<'a> {
     /// A count, not a list: Postio never sends one automatically (CLAUDE.md's
     /// privacy section), so there is no per-message action for the privacy
     /// pane to offer — only the fact of how often it was asked.
-    pub fn read_receipt_requested_count(&self, account_id: AccountId) -> Result<u64> {
-        Ok(self.connection.query_row(
+    pub async fn read_receipt_requested_count(&self, account_id: AccountId) -> Result<u64> {
+        Ok(sql::one(
+            self.connection,
             "SELECT count(*) FROM messages
               WHERE account_id = ?1 AND read_receipt_requested = 1
                 AND deleted_locally = 0",
             [account_id.get()],
-            |row| row.get::<_, i64>(0),
-        )? as u64)
+            |row| row.col::<i64>(0),
+        )
+        .await? as u64)
     }
 
     /// One message's backfill candidate, if it still needs (part of) its body.
@@ -1899,7 +1855,7 @@ impl<'a> MessageRepository<'a> {
     /// this looks both up rather than asking the caller to already know them.
     /// `None` covers both "already has a full body" and "not there any more" —
     /// either way there is nothing to fetch.
-    pub fn backfill_candidate(&self, message_id: MessageId) -> Result<Option<BackfillCandidate>> {
+    pub async fn backfill_candidate(&self, message_id: MessageId) -> Result<Option<BackfillCandidate>> {
         let mut statement = self.connection.prepare(
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id, messages.mailbox_id
@@ -1909,13 +1865,13 @@ impl<'a> MessageRepository<'a> {
                 AND messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0",
-        )?;
-        let mut rows = statement.query([message_id.get()])?;
-        let Some(row) = rows.next()? else {
+        ).await?;
+        let mut rows = statement.query([message_id.get()]).await?;
+        let Some(row) = rows.next().await? else {
             return Ok(None);
         };
-        let mailbox_id = MailboxId::new(row.get(6)?);
-        Ok(Some(read_backfill_candidate(row, mailbox_id)?))
+        let mailbox_id = MailboxId::new(row.col(6)?);
+        Ok(Some(read_backfill_candidate(&row, mailbox_id)?))
     }
 
     /// Messages in `mailbox_id` that carry no usable thread reference at all —
@@ -1925,17 +1881,17 @@ impl<'a> MessageRepository<'a> {
     /// can ever have a better answer for later than it did at insertion: one
     /// that names an ancestor either already found it or is waiting to, so
     /// only silence at insertion time is worth asking about again.
-    pub fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
+    pub async fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
         let mut statement = self.connection.prepare(
             "SELECT id FROM messages
               WHERE mailbox_id = ?1
                 AND thread_id IS NOT NULL
                 AND in_reply_to IS NULL
                 AND reference_ids = ''",
-        )?;
+        ).await?;
         let rows =
-            statement.query_map([mailbox_id.get()], |row| Ok(MessageId::new(row.get(0)?)))?;
-        Ok(rows.collect::<Result<_, _>>()?)
+            sql::mapped(&mut statement, [mailbox_id.get()], |row| Ok(MessageId::new(row.col(0)?))).await?;
+        Ok(rows)
     }
 }
 
@@ -2087,7 +2043,7 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
 /// Shared with [`MessageRepository::upsert_batch`], which is already inside
 /// one: SQLite has no nested transactions, and a resync must not commit half a
 /// page of messages.
-fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
+async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
     let changed = connection.execute(
@@ -2104,8 +2060,8 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
                 read_receipt_requested = ?38
           WHERE id = ?1",
-        params_from_iter(row_values(id, message)),
-    )?;
+        row_values(id, message),
+    ).await?;
     if changed == 0 {
         return Err(Error::NotFound {
             entity: "message",
@@ -2113,18 +2069,17 @@ fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
         });
     }
 
-    connection.execute("DELETE FROM recipients WHERE message_id = ?1", [id])?;
-    connection.execute("DELETE FROM attachments WHERE message_id = ?1", [id])?;
-    connection.execute("DELETE FROM message_labels WHERE message_id = ?1", [id])?;
-    write_children(connection, message)?;
+    connection.execute("DELETE FROM recipients WHERE message_id = ?1", [id]).await?;
+    connection.execute("DELETE FROM attachments WHERE message_id = ?1", [id]).await?;
+    connection.execute("DELETE FROM message_labels WHERE message_id = ?1", [id]).await?;
+    write_children(connection, message).await?;
     Ok(())
 }
 
-fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
+async fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
     // Cached: the widest statement in the write path and the one a first sync
     // runs most -- once per new message (#728).
-    connection
-        .prepare_cached(
+    connection.prepare_cached(
             "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
                                in_reply_to, reference_ids, subject, normalized_subject, date,
                                received_at, preview, size, flags, seen, flagged, answered,
@@ -2137,18 +2092,18 @@ fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
                  ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
-        )?
-        .execute(params_from_iter(row_values(0, message)))?;
+        ).await?
+        .execute(row_values(0, message)).await?;
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
 /// The parameter list shared by insert and update, `?1` being the id.
 ///
-/// Owned [`Value`]s rather than borrows: the two statements have thirty
+/// Owned [`turso::Value`]s rather than borrows: the two statements have thirty
 /// parameters of six different types, and one homogeneous list is far easier to
 /// keep aligned with the column list than two hand-written `params!` calls that
 /// have to stay in step with each other.
-fn row_values(id: i64, message: &Message) -> Vec<Value> {
+fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
     let flags = message.flags.persistable();
     let references = message
         .references
@@ -2225,27 +2180,27 @@ fn row_values(id: i64, message: &Message) -> Vec<Value> {
     ]
 }
 
-fn integer(value: i64) -> Value {
-    Value::Integer(value)
+fn integer(value: i64) -> turso::Value {
+    turso::Value::Integer(value)
 }
 
-fn maybe_integer(value: Option<i64>) -> Value {
-    value.map_or(Value::Null, Value::Integer)
+fn maybe_integer(value: Option<i64>) -> turso::Value {
+    value.map_or(turso::Value::Null, turso::Value::Integer)
 }
 
-fn text(value: impl Into<String>) -> Value {
-    Value::Text(value.into())
+fn text(value: impl Into<String>) -> turso::Value {
+    turso::Value::Text(value.into())
 }
 
-fn maybe_text(value: Option<String>) -> Value {
-    value.map_or(Value::Null, Value::Text)
+fn maybe_text(value: Option<String>) -> turso::Value {
+    value.map_or(turso::Value::Null, turso::Value::Text)
 }
 
-fn boolean(value: bool) -> Value {
-    Value::Integer(i64::from(value))
+fn boolean(value: bool) -> turso::Value {
+    turso::Value::Integer(i64::from(value))
 }
 
-fn write_children(connection: &Connection, message: &mut Message) -> Result<()> {
+async fn write_children(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = message.id.get();
 
     for (kind, addresses) in [
@@ -2260,14 +2215,14 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
             connection.execute(
                 "INSERT INTO recipients (message_id, kind, position, name, address_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
+                bind![
                     id,
                     kind,
                     position as i64,
                     address.name,
-                    address_id(connection, address)?,
+                    address_id(connection, address).await?,
                 ],
-            )?;
+            ).await?;
         }
     }
 
@@ -2277,7 +2232,7 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
                                       content_id, disposition, disposition_raw, part_id,
                                       part_headers, blob_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
+            bind![
                 id,
                 position as i64,
                 attachment.filename,
@@ -2290,7 +2245,7 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
                 attachment.part_headers,
                 attachment.blob_id.as_ref().map(BlobId::as_str),
             ],
-        )?;
+        ).await?;
         attachment.id = postio_model::AttachmentId::new(connection.last_insert_rowid());
         attachment.message_id = message.id;
     }
@@ -2298,32 +2253,31 @@ fn write_children(connection: &Connection, message: &mut Message) -> Result<()> 
     for label in &message.labels {
         connection.execute(
             "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-            params![id, label.get()],
-        )?;
+            bind![id, label.get()],
+        ).await?;
     }
 
     Ok(())
 }
 
 /// A row by the backend's own identity — the match the engine prefers.
-fn find_by_remote_id(
+async fn find_by_remote_id(
     connection: &Connection,
     mailbox_id: MailboxId,
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
     // Cached: once per message on every batch a sync pass writes (#728).
-    let mut statement = connection
-        .prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")?;
-    let mut rows = statement.query(params![mailbox_id.get(), remote_id.as_str()])?;
-    Ok(match rows.next()? {
-        Some(row) => Some(MessageId::new(row.get(0)?)),
+    let mut statement = connection.prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2").await?;
+    let mut rows = statement.query(bind![mailbox_id.get(), remote_id.as_str()]).await?;
+    Ok(match rows.next().await? {
+        Some(row) => Some(MessageId::new(row.col(0)?)),
         None => None,
     })
 }
 
 /// The engine-facing lookup: the caller tracks an opaque [`Generation`],
 /// which for IMAP is numerically the stored `uid_validity` (#543).
-fn find_by_generation_uid(
+async fn find_by_generation_uid(
     connection: &Connection,
     mailbox_id: MailboxId,
     generation: Generation,
@@ -2334,14 +2288,14 @@ fn find_by_generation_uid(
     let mut statement = connection.prepare_cached(
         "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
-    )?;
-    let mut rows = statement.query(params![
+    ).await?;
+    let mut rows = statement.query(bind![
         mailbox_id.get(),
         i64::from(generation.get()),
         i64::from(uid.get()),
-    ])?;
-    Ok(match rows.next()? {
-        Some(row) => Some(MessageId::new(row.get(0)?)),
+    ]).await?;
+    Ok(match rows.next().await? {
+        Some(row) => Some(MessageId::new(row.col(0)?)),
         None => None,
     })
 }
@@ -2351,31 +2305,31 @@ fn find_by_generation_uid(
 /// [`MessageRepository::needing_backfill`] and
 /// [`MessageRepository::backfill_candidate`].
 fn read_backfill_candidate(
-    row: &Row<'_>,
+    row: &Row,
     mailbox_id: MailboxId,
-) -> rusqlite::Result<BackfillCandidate> {
+) -> Result<BackfillCandidate> {
     Ok(BackfillCandidate {
-        message_id: MessageId::new(row.get(0)?),
+        message_id: MessageId::new(row.col(0)?),
         mailbox_id,
-        uid: Uid::new(row.get::<_, i64>(1)? as u32),
-        size: row.get::<_, i64>(2)? as u64,
-        received_at: from_millis(row.get(3)?),
-        mailbox_path: row.get(4)?,
-        remote_id: RemoteId::new(row.get::<_, String>(5)?),
+        uid: Uid::new(row.col::<i64>(1)? as u32),
+        size: row.col::<i64>(2)? as u64,
+        received_at: from_millis(row.col(3)?),
+        mailbox_path: row.col(4)?,
+        remote_id: RemoteId::new(row.col::<String>(5)?),
     })
 }
 
-fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
-    let body_state: String = row.get(18)?;
-    let references: String = row.get(6)?;
+fn read_message(row: &Row) -> Result<Message> {
+    let body_state: String = row.col(18)?;
+    let references: String = row.col(6)?;
 
     Ok(Message {
-        id: MessageId::new(row.get(0)?),
-        account_id: AccountId::new(row.get(1)?),
-        mailbox_id: MailboxId::new(row.get(2)?),
-        thread_id: row.get::<_, Option<i64>>(3)?.map(ThreadId::new),
-        rfc_message_id: row.get::<_, Option<String>>(4)?.map(RfcMessageId::new),
-        in_reply_to: row.get::<_, Option<String>>(5)?.map(RfcMessageId::new),
+        id: MessageId::new(row.col(0)?),
+        account_id: AccountId::new(row.col(1)?),
+        mailbox_id: MailboxId::new(row.col(2)?),
+        thread_id: row.col::<Option<i64>>(3)?.map(ThreadId::new),
+        rfc_message_id: row.col::<Option<String>>(4)?.map(RfcMessageId::new),
+        in_reply_to: row.col::<Option<String>>(5)?.map(RfcMessageId::new),
         references: references
             .split_whitespace()
             .map(RfcMessageId::new)
@@ -2386,80 +2340,76 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         to: Vec::new(),
         cc: Vec::new(),
         bcc: Vec::new(),
-        subject: row.get(7)?,
-        date: row.get::<_, Option<i64>>(8)?.map(from_millis),
-        received_at: from_millis(row.get(9)?),
+        subject: row.col(7)?,
+        date: row.col::<Option<i64>>(8)?.map(from_millis),
+        received_at: from_millis(row.col(9)?),
         body: postio_model::MessageBody::default(),
-        preview: row.get(10)?,
+        preview: row.col(10)?,
         attachments: Vec::new(),
-        flags: parse_flags(&row.get::<_, String>(12)?),
+        flags: parse_flags(&row.col::<String>(12)?),
         labels: Vec::new(),
-        size: row.get::<_, i64>(11)? as u64,
+        size: row.col::<i64>(11)? as u64,
         headers: postio_model::Headers::new(),
         server: ServerIdentifiers {
             uid: row
-                .get::<_, Option<i64>>(14)?
+                .col::<Option<i64>>(14)?
                 .map(|uid| Uid::new(uid as u32)),
             uid_validity: row
-                .get::<_, Option<i64>>(15)?
+                .col::<Option<i64>>(15)?
                 .map(|validity| UidValidity::new(validity as u32)),
             mod_seq: row
-                .get::<_, Option<i64>>(16)?
+                .col::<Option<i64>>(16)?
                 .map(|seq| ModSeq::new(seq as u64)),
-            remote_id: row.get::<_, Option<String>>(17)?.map(RemoteId::new),
+            remote_id: row.col::<Option<String>>(17)?.map(RemoteId::new),
         },
         sync: LocalSyncState {
             body_state: BodyState::from_name(&body_state).ok_or_else(|| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    18,
-                    rusqlite::types::Type::Text,
-                    Box::new(unknown_enum("messages.body_state", body_state)),
-                )
+                unknown_enum("messages.body_state", body_state)
             })?,
-            flags_dirty: row.get(19)?,
-            has_pending_operations: row.get(20)?,
-            deleted_locally: row.get(21)?,
-            last_synced_at: row.get::<_, Option<i64>>(22)?.map(from_millis),
+            flags_dirty: row.col(19)?,
+            has_pending_operations: row.col(20)?,
+            deleted_locally: row.col(21)?,
+            last_synced_at: row.col::<Option<i64>>(22)?.map(from_millis),
         },
-        raw_blob_id: row.get::<_, Option<String>>(23)?.map(BlobId::new),
-        content_type: row.get(24)?,
-        list_id: row.get(25)?,
-        text_part_id: row.get(26)?,
-        text_part_headers: row.get(27)?,
-        html_part_id: row.get(28)?,
-        html_part_headers: row.get(29)?,
-        snoozed_until: row.get::<_, Option<i64>>(30)?.map(from_millis),
-        text_is_flowed: row.get(31)?,
-        read_receipt_requested: row.get(32)?,
+        raw_blob_id: row.col::<Option<String>>(23)?.map(BlobId::new),
+        content_type: row.col(24)?,
+        list_id: row.col(25)?,
+        text_part_id: row.col(26)?,
+        text_part_headers: row.col(27)?,
+        html_part_id: row.col(28)?,
+        html_part_headers: row.col(29)?,
+        snoozed_until: row.col::<Option<i64>>(30)?.map(from_millis),
+        text_is_flowed: row.col(31)?,
+        read_receipt_requested: row.col(32)?,
     })
 }
 
-pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
-    let from_address: Option<String> = row.get(14)?;
+pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
+    let from_address: Option<String> = row.col(14)?;
     Ok(MessageListRow {
-        id: MessageId::new(row.get(0)?),
-        thread_id: row.get::<_, Option<i64>>(1)?.map(ThreadId::new),
+        id: MessageId::new(row.col(0)?),
+        thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
-                Ok::<_, rusqlite::Error>(EmailAddress::new(
-                    row.get::<_, Option<String>>(13)?,
+                Ok::<_, Error>(EmailAddress::new(
+                    row.col::<Option<String>>(13)?,
                     address,
                 ))
             })
             .transpose()?,
-        subject: row.get(2)?,
-        preview: row.get(3)?,
-        received_at: from_millis(row.get(4)?),
-        seen: row.get(5)?,
-        flagged: row.get(6)?,
-        answered: row.get(7)?,
+        subject: row.col(2)?,
+        preview: row.col(3)?,
+        received_at: from_millis(row.col(4)?),
+        seen: row.col(5)?,
+        flagged: row.col(6)?,
+        answered: row.col(7)?,
         send_state: row
-            .get::<_, Option<String>>(11)?
+            .col::<Option<String>>(11)?
             .as_deref()
             .and_then(DraftState::from_name),
-        send_at: row.get::<_, Option<i64>>(12)?.map(from_millis),
-        has_attachments: row.get(9)?,
-        size: row.get::<_, i64>(10)? as u64,
+        send_at: row.col::<Option<i64>>(12)?.map(from_millis),
+        has_attachments: row.col(9)?,
+        size: row.col::<i64>(10)? as u64,
     })
 }
 
@@ -2472,35 +2422,36 @@ pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
 /// `ON CONFLICT DO NOTHING` then `SELECT` rather than `INSERT OR REPLACE`: the
 /// row may already be referenced by hundreds of recipients, and replacing it
 /// would churn an id they all point at to rewrite a column with the same value.
-pub(crate) fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
+pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
     let normalized = address.normalized();
     connection.execute(
         "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
          ON CONFLICT (address_normalized) DO NOTHING",
-        params![address.address, normalized],
-    )?;
-    Ok(connection.query_row(
+        bind![address.address, normalized],
+    ).await?;
+    Ok(sql::one(
+        connection,
         "SELECT id FROM addresses WHERE address_normalized = ?1",
-        [&normalized],
-        |row| row.get(0),
-    )?)
+        bind![normalized],
+        |row| row.col(0),
+    )
+    .await?)
 }
 
-fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
+async fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
     let mut statement = connection.prepare(
         "SELECT r.kind, r.name, a.address FROM recipients r
            JOIN addresses a ON a.id = r.address_id
           WHERE r.message_id = ?1 ORDER BY r.kind, r.position, r.id",
-    )?;
-    let rows = statement.query_map([message.id.get()], |row| {
+    ).await?;
+    let rows = sql::mapped(&mut statement, [message.id.get()], |row| {
         Ok((
-            row.get::<_, String>(0)?,
-            EmailAddress::new(row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?),
+            row.col::<String>(0)?,
+            EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
         ))
-    })?;
+    }).await?;
 
-    for row in rows {
-        let (kind, address) = row?;
+    for (kind, address) in rows {
         match kind.as_str() {
             "from" => message.from.push(address),
             "sender" => message.sender = Some(address),
@@ -2514,45 +2465,44 @@ fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()>
     Ok(())
 }
 
-fn read_attachments(connection: &Connection, id: MessageId) -> Result<Vec<Attachment>> {
-    let mut statement = connection.prepare(
+async fn read_attachments(connection: &Connection, id: MessageId) -> Result<Vec<Attachment>> {
+    sql::all(
+        connection,
         "SELECT id, filename, mime_type, size, content_id, disposition, disposition_raw,
                 part_id, blob_id, part_headers
            FROM attachments WHERE message_id = ?1 ORDER BY position, id",
-    )?;
-    let rows = statement.query_map([id.get()], |row| {
-        let disposition: String = row.get(5)?;
-        let raw: Option<String> = row.get(6)?;
+        [id.get()],
+        |row| {
+        let disposition: String = row.col(5)?;
+        let raw: Option<String> = row.col(6)?;
         Ok(Attachment {
-            id: postio_model::AttachmentId::new(row.get(0)?),
+            id: postio_model::AttachmentId::new(row.col(0)?),
             message_id: id,
-            filename: row.get(1)?,
-            mime_type: row.get(2)?,
-            size: row.get::<_, i64>(3)? as u64,
-            content_id: row.get(4)?,
+            filename: row.col(1)?,
+            mime_type: row.col(2)?,
+            size: row.col::<i64>(3)? as u64,
+            content_id: row.col(4)?,
             disposition: Disposition::from_parts(&disposition, raw.as_deref()).ok_or_else(
                 || {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        5,
-                        rusqlite::types::Type::Text,
-                        Box::new(unknown_enum("attachments.disposition", disposition)),
-                    )
+                    unknown_enum("attachments.disposition", disposition)
                 },
             )?,
-            part_id: row.get(7)?,
-            blob_id: row.get::<_, Option<String>>(8)?.map(BlobId::new),
-            part_headers: row.get(9)?,
+            part_id: row.col(7)?,
+            blob_id: row.col::<Option<String>>(8)?.map(BlobId::new),
+            part_headers: row.col(9)?,
         })
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
+    },
+    )
+    .await}
 
-fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<LabelId>> {
-    let mut statement = connection
-        .prepare("SELECT label_id FROM message_labels WHERE message_id = ?1 ORDER BY label_id")?;
-    let rows = statement.query_map([id.get()], |row| Ok(LabelId::new(row.get(0)?)))?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
+async fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<LabelId>> {
+    sql::all(
+        connection,
+        "SELECT label_id FROM message_labels WHERE message_id = ?1 ORDER BY label_id",
+        [id.get()],
+        |row| Ok(LabelId::new(row.col(0)?)),
+    )
+    .await}
 
 /// Flags as the schema stores them: canonical spellings, space separated, in
 /// [`FlagSet`] order, with `\Recent` already gone.
@@ -2594,18 +2544,18 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
 /// not locate has no identity and is absent from this — `postio-sync` flags
 /// the folder for a resync instead of guessing which message is the one it
 /// just wrote.
-fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
+async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = connection.prepare(
         "SELECT mailboxes.id, drafts.remote_id
            FROM drafts
            JOIN mailboxes ON mailboxes.account_id = drafts.account_id
                          AND mailboxes.role = 'drafts'
           WHERE drafts.remote_id IS NOT NULL",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((MailboxId::new(row.get::<_, i64>(0)?), row.get(1)?))
-    })?;
-    rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+    ).await?;
+    let rows = sql::mapped(&mut statement, (), |row| {
+        Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
+    }).await?;
+    Ok::<_, Error>(rows.into_iter().collect())
         .map_err(Into::into)
 }
 
@@ -2627,27 +2577,30 @@ fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, Stri
 /// lose one of them. `COLLATE NOCASE` matches
 /// [`MessageRepository::ids_by_rfc_message_id`], since a `Message-ID` is
 /// compared case-insensitively.
-fn local_copies_awaiting_identity(
+async fn local_copies_awaiting_identity(
     connection: &Connection,
 ) -> Result<std::collections::HashMap<(MailboxId, String), MessageId>> {
-    let mut statement = connection.prepare(
+    sql::all(
+        connection,
         "SELECT mailbox_id, lower(rfc_message_id), id
            FROM messages
           WHERE remote_id IS NULL
             AND uid IS NULL
             AND rfc_message_id IS NOT NULL
             AND deleted_locally = 0",
-    )?;
-    let rows = statement.query_map([], |row| {
+        (),
+        |row| {
         Ok((
             (
-                MailboxId::new(row.get::<_, i64>(0)?),
-                row.get::<_, String>(1)?,
+                MailboxId::new(row.col::<i64>(0)?),
+                row.col::<String>(1)?,
             ),
-            MessageId::new(row.get(2)?),
+            MessageId::new(row.col(2)?),
         ))
-    })?;
-    rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
+    },
+    )
+    .await
+    .map(|rows| rows.into_iter().collect())
 }
 
 /// `(mailbox, uid_validity, uid)` for every message with an undrained
@@ -2669,7 +2622,7 @@ fn local_copies_awaiting_identity(
 /// local half of the move nulls the row's `uid`/`uid_validity` in the same
 /// transaction that enqueues (#289): by the time a resync runs, this row is
 /// the only thing that still remembers where the server has it.
-fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
+async fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
     let mut statement = connection.prepare(
         "SELECT mailbox_id, source_remote_id
            FROM operation_queue
@@ -2677,11 +2630,11 @@ fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(Ma
             AND op_type IN ('move', 'delete')
             AND mailbox_id IS NOT NULL
             AND source_remote_id IS NOT NULL",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((MailboxId::new(row.get::<_, i64>(0)?), row.get(1)?))
-    })?;
-    rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+    ).await?;
+    let rows = sql::mapped(&mut statement, (), |row| {
+        Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
+    }).await?;
+    Ok::<_, Error>(rows.into_iter().collect())
         .map_err(Into::into)
 }
 
@@ -2699,7 +2652,7 @@ fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(Ma
 ///
 /// Keyed by local message id rather than by server coordinates, because a flag
 /// operation names its target directly and the row is still where it was.
-fn unacknowledged_flag_changes(
+async fn unacknowledged_flag_changes(
     connection: &Connection,
 ) -> Result<BTreeMap<MessageId, Vec<(bool, FlagSet)>>> {
     let mut statement = connection.prepare(
@@ -2709,18 +2662,17 @@ fn unacknowledged_flag_changes(
             AND op_type IN ('set_flags', 'clear_flags')
             AND target_kind = 'message'
           ORDER BY id",
-    )?;
-    let rows = statement.query_map([], |row| {
+    ).await?;
+    let rows = sql::mapped(&mut statement, (), |row| {
         Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
+            row.col::<i64>(0)?,
+            row.col::<String>(1)?,
+            row.col::<String>(2)?,
         ))
-    })?;
+    }).await?;
 
     let mut changes: BTreeMap<MessageId, Vec<(bool, FlagSet)>> = BTreeMap::new();
-    for row in rows {
-        let (target, op_type, payload) = row?;
+    for (target, op_type, payload) in rows {
         let operation: postio_model::Operation =
             serde_json::from_str(&payload).map_err(|source| Error::CorruptPayload {
                 column: "operation_queue.payload",

@@ -7,9 +7,12 @@
 
 use postio_model::UnsubscribeActivation;
 use postio_model::ids::{AccountId, UnsubscribeActivationId};
-use rusqlite::{Connection, Row, params};
 
 use super::{from_millis, to_millis};
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::Result;
 
 /// Read and write the unsubscribe-activation log on one connection.
@@ -26,19 +29,19 @@ impl<'a> UnsubscribeRepository<'a> {
     }
 
     /// Appends one activation, assigning its id.
-    pub fn record(
+    pub async fn record(
         &self,
         activation: &mut UnsubscribeActivation,
     ) -> Result<UnsubscribeActivationId> {
         self.connection.execute(
             "INSERT INTO unsubscribe_activations (account_id, list_identifier, activated_at)
              VALUES (?1, ?2, ?3)",
-            params![
+            bind![
                 activation.account_id.get(),
                 activation.list_identifier,
                 to_millis(activation.activated_at),
             ],
-        )?;
+        ).await?;
         let id = UnsubscribeActivationId::new(self.connection.last_insert_rowid());
         activation.id = id;
         Ok(id)
@@ -46,23 +49,26 @@ impl<'a> UnsubscribeRepository<'a> {
 
     /// Every activation for `account_id`, newest first — what the privacy
     /// settings pane lists.
-    pub fn for_account(&self, account_id: AccountId) -> Result<Vec<UnsubscribeActivation>> {
-        let mut statement = self.connection.prepare(&format!(
+    pub async fn for_account(&self, account_id: AccountId) -> Result<Vec<UnsubscribeActivation>> {
+        sql::all(
+            self.connection,
+            &format!(
             "SELECT {COLUMNS} FROM unsubscribe_activations
               WHERE account_id = ?1
               ORDER BY activated_at DESC, id DESC"
-        ))?;
-        let rows = statement.query_map([account_id.get()], read_activation)?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
+        ),
+            [account_id.get()],
+            read_activation,
+        )
+        .await}
 }
 
-fn read_activation(row: &Row<'_>) -> rusqlite::Result<UnsubscribeActivation> {
+fn read_activation(row: &Row) -> Result<UnsubscribeActivation> {
     Ok(UnsubscribeActivation {
-        id: UnsubscribeActivationId::new(row.get(0)?),
-        account_id: AccountId::new(row.get(1)?),
-        list_identifier: row.get(2)?,
-        activated_at: from_millis(row.get(3)?),
+        id: UnsubscribeActivationId::new(row.col(0)?),
+        account_id: AccountId::new(row.col(1)?),
+        list_identifier: row.col(2)?,
+        activated_at: from_millis(row.col(3)?),
     })
 }
 

@@ -51,6 +51,8 @@ use tempfile::TempDir;
 
 use crate::store::Store;
 use crate::key::{BlobKeys, Purpose, StoreKey, Subkey};
+use crate::repository::{AccountRepository, MailboxRepository};
+use crate::store::Connection;
 
 
 /// The key every scratch database is encrypted under.
@@ -282,6 +284,51 @@ impl std::ops::Deref for TempStore {
     fn deref(&self) -> &Store {
         &self.store
     }
+}
+
+/// Creates a throwaway account, so a test that is about something else does not
+/// have to spell one out.
+///
+/// # Panics
+///
+/// If the insert fails.
+pub async fn account(connection: &Connection) -> Account {
+    let mut account = Account::new(
+        "Test",
+        EmailAddress::new(Some("Test User"), "test@example.com"),
+    );
+    account.incoming.host = "imap.example.com".to_owned();
+    account.outgoing.host = "smtp.example.com".to_owned();
+    AccountRepository::new(connection)
+        .create(&mut account)
+        .await
+        .expect("create a test account");
+    account
+}
+
+/// Creates a mailbox at `path` in `account`.
+///
+/// # Panics
+///
+/// If the insert fails.
+pub async fn mailbox(connection: &Connection, account: &Account, path: &str) -> Mailbox {
+    let mut mailbox = Mailbox::new(account.id, path, Some('/'));
+    MailboxRepository::new(connection)
+        .create(&mut mailbox)
+        .await
+        .expect("create a test mailbox");
+    mailbox
+}
+
+/// Creates an account with an INBOX, the shape almost every test wants.
+///
+/// # Panics
+///
+/// If either insert fails.
+pub async fn account_with_inbox(connection: &Connection) -> (Account, MailboxId) {
+    let account = account(connection).await;
+    let inbox = mailbox(connection, &account, "INBOX").await;
+    (account, inbox.id)
 }
 
 #[cfg(test)]

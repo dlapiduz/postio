@@ -8,8 +8,11 @@
 
 use chrono::Utc;
 use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, RemoteId};
-use rusqlite::{Connection, OptionalExtension, params};
 
+
+use crate::sql::{self, RowExt as _, bind};
+use turso::Row;
+use crate::store::Connection;
 use crate::error::{Error, Result};
 
 /// Where a saga is in its life. See migration 0020 for what each means.
@@ -131,7 +134,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
 
     /// Start a saga, in `copying`. The row is on disk before either queue
     /// runs anything — resumability is this insert.
-    pub fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
+    pub async fn create(&self, saga: &NewCrossAccountMove) -> Result<CrossAccountMoveId> {
         let now = Utc::now().timestamp_millis();
         self.connection.execute(
             "INSERT INTO cross_account_moves
@@ -139,7 +142,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
                   target_account_id, target_mailbox_id, target_message_id,
                   raw_blob_id, rfc_message_id, phase, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'copying', ?9, ?9)",
-            params![
+            bind![
                 saga.source_message.get(),
                 saga.source_account.get(),
                 saga.source_mailbox.get(),
@@ -150,37 +153,37 @@ impl<'a> CrossAccountMoveRepository<'a> {
                 saga.rfc_message_id,
                 now,
             ],
-        )?;
+        ).await?;
         Ok(CrossAccountMoveId::new(self.connection.last_insert_rowid()))
     }
 
     /// One saga, or `None`.
-    pub fn get(&self, id: CrossAccountMoveId) -> Result<Option<CrossAccountMove>> {
-        self.connection
-            .query_row(
-                "SELECT id, source_message_id, source_account_id, source_mailbox_id,
+    pub async fn get(&self, id: CrossAccountMoveId) -> Result<Option<CrossAccountMove>> {
+        sql::first(
+            self.connection,
+            "SELECT id, source_message_id, source_account_id, source_mailbox_id,
                         target_account_id, target_mailbox_id, target_message_id,
                         raw_blob_id, rfc_message_id, phase, confirmed_remote_id
                    FROM cross_account_moves WHERE id = ?1",
-                [id.get()],
-                |row| {
-                    let phase: String = row.get(9)?;
+            [id.get()],
+            |row| {
+                    let phase: String = row.col(9)?;
                     Ok(CrossAccountMove {
-                        id: CrossAccountMoveId::new(row.get(0)?),
-                        source_message: row.get::<_, Option<i64>>(1)?.map(MessageId::new),
-                        source_account: row.get::<_, Option<i64>>(2)?.map(AccountId::new),
-                        source_mailbox: row.get::<_, Option<i64>>(3)?.map(MailboxId::new),
-                        target_account: row.get::<_, Option<i64>>(4)?.map(AccountId::new),
-                        target_mailbox: row.get::<_, Option<i64>>(5)?.map(MailboxId::new),
-                        target_message: row.get::<_, Option<i64>>(6)?.map(MessageId::new),
-                        raw_blob_id: row.get(7)?,
-                        rfc_message_id: row.get(8)?,
+                        id: CrossAccountMoveId::new(row.col(0)?),
+                        source_message: row.col::<Option<i64>>(1)?.map(MessageId::new),
+                        source_account: row.col::<Option<i64>>(2)?.map(AccountId::new),
+                        source_mailbox: row.col::<Option<i64>>(3)?.map(MailboxId::new),
+                        target_account: row.col::<Option<i64>>(4)?.map(AccountId::new),
+                        target_mailbox: row.col::<Option<i64>>(5)?.map(MailboxId::new),
+                        target_message: row.col::<Option<i64>>(6)?.map(MessageId::new),
+                        raw_blob_id: row.col(7)?,
+                        rfc_message_id: row.col(8)?,
                         phase: MovePhase::parse(&phase).unwrap_or(MovePhase::Aborted),
-                        confirmed_remote_id: row.get::<_, Option<String>>(10)?.map(RemoteId::new),
+                        confirmed_remote_id: row.col::<Option<String>>(10)?.map(RemoteId::new),
                     })
                 },
-            )
-            .optional()
+        )
+        .await
             .map_err(Into::into)
     }
     /// Every saga in one of `phases` whose *source* is among `sources`.
@@ -190,7 +193,7 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// to see `done` as well, since a move that finished is exactly the one
     /// a user is most likely to take back and is not "open" by any
     /// definition the forward path needed (#531).
-    pub fn for_sources(
+    pub async fn for_sources(
         &self,
         sources: &[MessageId],
         phases: &[MovePhase],
@@ -210,13 +213,11 @@ impl<'a> CrossAccountMoveRepository<'a> {
             "SELECT id FROM cross_account_moves
               WHERE phase IN ({list})
               ORDER BY id"
-        ))?;
-        let ids: Vec<i64> = statement
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        )).await?;
+        let ids: Vec<i64> = sql::mapped(&mut statement, (), |row| row.col(0)).await?;
         let mut found = Vec::new();
         for id in ids {
-            let Some(saga) = self.get(CrossAccountMoveId::new(id))? else {
+            let Some(saga) = self.get(CrossAccountMoveId::new(id)).await? else {
                 continue;
             };
             if saga
@@ -234,8 +235,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
     /// Refusal is an error, not a no-op: a drainer asking for an illegal
     /// transition has misread the saga, and silently ignoring it would let
     /// the walk continue on a wrong belief.
-    pub fn transition(&self, id: CrossAccountMoveId, next: MovePhase) -> Result<()> {
-        let Some(current) = self.get(id)? else {
+    pub async fn transition(&self, id: CrossAccountMoveId, next: MovePhase) -> Result<()> {
+        let Some(current) = self.get(id).await? else {
             return Err(Error::NotFound {
                 entity: "cross-account move",
                 id: id.get(),
@@ -254,8 +255,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
         }
         self.connection.execute(
             "UPDATE cross_account_moves SET phase = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id.get(), next.as_str(), Utc::now().timestamp_millis()],
-        )?;
+            bind![id.get(), next.as_str(), Utc::now().timestamp_millis()],
+        ).await?;
         Ok(())
     }
 
@@ -263,15 +264,15 @@ impl<'a> CrossAccountMoveRepository<'a> {
     ///
     /// `remote_id` is `Some` from APPENDUID, `None` when a Message-ID
     /// search proved presence without naming where.
-    pub fn confirm(&self, id: CrossAccountMoveId, remote_id: Option<&RemoteId>) -> Result<()> {
-        self.transition(id, MovePhase::Confirmed)?;
+    pub async fn confirm(&self, id: CrossAccountMoveId, remote_id: Option<&RemoteId>) -> Result<()> {
+        self.transition(id, MovePhase::Confirmed).await?;
         let Some(remote_id) = remote_id else {
             return Ok(());
         };
         self.connection.execute(
             "UPDATE cross_account_moves SET confirmed_remote_id = ?2 WHERE id = ?1",
-            params![id.get(), remote_id.as_str()],
-        )?;
+            bind![id.get(), remote_id.as_str()],
+        ).await?;
 
         // And onto the row the user is looking at (ADR 0026, #531).
         //
@@ -292,8 +293,8 @@ impl<'a> CrossAccountMoveRepository<'a> {
         self.connection.execute(
             "UPDATE messages SET remote_id = ?2
               WHERE id = (SELECT target_message_id FROM cross_account_moves WHERE id = ?1)",
-            params![id.get(), remote_id.as_str()],
-        )?;
+            bind![id.get(), remote_id.as_str()],
+        ).await?;
         Ok(())
     }
 }
