@@ -106,7 +106,7 @@ fn message(id: i64) -> Row {
         seen: id % 5 != 0,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: false,
         thread_count: 200,
         participants: Vec::new(),

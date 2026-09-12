@@ -244,7 +244,7 @@ mod tests {
             seen,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -1544,7 +1544,7 @@ impl ConversationView {
                     preview: row.preview.clone().unwrap_or_default(),
                     expanded: bodies.contains_key(&row.id) && expanded.contains(&row.id),
                     latest: newest == Some(row.id) && rows.len() > 1,
-                    draft: row.draft,
+                    draft: row.send_state.is_some(),
                     // Folded here because this is the layer that knows the
                     // account's addresses (#1241).
                     mine: self.is_mine(row),
@@ -1729,7 +1729,7 @@ impl ConversationView {
         // Which bar, decided from the message the bar is scoped to: its
         // verbs aim at the conversation's latest message, and a thread you
         // are part-way through answering ends in your own draft (#1212).
-        let ends_in_a_draft = messages.last().is_some_and(|row| row.draft);
+        let ends_in_a_draft = messages.last().is_some_and(|row| row.send_state.is_some());
         imp.header.set_verbs_visible(true, ends_in_a_draft);
         // Always, whatever the length -- unlike the stacked pane below.
         //

@@ -190,7 +190,7 @@ Sent and the row disappears.
 - [X] T061 [US1] Add `ListScope::Outbox(AccountId)` to `crates/postio-model/src/scope.rs` with its arms in `reaction`, `is_drawn_from` and `mailbox()`
 - [X] T062 [US1] Add the Outbox predicate and the Drafts exclusion to `where_clause` and `scope_arguments` in `crates/postio-storage/src/repository/messages.rs` — **the riskiest change in the feature**, measured against T047
 - [ ] T063 [US1] Add `ListQuery::outbox` beside the existing constructors in `crates/postio-storage/src/repository/messages.rs`
-- [ ] T064 [US1] Replace `MessageListRow::draft: bool` with `send_state: Option<DraftState>` in `crates/postio-storage/src/repository/messages.rs` and update every consumer the compiler names
+- [X] T064 [US1] Replace `MessageListRow::draft: bool` with `send_state: Option<DraftState>` in `crates/postio-storage/src/repository/messages.rs` and update every consumer the compiler names
 - [ ] T065 [US1] Add `Event::DraftStateChanged` to `crates/postio-core/src/event.rs` and emit it wherever the send path sets state in `crates/postio-sync/src/send.rs` and `crates/postio-storage/src/repository/drafts.rs`
 - [ ] T066 [US1] Add the sidebar's per-account count query (Outbox count, Drafts total, attention count) in `crates/postio-storage/src/repository/mailboxes.rs`, and carry it through `crates/postio-runtime/src/store/sqlite.rs`
 - [ ] T067 [US1] Feed the Outbox row's real count into the shared model in `crates/postio-ui/src/sidebar.rs`, hidden when zero

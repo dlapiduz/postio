@@ -55,7 +55,7 @@ impl MessageSource for SixMessageThread {
                 seen: true,
                 flagged: false,
                 answered: false,
-                draft: false,
+                send_state: None,
                 has_attachments: false,
                 thread_count: 6,
                 participants: Vec::new(),

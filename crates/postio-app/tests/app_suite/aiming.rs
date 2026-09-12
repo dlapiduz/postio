@@ -55,7 +55,7 @@ fn row_of(id: MessageId, kind: RowKind) -> Row {
         seen: true,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: false,
         thread_count: if participants.is_empty() { 1 } else { 2 },
         participants,

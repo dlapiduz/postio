@@ -561,7 +561,7 @@ mod tests {
             seen: true,
             flagged: false,
             answered: false,
-            draft: false,
+            send_state: None,
             has_attachments: false,
             thread_count: 3,
             participants: Vec::new(),

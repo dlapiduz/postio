@@ -123,17 +123,21 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         "the composer has to start closed or this test cannot mean anything"
     );
 
-    // ── open the Drafts folder ──────────────────────────────────────────
-    click_folder(
-        &window,
-        &postio_gtk::sidebar::display_name(&drafts_folder, std::slice::from_ref(&drafts_folder)),
-    );
+    // ── open the Outbox ─────────────────────────────────────────────────
+    //
+    // Not Drafts. #433 made a queued draft stay listed in Drafts so its send
+    // could still be cancelled, and spec 003 keeps that ability while moving
+    // where it is exercised from: a message on its way is in the Outbox, and
+    // Drafts holds what you are writing (FR-001, FR-020). What this test is
+    // about -- Return on a queued draft cancels the send and reopens it for
+    // editing -- is unchanged; only the folder it is done from has moved.
+    click_folder(&window, "Outbox");
     let list = window.list();
     let expected = {
         let connection = database.connection().expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .count(&postio_storage::repository::ListQuery {
-                scope: postio_storage::repository::ListScope::Mailbox(drafts_folder.id),
+                scope: postio_storage::repository::ListScope::Outbox(account),
                 limit: 50,
                 after: None,
             })

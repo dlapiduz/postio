@@ -125,7 +125,7 @@ fn row(id: MessageId, subject: String) -> Row {
         seen: false,
         flagged: false,
         answered: false,
-        draft: false,
+        send_state: None,
         has_attachments: false,
         thread_count: 1,
         participants: Vec::new(),
