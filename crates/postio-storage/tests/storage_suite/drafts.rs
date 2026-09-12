@@ -1846,6 +1846,26 @@ fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
 }
 
 #[test]
+fn the_outbox_has_a_constructor_like_every_other_scope() {
+    // FR-016. The Outbox is reached the way every list is, and a caller that
+    // has to spell out `limit` and `after` to name it is a caller reaching
+    // past the type -- which is what the app suite was doing, and what a
+    // second one would copy.
+    use postio_storage::repository::{ListQuery, ListScope};
+
+    let account = postio_model::AccountId::new(7);
+    let query = ListQuery::outbox(account);
+
+    assert_eq!(query.scope, ListScope::Outbox(account));
+    assert_eq!(
+        query.limit,
+        ListQuery::flagged(account).limit,
+        "a view's page is the same size as any other"
+    );
+    assert_eq!(query.after, None, "a fresh query starts at the newest");
+}
+
+#[test]
 fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
     // FR-007. `Queued` covers two things a person means -- "as soon as you
     // can" and "on Thursday" -- and without the time they read identically.

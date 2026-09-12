@@ -526,6 +526,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_row::the_row_draws_the_canvas_anatomy_at_every_density as fn(),
     ),
     (
+        "gtk_row::the_send_state_marks_are_four_glyphs_the_theme_actually_has",
+        gtk_row::the_send_state_marks_are_four_glyphs_the_theme_actually_has as fn(),
+    ),
+    (
         "gtk_row::building_rows_does_not_resolve_a_keymap",
         gtk_row::building_rows_does_not_resolve_a_keymap as fn(),
     ),
@@ -819,6 +823,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands",
         gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands as fn(),
+    ),
+    (
+        "gtk_sidebar::the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it",
+        gtk_sidebar::the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it as fn(),
     ),
     (
         "gtk_sidebar::a_manual_sync_is_reachable_in_every_connection_state",
