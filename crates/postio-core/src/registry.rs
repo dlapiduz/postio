@@ -45,7 +45,7 @@ pub enum Recovery {
     /// (docs/PRODUCT.md §16: *Archived 12 messages — Undo*).
     ///
     /// `u` works, and that is the load-bearing half: a command claiming this
-    /// must be something [`postio_core::undo::UndoStack`] can actually hold,
+    /// must be something [`crate::undo::UndoStack`] can actually hold,
     /// which means a `UndoKind` exists for it.
     Undo,
     /// Reversible for a limited time, through its own affordance rather than
