@@ -154,7 +154,9 @@ pub struct Provider {
 // SAFETY: every field is a `'static` function pointer or a raw pointer
 // SQLCipher owns and mutates only under its own provider mutex. Nothing here
 // is dropped, and nothing here points at anything this crate frees.
+#[allow(unsafe_code)]
 unsafe impl Sync for Provider {}
+#[allow(unsafe_code)]
 unsafe impl Send for Provider {}
 
 impl Provider {
@@ -183,6 +185,7 @@ impl Provider {
     }
 }
 
+#[allow(unsafe_code)]
 unsafe extern "C" {
     /// SQLCipher's runtime provider registration. Declared rather than bound
     /// through `libsqlite3-sys`, which does not expose it: the symbol is in
@@ -206,6 +209,7 @@ unsafe extern "C" {
 /// # Safety
 ///
 /// `provider` must point at a writable `sqlcipher_provider`.
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn postio_cipher_setup(provider: *mut Provider) -> c_int {
     if provider.is_null() {
@@ -268,6 +272,7 @@ pub unsafe extern "C" fn postio_cipher_setup(provider: *mut Provider) -> c_int {
 /// [`postio_cipher_setup`] only to fill it in, so ownership is never in
 /// question. It is the runtime door that has this hazard, and it has it
 /// whatever language the provider is written in.
+#[allow(unsafe_code)]
 pub fn install() -> Result<(), &'static str> {
     // SAFETY: SQLCipher's own allocator, asked for exactly the size of the
     // table it is about to be handed. It takes ownership at registration and
@@ -302,6 +307,7 @@ pub fn install() -> Result<(), &'static str> {
 ///
 /// `provider` must be a live provider table — in practice one that
 /// [`current`] handed out.
+#[allow(unsafe_code)]
 pub unsafe fn restore(provider: *mut Provider) -> Result<(), &'static str> {
     // SAFETY: the caller's contract.
     let rc = unsafe { sqlcipher_register_provider(provider) };
@@ -318,6 +324,7 @@ pub unsafe fn restore(provider: *mut Provider) -> Result<(), &'static str> {
 ///
 /// The returned pointer is SQLCipher's and must not be freed. It is valid for
 /// the life of the process.
+#[allow(unsafe_code)]
 pub unsafe fn current() -> *mut Provider {
     // SAFETY: the caller's contract; SQLCipher owns the table.
     unsafe { sqlcipher_get_provider() }
@@ -336,6 +343,7 @@ impl Provider {
     /// # Safety
     ///
     /// `self` must be a live provider table.
+    #[allow(unsafe_code)]
     pub unsafe fn derive(
         &self,
         algorithm: c_int,
@@ -364,6 +372,7 @@ impl Provider {
     ///
     /// `self` must be a live provider table, and `out` must have room for
     /// [`Provider::hmac_sz`] of `algorithm`.
+    #[allow(unsafe_code)]
     pub unsafe fn sign(
         &self,
         algorithm: c_int,
@@ -392,6 +401,7 @@ impl Provider {
     ///
     /// `self` must be a live provider table, and `out` must be as long as
     /// `input`.
+    #[allow(unsafe_code)]
     pub unsafe fn transform(
         &self,
         encrypting: bool,
@@ -417,6 +427,7 @@ impl Provider {
 
     /// What this provider calls itself — `"openssl"`, or this crate's
     /// `"rust"`.
+    #[allow(unsafe_code)]
     pub fn name(&self) -> String {
         let Some(get) = self.get_provider_name else {
             return String::new();
@@ -460,6 +471,7 @@ impl Provider {
 /// The pointer must not be freed and must not be passed to
 /// `sqlcipher_register_provider` — use [`install`] for that, which allocates
 /// a table SQLCipher may keep.
+#[allow(unsafe_code)]
 pub unsafe fn table() -> *mut Provider {
     static COMPARISON: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *COMPARISON.get_or_init(|| {
@@ -505,6 +517,7 @@ extern "C" fn get_hmac_sz(_ctx: *mut c_void, algorithm: c_int) -> c_int {
 
 /// No per-context state. OpenSSL's provider does the same — the context is a
 /// hook for a provider that needs one, and this one does not.
+#[allow(unsafe_code)]
 extern "C" fn ctx_init(ctx: *mut *mut c_void) -> c_int {
     if ctx.is_null() {
         return ERROR;
@@ -525,6 +538,7 @@ extern "C" fn fips_status(_ctx: *mut c_void) -> c_int {
     0
 }
 
+#[allow(unsafe_code)]
 extern "C" fn random(_ctx: *mut c_void, buffer: *mut c_void, length: c_int) -> c_int {
     if buffer.is_null() || length < 0 {
         return ERROR;
@@ -555,6 +569,7 @@ extern "C" fn add_random(_ctx: *mut c_void, _buffer: *const c_void, _length: c_i
 /// Two inputs rather than one because SQLCipher MACs the page ciphertext and
 /// then the page number, and will not allocate to join them.
 #[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
 extern "C" fn hmac(
     _ctx: *mut c_void,
     algorithm: c_int,
@@ -618,6 +633,7 @@ extern "C" fn hmac(
 
 /// PBKDF2 over the passphrase and the file's salt.
 #[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
 extern "C" fn kdf(
     _ctx: *mut c_void,
     algorithm: c_int,
@@ -664,6 +680,7 @@ extern "C" fn kdf(
 /// encrypts, 0 decrypts. `in_sz` is always a whole number of blocks — the
 /// page body — and `out` is a buffer of the same size.
 #[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
 extern "C" fn cipher(
     _ctx: *mut c_void,
     mode: c_int,

@@ -35,7 +35,9 @@ rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl
 tempfile = "3.27.0"
 
 [lints.rust]
-# This crate exists to hand C a table of function pointers, so the
-# workspace's `unsafe_code = "forbid"` floor cannot apply. Every block says
-# what it is upholding.
-unsafe_code = "allow"
+# `deny` rather than the workspace's `forbid`, and the difference is the
+# whole discipline: every `unsafe` in this crate still needs an explicit
+# `#[allow(unsafe_code)]` and a `# Safety` or `SAFETY:` beside it. What this
+# crate cannot do is inherit `forbid`, because handing C a table of function
+# pointers is what it is for. See EXCEPTIONS in check-lint-floor.py.
+unsafe_code = "deny"

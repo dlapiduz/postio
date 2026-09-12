@@ -76,6 +76,14 @@ EXCEPTIONS: dict[str, str] = {
     # "do not register that handler"; see the call site for the coredump this
     # comes from. No other `unsafe` in this crate.
     "postio-storage": "deny",
+    # A SQLCipher crypto provider: a table of `extern "C"` function pointers
+    # handed to the amalgamation, which then calls them with raw pointers and
+    # lengths. There is no version of that which is safe Rust, and unlike the
+    # crates above the `unsafe` is the crate's whole purpose rather than one
+    # call in it. `deny` still holds -- every site carries its own
+    # `#[allow(unsafe_code)]` and says which of SQLCipher's contracts it is
+    # relying on. A spike; see spike/FINDINGS.md.
+    "postio-cipher": "deny",
 }
 
 # Ordered weakest to strongest, so "at least as strong as" is an index test.

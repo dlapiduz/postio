@@ -111,6 +111,20 @@ upstream PR, and it is the only part of this that is somebody else's code.
    `PRAGMA cipher_kdf_algorithm` is still a store somebody has. It is not
    used by anything this build writes.
 
+## Where this branch stands
+
+`scripts/check.sh` is clean on it, which took two entries a reviewer should
+see rather than skim past:
+
+- `postio-cipher` is in `check-lint-floor.py`'s `EXCEPTIONS` at `deny`, like
+  the five crates already there. It cannot inherit the workspace's `forbid`
+   — handing C a table of function pointers is what it is for — but every
+  `unsafe` site still carries its own `#[allow(unsafe_code)]` and says which
+  of SQLCipher's contracts it is relying on.
+- Three `pub fn`s are in `uncalled-pub-fn-baseline.txt`. They exist to ask
+  *any* provider the same question so two can be compared, and only the
+  differential test has two.
+
 ## Files
 
 - `crates/postio-cipher/` — the provider, its unit tests, and

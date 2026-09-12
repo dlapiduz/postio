@@ -42,6 +42,7 @@ get_all                           # crates/postio-model/src/headers.rs:52
 handles_ext                       # crates/postio-core/src/dispatch.rs:373
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
+hmac_sz                           # crates/postio-cipher/src/lib.rs -- asks *any* provider a question, so the Rust one and the one SQLCipher compiled in can be compared; only the differential test has both (spike)
 idle_connections                  # crates/postio-storage/src/db.rs:728
 idles                             # crates/postio-sync/src/watch.rs:290
 immediate                         # crates/postio-storage/src/blob.rs:551
@@ -118,11 +119,13 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
+sizes                             # crates/postio-cipher/src/lib.rs -- as `hmac_sz` (spike)
 suspend                           # crates/postio-sync/src/watch.rs:510
 takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
 timing_out_after_the_payload      # crates/postio-smtp/src/transport.rs:594
+transform                         # crates/postio-cipher/src/lib.rs -- as `hmac_sz` (spike)
 try_next                          # crates/postio-core/src/bridge.rs:328
 unbind                            # crates/postio-ui/src/keymap.rs:634 -- counterpart to `bind`, no rebinding surface calls it yet (#1100)
 untracked                         # crates/postio-core/src/invocation.rs:155
