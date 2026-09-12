@@ -82,9 +82,17 @@ instrument could say *which* phase and not *what*. It is now three:
 
 | phase | what it holds |
 |---|---|
-| `account` | the keyring answering — a D-Bus round trip, asked on the runtime |
+| `window` | the widget tree, built before anything is on screen |
+| `shell` | the compositor showing the window — pixels, and no mail in them |
+| `store` | the keyring, the database, the migrations, the index — on a thread |
+| `account` | the route decided and the account found |
 | `feeds` | `feed_the_window`: synchronous main-thread work the frame waits on |
-| `first frame` | GTK's own paint, which is what the phase always claimed to be |
+| `first frame` | GTK's paint of the frame the mail is in. This is the budget |
+
+`shell` and `first frame` are two different moments since #1114, and the
+budget is measured against the second of them: a start that put a window on
+screen in 200 ms and mail in it twelve seconds later took twelve seconds to be
+usable, and a timeline that closed at the first frame would call it a pass.
 
 And the cause was found by counting rather than by timing, because a count is
 the same number on this workstation and on a loaded runner. Pointing a window
@@ -171,12 +179,12 @@ reasoning belongs here rather than only on a closed issue:
 - It pays the toll it was meant to hide. The pixels arrive at `init + toll`
   either way; the only question a splash answers is which window gets them.
 - What is left to hide is a flash. On the release figures above a splash would
-  be on screen from roughly 170 ms to roughly 400 ms, and once #1108 overlaps
-  the store open with the shader compile, that window closes to something like
-  120–150 ms. `PRODUCT.md` §18 allows a transition of ≤ 100 ms **or none**; a
-  whole window that appears and is replaced inside 150 ms is on the wrong side
-  of that, and on a faster machine it is pure flicker. Suppressing it below a
-  threshold only promises branding to the users having the worst day.
+  be on screen from roughly 170 ms to roughly 400 ms, and since #1114 opens the
+  store behind a window that is already up, that window closes further still.
+  `PRODUCT.md` §18 allows a transition of ≤ 100 ms **or none**; a whole window
+  that appears and is replaced inside 150 ms is on the wrong side of that, and
+  on a faster machine it is pure flicker. Suppressing it below a threshold only
+  promises branding to the users having the worst day.
 - The desktop already draws it. `dev.postio.Postio.desktop` sets
   `StartupNotify=true`, so the shell shows launch feedback from `Exec` to first
   map — earlier than any splash of ours could appear, because it starts before
@@ -188,13 +196,38 @@ reasoning belongs here rather than only on a closed issue:
   and it is two map/unmap events the compositor animates for us.
 
 What the idea is reaching for is real, and the answer is the same window
-sooner rather than a different one: #1108 realizes the window before the store
-is open, and #1114 is what it shows while it waits.
+sooner rather than a different one. **#1114 is that window.** `run` used to
+read the keyring and open the store before `app::build_with` was called at
+all, so there was no application — let alone a window — until the store had
+succeeded or been refused; it now presents the window first and opens the
+store on a thread behind it. #1108 proposed doing this for the ~20 ms of
+overlap and was rightly closed as not worth a restructuring of the
+composition root; what made it worth one was the tail rather than the
+average. The live install's journal has a schema migration holding a launch
+for 12.6 s and a keyring prompt holding another for 28 s, each with nothing on
+screen at all.
+
+### What the window shows while it waits
+
+Nothing, for the first second. No spinner, no skeleton rows, no "Loading…":
+the measured store phase is tens of milliseconds and anything drawn inside
+that is a transition of well under 100 ms that §18 forbids. Past a second —
+twice the budget, so the start has already failed it — the list pane says
+which of four waits it is on, because "Updating your mailbox's storage" is a
+different promise from "Opening your mailbox" and the two that change the
+store are the two that take tens of seconds. `postio_gtk::list_state::Waiting`
+is the list.
+
+A window with no store behind it also offers no verbs that cannot run:
+`Requirement::StoreOpen` on the registry row keeps them out of the palette and
+the cheat sheet, and a key bound to one refuses out loud with the same
+sentence the plate would show.
 
 *The first store reads are not in the `window` phase either.* The keyring
-round trip and the SQLCipher open happen before the main loop starts, and
-used to be folded into the same phase; they are now `store`, and the split
-shows the two moving independently:
+round trip and the SQLCipher open used to be folded into that phase; they are
+`store` now, and since #1114 they happen **after** `shell` — the frame the
+compositor first showed the window in — rather than before the main loop
+starts. The split shows the two moving independently:
 
 | | empty store | 20,000 messages |
 |---|---:|---:|

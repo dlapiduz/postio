@@ -3357,6 +3357,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [A window before its store is a new set of states](notes/2026-09-12-a-window-before-its-store-is-a-new-set-of-states.md) — presenting the window first moves the startup budget's subject, makes the absence of a plate a decision, and needs a guard where the work starts rather than where it ends (2026-09-12, #1114)
 - [An aggregate hides from a row count](notes/2026-09-11-an-aggregate-hides-from-a-row-count.md) — a `count(*)` over a mailbox is one statement and one row, so the two counted budgets in the workspace were blind to a full scan on the first-frame path (2026-09-11, #1479)
 - [Where 475 gigabytes went](notes/2026-09-09-where-475-gigabytes-went.md) — a full disk reports itself as a compile error; cargo never prunes `deps/`; and `git cherry`, not shas, is what tells a landed worktree from a live one (2026-09-09, #1428)
 - 2026-08-25 — [A slow query whose SQL is fast is measuring the machine (#500)](notes/2026-08-25-a-slow-query-whose-sql-is-fast-is-measuring-the-machine.md)
