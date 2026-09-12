@@ -1,11 +1,16 @@
 # Performance: budgets and the measured baseline
 
-Performance is a functional requirement in Postio, enforced by `cargo bench`
-rather than checked by hand at the end:
+Performance is a functional requirement in Postio. What enforces it is
+**counted work rather than wall-clock**: `bench.yml` compiles the bench
+targets nightly and deliberately times nothing, because a shared runner
+cannot defend 16 ms, so what gates a pull request is the *cause* of each
+budget — statements, rows and SQLite steps, which are the same numbers on
+any machine. See `postio_storage::test_support::counting`.
 
 | Budget | Target | Measured |
 |---|---|---|
-| Startup to usable UI (populated DB) | < 500 ms | **427 ms** |
+| Startup to usable UI (20,000 messages) | < 500 ms | **427 ms** |
+| Startup to usable UI (81,000 messages, real store) | < 500 ms | **1249.7 ms** before #1479, over; unmeasured since |
 | Ordinary UI interaction | < 16 ms | **0.3 ms** typical, one case over — see below |
 | Local search | < 100 ms | **42 ms** worst shape |
 | Memory, 100,000 messages | no full-mailbox load | **55 MiB**, flat past 100k |
@@ -49,7 +54,73 @@ the scratch store with. The tool deliberately never mints one.
 
 ## Startup
 
-On a 20,000-message store with an account and six folders:
+### On a real store, which is four times bigger than the figures below
+
+Measured on the maintainer's own account — 223 MB, ~81,000 messages, one
+iCloud account, fifteen folders — with `POSTIO_STARTUP_TRACE=1`, and reported
+on [#1479](https://github.com/dlapiduz/postio/issues/1479):
+
+```
+startup 1249.7ms (init 60.5ms · fonts 3.1ms · styles 4.1ms · store 30.8ms
+                  · window 107.2ms · first frame 1044.1ms) budget 500.0ms — OVER
+```
+
+**Four phases out of five got *faster* than the 20,000-message figures below,
+and one got ten times slower.** So this was never "everything is slower on a
+bigger store": `store` measured 30.8 ms against ~78 ms, `window` 107.2 ms
+against 228 ms, and the first frame 1044.1 ms against 106 ms.
+
+It was not the network either. `start_syncing` runs behind `on_first_frame`
+and the log shows it still does — the frame lands at `48.951` and the server
+round trips after it — so everything in the 961 ms between `opening account`
+and the paint was local.
+
+### What that 961 ms was, and how it was found
+
+`first frame` was one phase covering three unrelated things, so the
+instrument could say *which* phase and not *what*. It is now three:
+
+| phase | what it holds |
+|---|---|
+| `account` | the keyring answering — a D-Bus round trip, asked on the runtime |
+| `feeds` | `feed_the_window`: synchronous main-thread work the frame waits on |
+| `first frame` | GTK's own paint, which is what the phase always claimed to be |
+
+And the cause was found by counting rather than by timing, because a count is
+the same number on this workstation and on a loaded runner. Pointing a window
+at a seeded store, counting only the thread that has to draw
+(`app_suite`'s `startup_reads` case):
+
+| | 1,000 messages | 10,000 messages |
+|---|---:|---:|
+| statements | 37 | 37 |
+| rows | 28 | 28 |
+| **steps** | **8,144** | **71,144** |
+| steps, after the fix | **1,045** | **1,045** |
+
+One statement was 70,014 of those 71,144 steps: `count(*)` over every message
+the account holds, no index to narrow it, read at startup for a figure drawn
+in the privacy pane. It is read when the pane is opened now — the same trade
+[#871](https://github.com/dlapiduz/postio/issues/871) made for what an
+account's mail weighs, which measured 1.48 s in the pane next door.
+
+**Note which two rows did not move.** An aggregate is one statement and one
+row however much it reads, so the two counted budgets already in the
+workspace were blind to it by construction. `steps`
+(`SQLITE_STMTSTATUS_VM_STEP`) is the count that sees it, and
+`docs/notes/2026-09-11-an-aggregate-hides-from-a-row-count.md` is why that
+matters beyond this one query.
+
+**A post-fix wall-clock figure on a store this size is still unmeasured**,
+and this document should not invent one. What the arithmetic says is that it
+closes: 205 ms for the phases before the window, ~100 ms for the paint, and
+the rest of the 1249.7 ms is the width of that scan — which is the same order
+as #871's 1.48 s for a comparable scan of the same table. Anyone with a store
+this size can settle it with the recipe above.
+
+### On a 20,000-message store
+
+With an account and six folders:
 
 | | floor | spread over 5 runs |
 |---|---:|---|
