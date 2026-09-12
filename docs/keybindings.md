@@ -98,6 +98,10 @@ command from inside a text field.
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
 | `ctrl+b` | Toggle sidebar | List, conversation, reader |  | `toggle_sidebar` |
 | `g f` | Focus the folder list | List, conversation, reader, search |  | `focus_sidebar` |
+| `g i` | Go to inbox | List, conversation, reader, search |  | `go_to_inbox` |
+| `g d` | Go to drafts | List, conversation, reader, search |  | `go_to_drafts` |
+| `g t` | Go to sent | List, conversation, reader, search |  | `go_to_sent` |
+| `g s` | Go to flagged | List, conversation, reader, search |  | `go_to_flagged` |
 | `tab` | Next pane | List, conversation, reader, folder list |  | `cycle_pane` |
 | `shift+tab` | Previous pane | List, conversation, reader, folder list |  | `cycle_pane_back` |
 | `j` or `Down` | Next folder | Folder list |  | `next_folder` |

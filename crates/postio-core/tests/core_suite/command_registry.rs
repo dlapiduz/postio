@@ -111,6 +111,47 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
 }
 
 #[test]
+fn the_places_people_go_most_answer_to_two_keys() {
+    // `g` is already this app's "go to" prefix -- `g g` is the first message,
+    // `g f` the folder list, `g a` the next scope -- and these extend it to
+    // the destinations a person visits dozens of times a day. The letters are
+    // the ones somebody arrives from another mail client already holding.
+    //
+    // `g a` is deliberately not among them. It means "next scope" here and
+    // "all mail" in the convention being copied, which is not even the same
+    // destination, so an existing command is not given up for an imperfect
+    // match. The archive has no good letter and is left for the design
+    // authority rather than being assigned one here.
+    let expected = [
+        ("go_to_inbox", "g i"),
+        ("go_to_drafts", "g d"),
+        ("go_to_sent", "g t"),
+        ("go_to_flagged", "g s"),
+    ];
+    let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in expected {
+        let parsed: CommandId = id.parse().unwrap_or_else(|_| panic!("no command id {id}"));
+        assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
+
+        let spec = registry::get(parsed);
+        assert!(
+            !spec.destructive,
+            "{id} goes somewhere; it destroys nothing"
+        );
+        assert!(
+            spec.contexts.contains(Context::List),
+            "{id} has to work from the message list, which is where a person is \
+             standing when they want to be somewhere else"
+        );
+        assert!(
+            !spec.contexts.contains(Context::Composer),
+            "{id} must not fire in the composer, where `g` is a letter someone \
+             is typing"
+        );
+    }
+}
+
+#[test]
 fn ids_round_trip_through_strings() {
     for id in CommandId::ALL {
         let text = id.as_str();

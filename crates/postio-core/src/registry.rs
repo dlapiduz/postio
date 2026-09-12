@@ -1045,6 +1045,82 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::GoToInbox,
+        title: "Go to inbox",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `i` for inbox, which is what every mail client on the web binds it to.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g i",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else. Not the composer, where `g` is a letter being typed.
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::GoToDrafts,
+        title: "Go to drafts",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `d` for drafts, the same.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g d",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else. Not the composer, where `g` is a letter being typed.
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::GoToSent,
+        title: "Go to sent",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `t`, not `s`: the convention being copied spells sent mail that way, and `s` is taken below by the flagged folder for the same reason.
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g t",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else. Not the composer, where `g` is a letter being typed.
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
+        id: CommandId::GoToFlagged,
+        title: "Go to flagged",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g f` the folder list -- so a destination reads as the
+        // same idiom rather than a second one. `s` is what the convention binds to starred mail, and the sidebar says Flagged (docs/PRODUCT.md).
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g s",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else. Not the composer, where `g` is a letter being typed.
+        contexts: ctx(LIST_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        requires: None,
+    },
+    CommandSpec {
         id: CommandId::CyclePane,
         title: "Next pane",
         // The top-level meaning of bare Tab, which had none: it was not a

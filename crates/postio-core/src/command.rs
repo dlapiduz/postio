@@ -169,6 +169,14 @@ command_ids! {
     ToggleSidebar => "toggle_sidebar",
     /// Put the keyboard in the folder list.
     FocusSidebar => "focus_sidebar",
+    /// Go to the inbox.
+    GoToInbox => "go_to_inbox",
+    /// Go to the drafts.
+    GoToDrafts => "go_to_drafts",
+    /// Go to the sent mail.
+    GoToSent => "go_to_sent",
+    /// Go to the flagged mail.
+    GoToFlagged => "go_to_flagged",
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     CyclePane => "cycle_pane",
     /// Move the keyboard to the previous pane.
@@ -630,6 +638,20 @@ pub enum Command {
     ToggleSidebar,
     /// Put the keyboard in the folder list.
     FocusSidebar,
+    /// Go to a mailbox by the role it wears, rather than by its name.
+    ///
+    /// One variant each rather than `GoTo(MailboxRole)`, because [`Self::id`]
+    /// is total: a `GoTo(MailboxRole::Junk)` would be a value with no command
+    /// id, and the type would then permit something the registry cannot
+    /// answer. Four roles have a sequence; the rest are reached through the
+    /// box, which is what `#` is for.
+    GoToInbox,
+    /// Go to the drafts.
+    GoToDrafts,
+    /// Go to the sent mail.
+    GoToSent,
+    /// Go to the flagged mail.
+    GoToFlagged,
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     ///
     /// The *top-level* meaning of bare Tab, for when a pane itself has the
@@ -838,6 +860,10 @@ impl Command {
             Command::EditConfig => CommandId::EditConfig,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::GoToInbox => CommandId::GoToInbox,
+            Command::GoToDrafts => CommandId::GoToDrafts,
+            Command::GoToSent => CommandId::GoToSent,
+            Command::GoToFlagged => CommandId::GoToFlagged,
             Command::CyclePane => CommandId::CyclePane,
             Command::CyclePaneBack => CommandId::CyclePaneBack,
             Command::NextFolder => CommandId::NextFolder,
@@ -952,6 +978,10 @@ impl Command {
             CommandId::EditConfig => Command::EditConfig,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::GoToInbox => Command::GoToInbox,
+            CommandId::GoToDrafts => Command::GoToDrafts,
+            CommandId::GoToSent => Command::GoToSent,
+            CommandId::GoToFlagged => Command::GoToFlagged,
             CommandId::CyclePane => Command::CyclePane,
             CommandId::CyclePaneBack => Command::CyclePaneBack,
             CommandId::NextFolder => Command::NextFolder,

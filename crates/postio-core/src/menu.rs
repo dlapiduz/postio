@@ -125,6 +125,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::NextMessage | C::PrevMessage | C::ExtendSelectionDown | C::ExtendSelectionUp => None,
         C::FirstMessage | C::LastMessage => Some(M::Go),
         C::NextFolder | C::PrevFolder | C::FocusSidebar => Some(M::Go),
+        // The destinations belong in the Go menu for the same reason they
+        // belong in the palette: a person who does not know `g i` still wants
+        // the inbox, and this is where they look for it.
+        C::GoToInbox | C::GoToDrafts | C::GoToSent | C::GoToFlagged => Some(M::Go),
         C::CyclePane | C::CyclePaneBack => Some(M::Go),
         C::NextScope => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
