@@ -345,21 +345,48 @@ pub fn install() -> Result<(), &'static str> {
     Err("sqlcipher refused the provider")
 }
 
-/// Put `provider` back in force.
+/// A provider table SQLCipher allocated and owns.
 ///
-/// The other half of [`install`], and the same call underneath: SQLCipher
-/// elevates whatever is registered to the default, and a table already on its
-/// list is moved rather than initialised again. For a test that has to ask
-/// both providers the same question in one process.
+/// The only way to get one is [`current`], and the only thing to do with one
+/// is [`restore`] — which is what lets that function be safe, and is the
+/// point of the type.
 ///
-/// # Safety
+/// Before it existed, `restore` took a bare `*mut Provider` while the crate
+/// also handed out [`table`], a `Box::leak` for comparing against. Nothing
+/// but a doc comment stood between them, and writing `examples/throughput.rs`
+/// I put the second into the first: registering a table SQLCipher did not
+/// allocate splices it onto the chain `sqlcipher_extra_shutdown` frees, and
+/// the process aborts on the way out with `free(): invalid pointer`. The
+/// measurements printed perfectly first.
 ///
-/// `provider` must be a live provider table — in practice one that
-/// [`current`] handed out.
-#[allow(unsafe_code)]
-pub unsafe fn restore(provider: *mut Provider) -> Result<(), &'static str> {
-    // SAFETY: the caller's contract.
-    let rc = unsafe { sqlcipher_register_provider(provider) };
+/// Two pointers of one type meaning different things about ownership is the
+/// whole of that bug. A type each is the fix.
+#[derive(Clone, Copy)]
+pub struct Shipped(*mut Provider);
+
+impl Shipped {
+    /// The table, to ask it questions.
+    pub fn as_provider(&self) -> &Provider {
+        // SAFETY: `current` is the only constructor, and its contract is that
+        // SQLCipher's table is live for as long as SQLCipher is.
+        #[allow(unsafe_code)]
+        unsafe {
+            &*self.0
+        }
+    }
+}
+
+/// Put the provider SQLCipher was using back in force.
+///
+/// Safe, and only because a [`Shipped`] cannot be built out of anything else:
+/// the table came from SQLCipher, so handing it back cannot put a foreign
+/// allocation on the chain SQLCipher frees.
+pub fn restore(shipped: Shipped) -> Result<(), &'static str> {
+    // SAFETY: `shipped` came from `sqlcipher_get_provider`, so it is a table
+    // SQLCipher allocated and still owns. Registering it moves it back to the
+    // head of a list it is already on.
+    #[allow(unsafe_code)]
+    let rc = unsafe { sqlcipher_register_provider(shipped.0) };
     if rc == OK {
         Ok(())
     } else {
@@ -371,12 +398,13 @@ pub unsafe fn restore(provider: *mut Provider) -> Result<(), &'static str> {
 ///
 /// # Safety
 ///
-/// The returned pointer is SQLCipher's and must not be freed. It is valid for
-/// the life of the process.
+/// SQLCipher must have been initialised — opening any connection does it — or
+/// there is no provider yet and the table is null. It is SQLCipher's and is
+/// freed at `sqlite3_shutdown`; do not hold a [`Shipped`] across one.
 #[allow(unsafe_code)]
-pub unsafe fn current() -> *mut Provider {
-    // SAFETY: the caller's contract; SQLCipher owns the table.
-    unsafe { sqlcipher_get_provider() }
+pub unsafe fn current() -> Shipped {
+    // SAFETY: the caller's contract.
+    Shipped(unsafe { sqlcipher_get_provider() })
 }
 
 /// Asking a provider the questions SQLCipher asks it.

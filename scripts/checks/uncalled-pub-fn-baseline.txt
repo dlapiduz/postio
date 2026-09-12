@@ -20,6 +20,7 @@
 account_counts                    # crates/postio-storage/src/repository/mailboxes.rs:314
 add_member                        # crates/postio-storage/src/repository/contact_groups.rs:95
 advertises_special_use            # crates/postio-account/src/imap/dispatch.rs:215
+as_provider                       # crates/postio-cipher/src/lib.rs -- the only thing to do with a `Shipped`, and only a build carrying both providers has one to look at (spike)
 available                         # crates/postio-core/src/registry.rs:1327
 back_depth                        # crates/postio-core/src/state.rs:478
 backfill_policy_at                # crates/postio-session/src/lib.rs:92

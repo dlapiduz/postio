@@ -148,39 +148,92 @@ patch is in `spike/libsqlite3-sys/` and is twenty lines; it reads one
 environment variable and skips the OpenSSL discovery. That is a plausible
 upstream PR, and it is the only part of this that is somebody else's code.
 
+## Performance: measured, and it is the one real cost
+
+`cargo run --release -p postio-cipher --example throughput` asks both
+providers the same questions through the same vtable, back to back in one
+process, and reports the floor of five rounds. A ratio measured a microsecond
+apart survives a shared machine in a way an absolute number would not.
+
+| | openssl | rust | rust/openssl |
+|---|---:|---:|---:|
+| cipher encrypt (4 KiB page) | 3825 ns | 3965 ns | **1.04x** |
+| cipher decrypt (4 KiB page) | 1166 ns | 971 ns | **0.83x** |
+| hmac sha256 — what Postio uses | 9010 ns | 16801 ns | **1.86x** |
+| hmac sha512 — older stores | 6827 ns | 9326 ns | 1.37x |
+| pbkdf2 sha512, raw key — what Postio pays | 2777 ns | 1700 ns | **0.61x** |
+| pbkdf2 sha512, 256k — *not* Postio's path | 127 ms | 150 ms | 1.18x |
+| **full scan of a 26.4 MB store** | **141 ms** | **167 ms** | **1.18x** |
+
+**AES is a non-issue, and I had it wrong.** The first write-up said `aes` is
+"software unless the AES-NI features are on". It is not: `aes` 0.8 dispatches
+to AES-NI at run time on x86-64 through `cpufeatures`, this machine has it,
+and CBC *decrypt* — the direction that matters, since reading is what Postio
+does — is 17% **faster** than OpenSSL.
+
+**The 256,000-iteration PBKDF2 is not Postio's cost either.** `db.rs` keys
+with the raw `x'…'` form, because the key is high-entropy material from the
+keyring rather than something a person typed, and a raw key skips the main KDF
+for `FAST_PBKDF2_ITER`, which is 2. That path is 39% faster in Rust. #1479's
+30.8 ms `store` phase was already telling me the 127 ms path was not being
+taken.
+
+**The real cost is HMAC, and it is 1.86x.** It is also the dominant per-page
+cost — the MAC over a 4 KiB page costs more than the AES over it, either way
+round. End to end, a full scan of a real store is **1.18x**, because crypto is
+only part of what a page read does.
+
+### The caveat that decides whether that number means anything
+
+**This machine has no SHA-NI.** `/proc/cpuinfo` has `aes` and `avx2` and not
+`sha_ni` — so for SHA-256, OpenSSL uses AVX2 assembly and `sha2` falls back to
+portable Rust. On a machine with the extension both would use it: `sha2`
+0.10.9 autodetects it (`cpufeatures::new!(shani_cpuid, "sha", …)` in
+`sha256/x86.rs`), as does OpenSSL.
+
+Which matters twice over, because `PageMac::CURRENT` is `Sha256` *precisely
+because* of SHA-NI — `postio_storage::db` says so, and cites a profile
+putting 45.9% of samples in `sha512_block_data_order_avx2`. So this
+measurement is the **pessimistic** case for the algorithm Postio picked, taken
+on hardware that algorithm was not picked for. Worth noticing separately: on
+this box SHA-512 is faster than SHA-256 for *both* providers, which is exactly
+what that same doc comment predicts for a CPU without the extensions.
+
+Nobody should conclude from 1.86x without re-running this on a SHA-NI
+machine. The command is one line and the harness is committed.
+
 ## What is missing before this could land
 
 1. **Upstream, or a vendored `libsqlite3-sys`.** A patched build script in a
    `[patch.crates-io]` is what the spike used and is not what should ship.
-2. **The differential test against real stores, in CI.** `tests/differential.rs`
+2. **The same measurement on a SHA-NI machine**, per above. It is the
+   difference between "1.18x end to end" and "no measurable difference", and
+   it is the only open question that could still sink this.
+3. **The differential test against real stores, in CI.** `tests/differential.rs`
    compares the two providers primitive by primitive and across whole stores,
    but only in a process that has both. A build with no OpenSSL cannot run
    it, so the gate has to be a corpus of stores written by the OpenSSL build
    and committed, or a CI job that builds both.
-3. **Performance.** Unmeasured, and it matters: `aes` is a software
-   implementation unless `aes-armv8`/AES-NI features are on, while OpenSSL
-   picks AES-NI at run time. Postio decrypts every page it reads, so a
-   regression here lands on the interaction budget rather than on startup.
-   `postio_storage::test_support::counting` cannot see this — it is the same
-   number of statements either way — so it wants a real bench.
 4. **A decision about SHA-1.** The provider implements it because the vtable
    has three algorithm arms and a store written under an older
    `PRAGMA cipher_kdf_algorithm` is still a store somebody has. It is not
    used by anything this build writes.
 
-## Where this branch stands
+## One more footgun, walked into while measuring
 
-`scripts/check.sh` is clean on it, which took two entries a reviewer should
-see rather than skim past:
+`restore` used to take a bare `*mut Provider`, and the crate also handed out
+`table()`, a `Box::leak` for comparing against. Nothing but a doc comment
+stood between them, and `examples/throughput.rs` put the second into the
+first — which splices an allocation SQLCipher did not make onto the chain it
+frees, and aborts at exit with `free(): invalid pointer`. The measurements
+printed perfectly first.
 
-- `postio-cipher` is in `check-lint-floor.py`'s `EXCEPTIONS` at `deny`, like
-  the five crates already there. It cannot inherit the workspace's `forbid`
-   — handing C a table of function pointers is what it is for — but every
-  `unsafe` site still carries its own `#[allow(unsafe_code)]` and says which
-  of SQLCipher's contracts it is relying on.
-- Three `pub fn`s are in `uncalled-pub-fn-baseline.txt`. They exist to ask
-  *any* provider the same question so two can be compared, and only the
-  differential test has two.
+Two pointers of one type meaning different things about ownership is the
+whole of that bug, so there is a type each now: `current()` returns a
+`Shipped`, `restore` takes one, and `restore` is a **safe** function because
+a `Shipped` cannot be built out of anything else. The runtime door is the
+part of this crate that needs the care, and this is the second time it has
+proved it.
 
 ## Files
 

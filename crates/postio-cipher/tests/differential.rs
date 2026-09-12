@@ -62,9 +62,10 @@ fn the_rust_provider_and_openssl_agree_on_every_primitive_and_on_whole_stores() 
             .expect("a row");
     }
 
-    // SAFETY: SQLCipher owns this table and keeps it for the life of the
-    // process; nothing here frees it.
-    let shipped: &Provider = unsafe { &*postio_cipher::current() };
+    // SAFETY: SQLCipher has been initialised by the open above, so there is
+    // a provider; it owns the table and keeps it for the life of the process.
+    let was = unsafe { postio_cipher::current() };
+    let shipped: &Provider = was.as_provider();
     // SAFETY: a `'static` in this crate, not yet registered.
     let ours: &Provider = unsafe { &*postio_cipher::table() };
 
@@ -205,8 +206,9 @@ fn the_rust_provider_and_openssl_agree_on_every_primitive_and_on_whole_stores() 
 
     // ── and now whole stores, which is what a person would actually lose ──
     postio_cipher::install().expect("the provider registers");
-    // SAFETY: the table SQLCipher now holds.
-    let now: &Provider = unsafe { &*postio_cipher::current() };
+    // SAFETY: as above.
+    let now = unsafe { postio_cipher::current() };
+    let now: &Provider = now.as_provider();
     assert_eq!(
         now.name(),
         ours.name(),
@@ -240,12 +242,12 @@ fn the_rust_provider_and_openssl_agree_on_every_primitive_and_on_whole_stores() 
     // ...and read back by the provider SQLCipher shipped with. Re-registering
     // the original elevates it to default again; it is already on the list,
     // so it is moved rather than re-initialised.
-    // SAFETY: the table SQLCipher gave out above, still live and still
-    // SQLCipher's.
-    unsafe { postio_cipher::restore(shipped as *const Provider as *mut Provider) }
-        .expect("the shipped provider goes back");
-    // SAFETY: whatever is now in force.
-    let restored: &Provider = unsafe { &*postio_cipher::current() };
+    // Safe: `Shipped` is SQLCipher's own table by construction, which is
+    // what makes putting it back a safe call.
+    postio_cipher::restore(was).expect("the shipped provider goes back");
+    // SAFETY: as above.
+    let restored = unsafe { postio_cipher::current() };
+    let restored: &Provider = restored.as_provider();
     assert_eq!(
         restored.name(),
         shipped.name(),
