@@ -170,9 +170,9 @@ Sent and the row disappears.
 
 ### Tests
 
-- [ ] T047 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/counting.rs`: listing an ordinary mailbox issues the same statements and touches the same rows **before** the Drafts exclusion exists — the baseline the riskiest task is measured against
-- [ ] T048 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: a queued draft is in `ListScope::Outbox` and not in `ListScope::Mailbox(drafts)`; FR-004 as a property over all five states
-- [ ] T049 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: `messages.send_state` equals `drafts.state` after every draft verb
+- [X] T047 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/counting.rs`: listing an ordinary mailbox issues the same statements and touches the same rows **before** the Drafts exclusion exists — the baseline the riskiest task is measured against
+- [X] T048 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: a queued draft is in `ListScope::Outbox` and not in `ListScope::Mailbox(drafts)`; FR-004 as a property over all five states
+- [X] T049 [P] [US1] Test in `crates/postio-storage/tests/storage_suite/messages.rs`: `messages.send_state` equals `drafts.state` after every draft verb
 - [ ] T050 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: **with no backend at all**, a queued send is listed in the Outbox and nothing awaited a connection (US1 scenario 4)
 - [ ] T051 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: on acceptance the message leaves the Outbox and appears in Sent
 - [ ] T052 [P] [US1] Test in `crates/postio-session/tests/session_suite/outbox.rs`: cancelling before the drainer returns it to Drafts as editable; cancelling in flight is refused with a reason and the row stays
@@ -185,10 +185,10 @@ Sent and the row disappears.
 
 ### Implementation
 
-- [ ] T059 [US1] Migration `crates/postio-storage/src/migrations/0019_message_send_state.sql`: the nullable `send_state` column with its `CHECK`, the partial index, the count-trigger split, and a one-pass backfill from `drafts`; registered in `crates/postio-storage/src/migrations/mod.rs`
-- [ ] T060 [US1] Write `send_state` beside `drafts.state` in `crates/postio-storage/src/repository/drafts.rs` — `save`, `set_state`, `queue_send`, `queue_send_at`, `cancel_send` — in the same transaction, and nowhere else
-- [ ] T061 [US1] Add `ListScope::Outbox(AccountId)` to `crates/postio-model/src/scope.rs` with its arms in `reaction`, `is_drawn_from` and `mailbox()`
-- [ ] T062 [US1] Add the Outbox predicate and the Drafts exclusion to `where_clause` and `scope_arguments` in `crates/postio-storage/src/repository/messages.rs` — **the riskiest change in the feature**, measured against T047
+- [X] T059 [US1] Migration `crates/postio-storage/src/migrations/0019_message_send_state.sql`: the nullable `send_state` column with its `CHECK`, the partial index, the count-trigger split, and a one-pass backfill from `drafts`; registered in `crates/postio-storage/src/migrations/mod.rs`
+- [X] T060 [US1] Write `send_state` beside `drafts.state` in `crates/postio-storage/src/repository/drafts.rs` — `save`, `set_state`, `queue_send`, `queue_send_at`, `cancel_send` — in the same transaction, and nowhere else
+- [X] T061 [US1] Add `ListScope::Outbox(AccountId)` to `crates/postio-model/src/scope.rs` with its arms in `reaction`, `is_drawn_from` and `mailbox()`
+- [X] T062 [US1] Add the Outbox predicate and the Drafts exclusion to `where_clause` and `scope_arguments` in `crates/postio-storage/src/repository/messages.rs` — **the riskiest change in the feature**, measured against T047
 - [ ] T063 [US1] Add `ListQuery::outbox` beside the existing constructors in `crates/postio-storage/src/repository/messages.rs`
 - [ ] T064 [US1] Replace `MessageListRow::draft: bool` with `send_state: Option<DraftState>` in `crates/postio-storage/src/repository/messages.rs` and update every consumer the compiler names
 - [ ] T065 [US1] Add `Event::DraftStateChanged` to `crates/postio-core/src/event.rs` and emit it wherever the send path sets state in `crates/postio-sync/src/send.rs` and `crates/postio-storage/src/repository/drafts.rs`
@@ -197,7 +197,7 @@ Sent and the row disappears.
 - [ ] T068 [US1] Add the Outbox navigation command to `crates/postio-core/src/registry.rs` with a binding, place it in `crates/postio-core/src/menu.rs`, and regenerate `docs/keybindings.md` and `crates/postio-core/tests/golden/linux-bindings.txt` with `POSTIO_UPDATE_DOCS=1`
 - [ ] T069 [US1] Render each row's send state in `crates/postio-gtk/src/list.rs`, including a scheduled send's due time
 - [ ] T070 [US1] Announce the Outbox count to assistive technology in `crates/postio-gtk/src/sidebar.rs`, saying what the number means (FR-017)
-- [ ] T071 [US1] Re-run T047's budget in `crates/postio-storage/tests/storage_suite/counting.rs` after T062 and assert the generic mailbox listing is unchanged in statements and rows
+- [X] T071 [US1] Re-run T047's budget in `crates/postio-storage/tests/storage_suite/counting.rs` after T062 and assert the generic mailbox listing is unchanged in statements and rows
 
 **Checkpoint**: The reported defect is fixed. A sent message is visible while it is on its way, offline included, and is never listed among unfinished work.
 

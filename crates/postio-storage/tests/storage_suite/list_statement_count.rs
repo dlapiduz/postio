@@ -161,3 +161,57 @@ fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
         first.rows
     );
 }
+
+// ── The Drafts exclusion must not cost the other folders (spec 003, T047) ────
+
+/// The exact shape of an ordinary mailbox listing, recorded before spec 003
+/// adds the Drafts/Outbox split to `where_clause`.
+///
+/// That split lands on `ListScope::Mailbox` — the query every folder in the
+/// application reads through — so it is the one change in this feature that
+/// could make every list in Postio more expensive, on every open, for a
+/// distinction that matters to one folder.
+///
+/// Principle V gates causes rather than milliseconds: a shared runner cannot
+/// defend 16 ms, but statements and rows are the same number on every machine.
+/// These are those numbers. If a later change moves them, that is the
+/// conversation this test exists to force — not a silent regression on the
+/// hottest read path there is.
+#[test]
+fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
+    let database = test_support::memory();
+    let report = seed_small(&database, 40);
+    let inbox = report
+        .mailbox(MailboxRole::Inbox)
+        .expect("the seed makes an inbox");
+    let connection = database.connection().expect("a connection");
+    install(&connection);
+
+    let query = ListQuery {
+        scope: ListScope::Mailbox(inbox.id),
+        limit: 20,
+        after: None,
+    };
+    let messages = MessageRepository::new(&connection);
+    let _ = messages.page(&query).expect("a first read");
+
+    let mut returned = 0;
+    let counts = counted(|| returned = messages.page(&query).expect("a page").len());
+
+    assert_eq!(returned, 20, "the seed should fill the page");
+    assert_eq!(
+        counts.statements, 1,
+        "a page is one statement; anything more is a join or an N+1 that the \
+         Drafts exclusion must not have introduced"
+    );
+    assert_eq!(
+        counts.rows, returned,
+        "the query reads exactly the rows it returns. A subquery that filtered \
+         after the fact would read more than a page to fill one, which is how \
+         a windowed list quietly stops being windowed"
+    );
+    assert_eq!(
+        counts.nested, 0,
+        "no trigger or virtual-table work on a read"
+    );
+}

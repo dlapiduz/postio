@@ -1255,9 +1255,12 @@ impl Session {
     fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
         use postio_runtime::store::ListScope;
         match scope {
-            ListScope::Account(account) | ListScope::Flagged(account) => {
-                postio_core::Scope::Account(account)
-            }
+            // The Outbox names its account as plainly as these two do: every
+            // row in it is that account's draft, on its way through that
+            // account's server.
+            ListScope::Account(account)
+            | ListScope::Flagged(account)
+            | ListScope::Outbox(account) => postio_core::Scope::Account(account),
             ListScope::Mailbox(mailbox) => {
                 let Some((database, _)) = self.store_and_blobs() else {
                     return postio_core::Scope::Unified;

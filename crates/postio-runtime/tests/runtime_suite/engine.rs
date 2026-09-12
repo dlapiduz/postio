@@ -1225,7 +1225,11 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
     .await
     .expect("the engine connected and never wrote down a single folder");
 
-    assert_eq!(folders.len(), 3, "{folders:?}");
+    // Six: the three the mock server lists, plus the Archive, Drafts and Junk
+    // discovery creates because it has none (spec 003 FR-026). What this test
+    // is about is the engine writing folders down *at all* without being
+    // asked -- the count moved for a reason that has nothing to do with that.
+    assert_eq!(folders.len(), 6, "{folders:?}");
     assert!(
         folders
             .iter()

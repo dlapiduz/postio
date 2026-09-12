@@ -458,9 +458,16 @@ fn thread_query(
             Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
         }
         ListScope::Account(account) => Ok(ThreadListQuery::account(account).limit(limit)),
-        ListScope::Flagged(_) | ListScope::Snoozed(_) | ListScope::Thread(_) => Err(
-            StoreError::new("That view lists messages rather than conversations"),
-        ),
+        // The Outbox lists messages, not conversations, like the two views
+        // beside it: what is on its way is a set of individual sends, and
+        // grouping them into threads would hide two messages going to the
+        // same conversation behind one row.
+        ListScope::Flagged(_)
+        | ListScope::Snoozed(_)
+        | ListScope::Outbox(_)
+        | ListScope::Thread(_) => Err(StoreError::new(
+            "That view lists messages rather than conversations",
+        )),
         // Never reached: `read_thread_page` and `read_thread_count` take the
         // unified branch before they get here. It is spelled out rather than
         // left to a catch-all so that a future scope cannot land in this arm

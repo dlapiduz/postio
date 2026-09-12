@@ -83,6 +83,7 @@ impl MessageSource for Store {
             | ListScope::Unified
             | ListScope::Flagged(_)
             | ListScope::Snoozed(_)
+            | ListScope::Outbox(_)
             | ListScope::Thread(_) => MailboxId::new(0),
         };
         let total = 40;

@@ -560,7 +560,8 @@ impl<'a> DraftRepository<'a> {
     /// have delivered, and it holds on every write path or it is not an
     /// invariant. See [`reservation_for`] for why.
     pub fn set_state(&self, id: DraftId, state: DraftState) -> Result<()> {
-        let changed = self.connection.execute(
+        let transaction = super::Scope::open(self.connection)?;
+        let changed = transaction.execute(
             "UPDATE drafts
                 SET state = ?2,
                     rfc_message_id = CASE WHEN ?2 = 'editing'
@@ -574,6 +575,18 @@ impl<'a> DraftRepository<'a> {
                 id: id.get(),
             });
         }
+        // In the same transaction, so the row the list draws cannot be seen
+        // disagreeing with the draft it stands for. This is the path the
+        // drainer takes -- Queued, Sending, Failed, Unconfirmed -- and it is
+        // what moves a message between the Outbox and Drafts.
+        transaction.execute(
+            "UPDATE messages
+                SET send_state = ?2
+              WHERE id IN (SELECT message_id FROM drafts
+                            WHERE id = ?1 AND message_id IS NOT NULL)",
+            params![id.get(), state.as_str()],
+        )?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -758,12 +771,13 @@ fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
     message.attachments = draft.attachments.clone();
 
     let messages = super::MessageRepository::new(connection);
-    match existing {
+    let id = match existing {
         // `update` rewrites the children, which is what makes a recipient
         // removed in the composer disappear from the row.
         Some(id) => {
             message.id = MessageId::new(id);
             messages.update(&mut message)?;
+            message.id
         }
         None => {
             let id = messages.create(&mut message)?;
@@ -771,8 +785,27 @@ fn list_row(connection: &Connection, draft: &Draft) -> Result<()> {
                 "UPDATE drafts SET message_id = ?2 WHERE id = ?1",
                 params![draft.id.get(), id.get()],
             )?;
+            id
         }
-    }
+    };
+    // The send state, denormalised onto the row the list draws (spec 003).
+    // `Message` has no field for it: it is a fact about a draft, and every
+    // other message has none, so it is written here rather than travelling
+    // through a type that would carry `None` for the whole mailbox.
+    set_send_state(connection, id, draft.state)?;
+    Ok(())
+}
+
+/// Write a draft's state onto the `messages` row standing for it.
+///
+/// The only writer of `messages.send_state`, and it runs in whatever
+/// transaction its caller opened — which is how the column cannot be seen
+/// disagreeing with `drafts.state`.
+fn set_send_state(connection: &Connection, message: MessageId, state: DraftState) -> Result<()> {
+    connection.execute(
+        "UPDATE messages SET send_state = ?2 WHERE id = ?1",
+        params![message.get(), state.as_str()],
+    )?;
     Ok(())
 }
 
