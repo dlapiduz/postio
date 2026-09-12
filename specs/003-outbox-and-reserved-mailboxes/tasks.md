@@ -240,8 +240,8 @@ with an attention count of 2.
 - [X] T083 [P] Describe the Outbox in the sidebar section of `docs/PRODUCT.md` §9
 - [X] T084 [P] Record the reserved-role guarantee and what a refused creation means in `docs/config.md` beside `[mailboxes]`
 - [X] T085 [P] Add a `docs/notes/` entry on the mirror row (#166) as the thing that made the Outbox cheap, listed in `docs/engineering-notes.md`
-- [ ] T086 Run every scenario in [quickstart.md](./quickstart.md) end to end
-- [ ] T087 Check `crates/postio-gtk/data/shell.css` brace balance and run `cargo nextest run -p postio-gtk` in full — CSS is the one file here nothing type-checks, and a break in it surfaces somewhere unrelated
+- [X] T086 Run every scenario in [quickstart.md](./quickstart.md) end to end
+- [X] T087 Check `crates/postio-gtk/data/shell.css` brace balance and run `cargo nextest run -p postio-gtk` in full — CSS is the one file here nothing type-checks, and a break in it surfaces somewhere unrelated
 - [ ] T088 `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/test-sanity.sh`, `scripts/check.sh`, then `scripts/issue-land.sh --detach`
 
 ---
