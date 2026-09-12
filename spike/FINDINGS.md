@@ -289,6 +289,45 @@ compatibility to keep, so the *migration* is a resync rather than a problem —
 `postio_storage::db::PageMac` already says as much for its own format change.
 The risk is all in the page layer, not in the data.
 
+## If the store were being chosen from scratch
+
+**Page-level, not column-level.** Encrypting values instead of pages would
+take FTS5 with it, and search over subjects and bodies is most of what this
+application is. It also leaks the shape of the mailbox — row counts, sizes,
+timestamps — which is the thing an encrypted store is for.
+
+**An AEAD with a per-page one-time key, not a cipher plus a separate MAC.**
+One pass rather than two is where the 3-6x measured above comes from, and the
+per-page subkey is what makes a *random* nonce safe on data that is rewritten
+indefinitely. A page store cannot keep a counter.
+
+**And that scheme already exists, with a maintained implementation.**
+SQLite3 Multiple Ciphers' default is sqleet's ChaCha20-Poly1305: a one-time
+key per page derived from the encryption key, the page number and a 16-byte
+nonce, with a 16-byte Poly1305 tag — 32 reserved bytes per page, which is 0.8%
+of a 4 KiB one. That is the construction this spike would have specified, and
+specifying it is not the hard part.
+
+It is also a **VFS over unmodified SQLite** rather than a patched fork: SQLite
+removed the codec API in 3.32, so this is the only architecture left, and
+sqlite3mc is its reference implementation. Its crypto is self-contained C —
+`rijndael.c`, `chacha20poly1305.c`, `fastpbkdf2.c` — a couple of thousand
+lines rather than OpenSSL, MIT licensed, and with no libcrypto to link or to
+tear down at exit.
+
+**What not to do is write the page layer here.** The crypto in that layer is
+five functions; the layer itself is the WAL's frame format, the rollback
+journal, page one's salt, reserved-byte accounting, and torn writes. sqlite3mc
+is what re-deriving that looks like when it is done carefully, and it is not a
+dependency swap. Pure Rust would be the fastest of the options measured — and
+that is the wrong axis to optimise for a mailbox.
+
+**Keep the key handling exactly as it is.** A 256-bit key from the OS keyring,
+handed over raw, with no passphrase KDF on the open path. It is why the
+`store` phase is tens of milliseconds and not the 127 ms a 256,000-iteration
+PBKDF2 costs, and it is the one part of the current design this spike found
+nothing to improve.
+
 ## One more footgun, walked into while measuring
 
 `restore` used to take a bare `*mut Provider`, and the crate also handed out
