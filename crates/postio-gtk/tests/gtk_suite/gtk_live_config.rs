@@ -86,6 +86,10 @@ pub fn editing_config_toml_rebinds_the_running_window() {
     std::fs::write(&path, "[keys]\narchive = \"y\"\n").unwrap();
 
     let window = Window::default();
+    // A window with mail behind it: this case is about a rebind of `archive`
+    // reaching the live keymap, and `archive` is one of the commands a
+    // store-less window correctly does not offer at all (#1114).
+    window.set_store_open(true);
     postio_gtk::config::install_at(&window, &path);
     window.present();
     settle();

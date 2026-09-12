@@ -18,7 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;
 use postio_core::config::Keymap;
-use postio_core::{Command, CommandId, Context, MessageTarget, Recovery, Scope, registry};
+use postio_core::{
+    Availability, Command, CommandId, Context, MessageTarget, Recovery, Requirement, Scope,
+    registry,
+};
 use postio_model::AccountId;
 
 #[test]
@@ -284,17 +287,19 @@ fn commands_carry_their_target() {
 fn move_is_unavailable_in_unified_scope_and_available_in_an_account() {
     let account = Scope::Account(AccountId::new(1));
 
-    let in_account: Vec<CommandId> = registry::reachable_in(Context::List, account)
-        .filter_map(|action| action.id.builtin())
-        .collect();
+    let in_account: Vec<CommandId> =
+        registry::reachable_in(Context::List, Availability::open(account))
+            .filter_map(|action| action.id.builtin())
+            .collect();
     assert!(
         in_account.contains(&CommandId::Move),
         "moving into a folder is exactly what an account scope is for"
     );
 
-    let unified: Vec<CommandId> = registry::reachable_in(Context::List, Scope::Unified)
-        .filter_map(|action| action.id.builtin())
-        .collect();
+    let unified: Vec<CommandId> =
+        registry::reachable_in(Context::List, Availability::open(Scope::Unified))
+            .filter_map(|action| action.id.builtin())
+            .collect();
     assert!(
         !unified.contains(&CommandId::Move),
         "a unified view is a view, never a destination: offering Move there \
@@ -354,7 +359,10 @@ fn adding_an_account_is_reachable_wherever_settings_is() {
         !spec.destructive,
         "adding an account destroys nothing, so it must not ask first"
     );
-    assert_eq!(spec.requires, None, "any scope can gain an account");
+    assert!(
+        !spec.requires.contains(Requirement::SingleAccount),
+        "any scope can gain an account"
+    );
 }
 
 #[test]
@@ -443,4 +451,148 @@ fn setting_the_default_account_is_an_accounts_row_bound_to_m() {
          ToggleAccountEnabled argues -- there is nothing for the undo stack \
          to hold"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Availability before the store is open (#1114)
+// ---------------------------------------------------------------------------
+
+/// The commands that go on meaning something with no store behind the window.
+///
+/// #1114's rule, and the list is short on purpose: **a window on screen with
+/// no store behind it must not offer verbs that cannot run.** What survives is
+/// the chrome — how you find out what you can do, how you leave what you
+/// opened, and where the keyboard is — none of which reads or writes mail.
+///
+/// `EditConfig` is here because it is the one *repair* that needs no store: a
+/// start held up by a keyring or a config problem is exactly when somebody
+/// wants their `config.toml`, and it opens a file in an editor.
+const WITHOUT_A_STORE: &[CommandId] = &[
+    CommandId::CommandPalette,
+    CommandId::CheatSheet,
+    CommandId::Back,
+    CommandId::ToggleSidebar,
+    CommandId::CyclePane,
+    CommandId::CyclePaneBack,
+    CommandId::EditConfig,
+];
+
+/// Every command decides, and a new one cannot forget to.
+///
+/// The registry is the single source of the keyboard, the palette and the
+/// cheat sheet, so this is the one place the decision has to be recorded —
+/// and an assertion over the whole table is what makes the next command
+/// author answer the question rather than inherit whatever `requires` happens
+/// to default to.
+#[test]
+fn every_command_but_the_chrome_needs_the_store_open() {
+    for id in CommandId::ALL {
+        let needs = registry::get(*id).requires.contains(Requirement::StoreOpen);
+        let chrome = WITHOUT_A_STORE.contains(id);
+        assert_eq!(
+            needs,
+            !chrome,
+            "`{id}` {} the store open, and `WITHOUT_A_STORE` says it {}. A \
+             command that reads or writes mail must not be offered before \
+             there is mail to read; a command that is pure chrome must not \
+             disappear from a window that is perfectly usable.",
+            if needs {
+                "requires"
+            } else {
+                "does not require"
+            },
+            if chrome { "does not" } else { "does" },
+        );
+    }
+}
+
+/// What the palette and the cheat sheet list before the store is open.
+///
+/// They both go through [`registry::reachable_in`], so asserting here is
+/// asserting for both — which is the whole reason the requirement is data on
+/// the row rather than a check at each surface.
+#[test]
+fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
+    let account = Scope::Account(AccountId::new(1));
+    let closed = Availability {
+        scope: account,
+        store_open: false,
+    };
+    let open = Availability {
+        scope: account,
+        store_open: true,
+    };
+
+    let before: Vec<CommandId> = registry::reachable_in(Context::List, closed)
+        .filter_map(|action| action.id.builtin())
+        .collect();
+    let after: Vec<CommandId> = registry::reachable_in(Context::List, open)
+        .filter_map(|action| action.id.builtin())
+        .collect();
+
+    for absent in [
+        CommandId::Archive,
+        CommandId::Delete,
+        CommandId::Reply,
+        CommandId::Compose,
+        CommandId::Search,
+        CommandId::Refresh,
+        CommandId::NextMessage,
+    ] {
+        assert!(
+            !before.contains(&absent),
+            "`{absent}` is offered with no store behind the window, and it \
+             cannot run: it would either do nothing or reach a store that is \
+             not there"
+        );
+        assert!(
+            after.contains(&absent),
+            "`{absent}` did not come back once the store opened, so the \
+             requirement is not a wait but a removal"
+        );
+    }
+
+    assert!(
+        !before.is_empty(),
+        "a window with no store is still a window: the palette and the cheat \
+         sheet have to list something, or there is no way to find out that \
+         waiting is all there is to do"
+    );
+    for kept in [CommandId::CommandPalette, CommandId::CheatSheet] {
+        assert!(
+            before.contains(&kept),
+            "`{kept}` is how somebody finds out what is available, so it \
+             cannot itself be one of the things that is not"
+        );
+    }
+}
+
+/// `Move` needs *both*, and one requirement per row could not say so.
+///
+/// It was the only row with a requirement before #1114 and it is the row that
+/// proves the field had to become a set: a unified view has no destination to
+/// name, and a window with no store has no folder to move into either.
+#[test]
+fn a_command_can_need_more_than_one_thing_at_once() {
+    let requires = registry::get(CommandId::Move).requires;
+    assert!(requires.contains(Requirement::SingleAccount));
+    assert!(requires.contains(Requirement::StoreOpen));
+
+    let unified_and_open = Availability {
+        scope: Scope::Unified,
+        store_open: true,
+    };
+    let account_and_closed = Availability {
+        scope: Scope::Account(AccountId::new(1)),
+        store_open: false,
+    };
+    for unmet in [unified_and_open, account_and_closed] {
+        assert!(
+            !registry::reachable_in(Context::List, unmet)
+                .filter_map(|action| action.id.builtin())
+                .any(|id| id == CommandId::Move),
+            "Move survived {unmet:?}, so only one of its two requirements is \
+             being evaluated"
+        );
+    }
 }

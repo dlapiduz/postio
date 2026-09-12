@@ -34,7 +34,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
-use postio_core::{ActionId, Context, ContextSet, Keymap, Scope, registry};
+use postio_core::{ActionId, Availability, Context, ContextSet, Keymap, Scope, registry};
 
 use crate::finder::Mode;
 
@@ -102,7 +102,7 @@ fn heading(context: Context) -> &'static str {
 ///
 /// Empty sections are dropped: a heading with nothing under it is worse than no
 /// heading, and which sections have content depends on what the registry holds.
-pub fn sections(keymap: &Keymap, context: Context, scope: Scope) -> Vec<Section> {
+pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<Section> {
     let mut everywhere = Section {
         title: EVERYWHERE,
         rows: Vec::new(),
@@ -112,7 +112,7 @@ pub fn sections(keymap: &Keymap, context: Context, scope: Scope) -> Vec<Section>
         rows: Vec::new(),
     };
 
-    for spec in registry::reachable_in(context, scope) {
+    for spec in registry::reachable_in(context, state) {
         let ActionId::Builtin(id) = spec.id else {
             // Registered commands get their own sections, by provenance.
             continue;
@@ -234,7 +234,7 @@ mod imp {
         /// lists what is reachable from there rather than the whole
         /// vocabulary (#182).
         pub context: RefCell<Context>,
-        pub scope: RefCell<Scope>,
+        pub availability: RefCell<Availability>,
         pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
     }
 
@@ -244,7 +244,13 @@ mod imp {
                 columns: gtk::Box::new(gtk::Orientation::Horizontal, 32),
                 keymap: RefCell::new(Keymap::default()),
                 context: RefCell::new(Context::List),
-                scope: RefCell::new(Scope::default()),
+                // A sheet built before anything has fed the window is a
+                // sheet over a window with no store, and it lists what that
+                // window can actually do (#1114).
+                availability: RefCell::new(Availability {
+                    scope: Scope::default(),
+                    store_open: false,
+                }),
                 dismissed: RefCell::new(Vec::new()),
             }
         }
@@ -307,9 +313,10 @@ impl CheatSheet {
         self.rebuild();
     }
 
-    /// What the mail on screen belongs to — see [`Scope`].
-    pub fn set_scope(&self, scope: Scope) {
-        *self.imp().scope.borrow_mut() = scope;
+    /// What the window can currently do: its scope, and whether the store
+    /// behind it is open — see [`Availability`].
+    pub fn set_availability(&self, state: Availability) {
+        *self.imp().availability.borrow_mut() = state;
         self.rebuild();
     }
 
@@ -318,7 +325,7 @@ impl CheatSheet {
         sections(
             &self.imp().keymap.borrow(),
             *self.imp().context.borrow(),
-            *self.imp().scope.borrow(),
+            *self.imp().availability.borrow(),
         )
     }
 
@@ -445,8 +452,11 @@ mod tests {
 
     /// The reader's ordinary position: standing in the message list, with one
     /// account's mailboxes on screen.
-    fn in_the_list() -> (Context, Scope) {
-        (Context::List, Scope::Account(AccountId::new(1)))
+    fn in_the_list() -> (Context, Availability) {
+        (
+            Context::List,
+            Availability::open(Scope::Account(AccountId::new(1))),
+        )
     }
 
     #[test]
@@ -510,7 +520,7 @@ mod tests {
     #[test]
     fn every_composer_command_is_in_the_palette_and_the_sheet() {
         let keymap = defaults();
-        let scope = Scope::Account(AccountId::new(1));
+        let scope = Availability::open(Scope::Account(AccountId::new(1)));
 
         let reachable: Vec<_> =
             postio_core::registry::reachable_in(Context::Composer, scope).collect();
@@ -571,11 +581,12 @@ mod tests {
         };
 
         assert!(
-            ids(Scope::Account(AccountId::new(1))).contains(&ActionId::Builtin(CommandId::Move)),
+            ids(Availability::open(Scope::Account(AccountId::new(1))))
+                .contains(&ActionId::Builtin(CommandId::Move)),
             "an account view can name a destination"
         );
         assert!(
-            !ids(Scope::Unified).contains(&ActionId::Builtin(CommandId::Move)),
+            !ids(Availability::open(Scope::Unified)).contains(&ActionId::Builtin(CommandId::Move)),
             "a unified view cannot, so the sheet must not teach `m` there"
         );
     }

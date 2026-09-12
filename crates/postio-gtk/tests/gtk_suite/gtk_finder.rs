@@ -32,6 +32,9 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
     style::install(&display);
 
     let window = Window::default();
+    // A window with mail behind it, which is what this case is about: a
+    // store-less window offers the chrome and nothing else (#1114).
+    window.set_store_open(true);
     window.present();
     pump();
 

@@ -54,7 +54,7 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, pango};
-use postio_core::{ActionId, Context, Keymap, Scope};
+use postio_core::{ActionId, Availability, Context, Keymap, Scope};
 use postio_model::ids::{LabelId, MailboxId};
 use postio_model::mailbox::Mailbox;
 use postio_model::{Contact, Label};
@@ -443,7 +443,7 @@ mod imp {
         /// answers the same question from the other side: `context` is which
         /// surface has focus, this is what that surface is showing, and a
         /// command can need either (#182).
-        pub(super) scope: RefCell<Scope>,
+        pub(super) availability: RefCell<Availability>,
         pub(super) mailboxes: RefCell<Vec<Mailbox>>,
         pub(super) contacts: RefCell<Vec<Contact>>,
         pub(super) query: RefCell<Query>,
@@ -482,7 +482,12 @@ mod imp {
                 // The list is where the box opens from, and the context the
                 // commands are filtered by until the window says otherwise.
                 context: RefCell::new(Context::List),
-                scope: RefCell::new(Scope::default()),
+                // Before anything feeds the window there is no store, and
+                // the palette lists what this window can actually do (#1114).
+                availability: RefCell::new(Availability {
+                    scope: Scope::default(),
+                    store_open: false,
+                }),
                 mailboxes: RefCell::new(Vec::new()),
                 contacts: RefCell::new(Vec::new()),
                 query: RefCell::new(Query::new()),
@@ -640,10 +645,11 @@ impl Finder {
         self.refresh();
     }
 
-    /// What the mail on screen belongs to, for the commands that need one
-    /// account rather than one surface — `Move`, so far (#182).
-    pub fn set_scope(&self, scope: Scope) {
-        *self.imp().scope.borrow_mut() = scope;
+    /// What the window can currently do: its scope, for the commands that
+    /// need one account rather than one surface (`Move`, #182), and whether
+    /// the store behind it is open at all (#1114).
+    pub fn set_availability(&self, state: Availability) {
+        *self.imp().availability.borrow_mut() = state;
         self.refresh();
     }
 
@@ -1186,7 +1192,7 @@ impl Finder {
                 let found = entries(
                     &imp.keymap.borrow(),
                     *imp.context.borrow(),
-                    *imp.scope.borrow(),
+                    *imp.availability.borrow(),
                     &query.text,
                 );
                 for entry in &found {

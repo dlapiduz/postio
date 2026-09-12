@@ -93,6 +93,81 @@ pub enum Requirement {
     /// The view has to be one account's, because the command needs somewhere
     /// in *that* account to put something.
     SingleAccount,
+    /// The local store has to be open, because the command reads or writes
+    /// mail.
+    ///
+    /// Postio's window is on screen before the store is (#1114): the keyring
+    /// read, the schema migrations and the search-index rebuild all happen
+    /// behind a window that already exists, and on a real install that has
+    /// been twelve seconds. **A window with no store must not offer verbs
+    /// that cannot run** — the palette and the cheat sheet simply do not list
+    /// them, which is how they already treat anything unavailable, and a key
+    /// bound to one refuses out loud rather than being swallowed.
+    StoreOpen,
+}
+
+impl Requirement {
+    /// Every requirement, in declaration order. What [`RequirementSet`] is
+    /// built over.
+    pub const ALL: [Requirement; 2] = [Requirement::SingleAccount, Requirement::StoreOpen];
+
+    const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+/// The requirements one command carries — a set, because they compose.
+///
+/// `Move` is why this is not an `Option`: a destination has to be one folder
+/// in one account, *and* there has to be a store holding it. One slot per row
+/// could express either and not both, and the row that needed both was the
+/// only row that had a requirement at all.
+///
+/// A set rather than a closure for [`ContextSet`]'s reason: a predicate you
+/// can only call answers "is this available here?" and not "what is available
+/// here?", and the palette needs the second question answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RequirementSet(u8);
+
+impl RequirementSet {
+    /// Nothing required beyond having the right surface focused.
+    pub const NONE: RequirementSet = RequirementSet(0);
+
+    /// A set built from a slice, usable in a `const` table.
+    pub const fn from_slice(requirements: &[Requirement]) -> RequirementSet {
+        let mut bits = 0u8;
+        let mut index = 0;
+        while index < requirements.len() {
+            bits |= requirements[index].bit();
+            index += 1;
+        }
+        RequirementSet(bits)
+    }
+
+    /// Whether `requirement` is in the set.
+    pub const fn contains(self, requirement: Requirement) -> bool {
+        self.0 & requirement.bit() != 0
+    }
+
+    /// Whether the set is empty — the ordinary answer for most commands.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Whether `state` satisfies every requirement in the set.
+    pub fn met_by(self, state: Availability) -> bool {
+        Requirement::ALL
+            .iter()
+            .all(|need| !self.contains(*need) || need.met_by(state))
+    }
+
+    /// The requirements in the set, for a failure message that has to name
+    /// which one was not met.
+    pub fn iter(self) -> impl Iterator<Item = Requirement> {
+        Requirement::ALL
+            .into_iter()
+            .filter(move |need| self.contains(*need))
+    }
 }
 
 /// The state [`Requirement`]s are evaluated against.
@@ -103,6 +178,26 @@ pub enum Requirement {
 pub struct Availability {
     /// What the mail on screen belongs to.
     pub scope: Scope,
+    /// Whether the local store is open behind this window.
+    ///
+    /// `false` only between the first frame and the store landing — a window
+    /// Postio presents before it has opened anything, so that a slow keyring
+    /// read or a long migration is a window that says what it is waiting for
+    /// rather than no window at all (#1114).
+    pub store_open: bool,
+}
+
+impl Availability {
+    /// The ordinary state: this scope, with the mail open behind it.
+    ///
+    /// What every surface that has been fed is in, and what a test asserting
+    /// about scope alone means.
+    pub fn open(scope: Scope) -> Availability {
+        Availability {
+            scope,
+            store_open: true,
+        }
+    }
 }
 
 impl Requirement {
@@ -110,6 +205,7 @@ impl Requirement {
     pub fn met_by(self, state: Availability) -> bool {
         match self {
             Requirement::SingleAccount => state.scope.is_single_account(),
+            Requirement::StoreOpen => state.store_open,
         }
     }
 }
@@ -134,8 +230,14 @@ pub struct CommandSpec {
     /// How the user gets back. Never [`Recovery::None`] when `destructive`.
     pub recovery: Recovery,
     /// What the *state* must be for this command to mean anything, beyond
-    /// having the right surface focused. `None` for almost everything.
-    pub requires: Option<Requirement>,
+    /// having the right surface focused.
+    ///
+    /// Almost everything carries [`Requirement::StoreOpen`], because almost
+    /// everything reads or writes mail; [`RequirementSet::NONE`] is the
+    /// chrome — the palette, the cheat sheet, `Esc`, and where the keyboard
+    /// is — which means the same thing with an empty window as with a full
+    /// one.
+    pub requires: RequirementSet,
 }
 
 impl CommandSpec {
@@ -155,6 +257,18 @@ impl CommandSpec {
 const fn ctx(contexts: &'static [Context]) -> ContextSet {
     ContextSet::from_slice(contexts)
 }
+
+/// What a row needs beyond its context. Spelled short because almost every
+/// row carries one.
+const fn needs(requirements: &'static [Requirement]) -> RequirementSet {
+    RequirementSet::from_slice(requirements)
+}
+
+/// Reads or writes mail, which is very nearly everything.
+const MAIL: RequirementSet = needs(&[Requirement::StoreOpen]);
+
+/// Chrome: it means the same thing with an empty window as with a full one.
+const CHROME: RequirementSet = RequirementSet::NONE;
 
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
@@ -213,7 +327,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevMessage,
@@ -223,7 +337,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::FirstMessage,
@@ -237,7 +351,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::LastMessage,
@@ -247,7 +361,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenMessage,
@@ -259,7 +373,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleSelection,
@@ -273,7 +387,7 @@ static SPECS: &[CommandSpec] = &[
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionDown,
@@ -287,7 +401,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExtendSelectionUp,
@@ -298,7 +412,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SelectAll,
@@ -308,7 +422,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevView,
@@ -318,7 +432,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Back,
@@ -329,7 +443,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::ToggleResultOrder,
@@ -342,7 +456,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Search]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Message actions -------------------------------------------------
     CommandSpec {
@@ -357,7 +471,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevInConversation,
@@ -367,7 +481,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleFold,
@@ -388,7 +502,7 @@ static SPECS: &[CommandSpec] = &[
         // How much of a conversation is open is view state, not durable
         // data -- nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ViewOriginal,
@@ -410,7 +524,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ExpandAll,
@@ -426,7 +540,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleRail,
@@ -450,7 +564,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Reply,
@@ -460,7 +574,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ReplyAll,
@@ -470,7 +584,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Forward,
@@ -480,7 +594,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Archive,
@@ -492,7 +606,7 @@ static SPECS: &[CommandSpec] = &[
         // wants a toast for.
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ArchiveThread,
@@ -502,7 +616,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Delete,
@@ -512,7 +626,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: true,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Move,
@@ -526,7 +640,7 @@ static SPECS: &[CommandSpec] = &[
         // spans every enabled account — so there is nowhere for this to mean.
         // Unavailable rather than a no-op: offering it would promise a folder
         // the user was never given the chance to pick (#182, ADR 0005 Q4).
-        requires: Some(Requirement::SingleAccount),
+        requires: needs(&[Requirement::SingleAccount, Requirement::StoreOpen]),
     },
     CommandSpec {
         id: CommandId::Flag,
@@ -536,7 +650,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MarkUnread,
@@ -549,7 +663,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Snooze,
@@ -561,7 +675,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Unsnooze,
@@ -571,7 +685,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AddLabel,
@@ -581,7 +695,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     // -- Search ----------------------------------------------------------
     CommandSpec {
@@ -592,7 +706,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveSearch,
@@ -607,7 +721,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Search.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Compose ---------------------------------------------------------
     CommandSpec {
@@ -618,7 +732,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Send,
@@ -630,7 +744,7 @@ static SPECS: &[CommandSpec] = &[
         // the queue drains, so it earns an undo-send window rather than a modal.
         destructive: false,
         recovery: Recovery::Window,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ScheduleSend,
@@ -648,7 +762,7 @@ static SPECS: &[CommandSpec] = &[
         // Opening the picker commits nothing; `Recovery::Undo` belongs to
         // whichever time the user picks, exactly as it does for `Send`.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveDraft,
@@ -658,7 +772,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DiscardDraft,
@@ -669,7 +783,7 @@ static SPECS: &[CommandSpec] = &[
         // Typed prose has no other copy anywhere, so this one asks first.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MarkSent,
@@ -698,7 +812,7 @@ static SPECS: &[CommandSpec] = &[
         // changing it, so the correction for a wrong answer is to send the
         // message again, which is a real act. See `Actions::mark_sent`.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AttachFile,
@@ -708,7 +822,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DetachComposer,
@@ -725,7 +839,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CopyFields,
@@ -744,7 +858,7 @@ static SPECS: &[CommandSpec] = &[
         // refuses to lower them while they hold anything. There is nothing to
         // take back.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::InsertImage,
@@ -760,7 +874,7 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // The editor's own undo takes it back out, like any other edit.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Bold,
@@ -772,7 +886,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Italic,
@@ -782,7 +896,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::BulletList,
@@ -794,7 +908,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NumberedList,
@@ -804,7 +918,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::InsertLink,
@@ -816,7 +930,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::QuoteBlock,
@@ -826,7 +940,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: Context::Composer.as_set(),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- View and application --------------------------------------------
     CommandSpec {
@@ -845,7 +959,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES).with(Context::Accounts),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CommandPalette,
@@ -856,7 +970,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::CheatSheet,
@@ -867,7 +981,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::Settings,
@@ -878,7 +992,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::AddAccount,
@@ -896,7 +1010,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ContextSet::ANY,
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::EditConfig,
@@ -906,7 +1020,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::ToggleSidebar,
@@ -916,7 +1030,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::FocusSidebar,
@@ -928,7 +1042,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(LIST_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CyclePane,
@@ -946,7 +1060,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::CyclePaneBack,
@@ -956,7 +1070,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(PANE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: CHROME,
     },
     CommandSpec {
         id: CommandId::NextFolder,
@@ -970,7 +1084,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevFolder,
@@ -980,7 +1094,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleFolder,
@@ -996,7 +1110,7 @@ static SPECS: &[CommandSpec] = &[
         // Which folders are open is view state, not durable data — nothing
         // here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RenameSavedSearch,
@@ -1012,7 +1126,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchUp,
@@ -1027,7 +1141,7 @@ static SPECS: &[CommandSpec] = &[
         // A reorder destroys nothing; moving it back is the same action
         // once more, same as the mouse menu's version of this verb.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MoveSavedSearchDown,
@@ -1037,7 +1151,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Sidebar]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::DeleteSavedSearch,
@@ -1050,7 +1164,7 @@ static SPECS: &[CommandSpec] = &[
         // so like `DiscardDraft` this asks first rather than offering undo.
         destructive: true,
         recovery: Recovery::Confirm,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleAccountEnabled,
@@ -1062,7 +1176,7 @@ static SPECS: &[CommandSpec] = &[
         // Pressing it again is the reversal, so there is nothing for the undo
         // stack to hold (ADR 0005 Q6c).
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RemoveAccount,
@@ -1077,7 +1191,7 @@ static SPECS: &[CommandSpec] = &[
         // is something to undo for as long as the toast is up, and declaring
         // it here is what the registry enforces a keyboard path for.
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::UpdateCredential,
@@ -1095,7 +1209,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Accounts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RebuildAccountIndex,
@@ -1110,7 +1224,7 @@ static SPECS: &[CommandSpec] = &[
         // Rewriting a derived table -- postio_session::reindex_account's own
         // doc explains why there is nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SetDefaultAccount,
@@ -1132,7 +1246,7 @@ static SPECS: &[CommandSpec] = &[
         // hold. Nothing is lost either -- the previous holder is still there,
         // unmarked.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::MapMailboxRole,
@@ -1150,7 +1264,7 @@ static SPECS: &[CommandSpec] = &[
         // The previous mapping is the inverse, and a wrong pick costs one
         // keystroke rather than a dialog (ADR 0035).
         recovery: Recovery::Undo,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NextScope,
@@ -1169,7 +1283,7 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         // Deliberately not `SingleAccount`: this is the command that *leaves*
         // a single-account scope, so requiring one would switch itself off.
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::Refresh,
@@ -1182,7 +1296,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Parts panel -------------------------------------------------------
     CommandSpec {
@@ -1193,7 +1307,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Reader]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::NextPart,
@@ -1206,7 +1320,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::PrevPart,
@@ -1216,7 +1330,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPart,
@@ -1226,7 +1340,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SavePart,
@@ -1236,7 +1350,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::SaveAllParts,
@@ -1246,7 +1360,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::OpenPartExternally,
@@ -1256,7 +1370,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::RenderPartOnce,
@@ -1266,7 +1380,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(&[Context::Parts]),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     // -- Reader --------------------------------------------------------
     CommandSpec {
@@ -1295,7 +1409,7 @@ static SPECS: &[CommandSpec] = &[
         // What the pane is scrolled to is view state, not durable data —
         // nothing here for undo to reach.
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ScrollReaderUp,
@@ -1305,7 +1419,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: None,
+        requires: MAIL,
     },
 ];
 
@@ -1575,7 +1689,7 @@ pub struct ActionSpec {
     pub recovery: Recovery,
     /// What the state must be, beyond the focused surface. See
     /// [`Requirement`].
-    pub requires: Option<Requirement>,
+    pub requires: RequirementSet,
 }
 
 impl ActionSpec {
@@ -1617,9 +1731,14 @@ impl From<ExtSpec> for ActionSpec {
             contexts: spec.contexts,
             destructive: spec.destructive,
             recovery: spec.recovery,
-            // An extension has no way to name one yet; when it does, it
-            // arrives here rather than at a surface.
-            requires: None,
+            // Every extension command needs the store, and none of them can
+            // say otherwise yet. That is the safe default rather than a gap:
+            // an MCP tool or an AI action is a thing done *to mail*, so
+            // offering one before there is any would be the same broken
+            // promise a built-in would make. A registration that wants to
+            // name its own requirements adds a field here rather than a check
+            // at a surface.
+            requires: MAIL,
         }
     }
 }
@@ -1650,18 +1769,17 @@ pub fn reachable(context: Context) -> impl Iterator<Item = ActionSpec> {
 /// it from [`ActionSpec::available_in`] keeps the context question — which is
 /// most of them — free of state nobody else needs.
 pub fn available(spec: &ActionSpec, context: Context, state: Availability) -> bool {
-    spec.available_in(context) && spec.requires.is_none_or(|need| need.met_by(state))
+    spec.available_in(context) && spec.requires.met_by(state)
 }
 
-/// Every command reachable in `context` for a view scoped to `scope`.
+/// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]
-/// stays the scope-blind form, because `docs/keybindings.md` documents the
+/// stays the state-blind form, because `docs/keybindings.md` documents the
 /// whole vocabulary rather than one session's state — somebody looking up `m`
 /// has to find it whatever is on screen.
-pub fn reachable_in(context: Context, scope: Scope) -> impl Iterator<Item = ActionSpec> {
-    let state = Availability { scope };
-    reachable(context).filter(move |spec| spec.requires.is_none_or(|need| need.met_by(state)))
+pub fn reachable_in(context: Context, state: Availability) -> impl Iterator<Item = ActionSpec> {
+    reachable(context).filter(move |spec| spec.requires.met_by(state))
 }
 
 /// Every command in the merged vocabulary, in the same order as [`reachable`].
