@@ -36,10 +36,17 @@ in `postio-core::registry`, and every discovery surface is generated from it.
 sheet, the context menu, the key hints and `docs/keybindings.md` to derive from
 one table, and says *"a command that is not in the registry does not exist —
 not merely unbound, but absent from every way a user could discover it."* A
-prefix inside a text field is in none of them. The resting field says only
-*Search all mail*, so four of five modes have no route to a user at all. This
-is why writing a hint alone would be the wrong fix: it would add a sixth
-hand-maintained place for the truth to drift.
+prefix is in the registry's reach nowhere, so every surface generated from it
+misses the modes unless something adds them by hand.
+
+**Corrected during implementation.** This first said the modes reached *no*
+surface. One had already been fixed by hand: `cheatsheet.rs::prefix_section`
+lists them under "In the search box", shipped under `postio-2ee`. What was
+missing was `docs/keybindings.md` and the bar itself — and the fact that a
+cheat-sheet section alone did not stop the project's own maintainer asking
+for a mode that was in it. A hand-added section is also exactly the drift
+this research argues against: it is a second place the truth lives, and it
+happened to be right. Both now read the one table.
 
 **Alternatives considered**: Documenting the prefixes in `keybindings.md` by
 hand. Rejected — that file is generated and a test fails when it drifts, so a
