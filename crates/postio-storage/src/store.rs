@@ -39,6 +39,15 @@ use crate::schema;
 
 pub use turso::{Connection, Value};
 
+/// How many passes may read and write the store at once.
+///
+/// There is no connection pool to exhaust any more -- the engine keeps its
+/// own, and `connect` is cheap. This is the *concurrency* the old pool's size
+/// was standing in for, and it is still a real limit: every concurrent sync
+/// pass contends for one writer, and the UI thread reads through the same
+/// store. The number is what it was.
+pub const MAX_CONCURRENT_PASSES: usize = 4;
+
 /// The cipher the store is written under.
 ///
 /// AES-256-GCM: authenticated, and the one mode here with hardware support on

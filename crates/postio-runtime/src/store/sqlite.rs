@@ -1,13 +1,14 @@
 //! The local store, over real SQLite.
 //!
 //! The half of [`super`] that owns a database. Behind the `runtime` feature
-//! because `postio-gtk` depends on `postio-core` and must not have `rusqlite`
+//! because `postio-gtk` depends on `postio-core` and must not have the engine
 //! anywhere in its dependency graph; whatever assembles the running
 //! application turns the feature on, and the view layer never does.
 
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +16,7 @@ use postio_storage::repository::{
     ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository, ThreadCursor,
     ThreadListQuery, ThreadListRow, ThreadRepository, UnifiedThreadListQuery,
 };
-use postio_storage::{Database, Pool};
+use postio_storage::{Checkout, Store};
 
 use crate::store::{
     ListPage, ListScope, MailStore, MessagePage, MessageSummary, PageRequest, Read, StoreError,
@@ -28,10 +29,10 @@ impl From<postio_storage::Error> for StoreError {
     }
 }
 
-/// The local store, read from a blocking pool.
+/// The local store, read directly.
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
-    pool: Pool,
+    store: Store,
     /// Where each page boundary starts, so a page does not have to be
     /// counted to from the top of the folder every time. See [`Marks`].
     marks: Arc<Mutex<Marks<ListCursor>>>,
@@ -130,8 +131,8 @@ pub fn folders_counted() -> u64 {
 /// Only for a folder scope. An account-wide or unified count has no single
 /// mailbox row to witness it, and is left to be counted as before — those
 /// windows are not the ones that cost 786 ms.
-fn counted_total(
-    connection: &postio_storage::PooledConnection,
+async fn counted_total(
+    connection: &Checkout,
     cache: &Mutex<HashMap<MailboxId, CountedFolder>>,
     scope: ListScope,
     threads: &ThreadRepository<'_>,
@@ -139,11 +140,12 @@ fn counted_total(
 ) -> Result<u32, postio_storage::Error> {
     let ListScope::Mailbox(mailbox) = scope else {
         FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
-        return threads.count_of(query);
+        return threads.count_of(query).await;
     };
     // The cheap facts, read first: one row, no scan.
     let witness = MailboxRepository::new(connection)
-        .get(mailbox)?
+        .get(mailbox)
+        .await?
         .as_ref()
         .map(witness_of);
     if let Some(witness) = witness
@@ -154,7 +156,7 @@ fn counted_total(
     }
 
     FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
-    let counted = threads.count_of(query)?;
+    let counted = threads.count_of(query).await?;
     if let Some(witness) = witness {
         cache.lock().expect("not poisoned").insert(
             mailbox,
@@ -236,7 +238,7 @@ impl<C: Copy> Marks<C> {
     }
 
     /// Remember where the page after `offset` begins.
-    fn remember(&mut self, offset: u32, cursor: C) {
+    async fn remember(&mut self, offset: u32, cursor: C) {
         // Bounded: a folder read end to end at 50 a page leaves 2,000 marks
         // for 100,000 messages, and each is two integers. Worth the memory to
         // never walk the folder again.
@@ -245,13 +247,13 @@ impl<C: Copy> Marks<C> {
 }
 
 impl SqliteStore {
-    /// Read `database` through its own pool.
+    /// Read `store`.
     ///
-    /// Cloning a [`SqliteStore`] is cheap and gives another handle to the same pool,
-    /// which is how each blocking read gets a connection of its own.
-    pub fn new(database: &Database) -> Self {
+    /// Cloning a [`SqliteStore`] is cheap and gives another handle to the same
+    /// store, which is how each read gets a connection of its own.
+    pub fn new(store: &Store) -> Self {
         SqliteStore {
-            pool: database.pool().clone(),
+            store: store.clone(),
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
@@ -261,8 +263,8 @@ impl SqliteStore {
 
     async fn read_page(&self, request: PageRequest) -> Result<MessagePage, StoreError> {
         let marks = self.marks.clone();
-        self.read(move |connection| {
-            let messages = MessageRepository::new(connection);
+        self.read(move |connection| async move {
+            let messages = MessageRepository::new(&connection);
             let query = ListQuery {
                 scope: request.scope,
                 limit: request.limit,
@@ -270,7 +272,7 @@ impl SqliteStore {
             };
             // Both from one connection and one moment, so the rows and the
             // number of them cannot disagree.
-            let total = count(connection, request.scope, &query)?;
+            let total = count(&connection, request.scope, &query).await?;
 
             // Seek to the nearest boundary anybody has already read, and skip
             // only what is left. For sequential scrolling that is nothing.
@@ -287,7 +289,7 @@ impl SqliteStore {
                 after: seek,
                 ..query
             };
-            let rows = messages.page_at(&query, skip)?;
+            let rows = messages.page_at(&query, skip).await?;
 
             // And remember where the next page begins, so it can seek too.
             if let Some(last) = rows.last() {
@@ -297,11 +299,14 @@ impl SqliteStore {
                     .remember(request.offset + rows.len() as u32, last.cursor());
             }
 
-            let threads = ThreadRepository::new(connection);
-            let rows = rows
-                .into_iter()
-                .map(|row| summarise(row, &threads))
-                .collect::<Result<Vec<_>, _>>()?;
+            // A loop rather than `map().collect()`: `summarise` reads the
+            // thread's participants, so it awaits, and a closure cannot.
+            let threads = ThreadRepository::new(&connection);
+            let mut summaries = Vec::with_capacity(rows.len());
+            for row in rows {
+                summaries.push(summarise(row, &threads).await?);
+            }
+            let rows = summaries;
             Ok(MessagePage { total, rows })
         })
         .await
@@ -320,9 +325,9 @@ impl SqliteStore {
         let ListScope::Mailbox(mailbox) = scope else {
             return Ok(matches!(scope, ListScope::Account(_) | ListScope::Unified));
         };
-        self.read(move |connection| {
-            let folder = MailboxRepository::new(connection)
-                .get(mailbox)?
+        self.read(move |connection| async move {
+            let folder = MailboxRepository::new(&connection)
+                .get(mailbox).await?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?;
             Ok(folder.role != postio_model::mailbox::MailboxRole::Drafts)
         })
@@ -357,10 +362,11 @@ impl SqliteStore {
         }
         let marks = self.thread_marks.clone();
         let counts = self.folder_counts.clone();
-        self.read(move |connection| {
-            let query = thread_query(connection, request.scope, request.limit)?;
-            let threads = ThreadRepository::new(connection);
-            let total = counted_total(connection, &counts, request.scope, &threads, &query)?;
+        self.read(move |connection| async move {
+            let query = thread_query(&connection, request.scope, request.limit).await?;
+            let threads = ThreadRepository::new(&connection);
+            let total =
+                counted_total(&connection, &counts, request.scope, &threads, &query).await?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
@@ -377,7 +383,8 @@ impl SqliteStore {
                     ..query.clone()
                 },
                 skip,
-            )?;
+            )
+            .await?;
 
             // An empty page inside a list that says it has rows means the
             // mark we seeked from lied: it claimed a cursor stood at some
@@ -394,7 +401,7 @@ impl SqliteStore {
             // because the marks are gone afterwards.
             if rows.is_empty() && seek.is_some() && request.offset < total {
                 marks.lock().expect("not poisoned").forget();
-                rows = threads.page_at(&query, request.offset)?;
+                rows = threads.page_at(&query, request.offset).await?;
             }
 
             if let Some(last) = rows.last() {
@@ -425,9 +432,9 @@ impl SqliteStore {
     /// short.
     async fn read_unified_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         let marks = self.unified_marks.clone();
-        self.read(move |connection| {
-            let threads = ThreadRepository::new(connection);
-            let total = threads.unified_count()?;
+        self.read(move |connection| async move {
+            let threads = ThreadRepository::new(&connection);
+            let total = threads.unified_count().await?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");
@@ -444,7 +451,7 @@ impl SqliteStore {
                     after: seek,
                 },
                 skip,
-            )?;
+            ).await?;
             if let Some(last) = groups.last() {
                 marks
                     .lock()
@@ -464,12 +471,12 @@ impl SqliteStore {
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         if matches!(scope, ListScope::Unified) {
             return self
-                .read(move |connection| Ok(ThreadRepository::new(connection).unified_count()?))
+                .read(move |connection| async move { Ok(ThreadRepository::new(&connection).unified_count().await?) })
                 .await;
         }
-        self.read(move |connection| {
-            let query = thread_query(connection, scope, 0)?;
-            Ok(ThreadRepository::new(connection).count_of(&query)?)
+        self.read(move |connection| async move {
+            let query = thread_query(&connection, scope, 0).await?;
+            Ok(ThreadRepository::new(&connection).count_of(&query).await?)
         })
         .await
     }
@@ -478,20 +485,22 @@ impl SqliteStore {
     /// anything, so there is no position to remember and nothing to be
     /// consistent with.
     async fn read_rows(&self, ids: Vec<MessageId>) -> Result<Vec<MessageSummary>, StoreError> {
-        self.read(move |connection| {
-            let rows = MessageRepository::new(connection).rows_for(&ids)?;
-            let threads = ThreadRepository::new(connection);
-            rows.into_iter()
-                .map(|row| summarise(row, &threads))
-                .collect::<Result<Vec<_>, _>>()
+        self.read(move |connection| async move {
+            let rows = MessageRepository::new(&connection).rows_for(&ids).await?;
+            let threads = ThreadRepository::new(&connection);
+            let mut summaries = Vec::with_capacity(rows.len());
+            for row in rows {
+                summaries.push(summarise(row, &threads).await?);
+            }
+            Ok(summaries)
         })
         .await
     }
 
     async fn read_count(&self, scope: ListScope) -> Result<u32, StoreError> {
-        self.read(move |connection| {
+        self.read(move |connection| async move {
             count(
-                connection,
+                &connection,
                 scope,
                 &ListQuery {
                     scope,
@@ -499,40 +508,34 @@ impl SqliteStore {
                     after: None,
                 },
             )
+            .await
         })
         .await
     }
 
     async fn read_mailboxes(&self, account: AccountId) -> Result<Vec<Mailbox>, StoreError> {
-        self.read(move |connection| {
-            Ok(MailboxRepository::new(connection).list_for_account(account)?)
+        self.read(move |connection| async move {
+            Ok(MailboxRepository::new(&connection).list_for_account(account).await?)
         })
         .await
     }
 
-    /// Run `read` on a blocking thread with a connection of its own.
+    /// Run `read` with a connection of its own.
     ///
-    /// `spawn_blocking` rather than a tokio worker: rusqlite blocks, and a
-    /// blocked worker is a worker not running everything else. The caller
-    /// awaits, so nothing on the calling thread waits either.
-    async fn read<T, F>(&self, read: F) -> Result<T, StoreError>
+    /// # There is no blocking thread any more
+    ///
+    /// There was: `spawn_blocking`, because `rusqlite` blocked and a blocked
+    /// tokio worker is a worker not running everything else. The engine is
+    /// async to the bottom now, so the read simply awaits -- no thread pool,
+    /// no `T: Send + 'static` on every closure, and no "the read did not
+    /// finish" arm for a panic that crossed a thread boundary.
+    async fn read<T, F, Fut>(&self, read: F) -> Result<T, StoreError>
     where
-        T: Send + 'static,
-        F: FnOnce(&postio_storage::PooledConnection) -> Result<T, StoreError> + Send + 'static,
+        F: FnOnce(Checkout) -> Fut,
+        Fut: Future<Output = Result<T, StoreError>>,
     {
-        let pool = self.pool.clone();
-        tokio::task::spawn_blocking(move || {
-            let connection = pool.get().map_err(StoreError::from)?;
-            read(&connection)
-        })
-        .await
-        .unwrap_or_else(|error| {
-            // A panic in a read is a bug, but the surface it reaches is a
-            // mail client that should say something rather than disappear.
-            Err(StoreError {
-                message: format!("the read did not finish: {error}"),
-            })
-        })
+        let connection = self.store.connect().await.map_err(StoreError::from)?;
+        read(connection).await
     }
 }
 
@@ -563,18 +566,18 @@ impl SqliteStore {
 /// counting a full one costs milliseconds off the UI thread, and getting it
 /// wrong the other way costs the user their mail with nothing on screen to say
 /// so. Any future drift degrades to slow rather than to invisible.
-fn count(
-    connection: &postio_storage::PooledConnection,
+async fn count(
+    connection: &Checkout,
     scope: ListScope,
     query: &ListQuery,
 ) -> Result<u32, StoreError> {
     if let ListScope::Mailbox(mailbox) = scope
-        && let Some(counts) = MailboxRepository::new(connection).counts(mailbox)?
+        && let Some(counts) = MailboxRepository::new(&connection).counts(mailbox).await?
         && counts.total > 0
     {
         return Ok(counts.total);
     }
-    Ok(MessageRepository::new(connection).count(query)?)
+    Ok(MessageRepository::new(&connection).count(query).await?)
 }
 
 /// Add the thread count a row's badge needs.
@@ -589,8 +592,8 @@ fn count(
 /// drill-in are not folders, and answering them with conversations would be
 /// the wrong answer rather than a missing one — so this refuses instead of
 /// quietly picking a scope.
-fn thread_query(
-    connection: &postio_storage::PooledConnection,
+async fn thread_query(
+    connection: &Checkout,
     scope: ListScope,
     limit: u32,
 ) -> Result<ThreadListQuery, StoreError> {
@@ -600,8 +603,8 @@ fn thread_query(
             // decoration: `threads.account_id` is the leading column of
             // `idx_threads_account_last_at`, so without it the window has no
             // index to seek and the whole flat-paging argument collapses.
-            let account = MailboxRepository::new(connection)
-                .get(mailbox)?
+            let account = MailboxRepository::new(&connection)
+                .get(mailbox).await?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?
                 .account_id;
             Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
@@ -663,13 +666,13 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
     })
 }
 
-fn summarise(
+async fn summarise(
     row: MessageListRow,
     threads: &ThreadRepository<'_>,
 ) -> Result<MessageSummary, StoreError> {
     let thread_count = match row.thread_id {
         Some(id) => threads
-            .get(id)?
+            .get(id).await?
             .map(|thread| thread.message_count)
             .unwrap_or(1),
         None => 1,
@@ -729,8 +732,10 @@ impl MailStore for SqliteStore {
         account: AccountId,
     ) -> Read<'_, postio_storage::repository::DraftCounts> {
         Box::pin(
-            self.read(move |connection| {
-                Ok(MailboxRepository::new(connection).draft_counts(account)?)
+            self.read(move |connection| async move {
+                Ok(MailboxRepository::new(&connection)
+                    .draft_counts(account)
+                    .await?)
             }),
         )
     }
