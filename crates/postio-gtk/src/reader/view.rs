@@ -106,6 +106,13 @@ pub struct Reader {
     // hand-rolled bar with the shared one, and `actions.rs` now owns only
     // which four verbs it carries.
     actions: Rc<ActionBar>,
+    /// The bar a message waiting to be sent gets, and the one a stopped send
+    /// gets. See [`Reader::set_send_state`].
+    queued_actions: Rc<ActionBar>,
+    stopped_actions: Rc<ActionBar>,
+    /// What the message on screen is doing, so `render` can put the right
+    /// bar back after clearing.
+    send_state: Rc<std::cell::Cell<Option<postio_model::DraftState>>>,
     allowlist: Rc<RefCell<RemoteImageAllowList>>,
     /// The thread currently drawn, so a `Show` verb inside the document can
     /// find the message its scope names and the sender that message is from.
@@ -370,6 +377,12 @@ impl Reader {
         );
         let unsubscribe_banner = Rc::new(UnsubscribeBanner::new());
         let actions = super::actions::new();
+        // One bar per verb set `ReaderAction::for_send_state` can return.
+        // Exactly one is visible, and for `Sending` none is: cancelling is
+        // refused once the submission started and retrying would risk a
+        // second copy, so the bar offers nothing rather than a refusal.
+        let queued_actions = super::actions::new_for(&super::actions::QUEUED);
+        let stopped_actions = super::actions::new_for(&super::actions::STOPPED);
 
         let chips = crate::parts::Chips::new();
 
@@ -393,7 +406,11 @@ impl Reader {
         // two different places depending on which surface opened it -- and
         // for a one-message row that surface is this one, so the older
         // placement was what most mail showed (#1435).
-        header.set_verbs(&actions.widget());
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        verbs.append(&actions.widget());
+        verbs.append(&queued_actions.widget());
+        verbs.append(&stopped_actions.widget());
+        header.set_verbs(verbs.upcast_ref::<gtk::Widget>());
 
         let reader = Reader {
             container,
@@ -406,6 +423,9 @@ impl Reader {
             unsubscribe_list: Rc::new(RefCell::new(None)),
             on_unsubscribe: Rc::new(RefCell::new(Vec::new())),
             actions,
+            queued_actions,
+            stopped_actions,
+            send_state: Rc::new(std::cell::Cell::new(None)),
             allowlist: Rc::new(RefCell::new(allowlist)),
             thread: Rc::new(RefCell::new(Vec::new())),
             originals: Rc::new(RefCell::new(std::collections::HashSet::new())),
@@ -762,28 +782,96 @@ impl Reader {
     /// opinion.
     pub fn set_actions_visible(&self, visible: bool) {
         self.actions_suppressed.set(!visible);
-        self.actions.set_visible(visible);
+        if visible {
+            self.set_send_state(self.send_state.get());
+        } else {
+            self.actions.set_visible(false);
+            self.queued_actions.set_visible(false);
+            self.stopped_actions.set_visible(false);
+        }
+    }
+
+    /// Say what the message on screen is doing, so the bar offers verbs that
+    /// apply to it (#1525, spec 003).
+    ///
+    /// The reading pane has always assumed a message *arrived* — Reply,
+    /// Reply all, Forward and Archive are all answers to somebody else's
+    /// mail. Until the Outbox there was no folder holding one that had not
+    /// arrived, so the assumption was never wrong; now it is, and on the
+    /// message a person is most likely to want to act on.
+    ///
+    /// Which verbs each state gets is
+    /// [`ReaderAction::for_send_state`](postio_ui::reader::header::ReaderAction::for_send_state),
+    /// in `postio-ui`, so the macOS reader
+    /// reaches the same answer rather than a second copy of this judgement.
+    ///
+    /// Call it after [`render`](Self::render), which clears it — the same
+    /// convention as [`set_unsubscribe`](Self::set_unsubscribe) and
+    /// [`set_encoding_problems`](Self::set_encoding_problems), and for the
+    /// same reason: this belongs to one message and must not outlive it.
+    pub fn set_send_state(&self, state: Option<postio_model::DraftState>) {
+        use postio_ui::reader::header::ReaderAction;
+
+        self.send_state.set(state);
+        let wanted = ReaderAction::for_send_state(state);
+        let is = |verb: ReaderAction| wanted.contains(&verb);
+
+        let suppressed = self.actions_suppressed.get();
+        self.actions
+            .set_visible(!suppressed && is(ReaderAction::Reply));
+        self.queued_actions
+            .set_visible(!suppressed && is(ReaderAction::CancelSend));
+        self.stopped_actions
+            .set_visible(!suppressed && is(ReaderAction::RetrySend));
+
+        // And the banner, which offers to unsubscribe from the sender's
+        // domain when there is no `List-Id` (#971) — the sender of an
+        // outgoing message being the user themselves.
+        if !ReaderAction::unsubscribable(state) {
+            self.unsubscribe_banner.set_list(None);
+        }
     }
 
     /// Show the action bar unless [`Reader::set_actions_visible`]`(false)`
     /// has suppressed it — what every call site that used to say
     /// `self.actions.set_visible(true)` means now.
     fn show_actions_unless_suppressed(&self) {
-        if !self.actions_suppressed.get() {
-            self.actions.set_visible(true);
+        if self.actions_suppressed.get() {
+            return;
         }
+        // Through `set_send_state` rather than straight to `self.actions`, so
+        // a repaint of a message being sent does not put Reply back on it.
+        self.set_send_state(self.send_state.get());
     }
 
-    /// Whether the action bar is currently on screen. For tests.
-    #[doc(hidden)]
     /// The action bar's widget, so a test can ask where it is mounted.
     #[doc(hidden)]
     pub fn actions_widget(&self) -> gtk::Widget {
         self.actions.widget()
     }
 
+    /// Whether the action bar is currently on screen. For tests.
+    #[doc(hidden)]
     pub fn actions_visible(&self) -> bool {
         self.actions.widget().is_visible()
+    }
+
+    /// The verbs a person can actually see and press, by their labels.
+    ///
+    /// Across all three bars, because which one is showing is the thing
+    /// under test: asking `actions_visible` alone cannot tell "Reply is
+    /// offered" from "Send again is offered" (#1525).
+    #[doc(hidden)]
+    pub fn visible_verbs(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        for bar in [&self.actions, &self.queued_actions, &self.stopped_actions] {
+            let widget = bar.widget();
+            if !widget.is_visible() {
+                continue;
+            }
+            collect_labels(&widget, &mut found);
+        }
+        found
     }
 
     /// The banner's "always allow" button label, naming whichever sender it
@@ -871,6 +959,9 @@ impl Reader {
         // they are showing, through `set_encoding_problems`.
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
         // Reader view is decided per message, from the message. Bulk mail
         // opens reduced; correspondence never does. See
         // `document::suits_reader_view` for why the question is "was this
@@ -1007,6 +1098,9 @@ impl Reader {
         self.absent.set(None);
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
         self.banner.set_visible(false);
 
         let document = self.compose_thread(messages);
@@ -1369,6 +1463,9 @@ impl Reader {
         self.banner.set_visible(false);
         self.decode_notice.set_visible(false);
         self.set_unsubscribe(None);
+        // Per-message, like the two above: a message drawn over one that
+        // was being sent must not inherit its bar.
+        self.set_send_state(None);
         load_document(
             &self.canvas(),
             &wrap_document("", RemoteImages::Blocked, Sheet::Theme),
@@ -1914,6 +2011,29 @@ fn handle_decide_policy(
     });
     decision.ignore();
     true
+}
+
+/// Every verb title under `widget`, depth first. Test support for
+/// [`Reader::visible_verbs`].
+///
+/// The titles are in child `Label`s rather than on the buttons: a keycap
+/// button's content is a box holding the word and the key hint beside it, so
+/// `Button::label` answers `None` for every one of them. The hint carries
+/// `postio-keyhint`, which is the class that exists to tell the two apart.
+fn collect_labels(widget: &gtk::Widget, found: &mut Vec<String>) {
+    if let Some(label) = widget.downcast_ref::<gtk::Label>()
+        && !label.has_css_class("postio-keyhint")
+    {
+        let text = label.text().to_string();
+        if !text.is_empty() {
+            found.push(text);
+        }
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        child = node.next_sibling();
+        collect_labels(&node, found);
+    }
 }
 
 #[cfg(test)]

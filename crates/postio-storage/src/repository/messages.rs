@@ -29,7 +29,7 @@ use postio_model::{
     RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity, normalize_subject,
 };
 use rusqlite::types::Value;
-use rusqlite::{Connection, Row, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 
 /// Which messages a list shows.
 ///
@@ -880,6 +880,31 @@ impl<'a> MessageRepository<'a> {
 
         transaction.commit()?;
         Ok(report)
+    }
+
+    /// Whether this message is one being sent, and in which state.
+    ///
+    /// `None` for ordinary mail, which is almost every row. On its own rather
+    /// than on [`Message`] because it is asked for in one place -- the reading
+    /// pane, deciding which verbs a message gets (#1525) -- and widening the
+    /// message read for it would pay for the column on every caller that does
+    /// not care.
+    pub fn send_state(&self, id: MessageId) -> Result<Option<DraftState>> {
+        let state: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT send_state FROM messages WHERE id = ?1",
+                [id.get()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        state
+            .map(|state| {
+                DraftState::from_name(&state)
+                    .ok_or_else(|| unknown_enum("messages.send_state", &state))
+            })
+            .transpose()
     }
 
     /// One message, with its recipients, attachments and labels.

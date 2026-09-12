@@ -133,7 +133,12 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
 
         // ── File ─────────────────────────────────────────────────────────
         C::Compose | C::Send | C::ScheduleSend | C::SaveDraft | C::DiscardDraft => Some(M::File),
-        C::AttachFile | C::DetachComposer | C::MarkSent => Some(M::File),
+        // Retry and cancel sit with `MarkSent`: all three are about a message
+        // that has left the composer and not arrived, which is a File concern
+        // rather than an editing one.
+        C::AttachFile | C::DetachComposer | C::MarkSent | C::RetrySend | C::CancelSend => {
+            Some(M::File)
+        }
         C::SavePart | C::SaveAllParts | C::OpenPartExternally => Some(M::File),
         C::Refresh => Some(M::File),
 
