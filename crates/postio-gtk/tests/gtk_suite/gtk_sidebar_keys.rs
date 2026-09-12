@@ -162,3 +162,77 @@ pub fn a_mailbox_can_be_chosen_without_touching_the_mouse() {
          moving folders while the message list looks focused"
     );
 }
+
+/// The Outbox is reached the way every folder is (spec 003, FR-016).
+///
+/// Not by a key of its own. No folder in this application has one — not the
+/// Inbox, not Drafts — because a folder is a row, not a verb, and the verbs
+/// that reach rows are already in the registry: `FocusSidebar` puts the
+/// keyboard in the column, `NextFolder` and `PrevFolder` walk it, `Return`
+/// opens what it lands on. Giving the Outbox a dedicated binding would make
+/// it the only folder in the sidebar with one.
+///
+/// What has to be true is that the walk does not *skip* it. A view row has no
+/// id, and the openable check is written in terms of ids, so a row that is
+/// stepped onto and silently not reported is the failure this guards.
+pub fn the_keyboard_walks_onto_the_outbox_and_opens_it() {
+    let state_dir =
+        std::env::temp_dir().join(format!("postio-sidebar-outbox-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).unwrap();
+    // SAFETY: first statement of a single-threaded test.
+    unsafe { std::env::set_var("XDG_STATE_HOME", &state_dir) };
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    let mut all = folders();
+    all.extend(postio_ui::sidebar::view_rows(
+        AccountId::new(1),
+        &all.clone(),
+        postio_ui::sidebar::ViewCounts {
+            flagged: 2,
+            snoozed: 0,
+            outbox: 1,
+        },
+    ));
+    window.sidebar().set_mailboxes(&all);
+    pump();
+
+    let opened: Rc<RefCell<Vec<MailboxRole>>> = Default::default();
+    window.sidebar().connect_selected({
+        let opened = Rc::clone(&opened);
+        move |choice| {
+            if let SidebarChoice::View(role) = choice {
+                opened.borrow_mut().push(role);
+            }
+        }
+    });
+
+    // Into the column, then walk until the Outbox reports itself. Bounded so
+    // a row that never reports fails here rather than hanging the suite.
+    press(&window, "g");
+    press(&window, "f");
+    for _ in 0..24 {
+        if opened.borrow().contains(&MailboxRole::Outbox) {
+            break;
+        }
+        press(&window, "j");
+    }
+
+    assert!(
+        opened.borrow().contains(&MailboxRole::Outbox),
+        "the keyboard walked the whole sidebar without the Outbox reporting \
+         itself as opened: {:?}",
+        opened.borrow()
+    );
+}

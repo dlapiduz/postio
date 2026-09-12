@@ -1641,6 +1641,26 @@ impl Sidebar {
         imp.echoing.set(false);
     }
 
+    /// Highlight exactly this row, without looking it up.
+    ///
+    /// [`select`](Self::select) takes a [`MailboxId`] and searches, which is
+    /// right for its caller -- the window echoing a folder it just opened --
+    /// and wrong for the keyboard walk, which is holding the row already. A
+    /// view row has no id to search by, so searching finds whichever view
+    /// comes first rather than the one the cursor is on.
+    fn select_row_directly(&self, row: &gtk::ListBoxRow) {
+        let imp = self.imp();
+        imp.echoing.set(true);
+        for list in imp.folder_lists.borrow().iter() {
+            if row.parent().as_ref() == Some(list.upcast_ref::<gtk::Widget>()) {
+                list.select_row(Some(row));
+            } else {
+                list.unselect_all();
+            }
+        }
+        imp.echoing.set(false);
+    }
+
     /// Drop the folder highlight, without telling anyone a folder was picked.
     ///
     /// For a scope that is not a folder — Unified (#185) — where leaving
@@ -1851,7 +1871,12 @@ impl Sidebar {
         }
         let choice = row_choice(row);
         let id = MailboxId::new(row_id(row));
-        self.select(id);
+        // This row, not `select(id)`. The walk already has the row it landed
+        // on, and `select` goes looking for one by id -- which three view rows
+        // share, because a view has no id. Asking it to find "the row with id
+        // 0" snapped the cursor back to the first view every time, so `j` past
+        // Flagged reached Snoozed and then stuck there for ever.
+        self.select_row_directly(row);
         // A `\Noselect` container has nothing to open: stepping onto it
         // moves the keyboard there — so `toggle_focused` (#324) has
         // something to act on — but must not report it as an open folder,

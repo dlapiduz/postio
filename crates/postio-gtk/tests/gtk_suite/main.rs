@@ -839,6 +839,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_pane_cycle::tab_walks_the_panes_and_shift_tab_walks_back as fn(),
     ),
     (
+        "gtk_sidebar_keys::the_keyboard_walks_onto_the_outbox_and_opens_it",
+        gtk_sidebar_keys::the_keyboard_walks_onto_the_outbox_and_opens_it as fn(),
+    ),
+    (
         "gtk_sidebar_keys::a_mailbox_can_be_chosen_without_touching_the_mouse",
         gtk_sidebar_keys::a_mailbox_can_be_chosen_without_touching_the_mouse as fn(),
     ),
