@@ -24,6 +24,10 @@
 # (10.2s). Each says in its own doc comment that what it produces is numbers a
 # person reads. Together with the six, 75.6s off every pull request.
 #
+# SPIKE: `binary(hmac_cost)` is gone from this list with the test itself.
+# It measured SHA-256 against SHA-512 as the page MAC, and an AEAD has no
+# separate MAC to choose -- which is why the page path got faster.
+#
 # The filter is written once, negated, and `profile.nightly` lifts it with
 # `all()` rather than repeating it -- nextest config has no bindings, and a
 # second copy of an expression this long is a second thing to keep true.
@@ -46,7 +50,7 @@
 # that never answers, a compositor that went away mid-test.
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-default-filter = 'not (binary(hmac_cost) + binary(cache_pressure) + binary(header_block_size) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-storage) & test(/^measurements::/)) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
+default-filter = 'not (binary(cache_pressure) + binary(header_block_size) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + (package(postio-storage) & test(/^measurements::/)) + (package(postio-index) & test(/^body_index_size::/)) + (package(postio-app) & test(/^navigation_cost::/)))'
 
 # Retries are OFF by default, deliberately. A retry turns a real failure into
 # a slow pass, and this project's characteristic bug is something that works

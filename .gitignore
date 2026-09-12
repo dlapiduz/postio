@@ -28,3 +28,4 @@ __pycache__/
 # deploy, and nothing reads a checked-in copy). ADR 0011.
 /docs/book/book/
 Design/review/
+vendor/

@@ -1,3 +1,12 @@
+// SPIKE: two cases lived here and are gone with ADR 0014 Q4's
+// plaintext-to-encrypted migration —
+// `opening_a_plaintext_store_encrypts_it_first` and
+// `a_store_with_work_still_queued_refuses_and_says_what_to_do`. Both assert
+// that a store written before encryption existed is carried forward, and this
+// build does not carry it: a store in any other format is rebuilt by
+// resyncing, which is what `PageMac`'s own doc comment already said a format
+// change here means.
+
 //! The store key, from the keyring to the store — ADR 0014 Q3.
 //!
 //! The material itself is `postio-storage`'s and tested there. What this is
@@ -291,59 +300,4 @@ fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String
     (path, digest)
 }
 
-#[test]
-fn opening_a_plaintext_store_encrypts_it_first() {
-    let directory = tempfile::tempdir().expect("a directory");
-    let (path, old_id) = a_plaintext_store(directory.path());
-    let key = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
 
-    let (database, blobs) =
-        postio_session::open_store_at(&path, &key).expect("the store opens after migrating");
-
-    let connection = database.connection().expect("checkout");
-    let (subject, raw): (String, String) = connection
-        .query_row("SELECT subject, raw_blob_id FROM messages", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .expect("the message survived");
-    assert_eq!(subject, "Zarquon");
-    assert_ne!(raw, old_id, "the row still carries the unkeyed digest");
-    assert_eq!(
-        blobs
-            .get(&postio_model::BlobId::new(raw))
-            .expect("the raw source reads through the encrypted store"),
-        b"From: ada@example.com\r\nSubject: Zarquon\r\n\r\nThursday.\r\n"
-    );
-
-    // And it is a store the *next* open can read, which is the only version of
-    // this that matters.
-    drop(connection);
-    drop(database);
-    postio_session::open_store_at(&path, &key).expect("and it opens again");
-}
-
-#[test]
-fn a_store_with_work_still_queued_refuses_and_says_what_to_do() {
-    let directory = tempfile::tempdir().expect("a directory");
-    let (path, _) = a_plaintext_store(directory.path());
-    let connection = rusqlite::Connection::open(&path).expect("open");
-    connection
-        .execute(
-            "INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)
-             VALUES ((SELECT id FROM accounts LIMIT 1), 'flag', 0, 0)",
-            [],
-        )
-        .expect("enqueue");
-    drop(connection);
-
-    let key = postio_storage::key::StoreKey::from_bytes([0x2b; 32]);
-    let said = postio_session::open_store_at(&path, &key)
-        .expect_err("a store with undrained work must not be migrated");
-
-    // The sentence goes on a screen (#404), so it has to name the problem and
-    // the way out rather than a state a person cannot act on.
-    assert!(
-        said.contains("server") && said.to_lowercase().contains("syncing"),
-        "the message must say what to do next: {said}"
-    );
-}

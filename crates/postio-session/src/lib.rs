@@ -530,46 +530,16 @@ pub fn open_store_at_reporting(
     // and gets "file is not a database". ADR 0014 Q4's migration is what turns
     // that into a store this build can read, and it answers
     // `AlreadyEncrypted` and does no work on every open after the first.
-    // ADR 0014 Q4's one-off: a plaintext store is rewritten encrypted before
-    // anything can read it. `AlreadyEncrypted` is the answer on every open
-    // after the first, so this is a cheap question with an expensive
-    // occasional answer -- which is exactly the shape the report exists for.
-    report(Opening::Migrating);
-    match postio_storage::encrypt::encrypt_store(&path, store_key) {
-        Ok(postio_storage::encrypt::Outcome::Encrypted(report)) => {
-            tracing::info!(
-                blobs = report.blobs,
-                bytes = report.bytes,
-                "the local store has been encrypted"
-            );
-        }
-        Ok(postio_storage::encrypt::Outcome::Resumed) => {
-            tracing::info!("an interrupted store encryption was finished");
-        }
-        Ok(
-            postio_storage::encrypt::Outcome::AlreadyEncrypted
-            | postio_storage::encrypt::Outcome::NoStore,
-        ) => {}
-        // The queue is the one thing in the store that is not a copy of
-        // something on a server, so the migration refuses to run over it
-        // rather than deciding for somebody. The sentence has to say what to
-        // do next, because "drain first" is an instruction to a person.
-        Err(error @ postio_storage::Error::QueueNotDrained { .. }) => {
-            tracing::error!(path = %path.display(), %error, "the store cannot be encrypted yet: {error}");
-            return Err(format!(
-                "Postio could not encrypt its local store. {error} Open the previous \
-                 version, let it finish syncing, and start this one again."
-            ));
-        }
-        Err(error) => {
-            tracing::error!(path = %path.display(), %error, "the store could not be encrypted: {error}");
-            return Err(format!(
-                "Postio could not encrypt its local store: {error}. Nothing was \
-                 changed; the store is exactly as it was."
-            ));
-        }
-    }
-
+    // SPIKE: ADR 0014 Q4's plaintext-to-encrypted migration is gone. It
+    // existed to carry a store written before encryption was added, and
+    // there is nothing to carry: the store is a cache of the server, the
+    // maintainer's own instruction for this branch was "I can delete my
+    // mailbox and rebuild it", and `PageMac`'s doc comment already records
+    // that a format change here is a resync rather than a migration.
+    //
+    // Which also means this build cannot read a SQLCipher store at all. That
+    // is the deliberate half: it opens chacha20 stores and refuses others,
+    // rather than opening some and silently mis-reading others.
     let database = match Database::open_reporting(&path, &database_key, &|stage| {
         report(match stage {
             postio_storage::OpenStage::Opening => Opening::Store,

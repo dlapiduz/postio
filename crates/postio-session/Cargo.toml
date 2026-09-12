@@ -53,9 +53,7 @@ postio-storage = { workspace = true, features = ["test-support"] }
 # features match `postio-storage`'s, because one `links = "sqlite3"` crate in
 # the graph means the feature selecting SQLCipher has to agree everywhere
 # (ADR 0014).
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 # The unkeyed digest a blob written before ADR 0014 was named by, so the
 # fixture is the shape a real pre-release store has rather than a plausible
 # one.

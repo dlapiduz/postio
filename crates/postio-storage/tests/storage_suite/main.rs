@@ -31,7 +31,6 @@ mod contact_rank_index;
 mod contacts;
 mod draft_indexes;
 mod drafts;
-mod encrypt_migration;
 mod encryption;
 mod labels;
 mod list_statement_count;

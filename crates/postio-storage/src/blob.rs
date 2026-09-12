@@ -707,12 +707,23 @@ pub struct EvictionReport {
     pub bytes_remaining: u64,
 }
 
+/// Every column that holds a blob key, and the table it is on.
+///
+/// Lived in `encrypt.rs` until this branch removed ADR 0014 Q4's migration,
+/// which was its other reader. Named once because a fourth added in one place
+/// and not the other is mail that is on disk and not in the database.
+pub(crate) const BLOB_REFERENCES: [(&str, &str); 3] = [
+    ("messages", "raw_blob_id"),
+    ("attachments", "blob_id"),
+    ("cross_account_moves", "raw_blob_id"),
+];
+
 fn referenced_blobs(connection: &Connection) -> Result<HashSet<String>> {
-    // Built from `encrypt::BLOB_REFERENCES` rather than written out, because
+    // Built from `BLOB_REFERENCES` rather than written out, because
     // a column added to one list and not the other is either mail the sweep
     // deletes while a row still points at it or mail the migration leaves
     // behind. One list, two readers.
-    let clauses: Vec<String> = crate::encrypt::BLOB_REFERENCES
+    let clauses: Vec<String> = BLOB_REFERENCES
         .iter()
         .map(|(table, column)| format!("SELECT {column} FROM {table} WHERE {column} IS NOT NULL"))
         .collect();

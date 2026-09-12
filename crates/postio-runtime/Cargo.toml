@@ -41,7 +41,7 @@ postio-test-support.workspace = true
 # Features match `postio-storage`'s -- one `links = "sqlite3"` crate in the
 # graph, so the feature selecting SQLCipher has to agree everywhere (ADR 0014).
 rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
+    "bundled",
     # `Connection::trace_v2` -- examples/store_diag.rs's per-statement timing.
     "trace",
 ] }
