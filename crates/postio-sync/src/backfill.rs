@@ -630,13 +630,12 @@ impl Backfill {
     /// One at a time, and outstanding until [`finished`](Self::finished)
     /// reports it. That is what bounds how long the user can wait behind the
     /// backfill: one body, the one already on the wire.
-    pub async fn next_body(&mut self) -> Option<Claim> {
+    pub fn next_body(&mut self) -> Option<Claim> {
         if self.cancelled {
             return None;
         }
 
-        if let Some(request) = self.take_interactive()
-    {
+        if let Some(request) = self.take_interactive() {
             return Some(self.claim(request, Priority::Interactive));
         }
         if !self.background_runs() {
