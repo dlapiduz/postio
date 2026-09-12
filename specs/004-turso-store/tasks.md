@@ -37,8 +37,8 @@ Commits end `Refs: specs/004-turso-store` and the task id — never `Refs: #<iss
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `turso = "=0.8.0-pre.11"` to `crates/postio-storage/Cargo.toml` and remove `rusqlite`, leaving the crate non-compiling — this task's only claim is that the dependency resolves and `openssl-src` leaves the graph, proved by `cargo tree -i openssl-sys -e normal` answering "did not match any packages"
-- [ ] T002 Ban `turso` wherever `rusqlite` is banned in `scripts/checks/check-crate-boundaries.py` (`postio-gtk`, `-model`, `-config`, `-search`, `-body`) and add its test — a check that silently stops checking when a dependency is renamed is worse than no check
+- [x] T001 Add `turso = "=0.8.0-pre.11"` to `crates/postio-storage/Cargo.toml` and remove `rusqlite`, leaving the crate non-compiling — this task's only claim is that the dependency resolves and `openssl-src` leaves the graph, proved by `cargo tree -i openssl-sys -e normal` answering "did not match any packages"
+- [x] T002 Ban `turso` wherever `rusqlite` is banned in `scripts/checks/check-crate-boundaries.py` (`postio-gtk`, `-model`, `-config`, `-search`, `-body`) and add its test — a check that silently stops checking when a dependency is renamed is worse than no check
 - [ ] T003 [P] Record the engine swap in `docs/decisions/` as an amendment to ADR 0014, citing the three spikes rather than re-arguing them
 
 ---
@@ -49,11 +49,11 @@ Commits end `Refs: specs/004-turso-store` and the task id — never `Refs: #<iss
 answers.** Neither is allowed to end in a guess: each writes its result into
 `specs/004-turso-store/research.md` under the question it answers.
 
-- [ ] T004 **R1** — determine whether Turso can build an fts index over a generated column, in `crates/postio-storage/tests/turso_capabilities.rs`: create `body_indexed AS (coalesce(body_search, body_text)) VIRTUAL`, attempt `CREATE INDEX … USING fts (body_indexed)`, and assert either that it works or that it does not. Write the answer into research.md Q1. **T033 and T034 depend on which it is.**
-- [ ] T005 **R2** — determine whether a background writer can starve an interactive one, in `crates/postio-storage/tests/turso_capabilities.rs`: hold a long write while a second connection attempts a short one, and measure whether the short one waits unboundedly. Write the answer into research.md Q3. **T014 depends on it.**
-- [ ] T006 Write `crates/postio-storage/src/schema.rs`: the head schema as one constant, with the four changes data-model.md names — bodies as TEXT, `body_search` added, `WITHOUT ROWID` dropped from `thread_links`/`message_labels`/`message_headers`, the two FTS5 virtual tables replaced by fts indexes. Test first: a test that every table, index and trigger the old schema declared is present, so nothing is lost by transcription
-- [ ] T007 Write `crates/postio-storage/src/store.rs` replacing `db.rs`: `Store::open(path, key)` over Turso with encryption on, schema at head on a new file. Test first: opening a fresh path yields a store whose schema is at head
-- [ ] T008 Delete `crates/postio-storage/src/db.rs`, `encrypt.rs` and `body.rs`, and the tests that assert SQLCipher's own behaviour (`encrypt_migration`, `page_mac`, `key_pragma_failure`, `hmac_cost`, the `cipher_*` pragma cases in `concurrent_open`). Each deletion says in one line which engine behaviour it was about — a deleted test with no explanation is indistinguishable from a lost one
+- [x] T004 **R1** — determine whether Turso can build an fts index over a generated column, in `crates/postio-storage/tests/turso_capabilities.rs`: create `body_indexed AS (coalesce(body_search, body_text)) VIRTUAL`, attempt `CREATE INDEX … USING fts (body_indexed)`, and assert either that it works or that it does not. Write the answer into research.md Q1. **T033 and T034 depend on which it is.**
+- [x] T005 **R2** — determine whether a background writer can starve an interactive one, in `crates/postio-storage/tests/turso_capabilities.rs`: hold a long write while a second connection attempts a short one, and measure whether the short one waits unboundedly. Write the answer into research.md Q3. **T014 depends on it.**
+- [x] T006 Write `crates/postio-storage/src/schema.rs`: the head schema as one constant, with the four changes data-model.md names — bodies as TEXT, `body_search` added, `WITHOUT ROWID` dropped from `thread_links`/`message_labels`/`message_headers`, the two FTS5 virtual tables replaced by fts indexes. Test first: a test that every table, index and trigger the old schema declared is present, so nothing is lost by transcription
+- [x] T007 Write `crates/postio-storage/src/store.rs` replacing `db.rs`: `Store::open(path, key)` over Turso with encryption on, schema at head on a new file. Test first: opening a fresh path yields a store whose schema is at head
+- [x] T008 Delete `crates/postio-storage/src/db.rs`, `encrypt.rs` and `body.rs`, and the tests that assert SQLCipher's own behaviour (`encrypt_migration`, `page_mac`, `key_pragma_failure`, `hmac_cost`, the `cipher_*` pragma cases in `concurrent_open`). Each deletion says in one line which engine behaviour it was about — a deleted test with no explanation is indistinguishable from a lost one
 - [ ] T009 Port `crates/postio-storage/src/test_support.rs` to file-backed Turso stores only, per research Q6 — the engine refuses to key an in-memory database
 
 **Checkpoint**: the crate does not compile yet and is not expected to. Nothing below starts until T004 and T005 have written their answers down.
