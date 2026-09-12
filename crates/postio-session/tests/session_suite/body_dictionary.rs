@@ -34,7 +34,7 @@ fn a_body(seed: usize) -> String {
 }
 
 /// Fills `database` with `count` messages that have bodies.
-fn corpus(database: &postio_storage::test_support::TempDatabase, count: usize) {
+fn corpus(database: &postio_storage::test_support::TempStore, count: usize) {
     let connection = database.connection().expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection);
     let messages = MessageRepository::new(&connection);
@@ -59,7 +59,7 @@ fn corpus(database: &postio_storage::test_support::TempDatabase, count: usize) {
     }
 }
 
-fn dictionaries(database: &postio_storage::test_support::TempDatabase) -> i64 {
+fn dictionaries(database: &postio_storage::test_support::TempStore) -> i64 {
     let connection = database.connection().expect("checkout");
     connection
         .query_row("SELECT count(*) FROM body_dictionaries", [], |row| {

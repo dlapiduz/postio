@@ -12,7 +12,7 @@ use postio_search::facets::Scope;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::test_support;
 
-fn hits(connection: &rusqlite::Connection, account: postio_model::AccountId, query: &str) -> usize {
+fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
     let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
     postio_index::search(
         connection,
@@ -30,7 +30,7 @@ fn hits(connection: &rusqlite::Connection, account: postio_model::AccountId, que
 }
 
 fn second_account(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
 ) -> (postio_model::Account, postio_model::ids::MailboxId) {
     let mut account = postio_model::Account::new(
         "Second",

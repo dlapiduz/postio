@@ -24,7 +24,7 @@ const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
 /// A store holding one message whose body was fetched before blocks were
 /// stored: raw source on disk, `body_headers` NULL.
 fn a_store_from_before() -> (
-    test_support::TempDatabase,
+    test_support::TempStore,
     BlobStore,
     postio_model::MessageId,
 ) {

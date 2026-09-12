@@ -31,7 +31,7 @@ fn a_block(nth: usize) -> String {
     )
 }
 
-fn hits(connection: &rusqlite::Connection, account: postio_model::AccountId, query: &str) -> usize {
+fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
     let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
     postio_index::search(
         connection,

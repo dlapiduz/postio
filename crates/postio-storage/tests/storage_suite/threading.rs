@@ -7,7 +7,7 @@
 use std::cell::Cell;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use postio_model::{AccountId, MailboxId, Message, MessageId, RfcMessageId, ThreadId};
 use postio_storage::repository::{
@@ -15,16 +15,16 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 
-fn at(minute: i64) -> DateTime<Utc> {
+async fn at(minute: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + TimeDelta::minutes(minute)
 }
 
-fn id(raw: &str) -> RfcMessageId {
+async fn id(raw: &str) -> RfcMessageId {
     RfcMessageId::new(raw)
 }
 
 /// Writes a message and files it, returning what threading decided.
-fn file(
+async fn file(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -33,23 +33,26 @@ fn file(
     references: &[&str],
     subject: &str,
 ) -> (MessageId, ThreadId) {
-    let mut message = Message::new(account, mailbox, at(minute));
-    message.rfc_message_id = Some(id(message_id));
+    let mut message = Message::new(account, mailbox, at(minute).await);
+    message.rfc_message_id = Some(id(message_id).await);
     message.references = references.iter().map(|r| id(r)).collect();
     message.subject = Some(subject.to_owned());
     let message_id = MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create");
 
     let threaded = ThreadingRepository::new(connection, account)
         .thread(&message)
+        .await
         .expect("thread");
     (message_id, threaded.thread_id)
 }
 
-fn members(connection: &Connection, thread: ThreadId) -> Vec<MessageId> {
+async fn members(connection: &Connection, thread: ThreadId) -> Vec<MessageId> {
     ThreadRepository::new(connection)
         .messages(thread, ThreadOrder::Oldest)
+        .await
         .expect("members")
         .into_iter()
         .map(|row| row.id)
@@ -60,11 +63,11 @@ fn members(connection: &Connection, thread: ThreadId) -> Vec<MessageId> {
 // The ordinary cases
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_conversation_lands_in_one_thread() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_conversation_lands_in_one_thread() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (root, thread) = file(
         &connection,
@@ -74,7 +77,7 @@ fn a_conversation_lands_in_one_thread() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
     let (reply, second) = file(
         &connection,
         account.id,
@@ -83,7 +86,7 @@ fn a_conversation_lands_in_one_thread() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    );
+    ).await;
     let (third, last) = file(
         &connection,
         account.id,
@@ -92,17 +95,17 @@ fn a_conversation_lands_in_one_thread() {
         "<c@example.com>",
         &["<a@example.com>", "<b@example.com>"],
         "Re: Contract",
-    );
+    ).await;
 
     assert_eq!((second, last), (thread, thread));
-    assert_eq!(members(&connection, thread), vec![root, reply, third]);
+    assert_eq!(members(&connection, thread).await, vec![root, reply, third]);
 }
 
-#[test]
-fn two_conversations_stay_apart() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn two_conversations_stay_apart() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (_, first) = file(
         &connection,
@@ -112,7 +115,7 @@ fn two_conversations_stay_apart() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -121,16 +124,16 @@ fn two_conversations_stay_apart() {
         "<x@example.com>",
         &[],
         "Invoice",
-    );
+    ).await;
 
     assert_ne!(first, second);
 }
 
-#[test]
-fn a_new_thread_takes_the_normalized_subject() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_new_thread_takes_the_normalized_subject() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (_, thread) = file(
         &connection,
@@ -140,11 +143,12 @@ fn a_new_thread_takes_the_normalized_subject() {
         "<a@example.com>",
         &[],
         "RE: Re: FWD: Contract",
-    );
+    ).await;
 
     assert_eq!(
         ThreadRepository::new(&connection)
             .get(thread)
+            .await
             .expect("get")
             .expect("the thread")
             .subject
@@ -157,11 +161,11 @@ fn a_new_thread_takes_the_normalized_subject() {
 // Out of order, and merging
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // An initial sync walks newest first, so this is the ordinary case.
     let (reply, thread) = file(
@@ -172,7 +176,7 @@ fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    );
+    ).await;
     let (parent, same) = file(
         &connection,
         account.id,
@@ -181,17 +185,17 @@ fn a_reply_that_arrives_before_its_parent_still_gathers_it() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
 
     assert_eq!(same, thread);
-    assert_eq!(members(&connection, thread), vec![parent, reply]);
+    assert_eq!(members(&connection, thread).await, vec![parent, reply]);
 }
 
-#[test]
-fn a_late_message_that_links_two_threads_merges_them() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_late_message_that_links_two_threads_merges_them() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (left, first) = file(
         &connection,
@@ -201,7 +205,7 @@ fn a_late_message_that_links_two_threads_merges_them() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    );
+    ).await;
     let (right, second) = file(
         &connection,
         account.id,
@@ -210,26 +214,28 @@ fn a_late_message_that_links_two_threads_merges_them() {
         "<c@example.com>",
         &["<x@example.com>"],
         "Re: Notes",
-    );
+    ).await;
     assert_ne!(first, second, "nothing links them yet");
 
     // The message that references both turns up.
-    let mut linker = Message::new(account.id, inbox, at(3));
-    linker.rfc_message_id = Some(id("<a@example.com>"));
-    linker.references = vec![id("<x@example.com>")];
+    let mut linker = Message::new(account.id, inbox, at(3).await);
+    linker.rfc_message_id = Some(id("<a@example.com>").await);
+    linker.references = vec![id("<x@example.com>").await];
     linker.subject = Some("Contract and notes".to_owned());
     let linker_id = MessageRepository::new(&connection)
         .create(&mut linker)
+        .await
         .expect("create");
     let threaded = ThreadingRepository::new(&connection, account.id)
         .thread(&linker)
+        .await
         .expect("thread");
 
     assert_eq!(threaded.thread_id, first, "the older thread survives");
     assert_eq!(threaded.merged, vec![second]);
     assert!(!threaded.created);
 
-    let mut all = members(&connection, first);
+    let mut all = members(&connection, first).await;
     all.sort_unstable_by_key(|id| id.get());
     assert_eq!(all, {
         let mut expected = vec![left, right, linker_id];
@@ -237,17 +243,17 @@ fn a_late_message_that_links_two_threads_merges_them() {
         expected
     });
     assert_eq!(
-        ThreadRepository::new(&connection).get(second).expect("get"),
+        ThreadRepository::new(&connection).get(second).await.expect("get"),
         None,
         "the absorbed thread is gone, not left empty"
     );
 }
 
-#[test]
-fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let threading = ThreadingRepository::new(&connection, account.id);
 
     file(
@@ -258,7 +264,7 @@ fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: A",
-    );
+    ).await;
     file(
         &connection,
         account.id,
@@ -267,19 +273,21 @@ fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<c@example.com>",
         &["<x@example.com>"],
         "Re: X",
-    );
+    ).await;
 
-    let mut linker = Message::new(account.id, inbox, at(3));
-    linker.rfc_message_id = Some(id("<a@example.com>"));
-    linker.references = vec![id("<x@example.com>")];
+    let mut linker = Message::new(account.id, inbox, at(3).await);
+    linker.rfc_message_id = Some(id("<a@example.com>").await);
+    linker.references = vec![id("<x@example.com>").await];
     linker.subject = Some("A and X".to_owned());
     MessageRepository::new(&connection)
         .create(&mut linker)
+        .await
         .expect("create");
-    let threaded = threading.thread(&linker).expect("thread");
+    let threaded = threading.thread(&linker).await.expect("thread");
 
     let claimed: Vec<String> = threading
         .claims(threaded.thread_id)
+        .await
         .expect("claims")
         .iter()
         .map(|id| id.as_str().to_owned())
@@ -304,7 +312,7 @@ fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
         "<d@example.com>",
         &["<c@example.com>"],
         "Re: X",
-    );
+    ).await;
     assert_eq!(later, threaded.thread_id);
 }
 
@@ -312,11 +320,11 @@ fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
 // Broken chains
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_reply_with_no_references_falls_back_to_its_subject() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_reply_with_no_references_falls_back_to_its_subject() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // What a list that rewrites headers leaves behind.
     let (_, first) = file(
@@ -327,7 +335,7 @@ fn a_reply_with_no_references_falls_back_to_its_subject() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -336,16 +344,16 @@ fn a_reply_with_no_references_falls_back_to_its_subject() {
         "<b@example.com>",
         &[],
         "Re: Contract",
-    );
+    ).await;
 
     assert_eq!(second, first);
 }
 
-#[test]
-fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (_, first) = file(
         &connection,
@@ -355,7 +363,7 @@ fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
         "<a@example.com>",
         &[],
         "Hello",
-    );
+    ).await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -364,16 +372,16 @@ fn two_messages_that_merely_share_a_subject_are_not_a_conversation() {
         "<b@example.com>",
         &[],
         "Hello",
-    );
+    ).await;
 
     assert_ne!(second, first);
 }
 
-#[test]
-fn a_reference_to_a_message_that_never_arrived_is_harmless() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_reference_to_a_message_that_never_arrived_is_harmless() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (_, first) = file(
         &connection,
@@ -383,7 +391,7 @@ fn a_reference_to_a_message_that_never_arrived_is_harmless() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -392,16 +400,16 @@ fn a_reference_to_a_message_that_never_arrived_is_harmless() {
         "<c@example.com>",
         &["<a@example.com>", "<gone@example.com>"],
         "Re: Contract",
-    );
+    ).await;
 
     assert_eq!(second, first);
 }
 
-#[test]
-fn message_ids_match_without_regard_to_case() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn message_ids_match_without_regard_to_case() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let (_, first) = file(
         &connection,
@@ -411,7 +419,7 @@ fn message_ids_match_without_regard_to_case() {
         "<A@Example.COM>",
         &[],
         "Contract",
-    );
+    ).await;
     let (_, second) = file(
         &connection,
         account.id,
@@ -420,19 +428,19 @@ fn message_ids_match_without_regard_to_case() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    );
+    ).await;
 
     assert_eq!(second, first);
 }
 
-#[test]
-fn threading_never_crosses_accounts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let first = test_support::account(&connection);
-    let first_inbox = test_support::mailbox(&connection, &first, "INBOX").id;
-    let second = test_support::account(&connection);
-    let second_inbox = test_support::mailbox(&connection, &second, "INBOX").id;
+#[tokio::test]
+async fn threading_never_crosses_accounts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let first = test_support::account(&connection).await;
+    let first_inbox = test_support::mailbox(&connection, &first, "INBOX").await.id;
+    let second = test_support::account(&connection).await;
+    let second_inbox = test_support::mailbox(&connection, &second, "INBOX").await.id;
 
     let (_, theirs) = file(
         &connection,
@@ -442,7 +450,7 @@ fn threading_never_crosses_accounts() {
         "<a@example.com>",
         &[],
         "Contract",
-    );
+    ).await;
     let (_, ours) = file(
         &connection,
         second.id,
@@ -451,7 +459,7 @@ fn threading_never_crosses_accounts() {
         "<b@example.com>",
         &["<a@example.com>"],
         "Re: Contract",
-    );
+    ).await;
 
     assert_ne!(
         ours, theirs,
@@ -459,26 +467,27 @@ fn threading_never_crosses_accounts() {
     );
 }
 
-#[test]
-fn filing_the_same_message_twice_changes_nothing() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn filing_the_same_message_twice_changes_nothing() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let mut message = Message::new(account.id, inbox, at(0));
-    message.rfc_message_id = Some(id("<a@example.com>"));
+    let mut message = Message::new(account.id, inbox, at(0).await);
+    message.rfc_message_id = Some(id("<a@example.com>").await);
     message.subject = Some("Contract".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
+        .await
         .expect("create");
 
     let threading = ThreadingRepository::new(&connection, account.id);
-    let first = threading.thread(&message).expect("thread");
-    let again = threading.thread(&message).expect("thread again");
+    let first = threading.thread(&message).await.expect("thread");
+    let again = threading.thread(&message).await.expect("thread again");
 
     assert_eq!(again.thread_id, first.thread_id);
     assert!(!again.created);
-    assert_eq!(members(&connection, first.thread_id).len(), 1);
+    assert_eq!(members(&connection, first.thread_id).await.len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +501,7 @@ thread_local! {
 /// Counts every statement SQLite starts running.
 ///
 /// A plain `fn`, not a closure: that is what `trace_v2` takes.
-fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
+async fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
     if matches!(event, rusqlite::trace::TraceEvent::Stmt(..)) {
         STATEMENTS.with(|count| count.set(count.get() + 1));
     }
@@ -500,10 +509,10 @@ fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
 
 /// Fills a mailbox with `threads` separate conversations of three messages each,
 /// then measures what it costs to file one more message into a new thread.
-fn cost_of_one_more(threads: i64) -> usize {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+async fn cost_of_one_more(threads: i64) -> usize {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     for index in 0..threads {
         let root = format!("<root{index}@example.com>");
@@ -515,7 +524,7 @@ fn cost_of_one_more(threads: i64) -> usize {
             &root,
             &[],
             &format!("Topic {index}"),
-        );
+        ).await;
         for reply in 1..3 {
             file(
                 &connection,
@@ -525,16 +534,17 @@ fn cost_of_one_more(threads: i64) -> usize {
                 &format!("<reply{index}-{reply}@example.com>"),
                 &[&root],
                 &format!("Re: Topic {index}"),
-            );
+            ).await;
         }
     }
 
-    let mut message = Message::new(account.id, inbox, at(100_000));
-    message.rfc_message_id = Some(id("<new@example.com>"));
-    message.references = vec![id("<gone-a@example.com>"), id("<gone-b@example.com>")];
+    let mut message = Message::new(account.id, inbox, at(100_000).await);
+    message.rfc_message_id = Some(id("<new@example.com>").await);
+    message.references = vec![id("<gone-a@example.com>").await, id("<gone-b@example.com>").await];
     message.subject = Some("Something else".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
+        .await
         .expect("create");
 
     STATEMENTS.with(|count| count.set(0));
@@ -544,16 +554,17 @@ fn cost_of_one_more(threads: i64) -> usize {
     );
     ThreadingRepository::new(&connection, account.id)
         .thread(&message)
+        .await
         .expect("thread");
     connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
 
     STATEMENTS.with(Cell::get)
 }
 
-#[test]
-fn adding_a_message_costs_the_same_however_large_the_mailbox_is() {
-    let small = cost_of_one_more(10);
-    let large = cost_of_one_more(200);
+#[tokio::test]
+async fn adding_a_message_costs_the_same_however_large_the_mailbox_is() {
+    let small = cost_of_one_more(10).await;
+    let large = cost_of_one_more(200).await;
 
     assert_eq!(
         small, large,
@@ -567,22 +578,23 @@ fn adding_a_message_costs_the_same_however_large_the_mailbox_is() {
     );
 }
 
-#[test]
-fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // A forty-deep conversation, which is a long one and still not a mailbox.
     let references: Vec<String> = (0..40).map(|n| format!("<r{n}@example.com>")).collect();
     let borrowed: Vec<&str> = references.iter().map(String::as_str).collect();
 
-    let mut message = Message::new(account.id, inbox, at(0));
-    message.rfc_message_id = Some(id("<deep@example.com>"));
+    let mut message = Message::new(account.id, inbox, at(0).await);
+    message.rfc_message_id = Some(id("<deep@example.com>").await);
     message.references = borrowed.iter().map(|r| id(r)).collect();
     message.subject = Some("Re: Long".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
+        .await
         .expect("create");
 
     STATEMENTS.with(|count| count.set(0));
@@ -592,6 +604,7 @@ fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
     );
     ThreadingRepository::new(&connection, account.id)
         .thread(&message)
+        .await
         .expect("thread");
     connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
     let statements = STATEMENTS.with(Cell::get);
@@ -609,7 +622,7 @@ fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
 // ---------------------------------------------------------------------------
 
 /// Parses a fixture and files it, returning the thread it landed in.
-fn file_fixture(
+async fn file_fixture(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -618,12 +631,14 @@ fn file_fixture(
 ) -> ThreadId {
     let fixture = postio_model::test_corpus::load(name);
     let mut message =
-        postio_model::mime::parse(fixture.bytes()).into_message(account, mailbox, at(minute));
+        postio_model::mime::parse(fixture.bytes()).into_message(account, mailbox, at(minute).await);
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create");
     ThreadingRepository::new(connection, account)
         .thread(&message)
+        .await
         .expect("thread")
         .thread_id
 }
@@ -642,16 +657,16 @@ const LIST_THREAD: &[&str] = &[
     "list-thread-07-subject-change",
 ];
 
-#[test]
-fn the_corpus_mailing_list_threads_as_one_conversation() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_corpus_mailing_list_threads_as_one_conversation() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let threads: Vec<ThreadId> = LIST_THREAD
         .iter()
         .enumerate()
-        .map(|(index, name)| file_fixture(&connection, account.id, inbox, index as i64, name))
+        .map(|(index, name)| file_fixture(&connection, account.id, inbox, index as i64, name).await)
         .collect();
 
     let first = threads[0];
@@ -661,23 +676,23 @@ fn the_corpus_mailing_list_threads_as_one_conversation() {
             "`{name}` fell out of the conversation it belongs to"
         );
     }
-    assert_eq!(members(&connection, first).len(), LIST_THREAD.len());
+    assert_eq!(members(&connection, first).await.len(), LIST_THREAD.len());
 }
 
-#[test]
-fn arriving_newest_first_still_gathers_everything_the_chain_names() {
+#[tokio::test]
+async fn arriving_newest_first_still_gathers_everything_the_chain_names() {
     // An initial sync walks newest-first, so this order is not the exotic one.
     // Each message keeps its true delivery time; only the order we *file* them
     // in is reversed, which is what a real backwards fetch looks like.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mut placed: Vec<(&str, ThreadId)> = Vec::new();
     for (index, name) in LIST_THREAD.iter().enumerate().rev() {
         placed.push((
             name,
-            file_fixture(&connection, account.id, inbox, index as i64, name),
+            file_fixture(&connection, account.id, inbox, index as i64, name).await,
         ));
     }
 
@@ -695,7 +710,7 @@ fn arriving_newest_first_still_gathers_everything_the_chain_names() {
         );
     }
     assert_eq!(
-        members(&connection, conversation).len(),
+        members(&connection, conversation).await.len(),
         LIST_THREAD.len() - 1
     );
 
@@ -722,17 +737,17 @@ fn arriving_newest_first_still_gathers_everything_the_chain_names() {
     );
 }
 
-#[test]
-fn rethreading_recovers_the_orphan_arrival_order_stranded() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn rethreading_recovers_the_orphan_arrival_order_stranded() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mut placed: Vec<(&str, ThreadId)> = Vec::new();
     for (index, name) in LIST_THREAD.iter().enumerate().rev() {
         placed.push((
             name,
-            file_fixture(&connection, account.id, inbox, index as i64, name),
+            file_fixture(&connection, account.id, inbox, index as i64, name).await,
         ));
     }
     let conversation = placed
@@ -751,10 +766,11 @@ fn rethreading_recovers_the_orphan_arrival_order_stranded() {
 
     let moved = ThreadingRepository::new(&connection, account.id)
         .rethread_orphans(inbox)
+        .await
         .expect("rethread");
 
     assert_eq!(moved, 1, "exactly the one stranded orphan moves");
-    let members_now = members(&connection, conversation);
+    let members_now = members(&connection, conversation).await;
     assert_eq!(
         members_now.len(),
         LIST_THREAD.len(),
@@ -764,15 +780,16 @@ fn rethreading_recovers_the_orphan_arrival_order_stranded() {
     // Idempotent: nothing left to reconsider, so a second pass is a no-op.
     let moved_again = ThreadingRepository::new(&connection, account.id)
         .rethread_orphans(inbox)
+        .await
         .expect("rethread again");
     assert_eq!(moved_again, 0);
 }
 
-#[test]
-fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Two ordinary replies converge on their own thread via real references —
     // never touching the subject fallback at all.
@@ -784,7 +801,7 @@ fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
         "<root@example.com>",
         &[],
         "Quarterly numbers",
-    );
+    ).await;
     file(
         &connection,
         account.id,
@@ -793,19 +810,21 @@ fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
         "<reply@example.com>",
         &["<root@example.com>"],
         "Re: Quarterly numbers",
-    );
-    assert_eq!(members(&connection, root_thread).len(), 2);
+    ).await;
+    assert_eq!(members(&connection, root_thread).await.len(), 2);
 
     // A third message with no reference at all, but the same subject as the
     // thread above -- it must not drag `root_thread`'s other member along.
-    let mut orphan = Message::new(account.id, inbox, at(2));
-    orphan.rfc_message_id = Some(id("<orphan@example.net>"));
+    let mut orphan = Message::new(account.id, inbox, at(2).await);
+    orphan.rfc_message_id = Some(id("<orphan@example.net>").await);
     orphan.subject = Some("Re: Quarterly numbers".to_owned());
     let orphan_id = MessageRepository::new(&connection)
         .create(&mut orphan)
+        .await
         .expect("create");
     let orphan_thread = ThreadingRepository::new(&connection, account.id)
         .thread(&orphan)
+        .await
         .expect("thread")
         .thread_id;
     assert_eq!(
@@ -815,27 +834,28 @@ fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others() {
 
     let moved = ThreadingRepository::new(&connection, account.id)
         .rethread_orphans(inbox)
+        .await
         .expect("rethread");
 
     assert_eq!(
         moved, 0,
         "the orphan already sits with others, so nothing is reconsidered for it"
     );
-    assert_eq!(members(&connection, root_thread).len(), 3);
+    assert_eq!(members(&connection, root_thread).await.len(), 3);
     let _ = orphan_id;
 }
 
-#[test]
-fn a_message_with_broken_references_still_finds_its_conversation() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_with_broken_references_still_finds_its_conversation() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // `broken-references.eml` carries a `References` header the parser cannot
     // make usable ids out of. It must not take the message out of the mailbox,
     // and it must not crash the pass.
-    let root = file_fixture(&connection, account.id, inbox, 0, "list-thread-01-root");
-    let broken = file_fixture(&connection, account.id, inbox, 1, "broken-references");
+    let root = file_fixture(&connection, account.id, inbox, 0, "list-thread-01-root").await;
+    let broken = file_fixture(&connection, account.id, inbox, 1, "broken-references").await;
 
     assert!(
         broken.is_assigned(),
@@ -844,35 +864,35 @@ fn a_message_with_broken_references_still_finds_its_conversation() {
     let _ = root;
 }
 
-#[test]
-fn two_messages_claiming_one_message_id_do_not_break_the_index() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn two_messages_claiming_one_message_id_do_not_break_the_index() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // `Message-ID` is not unique in the wild — `duplicate-message-id.eml` is in
     // the corpus precisely because a client out there reuses one.
-    let first = file_fixture(&connection, account.id, inbox, 0, "duplicate-message-id");
-    let second = file_fixture(&connection, account.id, inbox, 1, "duplicate-message-id");
+    let first = file_fixture(&connection, account.id, inbox, 0, "duplicate-message-id").await;
+    let second = file_fixture(&connection, account.id, inbox, 1, "duplicate-message-id").await;
 
     assert_eq!(
         second, first,
         "the second claims an id the first already did, so it joins it rather \
          than colliding on the index"
     );
-    assert_eq!(members(&connection, first).len(), 2);
+    assert_eq!(members(&connection, first).await.len(), 2);
 }
 
-#[test]
-fn every_corpus_fixture_can_be_threaded() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn every_corpus_fixture_can_be_threaded() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Malformed headers, truncated multiparts, missing Message-IDs, mislabelled
     // charsets: none of them may panic the pass or leave a message unfiled.
     for (index, fixture) in postio_model::test_corpus::all().iter().enumerate() {
-        let thread = file_fixture(&connection, account.id, inbox, index as i64, fixture.name());
+        let thread = file_fixture(&connection, account.id, inbox, index as i64, fixture.name()).await;
         assert!(
             thread.is_assigned(),
             "`{}` was left without a thread",

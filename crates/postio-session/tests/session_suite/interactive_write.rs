@@ -52,7 +52,7 @@ use postio_session::actions::Actions;
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
-use postio_storage::test_support::TempDatabase;
+use postio_storage::test_support::TempStore;
 use postio_storage::{BlobStore, Database, test_support};
 
 /// Enough round-trip cost that the backfill is still going when the keystroke
@@ -107,7 +107,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// records: an in-memory database uses SQLite's shared cache, whose
 /// table-level locking is a different model from the WAL one Postio runs on
 /// and the one this file is about.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, tempfile::TempDir) {
+fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, tempfile::TempDir) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");

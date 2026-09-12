@@ -44,8 +44,8 @@ fn wal_bytes(path: &std::path::Path) -> u64 {
     std::fs::metadata(&wal).map(|meta| meta.len()).unwrap_or(0)
 }
 
-#[test]
-fn the_wal_gives_its_space_back_once_the_writing_stops() {
+#[tokio::test]
+async fn the_wal_gives_its_space_back_once_the_writing_stops() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("store.db");
     let database = Database::open(&path, &test_support::key()).expect("a store");
@@ -59,14 +59,14 @@ fn the_wal_gives_its_space_back_once_the_writing_stops() {
     // This is here to *build* a large log, not as a claim about which reader
     // did it on the live store. Whatever holds the snapshot, the assertion
     // below is the same: once it lets go, the space comes back.
-    let reader = database.connection().expect("a reader");
+    let reader = database.connect().await.expect("a reader");
     reader.execute_batch("BEGIN;").expect("begin");
     let _: i64 = reader
         .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
         .expect("take the read lock");
 
     // A first sync's worth of mail, which is what grows it.
-    seed_large(&database, 11, 20_000);
+    seed_large(&database, 11, 20_000).await;
     let peak = wal_bytes(&path);
     reader.execute_batch("COMMIT;").expect("end the read");
     drop(reader);
@@ -74,7 +74,7 @@ fn the_wal_gives_its_space_back_once_the_writing_stops() {
     // The writing has stopped, and something commits afterwards -- which is
     // every ordinary moment in a running Postio between one sync pass and the
     // next. That is when the log should hand its space back.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS wal_ceiling_probe(x); DROP TABLE wal_ceiling_probe;",
@@ -92,8 +92,8 @@ fn the_wal_gives_its_space_back_once_the_writing_stops() {
     );
 }
 
-#[test]
-fn a_log_an_unclean_exit_left_behind_is_reclaimed_on_the_next_open() {
+#[tokio::test]
+async fn a_log_an_unclean_exit_left_behind_is_reclaimed_on_the_next_open() {
     // `journal_size_limit` bounds what a *completed checkpoint* retains, and
     // a checkpoint cannot pass an open reader. So a store that never gets a
     // quiet moment keeps whatever it grew to — and the live one had 676 MB to
@@ -112,12 +112,12 @@ fn a_log_an_unclean_exit_left_behind_is_reclaimed_on_the_next_open() {
     let path = directory.path().join("store.db");
     let database = Database::open(&path, &test_support::key()).expect("a store");
 
-    let reader = database.connection().expect("a reader");
+    let reader = database.connect().await.expect("a reader");
     reader.execute_batch("BEGIN;").expect("begin");
     let _: i64 = reader
         .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
         .expect("take the read lock");
-    seed_large(&database, 11, 20_000);
+    seed_large(&database, 11, 20_000).await;
     drop(reader);
     std::mem::forget(database);
 

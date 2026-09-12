@@ -20,7 +20,7 @@ use postio_storage::test_support;
 /// A store, a blob directory beside it, and one message holding one blob —
 /// its raw RFC 5322 source.
 fn store_with_a_message() -> (
-    test_support::TempDatabase,
+    test_support::TempStore,
     BlobStore,
     postio_model::MessageId,
 ) {
@@ -185,7 +185,7 @@ fn store_with_messages(
     count: usize,
     size: usize,
 ) -> (
-    test_support::TempDatabase,
+    test_support::TempStore,
     BlobStore,
     Vec<postio_model::BlobId>,
 ) {

@@ -13,7 +13,7 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
 /// A store with three messages, two of which say "quarterly".
-fn store() -> (test_support::TempDatabase, postio_model::ids::AccountId) {
+fn store() -> (test_support::TempStore, postio_model::ids::AccountId) {
     let database = test_support::temp();
     let connection = database.connection().expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
@@ -63,7 +63,7 @@ fn store() -> (test_support::TempDatabase, postio_model::ids::AccountId) {
 }
 
 fn run(
-    database: &test_support::TempDatabase,
+    database: &test_support::TempStore,
     account: postio_model::ids::AccountId,
     text: &str,
 ) -> postio_search::SearchResults {

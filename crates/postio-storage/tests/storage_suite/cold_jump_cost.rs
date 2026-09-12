@@ -54,7 +54,7 @@ const LIST_INDEXES: &[&str] = &[
 const FILTER_COLUMNS: &[&str] = &["deleted_locally", "snoozed_until"];
 
 /// The columns `index` is keyed on, in order.
-fn columns_of(connection: &rusqlite::Connection, index: &str) -> Vec<String> {
+fn columns_of(connection: &Connection, index: &str) -> Vec<String> {
     connection
         .prepare(&format!("PRAGMA index_info({index})"))
         .expect("the index exists")
@@ -65,7 +65,7 @@ fn columns_of(connection: &rusqlite::Connection, index: &str) -> Vec<String> {
 }
 
 /// Which of [`FILTER_COLUMNS`] `index` cannot answer.
-fn missing_from(connection: &rusqlite::Connection, index: &str) -> Vec<&'static str> {
+fn missing_from(connection: &Connection, index: &str) -> Vec<&'static str> {
     let columns = columns_of(connection, index);
     FILTER_COLUMNS
         .iter()
@@ -74,20 +74,21 @@ fn missing_from(connection: &rusqlite::Connection, index: &str) -> Vec<&'static 
         .collect()
 }
 
-#[test]
-fn a_narrow_list_index_is_reported_as_missing_its_filters() {
+#[tokio::test]
+async fn a_narrow_list_index_is_reported_as_missing_its_filters() {
     // The control. This test was written after migration 0005, so on its own
     // it says only that the schema is what it is today; what makes it an
     // assertion is that the same check fails on the shape 0005 replaced.
     // Built here rather than by undoing the migration, because re-breaking
     // working code to test the test is the one thing CLAUDE.md rules out.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
     connection
         .execute_batch(
             "CREATE INDEX idx_probe_narrow_list
                  ON messages (mailbox_id, received_at DESC, id DESC);",
         )
+        .await
         .expect("the pre-0005 shape");
 
     assert_eq!(
@@ -103,10 +104,10 @@ fn a_narrow_list_index_is_reported_as_missing_its_filters() {
     );
 }
 
-#[test]
-fn every_list_index_carries_the_columns_every_list_query_filters_on() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
+#[tokio::test]
+async fn every_list_index_carries_the_columns_every_list_query_filters_on() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
 
     for index in LIST_INDEXES {
         let columns = columns_of(&connection, index);
@@ -130,15 +131,15 @@ fn every_list_index_carries_the_columns_every_list_query_filters_on() {
     }
 }
 
-#[test]
-fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
+#[tokio::test]
+async fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
     // The index changed shape, so the thing to prove beyond the schema is
     // that it still answers the same question. A wider key that reordered or
     // dropped rows would be a far worse bug than the one it fixes.
-    let database = test_support::temp();
-    let report = seed_small(&database, 11);
+    let database = test_support::temp().await;
+    let report = seed_small(&database, 11).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let messages = MessageRepository::new(&connection);
     let query = ListQuery {
         scope: ListScope::Mailbox(inbox),
@@ -148,6 +149,7 @@ fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
 
     let through_the_index: Vec<_> = messages
         .page_at(&query, 3)
+        .await
         .expect("a page three in")
         .iter()
         .map(|row| row.id)
@@ -166,6 +168,7 @@ fn a_deep_page_returns_the_same_rows_the_narrow_index_would_have() {
               ORDER BY received_at DESC, id DESC
               LIMIT 5 OFFSET 3",
         )
+        .await
         .expect("prepare")
         .query_map([inbox.get()], |row| row.get::<_, i64>(0))
         .expect("rows")

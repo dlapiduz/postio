@@ -16,13 +16,13 @@ use postio_storage::repository::{
     MessageRepository, ThreadGroup, ThreadRepository, ThreadingRepository, UnifiedThreadListQuery,
 };
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn at(hour: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 10, 0, 0, 0).unwrap() + TimeDelta::hours(hour)
 }
 
-fn file(
+async fn file(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -37,38 +37,42 @@ fn file(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create");
     let threaded = ThreadingRepository::new(connection, account)
         .thread(&message)
+        .await
         .expect("thread");
     (id, threaded.thread_id)
 }
 
 /// Two accounts, each with an inbox.
-fn two_accounts(connection: &Connection) -> ((AccountId, MailboxId), (AccountId, MailboxId)) {
-    let (first, inbox) = test_support::account_with_inbox(connection);
+async fn two_accounts(connection: &Connection) -> ((AccountId, MailboxId), (AccountId, MailboxId)) {
+    let (first, inbox) = test_support::account_with_inbox(connection).await;
     let mut second = postio_model::Account::new(
         "Second",
         postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
     );
     postio_storage::repository::AccountRepository::new(connection)
         .create(&mut second)
+        .await
         .expect("second account");
-    let second_inbox = test_support::mailbox(connection, &second, "INBOX");
+    let second_inbox = test_support::mailbox(connection, &second, "INBOX").await;
     ((first.id, inbox), (second.id, second_inbox.id))
 }
 
-fn page(connection: &Connection, limit: u32) -> Vec<ThreadGroup> {
+async fn page(connection: &Connection, limit: u32) -> Vec<ThreadGroup> {
     ThreadRepository::new(connection)
         .unified_page(&UnifiedThreadListQuery { limit, after: None })
+        .await
         .expect("unified page")
 }
 
-#[test]
-fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // The same announcement received at both addresses, replied to in the
     // first account: three rows, two distinct messages, one conversation.
@@ -80,7 +84,7 @@ fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<root@example.com>"),
         &[],
         "Launch",
-    );
+    ).await;
     file(
         &connection,
         a,
@@ -89,7 +93,7 @@ fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<re1@example.com>"),
         &["<root@example.com>"],
         "Re: Launch",
-    );
+    ).await;
     let (_, b_thread) = file(
         &connection,
         b,
@@ -98,9 +102,9 @@ fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
         Some("<root@example.com>"),
         &[],
         "Launch",
-    );
+    ).await;
 
-    let groups = page(&connection, 10);
+    let groups = page(&connection, 10).await;
     assert_eq!(groups.len(), 1, "one conversation, however many accounts");
     let group = &groups[0];
     assert_eq!(
@@ -121,20 +125,20 @@ fn threads_sharing_a_root_rfc_id_group_across_accounts_and_dedupe() {
     );
 }
 
-#[test]
-fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // No rfc ids anywhere: the subject fallback is all there is.
-    file(&connection, a, a_inbox, 1, None, &[], "Sirius review");
-    file(&connection, b, b_inbox, 5, None, &[], "Re: Sirius review");
+    file(&connection, a, a_inbox, 1, None, &[], "Sirius review").await;
+    file(&connection, b, b_inbox, 5, None, &[], "Re: Sirius review").await;
 
     // Same subject in both accounts, but further apart than the coalescing
     // window: two unrelated conversations that happen to share four words.
     let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
-    file(&connection, a, a_inbox, 100, None, &[], "Weekly digest");
+    file(&connection, a, a_inbox, 100, None, &[], "Weekly digest").await;
     file(
         &connection,
         b,
@@ -143,9 +147,9 @@ fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
         None,
         &[],
         "Weekly digest",
-    );
+    ).await;
 
-    let groups = page(&connection, 10);
+    let groups = page(&connection, 10).await;
     let sizes: Vec<usize> = groups.iter().map(|group| group.members.len()).collect();
     assert_eq!(
         sizes,
@@ -154,11 +158,11 @@ fn rootless_threads_group_by_subject_within_the_window_and_not_beyond() {
     );
 }
 
-#[test]
-fn a_partner_already_shown_is_never_a_second_row_across_pages() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn a_partner_already_shown_is_never_a_second_row_across_pages() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // The grouped conversation is the newest thing in both accounts…
     file(
@@ -169,7 +173,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<pair@example.com>"),
         &[],
         "Paired",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -178,7 +182,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<pair@example.com>"),
         &[],
         "Paired",
-    );
+    ).await;
     // …and one older standalone per account fills the second page.
     file(
         &connection,
@@ -188,7 +192,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<solo-a@example.com>"),
         &[],
         "Alone in A",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -197,7 +201,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
         Some("<solo-b@example.com>"),
         &[],
         "Alone in B",
-    );
+    ).await;
 
     let repository = ThreadRepository::new(&connection);
     let first = repository
@@ -205,6 +209,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
             limit: 1,
             after: None,
         })
+        .await
         .expect("first page");
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].members.len(), 2, "the pair is one row");
@@ -214,6 +219,7 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
             limit: 10,
             after: Some(first[0].cursor()),
         })
+        .await
         .expect("second page");
     let subjects: Vec<Option<&str>> = second
         .iter()
@@ -237,11 +243,11 @@ fn a_partner_already_shown_is_never_a_second_row_across_pages() {
 /// than against a literal: a hand-counted expectation would let the two drift
 /// apart in exactly the case that matters, which is the fixture holding every
 /// grouping rule at once.
-#[test]
-fn the_group_count_is_what_walking_every_page_produces() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn the_group_count_is_what_walking_every_page_produces() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // Grouped by root identity, across accounts.
     file(
@@ -252,7 +258,7 @@ fn the_group_count_is_what_walking_every_page_produces() {
         Some("<r@example.com>"),
         &[],
         "Root pair",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -261,15 +267,15 @@ fn the_group_count_is_what_walking_every_page_produces() {
         Some("<r@example.com>"),
         &[],
         "Root pair",
-    );
+    ).await;
 
     // Grouped by subject, inside the coalescing window.
-    file(&connection, a, a_inbox, 16, None, &[], "Subject pair");
-    file(&connection, b, b_inbox, 15, None, &[], "Re: Subject pair");
+    file(&connection, a, a_inbox, 16, None, &[], "Subject pair").await;
+    file(&connection, b, b_inbox, 15, None, &[], "Re: Subject pair").await;
 
     // Same subject, beyond the window: two rows, not one.
     let far = 24 * postio_model::subject::COALESCING_WINDOW_DAYS + 48;
-    file(&connection, a, a_inbox, 200, None, &[], "Weekly digest");
+    file(&connection, a, a_inbox, 200, None, &[], "Weekly digest").await;
     file(
         &connection,
         b,
@@ -278,12 +284,12 @@ fn the_group_count_is_what_walking_every_page_produces() {
         None,
         &[],
         "Weekly digest",
-    );
+    ).await;
 
     // Same subject inside the window but the *same* account: never a group,
     // because a conversation folds across accounts and not within one.
-    file(&connection, a, a_inbox, 30, None, &[], "Same account twice");
-    file(&connection, a, a_inbox, 31, None, &[], "Same account twice");
+    file(&connection, a, a_inbox, 30, None, &[], "Same account twice").await;
+    file(&connection, a, a_inbox, 31, None, &[], "Same account twice").await;
 
     // Plain solos, one per account.
     file(
@@ -294,7 +300,7 @@ fn the_group_count_is_what_walking_every_page_produces() {
         Some("<solo-a@example.com>"),
         &[],
         "Alone in A",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -303,7 +309,7 @@ fn the_group_count_is_what_walking_every_page_produces() {
         Some("<solo-b@example.com>"),
         &[],
         "Alone in B",
-    );
+    ).await;
 
     let repository = ThreadRepository::new(&connection);
 
@@ -313,6 +319,7 @@ fn the_group_count_is_what_walking_every_page_produces() {
     loop {
         let groups = repository
             .unified_page(&UnifiedThreadListQuery { limit: 2, after })
+            .await
             .expect("unified page");
         let Some(last) = groups.last() else { break };
         after = Some(last.cursor());
@@ -327,7 +334,7 @@ fn the_group_count_is_what_walking_every_page_produces() {
         "the walk folds exactly the two cross-account pairs"
     );
     assert_eq!(
-        repository.unified_count().expect("unified count") as usize,
+        repository.unified_count().await.expect("unified count") as usize,
         walked,
         "the count and the walk have to agree about what a row is -- a list \
          told there are more rows than the pages can fill ends in trailing \
@@ -340,11 +347,11 @@ fn the_group_count_is_what_walking_every_page_produces() {
 ///
 /// The offset is counted from the cursor every time, which is why
 /// `postio_runtime::store` keeps seek marks and hands this a small number.
-#[test]
-fn an_offset_window_is_the_walk_from_that_row_on() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn an_offset_window_is_the_walk_from_that_row_on() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // Six rows, one of them a cross-account pair, so the offset has to be an
     // offset into *groups* rather than into threads.
@@ -357,7 +364,7 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
             None,
             &[],
             &format!("Note {hour}"),
-        );
+        ).await;
     }
     file(
         &connection,
@@ -367,7 +374,7 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
         Some("<p@example.com>"),
         &[],
         "Paired",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -376,8 +383,8 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
         Some("<p@example.com>"),
         &[],
         "Paired",
-    );
-    file(&connection, b, b_inbox, 2, None, &[], "Only in B");
+    ).await;
+    file(&connection, b, b_inbox, 2, None, &[], "Only in B").await;
 
     let repository = ThreadRepository::new(&connection);
     let all = repository
@@ -385,6 +392,7 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
             limit: 50,
             after: None,
         })
+        .await
         .expect("the whole list");
     assert_eq!(all.len(), 6, "the pair is one row");
 
@@ -397,6 +405,7 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
                 },
                 offset,
             )
+            .await
             .expect("offset window");
         let expected: Vec<Option<&str>> = all[offset as usize..]
             .iter()
@@ -421,11 +430,11 @@ fn an_offset_window_is_the_walk_from_that_row_on() {
 /// It has to hold for the partner search too, not just the page: a thread in
 /// a disabled account that absorbed its partner in an enabled one would take
 /// a row the user can see and fold it into a row they cannot.
-#[test]
-fn a_disabled_account_is_not_in_the_unified_view_at_all() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection);
+#[tokio::test]
+async fn a_disabled_account_is_not_in_the_unified_view_at_all() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let ((a, a_inbox), (b, b_inbox)) = two_accounts(&connection).await;
 
     // One conversation each, and one they share -- with the shared one newer
     // in the account that is about to be switched off, so it would be the
@@ -438,7 +447,7 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<solo-a@example.com>"),
         &[],
         "Only in A",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -447,7 +456,7 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<solo-b@example.com>"),
         &[],
         "Only in B",
-    );
+    ).await;
     file(
         &connection,
         a,
@@ -456,7 +465,7 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<pair@example.com>"),
         &[],
         "Shared",
-    );
+    ).await;
     file(
         &connection,
         b,
@@ -465,17 +474,18 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
         Some("<pair@example.com>"),
         &[],
         "Shared",
-    );
+    ).await;
 
     let repository = ThreadRepository::new(&connection);
     assert_eq!(
-        repository.unified_count().expect("count"),
+        repository.unified_count().await.expect("count"),
         3,
         "with both accounts enabled: two solos and the shared pair"
     );
 
     postio_storage::repository::AccountRepository::new(&connection)
         .set_enabled(b, false)
+        .await
         .expect("disable the second account");
 
     let rows: Vec<Option<String>> = repository
@@ -483,6 +493,7 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
             limit: 10,
             after: None,
         })
+        .await
         .expect("unified page")
         .into_iter()
         .map(|group| group.row.subject)
@@ -494,7 +505,7 @@ fn a_disabled_account_is_not_in_the_unified_view_at_all() {
          is still drawn from the account that is still enabled"
     );
     assert_eq!(
-        repository.unified_count().expect("count"),
+        repository.unified_count().await.expect("count"),
         2,
         "the count agrees with the rows, or the list grows placeholders"
     );

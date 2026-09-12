@@ -36,7 +36,7 @@ use postio_index::index::{ensure_schema, index_body};
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 /// Mail-shaped text: a few hundred words with the repetition real mail has —
 /// a quoted parent, a signature, the same handful of names.

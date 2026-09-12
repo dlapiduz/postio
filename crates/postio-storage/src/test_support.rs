@@ -93,9 +93,7 @@ fn master() -> StoreKey {
     StoreKey::from_bytes([0x5a; crate::key::KEY_BYTES])
 }
 
-// The counted-cost instrument read SQLite's trace hook, which this engine
-// does not have. Rebuilt at a different seam in T038 -- research.md Q5.
-// pub mod counting;
+pub mod counting;
 /// A migrated scratch database, shared by every connection its pool opens.
 ///
 /// It lives as long as the returned handle (clones included) and disappears

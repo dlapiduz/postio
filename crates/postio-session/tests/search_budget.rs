@@ -35,7 +35,7 @@ const COMMON: &str = "quarterly";
 /// Indexed explicitly: `seed_large` writes messages but not the body index —
 /// the indexer is a separate pass — and a search over an unindexed store
 /// would measure an empty result set and call it cheap.
-fn indexed(count: usize) -> (postio_storage::Database, postio_model::ids::AccountId) {
+fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId) {
     let database = test_support::memory();
     let connection = database.connection().expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection);
@@ -71,7 +71,7 @@ fn indexed(count: usize) -> (postio_storage::Database, postio_model::ids::Accoun
 
 /// One search of [`COMMON`], and what SQLite did for it.
 fn cost_of_searching(
-    store: &(postio_storage::Database, postio_model::ids::AccountId),
+    store: &(postio_storage::Store, postio_model::ids::AccountId),
 ) -> (usize, usize) {
     let (database, account) = store;
     let connection = database.connection().expect("a connection");

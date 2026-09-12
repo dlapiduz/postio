@@ -9,14 +9,14 @@ use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_storage::repository::{ContactGroupRepository, ContactRepository, MessageRepository};
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
 }
 
 struct World {
-    _database: postio_storage::Database,
+    _database: postio_storage::Store,
     connection: postio_storage::PooledConnection,
     from_member: Message,
     to_member: Message,

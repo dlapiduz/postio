@@ -55,7 +55,7 @@ use postio_index::index::{HEADER_ROWS_PER_MESSAGE, ensure_schema, index_body, in
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 /// ADR 0025 Q3's budget: `message_headers` may cost at most this share of
 /// what `message_bodies_fts` costs on the same corpus.

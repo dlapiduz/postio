@@ -63,7 +63,7 @@ use postio_storage::{BlobStore, test_support};
 /// Phase 3 identifies the message it delivered rather than counting rows —
 /// see there for why.
 fn id_of(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     rfc_message_id: &str,
 ) -> Option<postio_model::MessageId> {
     let connection = database.connection().ok()?;

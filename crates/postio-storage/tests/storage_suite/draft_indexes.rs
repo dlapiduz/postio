@@ -17,17 +17,13 @@
 //! So the shape assertion alone cannot fail usefully, and the rows-come-back
 //! assertion alone cannot either.
 
-use rusqlite::Connection;
+use postio_storage::Connection;
 
-use postio_storage::migrate;
 
-fn migrated() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .expect("foreign keys");
-    migrate(&mut connection).expect("migrate");
-    connection
+async fn migrated() -> (postio_storage::Store, Connection) {
+    let store = postio_storage::test_support::memory().await;
+    let connection = store.connect().await.expect("a connection");
+    (store, connection)
 }
 
 /// The `CREATE INDEX` statement the database is actually carrying.
@@ -42,9 +38,10 @@ fn definition(connection: &Connection, index: &str) -> String {
 }
 
 /// How SQLite says it would answer `query`.
-fn plan(connection: &Connection, query: &str) -> String {
+async fn plan(connection: &Connection, query: &str) -> String {
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+        .await
         .expect("a query plan");
     let rows = statement
         .query_map([], |row| row.get::<_, String>(3))
@@ -54,9 +51,9 @@ fn plan(connection: &Connection, query: &str) -> String {
     rows.join("\n")
 }
 
-#[test]
-fn the_draft_indexes_cover_only_the_rows_that_have_a_draft() {
-    let connection = migrated();
+#[tokio::test]
+async fn the_draft_indexes_cover_only_the_rows_that_have_a_draft() {
+    let (_store, connection) = migrated().await;
 
     for index in ["idx_recipients_draft", "idx_attachments_draft"] {
         let definition = definition(&connection, index);
@@ -69,9 +66,9 @@ fn the_draft_indexes_cover_only_the_rows_that_have_a_draft() {
     }
 }
 
-#[test]
-fn a_drafts_own_rows_are_still_found_through_them() {
-    let connection = migrated();
+#[tokio::test]
+async fn a_drafts_own_rows_are_still_found_through_them() {
+    let (_store, connection) = migrated().await;
 
     // The two reads `DraftRepository::fill` makes, verbatim: a partial index
     // is only used when the planner can prove the query cannot want the rows
@@ -83,7 +80,7 @@ fn a_drafts_own_rows_are_still_found_through_them() {
         "SELECT r.kind, r.name, a.address FROM recipients r
            JOIN addresses a ON a.id = r.address_id
           WHERE r.draft_id = 1 ORDER BY r.kind, r.position, r.id",
-    );
+    ).await;
     assert!(
         recipients.contains("idx_recipients_draft"),
         "a draft's recipients no longer reach their index:\n{recipients}"
@@ -92,7 +89,7 @@ fn a_drafts_own_rows_are_still_found_through_them() {
     let attachments = plan(
         &connection,
         "SELECT id, filename FROM attachments WHERE draft_id = 1 ORDER BY position, id",
-    );
+    ).await;
     assert!(
         attachments.contains("idx_attachments_draft"),
         "a draft's attachments no longer reach their index:\n{attachments}"
