@@ -445,6 +445,8 @@ mod imp {
         pub(super) live: RefCell<Option<Live>>,
         pub(super) commands: RefCell<Vec<ActionId>>,
         pub(super) folders: RefCell<Vec<MailboxId>>,
+        /// What the empty box is offering, as a person reads it.
+        pub(super) hints: RefCell<Vec<String>>,
         pub(super) available_labels: RefCell<Vec<Label>>,
         pub(super) labels: RefCell<Vec<LabelId>>,
         pub(super) matched: RefCell<Vec<ContactHit>>,
@@ -488,6 +490,7 @@ mod imp {
                 live: RefCell::new(None),
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
+                hints: RefCell::new(Vec::new()),
                 available_labels: RefCell::new(Vec::new()),
                 labels: RefCell::new(Vec::new()),
                 matched: RefCell::new(Vec::new()),
@@ -754,6 +757,14 @@ impl Finder {
     /// The folders listed, best first.
     pub fn folders(&self) -> Vec<MailboxId> {
         self.imp().folders.borrow().clone()
+    }
+
+    /// What an empty box offers: every mode a prefix reaches, as the
+    /// character and what it is for.
+    ///
+    /// Search is not among them — it is what the box is already doing.
+    pub fn mode_hints(&self) -> Vec<String> {
+        self.imp().hints.borrow().clone()
     }
 
     /// The correspondents listed, best first.
@@ -1163,6 +1174,26 @@ impl Finder {
 
         match query.mode {
             Mode::Search => {
+                // Nothing typed is nothing to search for, and that is the
+                // one moment there is room to say what else this box can be
+                // asked. Four of the five modes were reachable only by
+                // knowing the character already. The rows go the moment a
+                // query starts, so the hint never stands in the way of it.
+                // Assigned rather than pushed, like every other row list
+                // here: this runs on each rebuild, and appending would stack
+                // the same four hints up again on every keystroke.
+                let mut hints = Vec::new();
+                if query.text.is_empty() {
+                    for mode in postio_ui::finder::MODES {
+                        let Some(prefix) = mode.prefix else {
+                            continue;
+                        };
+                        imp.list.append(&hint_row(mode.purpose, prefix));
+                        hints.push(format!("{}, {prefix}", mode.purpose));
+                    }
+                }
+                *imp.hints.borrow_mut() = hints;
+
                 let parsed = postio_search::parse(&query.text, today());
                 *imp.parsed.borrow_mut() = parsed;
                 let parsed = imp.parsed.borrow().clone();
@@ -1274,13 +1305,17 @@ impl Finder {
         imp.chips.set_visible(!drawn.is_empty());
 
         let count = self.row_count();
-        let listing = open && query.mode.has_results();
+        // Search answers in the message list rather than on the plate -- but
+        // an empty search box is offering modes, and those are rows like any
+        // other.
+        let hinting = open && query.mode == Mode::Search && query.text.is_empty();
+        let listing = open && (query.mode.has_results() || hinting);
         // The plate is up when it has something to say: rows to pick from,
         // a reading of the query, or the fact that nothing matched.
         self.set_visible(open && (listing || !drawn.is_empty()));
         imp.scroller.set_visible(listing && count > 0);
         self.fit_whole_rows();
-        imp.empty.set_visible(listing && count == 0);
+        imp.empty.set_visible(listing && count == 0 && !hinting);
         if count == 0 {
             // Never a shrug: say what was looked in, so the next keystroke
             // is an informed one.
@@ -1332,6 +1367,18 @@ fn command_row(entry: &Entry) -> gtk::ListBoxRow {
         Some(binding) => format!("{}, {binding}", entry.title),
         None => entry.title.to_string(),
     })]);
+    row
+}
+
+/// One hint row: what a mode is for, with the character that reaches it on
+/// the right -- the arrangement the palette already uses for a command and
+/// its binding, because this is the same fact in the same shape.
+fn hint_row(purpose: &str, prefix: char) -> gtk::ListBoxRow {
+    let marker = prefix.to_string();
+    let row = row_shell(&glib::markup_escape_text(purpose), Some(&marker));
+    row.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{purpose}, {prefix}"
+    ))]);
     row
 }
 
