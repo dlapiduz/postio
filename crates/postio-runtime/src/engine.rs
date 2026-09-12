@@ -3096,7 +3096,7 @@ mod tests {
         drop(connection);
 
         let mut state = empty_state();
-        queue_every_mailbox(&parts, &database, &mut state);
+        queue_every_mailbox(&parts, &database, &mut state).await;
 
         let queued: Vec<MailboxId> = state.to_sync.into_iter().collect();
         assert_eq!(
@@ -3188,11 +3188,11 @@ mod tests {
         let t0 = Instant::now();
 
         state.backfill.request_now(body_request(1));
-        announce_backfill(&parts, &mut state, t0);
+        announce_backfill(&parts, &mut state, t0).await;
         assert_eq!(events.len(), 1, "the first claim must announce at once");
 
         state.backfill.request_now(body_request(2));
-        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10));
+        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10)).await;
         assert_eq!(
             events.len(),
             1,
@@ -3212,13 +3212,13 @@ mod tests {
         let t0 = Instant::now();
 
         state.backfill.request_now(body_request(1));
-        announce_backfill(&parts, &mut state, t0);
+        announce_backfill(&parts, &mut state, t0).await;
         assert_eq!(events.len(), 1);
 
         // A second interactive claim, 10ms later -- exactly the timing the
         // test above proves the throttled path swallows.
         state.backfill.request_now(body_request(2));
-        announce_backfill_now(&parts, &mut state, t0 + Duration::from_millis(10));
+        announce_backfill_now(&parts, &mut state, t0 + Duration::from_millis(10)).await;
 
         assert_eq!(
             events.len(),
@@ -3274,7 +3274,7 @@ mod tests {
 
         let mut state = empty_state();
         state.backfill.request_now(body_request(1));
-        announce_backfill_now(&parts, &mut state, std::time::Instant::now());
+        announce_backfill_now(&parts, &mut state, std::time::Instant::now()).await;
 
         match events.try_next() {
             Some(Event::BackfillProgress { footprint, .. }) => {
@@ -3304,12 +3304,12 @@ mod tests {
         let t0 = Instant::now();
 
         state.backfill.request_now(body_request(1));
-        announce_backfill(&parts, &mut state, t0);
+        announce_backfill(&parts, &mut state, t0).await;
         let claim = state.backfill.next_body().expect("the claim just queued");
         state
             .backfill
             .finished(claim.request.message, Outcome::Gone);
-        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10));
+        announce_backfill(&parts, &mut state, t0 + Duration::from_millis(10)).await;
         assert_eq!(
             events.len(),
             2,
