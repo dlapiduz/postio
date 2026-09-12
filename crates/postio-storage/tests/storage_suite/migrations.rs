@@ -1091,9 +1091,12 @@ fn a_run_that_could_not_break_a_reference_checks_nothing() {
     let head = migrations::all();
     migrations::migrate_with(&mut connection, &head[..15]).expect("up to 0015");
 
-    let (result, checks) = checks_while_migrating(&mut connection, head);
+    // The pair, named -- not "whatever is above 0015". Written against head,
+    // this counted the distance to it, so the next migration to land made it
+    // fail while saying nothing about the two it is actually about.
+    let (result, checks) = checks_while_migrating(&mut connection, &head[..17]);
 
-    assert_eq!(result.expect("migrate to head").applied, 2);
+    assert_eq!(result.expect("migrate 0016 and 0017").applied, 2);
     assert!(
         checks.is_empty(),
         "0016 adds a column to `accounts` and 0017 creates an empty table. \
@@ -1101,6 +1104,17 @@ fn a_run_that_could_not_break_a_reference_checks_nothing() {
          nothing should have been scanned -- this exact pair cost 4.81s of a \
          5.14s launch on an 82,000-message store when the check was \
          whole-database (#1506). Ran: {checks:?}"
+    );
+
+    // And the three this branch adds, for the same reason and stated the
+    // same way: a table created empty, a column with its backfill, a column.
+    let (result, checks) = checks_while_migrating(&mut connection, head);
+    assert_eq!(result.expect("migrate to head").applied, head.len() - 17);
+    assert!(
+        checks.is_empty(),
+        "0018 creates an empty table, 0019 adds a column and backfills only \
+         that column, 0020 adds a column. None can orphan a row. Ran: \
+         {checks:?}"
     );
 }
 

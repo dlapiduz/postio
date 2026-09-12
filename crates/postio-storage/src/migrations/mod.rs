@@ -234,16 +234,23 @@ static MIGRATIONS: [Migration; 20] = [
         version: 18,
         name: "role_creation_refused",
         sql: include_str!("0018_role_creation_refused.sql"),
+        // Creates one table, empty. Nothing to point anywhere yet.
+        foreign_key_check: &[],
     },
     Migration {
         version: 19,
         name: "message_send_state",
         sql: include_str!("0019_message_send_state.sql"),
+        // Adds a column, an index, and a backfill that writes `send_state`
+        // and nothing else. `messages` keeps every reference it had.
+        foreign_key_check: &[],
     },
     Migration {
         version: 20,
         name: "message_send_at",
         sql: include_str!("0020_message_send_at.sql"),
+        // One `ALTER TABLE ... ADD COLUMN`.
+        foreign_key_check: &[],
     },
 ];
 
