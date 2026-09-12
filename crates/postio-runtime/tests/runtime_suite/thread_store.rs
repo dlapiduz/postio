@@ -19,7 +19,7 @@ fn store(
     SqliteStore,
     AccountId,
     MailboxId,
-    test_support::TempDatabase,
+    test_support::TempStore,
 ) {
     let database = test_support::temp();
     let report = seed_large(&database, 7, messages);

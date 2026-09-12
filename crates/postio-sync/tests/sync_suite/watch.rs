@@ -53,7 +53,7 @@ async fn server(count: u32) -> MockBackend {
 
 /// The local half: a database with an account, an INBOX and an Archive.
 struct Local {
-    _database: postio_storage::Database,
+    _database: postio_storage::Store,
     connection: postio_storage::PooledConnection,
     inbox: Mailbox,
     archive: Mailbox,

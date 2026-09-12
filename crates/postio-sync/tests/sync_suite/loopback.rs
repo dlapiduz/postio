@@ -30,13 +30,13 @@ use postio_model::{
 use postio_storage::repository::{
     ContactRepository, MessageRepository, MessageSet, OperationQueueRepository, SyncStateRepository,
 };
-use postio_storage::test_support::{self, TempDatabase};
+use postio_storage::test_support::{self, TempStore};
 use postio_storage::{BlobStore, PooledConnection};
 use postio_sync::backfill::{BackfillPolicy, BodyRequest, Outcome as BackfillOutcome, fetch_body};
 use postio_sync::{
     Attention, Drainer, Outcome, Watch, WatchPolicy, Watcher, resync_mailbox, sync_mailbox,
 };
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 const INBOX: &str = "INBOX";
 const ARCHIVE: &str = "Archive";
@@ -869,7 +869,7 @@ async fn the_poll_floor_notices_what_no_wake_up_reported() {
 /// is a directory and an in-memory database has no directory to sit next to.
 struct OnDisk {
     #[allow(dead_code)]
-    database: TempDatabase,
+    database: TempStore,
     connection: PooledConnection,
     blobs: BlobStore,
     inbox: Mailbox,

@@ -18,7 +18,7 @@ use postio_model::{
 use postio_storage::repository::{ContactRepository, MessageRepository};
 use postio_storage::test_support;
 use postio_sync::commit_batch;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 const INBOX: &str = "INBOX";
 

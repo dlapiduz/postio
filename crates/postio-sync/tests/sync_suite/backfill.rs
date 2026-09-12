@@ -1,6 +1,7 @@
 //! Backfilling message bodies: newest first, out of the user's way, and never
 //! in front of the message they just opened.
 
+use postio_storage::sql::bind;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
@@ -9,7 +10,7 @@ use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, Mailbox, MessageId, Uid, UidValidity};
 use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
-use postio_storage::test_support::{self, TempDatabase};
+use postio_storage::test_support::{self, TempStore};
 use postio_sync::backfill::{
     AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Priority, Want, fetch_body,
     request_body, request_payloads, seed, seed_header_blocks, seed_payloads,
@@ -48,7 +49,7 @@ async fn server(count: u32) -> MockBackend {
 /// A file-backed database and a blob store beside it, because a blob store is
 /// a directory and an in-memory database has no directory to sit next to.
 struct Local {
-    database: TempDatabase,
+    database: TempStore,
     connection: postio_storage::PooledConnection,
     blobs: BlobStore,
     inbox: Mailbox,
@@ -670,7 +671,7 @@ fn body_matches(connection: &postio_storage::PooledConnection, id: MessageId, qu
         .query_row(
             "SELECT EXISTS (SELECT 1 FROM message_bodies_fts
                              WHERE rowid = ?1 AND message_bodies_fts MATCH ?2)",
-            rusqlite::params![id.get(), query],
+            bind![id.get(), query],
             |row| row.get::<_, bool>(0),
         )
         .unwrap_or(false)
@@ -1046,7 +1047,7 @@ fn header_is_indexed(
             "SELECT EXISTS (SELECT 1 FROM message_headers
                              WHERE message_id = ?1 AND name = ?2
                                AND value LIKE '%' || ?3 || '%')",
-            rusqlite::params![id.get(), name, value],
+            bind![id.get(), name, value],
             |row| row.get::<_, bool>(0),
         )
         .unwrap_or(false)

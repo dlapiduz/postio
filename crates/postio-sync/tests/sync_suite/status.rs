@@ -56,7 +56,7 @@ async fn a_full_pass_leaves_the_tracker_idle_with_a_last_sync_time() {
     );
     assert!(
         matches!(
-            reported.last(),
+            reported.last().await,
             Some(SyncStatus::Syncing { progress: Some(p), .. }) if p.is_complete()
         ),
         "the last progress update reported must be the completing one"

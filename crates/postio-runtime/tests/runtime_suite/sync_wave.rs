@@ -26,7 +26,7 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
-use postio_storage::test_support::TempDatabase;
+use postio_storage::test_support::TempStore;
 use postio_storage::{BlobStore, Database, test_support};
 
 use crate::harness;
@@ -78,7 +78,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// wave this file is about stops overlapping — not because the engine stopped
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
-fn engine_over(backend: Arc<MockBackend>) -> (TempDatabase, Engine, BlobDir) {
+fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
     let database = test_support::temp();
     let account = {
         let connection = database.connection().expect("a connection");

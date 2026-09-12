@@ -71,7 +71,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
 /// prefix, because a whole preview is long enough that a formatter could wrap
 /// or truncate it and the test would pass by accident.
 fn content_of(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::AccountId,
 ) -> Vec<String> {
     let connection = database.connection().expect("a connection");

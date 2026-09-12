@@ -12,7 +12,7 @@ use postio_sync::blob_sink::BlobSink;
 /// `postio_storage::test_support::temp` rather than `tempfile` directly: it is
 /// what every other test in this crate uses to get a directory, and a second
 /// way of doing it would be a second thing to keep in step.
-fn store() -> (postio_storage::test_support::TempDatabase, BlobStore) {
+fn store() -> (postio_storage::test_support::TempStore, BlobStore) {
     let database = postio_storage::test_support::temp();
     let store = BlobStore::open(
         database.directory().join("blobs"),

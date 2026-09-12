@@ -10,7 +10,7 @@ use postio_model::{AccountId, Mailbox, MailboxId, Uid};
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Progress, sync_mailbox, sync_mailbox_with_batch_size};
-use rusqlite::Connection;
+use postio_storage::Connection;
 use std::collections::BTreeSet;
 
 const INBOX: &str = "INBOX";

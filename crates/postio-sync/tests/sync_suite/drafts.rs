@@ -13,7 +13,7 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 use postio_sync::{DrainReport, Drainer};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()

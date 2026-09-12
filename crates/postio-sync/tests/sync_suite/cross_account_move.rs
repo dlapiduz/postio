@@ -31,7 +31,7 @@ fn at(hour: u32) -> DateTime<Utc> {
 
 /// Two accounts in one store, a saga between them, and both queue halves.
 struct World {
-    database: test_support::TempDatabase,
+    database: test_support::TempStore,
     blobs: BlobStore,
     source_account: AccountId,
     target_account: AccountId,
