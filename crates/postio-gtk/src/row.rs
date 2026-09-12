@@ -91,7 +91,7 @@ fn default_hints() -> Vec<(String, &'static str)> {
 // stand for a sender, and whether a time reads as `09:14`, `Thu` or `12 Aug`,
 // are answers a mail client gives once. Two frontends deriving them apart is
 // the drift these moves exist to stop.
-pub use postio_ui::row::{initials, timestamp};
+pub use postio_ui::row::{initials, send_state_word, timestamp};
 
 /// What a screen reader says for `row`.
 ///
@@ -107,8 +107,8 @@ pub fn accessible_label(row: &Row) -> String {
     if row.flagged {
         parts.push("Flagged".to_string());
     }
-    if row.send_state.is_some() {
-        parts.push("Draft".to_string());
+    if let Some(state) = row.send_state {
+        parts.push(postio_ui::row::send_state_word(state).to_string());
     }
     // A thread row is a conversation, and a screen reader has to hear that
     // before it hears a name — otherwise "from Ada, 6 in thread" reads as a
@@ -233,6 +233,13 @@ struct Palette {
     flag_mark: Option<gtk::IconPaintable>,
     answered_mark: Option<gtk::IconPaintable>,
     draft_mark: Option<gtk::IconPaintable>,
+    /// The send states that are not "still writing". One glyph for all five
+    /// made a message that needs you look like one you have not finished --
+    /// which is the picture half of #1491's third open question, the
+    /// accessible label being the other.
+    sending_mark: Option<gtk::IconPaintable>,
+    failed_mark: Option<gtk::IconPaintable>,
+    unconfirmed_mark: Option<gtk::IconPaintable>,
     /// The hover actions, in [`RowAction::ALL`] order, with the flag glyph
     /// in both of its states.
     archive: Option<gtk::IconPaintable>,
@@ -291,6 +298,12 @@ impl Palette {
             flag_mark: probe.display().pipe_icon("starred-symbolic"),
             answered_mark: probe.display().pipe_icon("mail-replied-symbolic"),
             draft_mark: probe.display().pipe_icon("document-edit-symbolic"),
+            // Standard symbolic names, so a theme that has them draws them and
+            // one that does not degrades to no mark rather than to a wrong
+            // one -- `pipe_icon` answers `None` and `mark` draws nothing.
+            sending_mark: probe.display().pipe_icon("mail-send-symbolic"),
+            failed_mark: probe.display().pipe_icon("dialog-warning-symbolic"),
+            unconfirmed_mark: probe.display().pipe_icon("dialog-question-symbolic"),
             archive: probe.display().action_icon(icon(RowAction::Archive, false)),
             flagged: probe.display().action_icon(icon(RowAction::Flag, true)),
             unflagged: probe.display().action_icon(icon(RowAction::Flag, false)),
@@ -1338,7 +1351,20 @@ impl MessageRowView {
             );
             snapshot.restore();
         };
-        mark(row.send_state.is_some(), &palette.draft_mark);
+        // Which mark, not whether: queued and sending are on their way, failed
+        // has stopped, unconfirmed is neither. See `postio_ui::row::
+        // send_state_word` for the same distinction in words.
+        mark(
+            row.send_state.is_some(),
+            match row.send_state {
+                Some(postio_model::DraftState::Queued | postio_model::DraftState::Sending) => {
+                    &palette.sending_mark
+                }
+                Some(postio_model::DraftState::Failed) => &palette.failed_mark,
+                Some(postio_model::DraftState::Unconfirmed) => &palette.unconfirmed_mark,
+                _ => &palette.draft_mark,
+            },
+        );
         mark(row.answered, &palette.answered_mark);
         mark(row.flagged, &palette.flag_mark);
 
@@ -1603,9 +1629,73 @@ mod tests {
 
         let draft = accessible_label(&Row {
             send_state: Some(postio_model::DraftState::Editing),
-            ..base
+            ..base.clone()
         });
         assert!(draft.contains("Draft"), "{draft}");
+    }
+
+    #[test]
+    fn a_row_says_which_send_state_it_is_in_not_merely_that_it_is_a_draft() {
+        // FR-015 and FR-021. "Draft" for all five is what #1491 reports: the
+        // one you are writing, the one on its way and the one that failed all
+        // read the same, so a screen reader cannot tell a message that needs
+        // you from one you simply have not finished.
+        use postio_model::DraftState;
+        let base = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: Some(addr(Some("Lena Tomlin"), "lena@example.com")),
+            subject: Some("Re: maildir index rebuild".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: None,
+            has_attachments: false,
+            thread_count: 1,
+            participants: Vec::new(),
+        };
+        let says = |state| {
+            accessible_label(&Row {
+                send_state: Some(state),
+                ..base.clone()
+            })
+        };
+
+        for (state, expected) in [
+            (DraftState::Editing, "Draft"),
+            (DraftState::Queued, "Waiting to send"),
+            (DraftState::Sending, "Sending"),
+            (DraftState::Failed, "Not sent"),
+            (DraftState::Unconfirmed, "Not confirmed"),
+        ] {
+            let label = says(state);
+            assert!(
+                label.contains(expected),
+                "{state:?} should read as {expected:?}: {label}"
+            );
+        }
+
+        // And they are distinguishable from one another, which is the point.
+        let all: Vec<String> = [
+            DraftState::Editing,
+            DraftState::Queued,
+            DraftState::Sending,
+            DraftState::Failed,
+            DraftState::Unconfirmed,
+        ]
+        .into_iter()
+        .map(says)
+        .collect();
+        let mut unique = all.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            all.len(),
+            "two send states read identically to a screen reader: {all:?}"
+        );
     }
 
     #[test]

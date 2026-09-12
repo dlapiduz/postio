@@ -192,6 +192,40 @@ impl RowAction {
     }
 }
 
+/// What a row says about a draft's send state, in one word or two.
+///
+/// Here rather than in a widget for the reason `initials` and `timestamp` are:
+/// what a mail client calls a state is answered once, and two frontends
+/// wording it apart is the drift these moves exist to stop.
+///
+/// # Why not just "Draft"
+///
+/// It was "Draft" for all five, which is #1491's third open question. Drafts
+/// holds what you are writing, what failed and what cannot be confirmed, and
+/// the Outbox holds what is on its way -- and a row that says only "Draft"
+/// makes a message that *needs you* look like one you simply have not
+/// finished. The words are the user's, not the state machine's: nobody is
+/// looking for an "unconfirmed draft", they are looking for the one that did
+/// not go.
+pub fn send_state_word(state: postio_model::DraftState) -> &'static str {
+    use postio_model::DraftState;
+    match state {
+        DraftState::Editing => "Draft",
+        DraftState::Queued => "Waiting to send",
+        DraftState::Sending => "Sending",
+        // Not "Failed": what matters to the reader is that it did not go, and
+        // the reason is on the draft itself when they open it (#1487).
+        DraftState::Failed => "Not sent",
+        // ADR 0021 Decision 3: nobody can say whether it arrived. The word has
+        // to carry that rather than claim either.
+        DraftState::Unconfirmed => "Not confirmed",
+        // The moment between the server accepting and the row being deleted.
+        // It has a word because the column can hold it, not because a person
+        // is expected to read it.
+        DraftState::Sent => "Sent",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
