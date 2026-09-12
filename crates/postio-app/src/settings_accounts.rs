@@ -625,10 +625,14 @@ fn account_mailboxes(
             .map(|mailbox| (role, mailbox.path))
     })
     .collect();
+    let refused = MailboxRoleRepository::new(connection)
+        .refusals(account)
+        .unwrap_or_default();
     AccountMailboxes {
         folders,
         chosen,
         resolved,
+        refused,
     }
 }
 

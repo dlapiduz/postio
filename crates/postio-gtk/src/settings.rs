@@ -230,6 +230,15 @@ pub struct AccountMailboxes {
     pub chosen: Vec<(MailboxRole, String)>,
     /// What each role resolves to right now, mapped or not.
     pub resolved: Vec<(MailboxRole, String)>,
+    /// The roles this account's server refused to create a folder for, and
+    /// what it said (spec 003, FR-031).
+    ///
+    /// Distinct from "not resolved": a role can have no folder because nobody
+    /// has synced yet, which fixes itself, or because the server said no,
+    /// which does not. Only the second has words worth showing, and they are
+    /// the server's own -- "Permission denied" tells a user where to look and
+    /// "could not create Junk" tells them nothing.
+    pub refused: Vec<(MailboxRole, String)>,
 }
 
 /// What to call when a field in the account detail view is committed.
@@ -2148,10 +2157,19 @@ impl SettingsPanel {
         // Named only when nothing is chosen: with a choice in force, what
         // automatic *would* say is a question only the next discovery pass
         // can answer, and guessing at it here would be a label that lies.
-        let automatic = match (&chosen, resolved) {
-            (Some(_), _) => "Automatic".to_owned(),
-            (None, Some(path)) => format!("Automatic ({path})"),
-            (None, None) => "Automatic (no folder)".to_owned(),
+        let refused = data
+            .refused
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, reason)| reason.as_str());
+        let automatic = match (&chosen, resolved, refused) {
+            (Some(_), _, _) => "Automatic".to_owned(),
+            (None, Some(path), _) => format!("Automatic ({path})"),
+            // The server said no, and said why. Shown here rather than left as
+            // a bare "no folder", which is true and gives a person nothing to
+            // do about it.
+            (None, None, Some(reason)) => format!("Automatic (no folder — {reason})"),
+            (None, None, None) => "Automatic (no folder)".to_owned(),
         };
 
         let mut entries = vec![automatic];

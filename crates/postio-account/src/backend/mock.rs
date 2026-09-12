@@ -407,6 +407,9 @@ struct State {
     persistent_fault: Option<Fault>,
     latency: Duration,
     calls: u64,
+    /// The reason `create_mailbox` refuses with, when it is set to refuse.
+    /// See [`MockBackend::refuse_creates`].
+    refuse_creates: Option<String>,
     /// Every path `create_mailbox` was asked for, in order, including ones
     /// that already existed. See [`MockBackend::created`].
     created: Vec<String>,
@@ -606,6 +609,18 @@ impl MockBackend {
     /// complete then, by walking the UID space as it did before #727.
     pub fn refuse_uid_listing(&self) {
         self.state().refuse_uid_listing = true;
+    }
+
+    /// Makes [`MailBackend::create_mailbox`] refuse with `reason`, as a server
+    /// that will not let this account make folders would.
+    ///
+    /// Narrower than a [`Fault`] for the same reason as
+    /// [`refuse_uid_listing`](Self::refuse_uid_listing): a fault fails *every*
+    /// call, and the case worth testing is the one where creation is refused
+    /// and listing, selecting and fetching all work perfectly. Discovery has
+    /// to finish that pass, leave the role unmapped, and not ask again.
+    pub fn refuse_creates(&self, reason: impl Into<String>) {
+        self.state().refuse_creates = Some(reason.into());
     }
 
     /// Clears [`fail_all`](Self::fail_all)'s fault and any scheduled ones —
@@ -907,6 +922,7 @@ impl MockBackendBuilder {
                 refuse_uid_listing: false,
                 latency: Duration::ZERO,
                 calls: 0,
+                refuse_creates: None,
                 created: Vec::new(),
                 in_flight: 0,
                 peak_in_flight: 0,
@@ -985,6 +1001,12 @@ impl MailBackend for MockBackend {
         let mut state = self.state();
         state.require_connected("CREATE")?;
         state.created.push(path.to_owned());
+        if let Some(reason) = state.refuse_creates.clone() {
+            return Err(BackendError::Rejected {
+                command: "CREATE".to_owned(),
+                reason,
+            });
+        }
         // Already there is success, not failure: the caller wants the folder
         // to exist, not to have been the one that made it.
         if state.index_of(path).is_ok() {

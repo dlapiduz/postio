@@ -538,6 +538,7 @@ fn folders() -> AccountMailboxes {
         ],
         chosen: Vec::new(),
         resolved: vec![(MailboxRole::Sent, "Sent".to_owned())],
+        refused: Vec::new(),
     }
 }
 
@@ -780,6 +781,40 @@ pub fn an_account_with_no_folders_yet_says_so_instead_of_offering_nothing() {
         )
         .is_empty(),
         "and offers no dropdown over folders nobody has yet"
+    );
+
+    window.destroy();
+}
+
+pub fn a_role_the_server_refused_to_create_says_so_and_says_why() {
+    // FR-031. "Automatic (no folder)" is true and useless: it does not say
+    // whether the folder is missing because nobody has synced yet, or because
+    // the server refused and will refuse again. The second is a thing the user
+    // can act on -- it is usually a permission -- so the server's own words
+    // belong on the row, where they are read next to the account they are
+    // about rather than in a log.
+    let Some((window, panel)) = panel_with_account() else {
+        return;
+    };
+    let mut data = folders();
+    data.refused = vec![(MailboxRole::Junk, "Permission denied".to_owned())];
+    panel.set_account_mailboxes(vec![(AccountId::new(1), data)]);
+    rows(&panel)[0].emit_activate();
+    pump();
+
+    let junk = entries(&role_dropdown(&panel, MailboxRole::Junk));
+    let automatic = junk.first().expect("the automatic entry comes first");
+    assert!(
+        automatic.contains("Permission denied"),
+        "the server's reason is what tells somebody what to fix: {automatic:?}"
+    );
+
+    // And a role that simply has not resolved yet must not borrow that reason.
+    let archive = entries(&role_dropdown(&panel, MailboxRole::Archive));
+    let automatic = archive.first().expect("the automatic entry comes first");
+    assert!(
+        !automatic.contains("Permission denied"),
+        "a role nobody refused is reporting another role's refusal: {automatic:?}"
     );
 
     window.destroy();
