@@ -285,6 +285,14 @@ pub trait MailStore: Send + Sync {
 
     /// An account's folders, with their counts as of now.
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>>;
+
+    /// What the sidebar draws beside Drafts and the Outbox.
+    ///
+    /// Separate from [`mailboxes`](Self::mailboxes) because the Outbox is not
+    /// one: it has no row in `mailboxes` to carry a count, and the Drafts badge
+    /// needs a number the cached column deliberately does not hold.
+    fn draft_counts(&self, account: AccountId)
+    -> Read<'_, postio_storage::repository::DraftCounts>;
 }
 
 mod sqlite;

@@ -572,4 +572,15 @@ impl MailStore for SqliteStore {
     fn mailboxes(&self, account: AccountId) -> Read<'_, Vec<Mailbox>> {
         Box::pin(self.read_mailboxes(account))
     }
+
+    fn draft_counts(
+        &self,
+        account: AccountId,
+    ) -> Read<'_, postio_storage::repository::DraftCounts> {
+        Box::pin(
+            self.read(move |connection| {
+                Ok(MailboxRepository::new(connection).draft_counts(account)?)
+            }),
+        )
+    }
 }

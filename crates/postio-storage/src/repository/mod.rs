@@ -54,7 +54,7 @@ pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
 pub use labels::LabelRepository;
 pub use mailbox_roles::MailboxRoleRepository;
-pub use mailboxes::MailboxRepository;
+pub use mailboxes::{DraftCounts, MailboxRepository};
 pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use settings::SettingsRepository;
 pub use sync_state::SyncStateRepository;

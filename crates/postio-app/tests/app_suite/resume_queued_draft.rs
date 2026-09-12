@@ -54,10 +54,13 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
     let database = test_support::memory();
     let report = seed_small(&database, 9);
     let account = report.account.id;
-    let drafts_folder = report
-        .mailbox(MailboxRole::Drafts)
-        .expect("the fixture has a Drafts folder")
-        .clone();
+    // The fixture still has to have a Drafts folder -- `list_row` writes the
+    // draft's row into it, and without one the draft is durable but unlisted
+    // (#166). It is just not the folder this test opens any more.
+    assert!(
+        report.mailbox(MailboxRole::Drafts).is_some(),
+        "the queued draft needs a Drafts folder to have a row in"
+    );
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),

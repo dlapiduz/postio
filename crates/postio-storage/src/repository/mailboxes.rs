@@ -63,6 +63,24 @@ fn refuse_a_view(role: MailboxRole) -> Result<()> {
     }
 }
 
+/// The three numbers the sidebar needs about an account's drafts.
+///
+/// Together rather than separately because they come from one row of one
+/// query: asking three times would be three reads on the path redrawn most
+/// often, for numbers that are only ever read together.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DraftCounts {
+    /// Drafts whose send is under way — the Outbox's badge, and what decides
+    /// whether that row is drawn at all (spec 003 FR-012).
+    pub outbox: u32,
+    /// Drafts that have stopped and need a person: failed, or unconfirmed.
+    /// Drawn apart from the total so "one of these needs you" is visible
+    /// without opening the folder (FR-022).
+    pub attention: u32,
+    /// What Drafts shows: everything not in flight. Includes `attention`.
+    pub drafts: u32,
+}
+
 impl<'a> MailboxRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
@@ -371,6 +389,46 @@ impl<'a> MailboxRepository<'a> {
     }
 
     /// The account's totals, summed from its mailboxes' cached counts.
+    /// What the sidebar draws beside Drafts and the Outbox.
+    ///
+    /// Three numbers from one read, none of which a cached column can hold.
+    /// The Outbox is not a mailbox, so it has no row to cache anything on.
+    /// And `mailboxes.total_count` still counts every message row filed in
+    /// Drafts, in-flight ones included — deliberately, because that is what it
+    /// means for every other folder — so the Drafts badge has to ask
+    /// separately for the number a person will actually see there.
+    ///
+    /// Bounded, and asserted as such: `idx_messages_send_state` is partial on
+    /// `send_state IS NOT NULL`, so this touches the account's drafts and not
+    /// its mail. The sidebar refreshes on every arrival, so a read that grew
+    /// with the mailbox would be paid on the surface redrawn most often
+    /// (Principle V; spec 003 SC-008).
+    pub fn draft_counts(&self, account_id: AccountId) -> Result<DraftCounts> {
+        self.connection
+            .query_row(
+                "SELECT
+                     coalesce(sum(send_state IN ('queued', 'sending')), 0),
+                     coalesce(sum(send_state IN ('failed', 'unconfirmed')), 0),
+                     coalesce(sum(send_state NOT IN ('queued', 'sending', 'sent')), 0)
+                   FROM messages
+                  WHERE account_id = ?1 AND send_state IS NOT NULL
+                    AND deleted_locally = 0",
+                [account_id.get()],
+                |row| {
+                    Ok(DraftCounts {
+                        outbox: row.get::<_, i64>(0)? as u32,
+                        attention: row.get::<_, i64>(1)? as u32,
+                        drafts: row.get::<_, i64>(2)? as u32,
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    /// Every folder's counts in one account, summed.
+    ///
+    /// The unified strip's numbers, read from the cached columns rather than
+    /// counted -- the same rule the per-folder counts follow.
     pub fn account_counts(&self, account_id: AccountId) -> Result<MailboxCounts> {
         self.connection
             .query_row(

@@ -105,6 +105,10 @@ impl MailStore for Fake {
         inbox.role = MailboxRole::Inbox;
         Box::pin(async move { Ok(vec![inbox]) })
     }
+
+    fn draft_counts(&self, _: AccountId) -> Read<'_, postio_storage::repository::DraftCounts> {
+        Box::pin(async { Ok(postio_storage::repository::DraftCounts::default()) })
+    }
 }
 
 #[tokio::test]
@@ -197,6 +201,9 @@ async fn a_read_that_fails_carries_a_sentence_rather_than_a_sql_error() {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
         fn mailboxes(&self, _: AccountId) -> Read<'_, Vec<Mailbox>> {
+            Box::pin(async { Err(StoreError::new("the database is locked")) })
+        }
+        fn draft_counts(&self, _: AccountId) -> Read<'_, postio_storage::repository::DraftCounts> {
             Box::pin(async { Err(StoreError::new("the database is locked")) })
         }
     }
