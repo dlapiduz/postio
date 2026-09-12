@@ -73,6 +73,14 @@ pub fn an_ordinary_start_draws_nothing_that_is_then_removed() {
         "a plate that is empty is still a plate: it covers the pane the rows \
          are about to arrive in"
     );
+    // And no counts. #1114 asks for the sidebar's structure without them,
+    // because a count that appears late must not be seen jumping from `0` —
+    // which is a promise that holds by construction only for as long as
+    // nothing decides an unfed sidebar should show a placeholder.
+    assert!(
+        window.sidebar().mailboxes().is_empty(),
+        "the sidebar has folders to count before anything has read any"
+    );
 
     // And the store lands, as it does on every ordinary start, well inside
     // the threshold. What the pane says from here on is the ordinary

@@ -327,6 +327,20 @@ impl Window {
         *self.imp().timeline.borrow_mut() = Some(timeline);
     }
 
+    /// Close this window's startup timeline once it is showing mail.
+    ///
+    /// [`crate::startup::report_usable`] against whatever is recording this
+    /// window's startup, or nothing at all on a window nobody is measuring —
+    /// the same bargain [`mark_startup`](Self::mark_startup) makes, and for
+    /// the same reason: the caller that knows the panes have been fed is in
+    /// the composition root, and all it holds is a window.
+    pub fn report_usable(&self) {
+        let timeline = self.imp().timeline.borrow().clone();
+        if let Some(timeline) = timeline {
+            crate::startup::report_usable(self, &timeline);
+        }
+    }
+
     /// Note that this window's startup has reached `phase`.
     ///
     /// A no-op on a window nothing is measuring, so a caller in the

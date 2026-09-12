@@ -103,7 +103,7 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
         window.composer();
         install_actions(app, &window);
         timeline.mark(Phase::Window);
-        report_first_frame(&window, app, &timeline);
+        report_shell_frame(&window, &timeline);
         window.present();
     });
 
@@ -134,22 +134,14 @@ pub fn install_icons(display: &gdk::Display) {
     gtk::Window::set_default_icon_name(APP_ID);
 }
 
-/// Close the timeline once the window is actually on screen, and act on the
-/// benchmarking switches documented in [`crate::startup`].
-fn report_first_frame(window: &Window, app: &adw::Application, timeline: &Timeline) {
+/// Mark the moment the compositor first shows the window.
+///
+/// Pixels, not a usable UI: since #1114 the store opens behind a window that
+/// is already up, so this says the shell arrived and nothing about whether
+/// there is any mail in it. What closes the timeline is
+/// [`startup::report_usable`], called by whoever fed the panes — this crate
+/// builds windows and does not know when that happened.
+fn report_shell_frame(window: &Window, timeline: &Timeline) {
     let timeline = timeline.clone();
-    let app = app.clone();
-    startup::on_first_frame(window, move || {
-        timeline.mark(Phase::FirstFrame);
-        if startup::enabled(startup::TRACE_ENV) {
-            // Through tracing rather than straight to stderr, so it is
-            // filtered and formatted like everything else. `POSTIO_LOG=off`
-            // now silences it, which is the correct reading of `off`; the
-            // benchmark path is `POSTIO_STARTUP_EXIT` and does not read this.
-            tracing::info!("{}", timeline.report());
-        }
-        if startup::enabled(startup::EXIT_ENV) {
-            app.quit();
-        }
-    });
+    startup::on_first_frame(window, move || timeline.mark(Phase::Shell));
 }

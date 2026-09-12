@@ -1076,6 +1076,23 @@ impl Drop for PooledConnection {
     }
 }
 
+/// What [`Database::open_reporting`] is doing right now.
+///
+/// Three stages rather than one because they are three different promises to
+/// whoever is waiting: reading a file, rewriting its schema, and giving back
+/// a log the last run left behind. The first is ordinary, and the other two
+/// are the ones that have taken tens of seconds on a real mailbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenStage {
+    /// Unlocking the file and taking the first connection.
+    Opening,
+    /// Applying schema migrations. Instant when there are none pending, and
+    /// reported anyway — see [`Database::open_reporting`].
+    Migrating,
+    /// Truncating a write-ahead log the last run left oversized (#1175).
+    ReclaimingLog,
+}
+
 /// An open, migrated Postio database.
 ///
 /// This is what the rest of the application holds: it owns the [`Pool`], and
@@ -1107,8 +1124,42 @@ impl Database {
         Self::open_with(path, key, DEFAULT_MAX_CONNECTIONS)
     }
 
+    /// [`Database::open`], saying what it is doing as it goes.
+    ///
+    /// Opening a store is not one wait. Applying schema migrations rewrites
+    /// tables and reclaiming an oversized write-ahead log reads the whole of
+    /// it, and on a real mailbox each has taken tens of seconds — a launch on
+    /// the live install spent 12.6 s inside this call. Postio shows its
+    /// window before this runs now (#1114), so the difference between
+    /// "opening your mailbox" and "updating your mailbox's storage" is a
+    /// sentence somebody is reading while they wait, and only this function
+    /// knows which one is true.
+    ///
+    /// `report` runs on the calling thread, before the stage it names. It is
+    /// called for every stage a normal open passes through, including the
+    /// ones that turn out to be instant: whether a stage is worth mentioning
+    /// is a question about how long it takes, which the caller finds out by
+    /// still being in it — not something to predict here.
+    pub fn open_reporting(
+        path: impl AsRef<Path>,
+        key: &Subkey,
+        report: &dyn Fn(OpenStage),
+    ) -> Result<Self> {
+        Self::open_with_reporting(path, key, DEFAULT_MAX_CONNECTIONS, report)
+    }
+
     /// [`Database::open`], with an explicit pool size.
     pub fn open_with(path: impl AsRef<Path>, key: &Subkey, max_connections: usize) -> Result<Self> {
+        Self::open_with_reporting(path, key, max_connections, &|_| {})
+    }
+
+    /// [`Database::open_reporting`], with an explicit pool size.
+    pub fn open_with_reporting(
+        path: impl AsRef<Path>,
+        key: &Subkey,
+        max_connections: usize,
+        report: &dyn Fn(OpenStage),
+    ) -> Result<Self> {
         let path = path.as_ref();
         if let Some(parent) = path
             .parent()
@@ -1116,13 +1167,18 @@ impl Database {
         {
             crate::perm::ensure_private_dir(parent)?;
         }
-        let database =
-            Self::from_location(Location::File(path.to_path_buf()), key, max_connections)?;
+        let database = Self::from_location_reporting(
+            Location::File(path.to_path_buf()),
+            key,
+            max_connections,
+            None,
+            report,
+        )?;
         // After from_location: that call is what actually creates the file
         // (SQLite opens it lazily, on the pool's first checkout), so there is
         // nothing to tighten before it exists.
         crate::perm::tighten_file(path)?;
-        database.reclaim_oversized_log(path);
+        database.reclaim_oversized_log(path, report);
         Ok(database)
     }
 
@@ -1144,7 +1200,7 @@ impl Database {
     /// Gated on the size, so a healthy store pays a `stat` and nothing else,
     /// and best-effort: a log that will not truncate is worth a line on
     /// stderr and not a store that refuses to open.
-    fn reclaim_oversized_log(&self, path: &Path) {
+    fn reclaim_oversized_log(&self, path: &Path, report: &dyn Fn(OpenStage)) {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             return;
         };
@@ -1155,6 +1211,11 @@ impl Database {
         if size <= WAL_SIZE_LIMIT {
             return;
         }
+        // Reported only once there is something to reclaim, unlike the
+        // stages above: this one is gated on a `stat` that answers in
+        // microseconds, so the caller can be told the truth rather than told
+        // about a stage that is usually not entered at all.
+        report(OpenStage::ReclaimingLog);
         tracing::info!(bytes = size, "reclaiming an oversized write-ahead log");
         let reclaimed = self.connection().and_then(|connection| {
             connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -1236,8 +1297,20 @@ impl Database {
         max_connections: usize,
         guard: Option<Box<dyn std::any::Any + Send + Sync>>,
     ) -> Result<Self> {
+        Self::from_location_reporting(location, key, max_connections, guard, &|_| {})
+    }
+
+    fn from_location_reporting(
+        location: Location,
+        key: &Subkey,
+        max_connections: usize,
+        guard: Option<Box<dyn std::any::Any + Send + Sync>>,
+        report: &dyn Fn(OpenStage),
+    ) -> Result<Self> {
+        report(OpenStage::Opening);
         let pool = Pool::new(location, key.clone(), max_connections, guard)?;
         let mut connection = pool.get()?;
+        report(OpenStage::Migrating);
         migrations::migrate(&mut connection)?;
         drop(connection);
         Ok(Self { pool })

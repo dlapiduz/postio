@@ -73,6 +73,7 @@ mod signature_default_wiring;
 mod startup_reads;
 mod startup_repair;
 mod storage_ceiling_wiring;
+mod store_refused_after_the_window;
 mod sync_window;
 mod thread_bulk_keystroke;
 mod thread_dwell;
@@ -135,6 +136,11 @@ const CASES: &[(&str, fn())] = &[
     (
         "bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read",
         bulk_keystroke::ctrl_a_then_shift_u_marks_the_whole_folder_read as fn(),
+    ),
+    (
+        "store_refused_after_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried",
+        store_refused_after_the_window::a_store_refused_after_the_window_is_up_says_so_and_can_be_retried
+            as fn(),
     ),
     (
         "startup_reads::opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is",
