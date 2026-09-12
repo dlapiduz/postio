@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use postio_model::egress::{EgressEvent, EgressSink};
 use postio_model::ids::AccountId;
 use postio_storage::repository::EgressLogRepository;
-use postio_storage::{Database, WritePriority};
+use postio_storage::{Store, WritePriority};
 
 /// How long [`EgressRecorder::shutdown`] waits for the writer thread to
 /// close its database connection, same discipline as
@@ -34,7 +34,7 @@ pub struct EgressRecorder {
     ///
     /// # The crash this exists for
     ///
-    /// The closure `start` spawns owns the `Database` it was given, and
+    /// The closure `start` spawns owns the `Store` it was given, and
     /// closing the last connection to a SQLCipher database calls into
     /// libcrypto (`sqlite3FreeCodecArg`). Left to finish whenever it got
     /// around to it — the previous design here — that close could still be
@@ -48,11 +48,26 @@ pub struct EgressRecorder {
 
 impl EgressRecorder {
     /// Start the writer thread over `database` and hand back the recorder.
-    pub fn start(database: Database) -> Arc<Self> {
+    pub fn start(database: Store) -> Arc<Self> {
         let (sender, receiver) = mpsc::channel::<EgressEvent>();
         let spawned = std::thread::Builder::new()
             .name("postio-egress".to_string())
             .spawn(move || {
+                // A runtime of its own, on this thread, because the store is
+                // async now and this is a dedicated writer thread rather than
+                // a tokio task. `current_thread` is the whole of it: one
+                // thread, no work stealing, exactly the shape this loop
+                // already had.
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        tracing::error!(%error, "the egress log has no writer");
+                        return;
+                    }
+                };
                 while let Ok(first) = receiver.recv() {
                     // Whatever else queued while we slept goes in the same
                     // transaction: one commit per burst, not per socket.
@@ -60,22 +75,24 @@ impl EgressRecorder {
                     while let Ok(event) = receiver.try_recv() {
                         batch.push(event);
                     }
-                    let Ok(connection) = database.connection() else {
-                        continue;
+                    runtime.block_on(async {
+                    let Ok(connection) = database.connect().await else {
+                        return;
                     };
                     let _permit = connection.write_gate().acquire(WritePriority::Background);
-                    if connection.execute_batch("BEGIN IMMEDIATE").is_err() {
-                        continue;
+                    if connection.execute("BEGIN IMMEDIATE", ()).await.is_err() {
+                        return;
                     }
                     let log = EgressLogRepository::new(&connection);
                     for event in &batch {
-                        if let Err(error) = log.record(event) {
+                        if let Err(error) = log.record(event).await {
                             tracing::warn!(%error, "an egress event was not recorded");
                         }
                     }
-                    if let Err(error) = connection.execute_batch("COMMIT") {
+                    if let Err(error) = connection.execute("COMMIT", ()).await {
                         tracing::warn!(%error, "an egress batch did not commit");
                     }
+                    });
                 }
             });
         let thread = match spawned {
@@ -191,7 +208,7 @@ mod tests {
     fn recorded_events_reach_the_store_with_the_account_stamped() {
         let database = test_support::memory();
         let recorder = EgressRecorder::start(database.clone());
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let account = test_support::account(&connection).id;
         drop(connection);
 
@@ -203,7 +220,7 @@ mod tests {
         // the deadline is generous and the pass is immediate in practice.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let rows = loop {
-            let connection = database.connection().expect("checkout");
+            let connection = database.connect().await.expect("checkout");
             let rows = EgressLogRepository::new(&connection)
                 .recent(10)
                 .expect("recent");

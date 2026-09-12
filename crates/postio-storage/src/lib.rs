@@ -45,6 +45,7 @@
 //! See `test_support` (behind the `test-support` feature) for throwaway stores
 //! in tests.
 
+pub mod actions;
 pub mod blob;
 pub mod error;
 pub mod key;

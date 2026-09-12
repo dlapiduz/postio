@@ -51,7 +51,7 @@ use postio_storage::repository::{
     MailboxRoleRepository, MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder,
     ThreadRepository,
 };
-use postio_storage::{Database, PooledConnection, WritePermit, WritePriority};
+use postio_storage::{Store, Checkout, WritePermit, WritePriority};
 
 /// The commands this module answers.
 ///
@@ -107,7 +107,7 @@ enum Recording {
 
 impl Recording {
     /// Whether this belongs on the undo stack and deserves a toast.
-    fn records(self) -> bool {
+    async fn records(self) -> bool {
         self == Recording::Record
     }
 }
@@ -194,19 +194,19 @@ struct Applied {
 /// Everything a verb needs: the store to write, the state to resolve targets
 /// against, and the history to push onto.
 ///
-/// Cheap to clone — a `Database` is a connection pool behind a handle, and the
+/// Cheap to clone — a `Store` is a connection pool behind a handle, and the
 /// other two are shared by construction — because the bus holds one of these
 /// per registered command.
 #[derive(Clone)]
 pub struct Actions {
-    database: Database,
+    database: Store,
     state: SharedState,
     undo: Arc<Mutex<UndoStack>>,
 }
 
 impl Actions {
     /// Verbs over `database`, resolving their targets against `state`.
-    pub fn new(database: Database, state: SharedState) -> Self {
+    pub async fn new(database: Store, state: SharedState) -> Self {
         Actions {
             database,
             state,
@@ -219,9 +219,9 @@ impl Actions {
     /// `Err` is what the user sees: the bus turns a rejection into a quiet
     /// hint and a failure into something louder.
     ///
-    pub fn run(&self, command: &Command, events: &EventSink) -> Result<(), CommandError> {
+    pub async fn run(&self, command: &Command, events: &EventSink) -> Result<(), CommandError> {
         match command {
-            Command::Undo => self.undo(events),
+            Command::Undo => self.undo(events).await,
             // Same verb, different provenance — see `Command::MarkReadOnDwell`.
             // The `Recording` is most of the difference; the rest is that a
             // rejection is not worth saying out loud. `set_flag` rejects with
@@ -232,17 +232,17 @@ impl Actions {
             // and deserves the same silence. A `Failed` still gets through,
             // because a store that will not write is worth hearing about.
             dwell @ Command::MarkReadOnDwell { .. } => {
-                match self.act(dwell, events, Recording::Incidental) {
+                match self.act(dwell, events, Recording::Incidental).await {
                     Err(CommandError::Rejected(_)) => Ok(()),
                     other => other,
                 }
             }
-            other => self.act(other, events, Recording::Record),
+            other => self.act(other, events, Recording::Record).await,
         }
     }
 
     /// Do one verb, and say what it did.
-    fn act(
+    async fn act(
         &self,
         command: &Command,
         events: &EventSink,
@@ -253,23 +253,23 @@ impl Actions {
                 target,
                 Destination::Role(MailboxRole::Archive),
                 UndoKind::Archive,
-            )?,
+            ).await?,
             Command::ArchiveThread { thread } => {
                 let thread = match thread {
                     Some(thread) => *thread,
-                    None => self.thread_in_view()?,
+                    None => self.thread_in_view().await?,
                 };
                 self.relocate(
                     &MessageTarget::Thread(thread),
                     Destination::Role(MailboxRole::Archive),
                     UndoKind::Archive,
-                )?
+                ).await?
             }
             Command::Delete { target } => self.relocate(
                 target,
                 Destination::Role(MailboxRole::Trash),
                 UndoKind::Delete,
-            )?,
+            ).await?,
             Command::Move { target, to } => {
                 // A move with no destination is not a move that failed; it
                 // is half a request — `None` means "ask the user". Nothing
@@ -277,38 +277,38 @@ impl Actions {
                 let to = to.ok_or_else(|| {
                     CommandError::rejected("Pick a folder to move to — drag the rows onto one")
                 })?;
-                self.relocate(target, Destination::Mailbox(to), UndoKind::Move)?
+                self.relocate(target, Destination::Mailbox(to), UndoKind::Move).await?
             }
-            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged)?,
+            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged).await?,
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
-                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))?
+                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread)).await?
             }
             Command::AddLabel { target, label, on } => {
                 // `None` is half a request, not a failure: ADR 0005's picker
                 // case, the same shape `Move { to: None }` has. The window
                 // opens the picker before this is reached.
                 let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
-                vec![self.set_label(target, label, *on)?]
+                vec![self.set_label(target, label, *on).await?]
             }
-            Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE)?],
-            Command::Unsnooze { target } => vec![self.unsnooze(target)?],
+            Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE).await?],
+            Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
-            Command::MarkSent { draft } => vec![self.mark_sent(*draft)?],
-            Command::RetrySend { draft } => vec![self.retry_send(*draft)?],
-            Command::CancelSend { draft } => vec![self.cancel_send(*draft)?],
+            Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],
+            Command::RetrySend { draft } => vec![self.retry_send(*draft).await?],
+            Command::CancelSend { draft } => vec![self.cancel_send(*draft).await?],
             Command::MapMailboxRole {
                 account,
                 role,
                 path,
-            } => vec![self.map_mailbox_role(*account, *role, path.as_deref())?],
+            } => vec![self.map_mailbox_role(*account, *role, path.as_deref()).await?],
             Command::MarkReadOnDwell { message } => self.set_flag(
                 &MessageTarget::Messages(vec![*message]),
                 Flag::Seen,
                 Some(true),
-            )?,
+            ).await?,
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -327,7 +327,7 @@ impl Actions {
     /// Nothing to take back is a rejection rather than a failure: pressing `u`
     /// on a fresh session is an ordinary thing to do, and it deserves a
     /// sentence, not a dialog.
-    fn undo(&self, events: &EventSink) -> Result<(), CommandError> {
+    async fn undo(&self, events: &EventSink) -> Result<(), CommandError> {
         let entry = self
             .stack()
             .undo()
@@ -336,14 +336,14 @@ impl Actions {
         // The undo stack records source rows; the saga table is the only
         // place that knows the move spanned two accounts, so it is asked
         // before the inverse commands are (#531, ADR 0005 Q9).
-        if let Some(cancelled) = self.cancel_cross_account_moves(entry.messages(), events)? {
+        if let Some(cancelled) = self.cancel_cross_account_moves(entry.messages(), events).await? {
             events.emit(Event::UndoPerformed {
                 description: cancelled,
             });
             return Ok(());
         }
         for command in entry.inverse() {
-            self.act(command, events, Recording::Replay)?;
+            self.act(command, events, Recording::Replay).await?;
         }
         events.emit(Event::UndoPerformed {
             description: entry.description(),
@@ -375,14 +375,14 @@ impl Actions {
     /// mail. Before #531 the refusal was not there either — `u` replayed an
     /// empty inverse and reported success, which is the same wrong answer
     /// with better manners.
-    fn cancel_cross_account_moves(
+    async fn cancel_cross_account_moves(
         &self,
         messages: &[MessageId],
         events: &EventSink,
     ) -> Result<Option<String>, CommandError> {
         use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
 
-        let (mut connection, _permit) = self.connect()?;
+        let (mut connection, _permit) = self.connect().await?;
         // `done` included: a move that *finished* is exactly the one
         // somebody is most likely to take back, and the forward path never
         // had a reason to look at one (#531).
@@ -396,6 +396,7 @@ impl Actions {
                     MovePhase::Done,
                 ],
             )
+            .await
             .map_err(store_failure)?;
         if sagas.is_empty() {
             return Ok(None);
@@ -406,7 +407,7 @@ impl Actions {
         let mut reloaded: BTreeSet<MailboxId> = BTreeSet::new();
         let mut accounts: BTreeSet<postio_model::ids::AccountId> = BTreeSet::new();
         let at = Utc::now();
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         {
             let repository = MessageRepository::new(&transaction);
             let queue = OperationQueueRepository::new(&transaction);
@@ -416,7 +417,7 @@ impl Actions {
                     // Nothing has left this machine. Withdraw both queue
                     // halves, drop the provisional copy, un-hide the source.
                     MovePhase::Copying => {
-                        cancel_one(&repository, &queue, &sagas_repository, saga)?;
+                        cancel_one(&repository, &queue, &sagas_repository, saga).await?;
                         undone += 1;
                     }
                     // ADR 0005 Q9's answer to an unprovable copy is stop and
@@ -430,17 +431,18 @@ impl Actions {
                     // removal would otherwise delete the source copy after
                     // the inverse had restored it.
                     MovePhase::Confirmed => {
-                        withdraw_pending(&queue, saga.source_message)?;
+                        withdraw_pending(&queue, saga.source_message).await?;
                         sagas_repository
                             .transition(saga.id, MovePhase::Aborted)
+                            .await
                             .map_err(store_failure)?;
-                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        invert_one(&repository, &queue, &sagas_repository, saga, at).await?;
                         undone += 1;
                     }
                     // The move is complete on both servers. Only the inverse
                     // saga can undo it.
                     MovePhase::Done => {
-                        invert_one(&repository, &queue, &sagas_repository, saga, at)?;
+                        invert_one(&repository, &queue, &sagas_repository, saga, at).await?;
                         undone += 1;
                     }
                     MovePhase::Aborted => {}
@@ -469,7 +471,7 @@ impl Actions {
                 "That move reached the other account but Postio could not confirm it,                  so taking it back would be a guess. Nothing was changed.",
             ));
         }
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         // Both mailboxes changed: one got a row back, the other lost one.
         for account in accounts {
@@ -503,14 +505,14 @@ impl Actions {
     /// list in view: a selection can span folders in the unified view, and
     /// undo has to put each message back where *it* was rather than where the
     /// first one was.
-    fn relocate(
+    async fn relocate(
         &self,
         target: &MessageTarget,
         to: Destination,
         kind: UndoKind,
     ) -> Result<Vec<Applied>, CommandError> {
-        let (mut connection, _permit) = self.connect()?;
-        match self.aim(&connection, target)? {
+        let (mut connection, _permit) = self.connect().await?;
+        match self.aim(&connection, target).await? {
             // One unit per account, which is what `Applied::account` has
             // always said a unified-scope action becomes. A selection made in
             // a unified view can span accounts, and each message has to land
@@ -529,13 +531,13 @@ impl Actions {
                 // the whole thing failed. An account with no Archive folder
                 // has to stop the action while stopping it is still free.
                 for account in by_account.keys() {
-                    mailbox_for(&connection, *account, to)?;
+                    mailbox_for(&connection, *account, to).await?;
                 }
 
                 let mut units = Vec::with_capacity(by_account.len());
                 let mut nothing_to_do = None;
                 for (_, rows) in by_account {
-                    match self.relocate_rows(&mut connection, rows, to, kind) {
+                    match self.relocate_rows(&mut connection, rows, to, kind).await {
                         Ok(unit) => units.push(unit),
                         // Everything in this account was already filed. That
                         // is not a failure for the accounts that were not —
@@ -559,7 +561,7 @@ impl Actions {
                 // no Archive has to stop the action while stopping it is
                 // still free.
                 for unit in &units {
-                    mailbox_for(&connection, unit.account, to)?;
+                    mailbox_for(&connection, unit.account, to).await?;
                 }
                 let mut applied = Vec::with_capacity(units.len());
                 let mut nothing_to_do = None;
@@ -571,7 +573,7 @@ impl Actions {
                         unit.from,
                         to,
                         kind,
-                    ) {
+                    ).await {
                         Ok(one) => applied.push(one),
                         Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
                         Err(error) => return Err(error),
@@ -593,16 +595,16 @@ impl Actions {
     /// is what makes one `u` enough: see [`OperationRange`].
     ///
     /// [`OperationRange`]: postio_model::OperationRange
-    fn relocate_set(
+    async fn relocate_set(
         &self,
-        connection: &mut PooledConnection,
+        connection: &mut Checkout,
         set: MessageSet,
         account: AccountId,
         from: Option<MailboxId>,
         to: Destination,
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
-        let destination = mailbox_for(connection, account, to)?;
+        let destination = mailbox_for(connection, account, to).await?;
         if from == Some(destination) {
             return Err(CommandError::rejected("Already there"));
         }
@@ -622,6 +624,7 @@ impl Actions {
             None => {
                 let mut sources = MessageRepository::new(connection)
                     .mailboxes_of_set(&set)
+                    .await
                     .map_err(store_failure)?;
                 // Whatever is already filed where it is going is not moving.
                 // Enqueueing it would tell the server to move a message onto
@@ -635,7 +638,7 @@ impl Actions {
         }
 
         let at = Utc::now();
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         let mut count = 0usize;
         let mut inverse = Vec::new();
         let mut reloaded = vec![destination];
@@ -657,12 +660,14 @@ impl Actions {
             // names the rows as they are now, and after the move it does not.
             let Some(range) = OperationQueueRepository::new(&transaction)
                 .enqueue_set(account, &group, &operation, at)
+                .await
                 .map_err(store_failure)?
             else {
                 continue;
             };
             count += MessageRepository::new(&transaction)
                 .move_set(&group, destination)
+                .await
                 .map_err(store_failure)?;
             reloaded.push(source);
             inverse.push(Command::Move {
@@ -682,7 +687,7 @@ impl Actions {
             // might have left.
             return Err(CommandError::rejected("There is nothing here to move"));
         }
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
             account,
@@ -701,9 +706,9 @@ impl Actions {
     }
 
     /// Move messages this handler has already read.
-    fn relocate_rows(
+    async fn relocate_rows(
         &self,
-        connection: &mut PooledConnection,
+        connection: &mut Checkout,
         rows: Vec<Message>,
         to: Destination,
         kind: UndoKind,
@@ -725,13 +730,14 @@ impl Actions {
         if let Destination::Mailbox(mailbox) = to {
             let target = MailboxRepository::new(connection)
                 .get(mailbox)
+                .await
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That folder no longer exists"))?;
             if target.account_id != account {
-                return self.cross_account_relocate(connection, rows, &target, kind);
+                return self.cross_account_relocate(connection, rows, &target, kind).await;
             }
         }
-        let destination = mailbox_for(connection, account, to)?;
+        let destination = mailbox_for(connection, account, to).await?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
         for message in &rows {
@@ -754,7 +760,7 @@ impl Actions {
         // keystroke does. This side opens the transaction and commits it;
         // the sync pass hands over the one it is already inside, which is
         // what ADR 0008 Q3 requires and why the verb takes a borrow.
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         postio_storage::actions::relocate(
             &transaction,
             account,
@@ -766,8 +772,9 @@ impl Actions {
             },
             at,
         )
+        .await
         .map_err(store_failure)?;
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         let removed: Vec<(MailboxId, Vec<MessageId>)> = by_source.into_iter().collect();
         let messages: Vec<MessageId> = removed
@@ -807,16 +814,16 @@ impl Actions {
     /// from the confirmed target UID, and `u` offering a plain move back
     /// would be offering something the servers cannot do. Filed as the
     /// follow-up this function's PR names.
-    fn cross_account_relocate(
+    async fn cross_account_relocate(
         &self,
-        connection: &mut PooledConnection,
+        connection: &mut Checkout,
         rows: Vec<Message>,
         target: &postio_model::Mailbox,
         kind: UndoKind,
     ) -> Result<Applied, CommandError> {
         let account = rows[0].account_id;
         let at = Utc::now();
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         let mut moved: Vec<MessageId> = Vec::new();
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
         {
@@ -843,10 +850,11 @@ impl Actions {
                 // account A's server minted (#940). A `MODSEQ` in particular
                 // means nothing outside the mailbox that issued it.
                 copy.server = postio_model::ServerIdentifiers::default();
-                let copy_id = messages.create(&mut copy).map_err(store_failure)?;
-                if let Some(body) = messages.body(row.id).map_err(store_failure)? {
+                let copy_id = messages.create(&mut copy).await.map_err(store_failure)?;
+                if let Some(body) = messages.body(row.id).await.map_err(store_failure)? {
                     messages
                         .set_body(copy_id, &body, row.sync.body_state)
+                        .await
                         .map_err(store_failure)?;
                 }
 
@@ -867,6 +875,7 @@ impl Actions {
                             .as_ref()
                             .map(|id| id.as_str().to_owned()),
                     })
+                    .await
                     .map_err(store_failure)?;
 
                 queue
@@ -876,6 +885,7 @@ impl Actions {
                         &Operation::CrossAccountCopy { saga },
                         at,
                     )
+                    .await
                     .map_err(store_failure)?;
                 queue
                     .enqueue(
@@ -884,16 +894,18 @@ impl Actions {
                         &Operation::CrossAccountRemove { saga },
                         at,
                     )
+                    .await
                     .map_err(store_failure)?;
                 messages
                     .set_deleted_locally(&[row.id], true)
+                    .await
                     .map_err(store_failure)?;
 
                 moved.push(row.id);
                 by_source.entry(row.mailbox_id).or_default().push(row.id);
             }
         }
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
             account,
@@ -924,13 +936,13 @@ impl Actions {
     /// and the repaint. `removed` rather than `changed`: the row does not
     /// merely look different, it leaves the list its mailbox is showing,
     /// which needs `Event::MessagesRemoved` rather than a per-row patch.
-    fn snooze(
+    async fn snooze(
         &self,
         target: &MessageTarget,
         until: chrono::DateTime<Utc>,
     ) -> Result<Applied, CommandError> {
-        let (connection, _permit) = self.connect()?;
-        let rows = match self.aim(&connection, target)? {
+        let (connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to snooze"));
@@ -940,6 +952,7 @@ impl Actions {
         let ids: Vec<MessageId> = rows.iter().map(|message| message.id).collect();
         MessageRepository::new(&connection)
             .snooze(&ids, until)
+            .await
             .map_err(store_failure)?;
 
         let mut removed: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
@@ -971,9 +984,9 @@ impl Actions {
     /// mailbox they were already filed in — nothing moved — so this is a
     /// wholesale repaint of each affected folder, potentially more than one
     /// at once for a selection spanning several.
-    fn unsnooze(&self, target: &MessageTarget) -> Result<Applied, CommandError> {
-        let (connection, _permit) = self.connect()?;
-        let rows = match self.aim(&connection, target)? {
+    async fn unsnooze(&self, target: &MessageTarget) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to unsnooze"));
@@ -983,6 +996,7 @@ impl Actions {
         let ids: Vec<MessageId> = rows.iter().map(|message| message.id).collect();
         MessageRepository::new(&connection)
             .unsnooze(&ids)
+            .await
             .map_err(store_failure)?;
 
         let reloaded: Vec<MailboxId> = rows
@@ -1017,14 +1031,14 @@ impl Actions {
     /// label with no name or colour to draw.
     ///
     /// `want` of `None` toggles, exactly as `Flag` does.
-    fn set_label(
+    async fn set_label(
         &self,
         target: &MessageTarget,
         label: LabelId,
         want: Option<bool>,
     ) -> Result<Applied, CommandError> {
-        let (mut connection, _permit) = self.connect()?;
-        let rows = match self.aim(&connection, target)? {
+        let (mut connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, target).await? {
             Aim::Rows(rows) => rows,
             // A whole mailbox at once would need the counted, three-statement
             // shape `set_flag_set` has, and there is no verb that asks for it
@@ -1041,22 +1055,26 @@ impl Actions {
             let repository = LabelRepository::new(&connection);
             repository
                 .get(label)
+                .await
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That label no longer exists"))?
                 .name
         };
         let keyword = Flag::Keyword(name);
 
+        // A loop rather than `map().collect()`: the read awaits, and a
+        // closure cannot.
         let carried: Vec<bool> = {
             let repository = LabelRepository::new(&connection);
-            rows.iter()
-                .map(|message| {
-                    repository
-                        .for_message(message.id)
-                        .map(|labels| labels.contains(&label))
-                        .map_err(store_failure)
-                })
-                .collect::<Result<_, _>>()?
+            let mut carried = Vec::with_capacity(rows.len());
+            for message in rows.iter() {
+                let labels = repository
+                    .for_message(message.id)
+                    .await
+                    .map_err(store_failure)?;
+                carried.push(labels.contains(&label));
+            }
+            carried
         };
         let wanted = want.unwrap_or_else(|| !carried.iter().all(|has| *has));
 
@@ -1072,16 +1090,16 @@ impl Actions {
 
         let one: FlagSet = std::iter::once(keyword.clone()).collect();
         let at = Utc::now();
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         {
             let labels = LabelRepository::new(&transaction);
             let messages = MessageRepository::new(&transaction);
             let queue = OperationQueueRepository::new(&transaction);
             for message in &touched {
                 if wanted {
-                    labels.attach(message.id, label).map_err(store_failure)?;
+                    labels.attach(message.id, label).await.map_err(store_failure)?;
                 } else {
-                    labels.detach(message.id, label).map_err(store_failure)?;
+                    labels.detach(message.id, label).await.map_err(store_failure)?;
                 }
                 let mut flags = message.flags.clone();
                 if wanted {
@@ -1091,6 +1109,7 @@ impl Actions {
                 }
                 messages
                     .set_flags(message.id, &flags, FlagSource::Local)
+                    .await
                     .map_err(store_failure)?;
                 let operation = if wanted {
                     Operation::SetFlags { flags: one.clone() }
@@ -1104,10 +1123,11 @@ impl Actions {
                         &operation,
                         at,
                     )
+                    .await
                     .map_err(store_failure)?;
             }
         }
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
         // Every touched row held the opposite value, so one command takes all
@@ -1146,21 +1166,22 @@ impl Actions {
     /// each of them would let a single keystroke flag one account while
     /// unflagging another — the unpredictable result the rule above exists to
     /// prevent, one level up (#811).
-    fn set_flag(
+    async fn set_flag(
         &self,
         target: &MessageTarget,
         flag: Flag,
         want: Option<bool>,
     ) -> Result<Vec<Applied>, CommandError> {
-        let (mut connection, _permit) = self.connect()?;
-        match self.aim(&connection, target)? {
+        let (mut connection, _permit) = self.connect().await?;
+        match self.aim(&connection, target).await? {
             Aim::Rows(rows) => self
                 .set_flag_rows(&mut connection, rows, flag, want)
+                .await
                 .map(|one| vec![one]),
             Aim::Bulk(units) => {
                 let wanted = match want {
                     Some(wanted) => wanted,
-                    None => self.agreeing_on(&connection, &units, &flag)?,
+                    None => self.agreeing_on(&connection, &units, &flag).await?,
                 };
                 let mut applied = Vec::with_capacity(units.len());
                 let mut nothing_to_do = None;
@@ -1172,7 +1193,7 @@ impl Actions {
                         unit.from,
                         flag.clone(),
                         Some(wanted),
-                    ) {
+                    ).await {
                         Ok(one) => applied.push(one),
                         // This account already agreed. That is not a failure
                         // for the accounts that did not — but if none of them
@@ -1197,9 +1218,9 @@ impl Actions {
     /// selection so the answer is one answer.
     ///
     /// [`set_flag_set`]: Actions::set_flag_set
-    fn agreeing_on(
+    async fn agreeing_on(
         &self,
-        connection: &PooledConnection,
+        connection: &Checkout,
         units: &[BulkUnit],
         flag: &Flag,
     ) -> Result<bool, CommandError> {
@@ -1209,6 +1230,7 @@ impl Actions {
         for unit in units {
             let disagreeing = repository
                 .count_set(&unit.set.clone().with_flag(column, false))
+                .await
                 .map_err(store_failure)?;
             if disagreeing > 0 {
                 return Ok(true);
@@ -1241,9 +1263,9 @@ impl Actions {
     /// set.
     ///
     /// [`set_flag_rows`]: Actions::set_flag_rows
-    fn set_flag_set(
+    async fn set_flag_set(
         &self,
-        connection: &mut PooledConnection,
+        connection: &mut Checkout,
         set: MessageSet,
         account: AccountId,
         from: Option<MailboxId>,
@@ -1259,9 +1281,11 @@ impl Actions {
         let carrying = |present: bool| set.clone().with_flag(column, present);
         let without = repository
             .count_set(&carrying(false))
+            .await
             .map_err(store_failure)? as usize;
         let with = repository
             .count_set(&carrying(true))
+            .await
             .map_err(store_failure)? as usize;
         if without + with == 0 {
             return Err(CommandError::rejected("There is nothing here to change"));
@@ -1288,6 +1312,7 @@ impl Actions {
             Some(from) => vec![from],
             None => MessageRepository::new(connection)
                 .mailboxes_of_set(&changing)
+                .await
                 .map_err(store_failure)?,
         };
 
@@ -1298,17 +1323,19 @@ impl Actions {
             Operation::ClearFlags { flags: one }
         };
         let at = Utc::now();
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         // Enqueue before writing, as a bulk move does: the predicate is "the
         // rows that disagree", and after the write none of them do.
         let range = OperationQueueRepository::new(&transaction)
             .enqueue_set(account, &changing, &operation, at)
+            .await
             .map_err(store_failure)?
             .ok_or_else(|| CommandError::rejected("Already set"))?;
         MessageRepository::new(&transaction)
             .set_flag_on_set(&changing, column, wanted)
+            .await
             .map_err(store_failure)?;
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         // Nothing moved, so `from` is carried through untouched: `None` in a
         // smart folder, where the rows stayed in as many folders as they
@@ -1346,9 +1373,9 @@ impl Actions {
     }
 
     /// Set or clear one flag across messages this handler has already read.
-    fn set_flag_rows(
+    async fn set_flag_rows(
         &self,
-        connection: &mut PooledConnection,
+        connection: &mut Checkout,
         rows: Vec<Message>,
         flag: Flag,
         want: Option<bool>,
@@ -1370,11 +1397,12 @@ impl Actions {
         // `postio-storage`'s half now (ADR 0028); the siblings it answers are
         // what the repaint below widens to. This side owns the transaction,
         // the rules pass hands over the one it is already inside.
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         let siblings =
             postio_storage::actions::set_flag(&transaction, account, &touched, &flag, wanted, at)
+                .await
                 .map_err(store_failure)?;
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         let changed: Vec<MessageId> = touched.iter().map(|message| message.id).collect();
         // What repaints is wider than what changed: the list's row for a
@@ -1418,7 +1446,7 @@ impl Actions {
     // ── Saying what happened ─────────────────────────────────────────────
 
     /// Emit what the panes repaint from, and record what `u` takes back.
-    fn announce(&self, applied: Applied, events: &EventSink, recording: Recording) {
+    async fn announce(&self, applied: Applied, events: &EventSink, recording: Recording) {
         let account = applied.account;
         for (mailbox, messages) in &applied.removed {
             events.emit(Event::MessagesRemoved {
@@ -1448,7 +1476,7 @@ impl Actions {
         if applied.mailboxes_changed {
             events.emit(Event::MailboxesChanged { account });
         }
-        if !recording.records() {
+        if !recording.records().await {
             return;
         }
         // A bulk unit knows its size and not its members, so it is recorded as
@@ -1476,15 +1504,15 @@ impl Actions {
     /// Never empty on success: a verb with nothing to act on is a rejection,
     /// not a no-op, or `a` on an empty list would look like the application
     /// ignoring the key.
-    fn rows(
+    async fn rows(
         &self,
-        connection: &PooledConnection,
+        connection: &Checkout,
         ids: Vec<MessageId>,
     ) -> Result<Vec<Message>, CommandError> {
         let repository = MessageRepository::new(connection);
         let mut rows = Vec::with_capacity(ids.len());
         for id in ids {
-            let Some(message) = repository.get(id).map_err(store_failure)? else {
+            let Some(message) = repository.get(id).await.map_err(store_failure)? else {
                 // The list is windowed over a database another half of the
                 // application is writing; a row can be gone by the time a
                 // key press reaches here.
@@ -1503,9 +1531,9 @@ impl Actions {
     /// The two whole-mailbox cases never become rows here. `Everything` is the
     /// selection the user built with `Ctrl+A`; `Batch` is undo taking one of
     /// those back. Both carry through to the store as SQL.
-    fn aim(
+    async fn aim(
         &self,
-        connection: &PooledConnection,
+        connection: &Checkout,
         target: &MessageTarget,
     ) -> Result<Aim, CommandError> {
         let resolved = self
@@ -1513,10 +1541,10 @@ impl Actions {
             .read(|app| app.resolve(target))
             .ok_or_else(|| CommandError::rejected("Nothing selected"))?;
         let units = match resolved {
-            Resolved::Messages(ids) => return self.rows(connection, ids).map(Aim::Rows),
+            Resolved::Messages(ids) => return self.rows(connection, ids).await.map(Aim::Rows),
             Resolved::Thread(thread) => {
-                let ids = thread_messages(connection, thread)?;
-                return self.rows(connection, ids).map(Aim::Rows);
+                let ids = thread_messages(connection, thread).await?;
+                return self.rows(connection, ids).await.map(Aim::Rows);
             }
             Resolved::Threads(threads) => {
                 // The unified group: every member thread's messages, in one
@@ -1524,9 +1552,9 @@ impl Actions {
                 // the rows into one unit per account queue.
                 let mut ids = Vec::new();
                 for thread in threads {
-                    ids.extend(thread_messages(connection, thread)?);
+                    ids.extend(thread_messages(connection, thread).await?);
                 }
-                return self.rows(connection, ids).map(Aim::Rows);
+                return self.rows(connection, ids).await.map(Aim::Rows);
             }
             Resolved::Everything { scope, except } => match scope {
                 ViewScope::Mailbox(mailbox) => vec![BulkUnit {
@@ -1534,7 +1562,7 @@ impl Actions {
                     // One row read, and it is a folder rather than a message:
                     // the account is needed to find the Archive, and there is
                     // no message to ask.
-                    account: account_of(connection, mailbox)?,
+                    account: account_of(connection, mailbox).await?,
                     from: Some(mailbox),
                 }],
                 // A smart folder carries its own account, so there is no
@@ -1585,9 +1613,9 @@ impl Actions {
     /// A whole-mailbox selection has no such message — `Ctrl+A` then `A` is a
     /// gesture with no answer rather than a bulk one, because "the thread of
     /// everything" is not a thing — so it is asked for rather than guessed at.
-    fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
-        let (connection, _permit) = self.connect()?;
-        let rows = match self.aim(&connection, &MessageTarget::Selection)? {
+    async fn thread_in_view(&self) -> Result<ThreadId, CommandError> {
+        let (connection, _permit) = self.connect().await?;
+        let rows = match self.aim(&connection, &MessageTarget::Selection).await? {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected(
@@ -1624,7 +1652,7 @@ impl Actions {
     /// store keeps no server attributes to re-derive a role from, so the
     /// honest local answer is "what you last chose, until the next pass",
     /// and the pane labels that state. Mail is never moved (#164).
-    fn map_mailbox_role(
+    async fn map_mailbox_role(
         &self,
         account: Option<AccountId>,
         role: Option<MailboxRole>,
@@ -1642,9 +1670,10 @@ impl Actions {
             ));
         }
 
-        let (mut connection, _permit) = self.connect()?;
+        let (mut connection, _permit) = self.connect().await?;
         let previous = MailboxRoleRepository::new(&connection)
             .for_account(account)
+            .await
             .map_err(store_failure)?
             .into_iter()
             .find(|(mapped, _)| *mapped == role)
@@ -1653,18 +1682,19 @@ impl Actions {
             return Err(CommandError::rejected("Already mapped there"));
         }
 
-        let transaction = connection.transaction().map_err(store_failure)?;
+        let transaction = connection.transaction().await.map_err(store_failure)?;
         let roles = MailboxRoleRepository::new(&transaction);
         let mailboxes = MailboxRepository::new(&transaction);
         match path {
             Some(path) => {
                 let chosen = mailboxes
                     .by_path(account, path)
+                    .await
                     .map_err(store_failure)?
                     .filter(|mailbox| mailbox.selectable)
                     .ok_or_else(|| CommandError::rejected("This account has no such folder"))?;
-                roles.set(account, role, path).map_err(store_failure)?;
-                for mut mailbox in mailboxes.list_for_account(account).map_err(store_failure)? {
+                roles.set(account, role, path).await.map_err(store_failure)?;
+                for mut mailbox in mailboxes.list_for_account(account).await.map_err(store_failure)? {
                     let wanted = if mailbox.id == chosen.id {
                         role
                     } else if mailbox.role == role {
@@ -1674,13 +1704,13 @@ impl Actions {
                     };
                     if mailbox.role != wanted {
                         mailbox.role = wanted;
-                        mailboxes.update(&mailbox).map_err(store_failure)?;
+                        mailboxes.update(&mailbox).await.map_err(store_failure)?;
                     }
                 }
             }
-            None => roles.clear(account, role).map_err(store_failure)?,
+            None => roles.clear(account, role).await.map_err(store_failure)?,
         }
-        transaction.commit().map_err(store_failure)?;
+        transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
             account,
@@ -1707,10 +1737,10 @@ impl Actions {
     /// than a shortcut: the draft's state and the `Send` operation are
     /// written in one transaction, which is what keeps a queued row from
     /// being one nothing will ever pick up.
-    fn retry_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
-        let (connection, _permit) = self.connect()?;
+    async fn retry_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
         let drafts = DraftRepository::new(&connection);
-        let mut draft = self.stopped_send(&connection, &drafts, draft)?;
+        let mut draft = self.stopped_send(&connection, &drafts, draft).await?;
 
         // Only the states that mean "it did not go". `Editing` belongs to the
         // composer, where the user can see what they are about to post, and
@@ -1729,6 +1759,7 @@ impl Actions {
         let account = draft.account_id;
         drafts
             .queue_send(&mut draft, Utc::now())
+            .await
             .map_err(store_failure)?;
         Ok(Applied {
             account,
@@ -1754,16 +1785,17 @@ impl Actions {
     /// cancelling a submission that may already have reached the server, and
     /// `cancel_send` reports which of the three happened rather than
     /// answering a bare bool.
-    fn cancel_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+    async fn cancel_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
         use postio_storage::repository::CancelSendOutcome;
 
-        let (connection, _permit) = self.connect()?;
+        let (connection, _permit) = self.connect().await?;
         let drafts = DraftRepository::new(&connection);
-        let draft = self.stopped_send(&connection, &drafts, draft)?;
+        let draft = self.stopped_send(&connection, &drafts, draft).await?;
         let account = draft.account_id;
 
         match drafts
             .cancel_send(draft.id, Utc::now())
+            .await
             .map_err(store_failure)?
         {
             CancelSendOutcome::Cancelled => Ok(Applied {
@@ -1797,19 +1829,20 @@ impl Actions {
     /// Shared because both verbs are reached the same two ways -- from the
     /// Outbox, where a row is selected and there is no composer, and from the
     /// composer, where the draft is named outright.
-    fn stopped_send(
+    async fn stopped_send(
         &self,
-        connection: &PooledConnection,
+        connection: &Checkout,
         drafts: &DraftRepository<'_>,
         draft: Option<DraftId>,
     ) -> Result<postio_model::Draft, CommandError> {
         match draft {
             Some(id) => drafts
                 .get(id)
+                .await
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That draft is no longer here")),
             None => {
-                let rows = match self.aim(connection, &MessageTarget::Selection)? {
+                let rows = match self.aim(connection, &MessageTarget::Selection).await? {
                     Aim::Rows(rows) => rows,
                     Aim::Bulk { .. } => {
                         return Err(CommandError::rejected("Pick the message this is about"));
@@ -1817,23 +1850,25 @@ impl Actions {
                 };
                 drafts
                     .by_message(rows[0].id)
+                    .await
                     .map_err(store_failure)?
                     .ok_or_else(|| CommandError::rejected("That row is not a message being sent"))
             }
         }
     }
 
-    fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
-        let (connection, _permit) = self.connect()?;
+    async fn mark_sent(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
+        let (connection, _permit) = self.connect().await?;
         let drafts = DraftRepository::new(&connection);
 
         let draft = match draft {
             Some(id) => drafts
                 .get(id)
+                .await
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That draft is no longer here"))?,
             None => {
-                let rows = match self.aim(&connection, &MessageTarget::Selection)? {
+                let rows = match self.aim(&connection, &MessageTarget::Selection).await? {
                     Aim::Rows(rows) => rows,
                     Aim::Bulk { .. } => {
                         return Err(CommandError::rejected("Pick the message this is about"));
@@ -1841,6 +1876,7 @@ impl Actions {
                 };
                 drafts
                     .by_message(rows[0].id)
+                    .await
                     .map_err(store_failure)?
                     .ok_or_else(|| {
                         CommandError::rejected("That row is not a draft Postio is unsure about")
@@ -1860,6 +1896,7 @@ impl Actions {
 
         drafts
             .set_state(draft.id, DraftState::Sent)
+            .await
             .map_err(store_failure)?;
         Ok(Applied {
             account: draft.account_id,
@@ -1918,8 +1955,8 @@ impl Actions {
     /// a backfill nothing measurable — they are indexed point reads on a
     /// human's schedule, not scans — and it keeps the pairing impossible to
     /// get wrong.
-    fn connect(&self) -> Result<(PooledConnection, WritePermit), CommandError> {
-        let connection = self.database.connection().map_err(store_failure)?;
+    async fn connect(&self) -> Result<(Checkout, WritePermit), CommandError> {
+        let connection = self.database.connect().await.map_err(store_failure)?;
         let permit = self
             .database
             .write_gate()
@@ -1937,8 +1974,8 @@ impl Actions {
 }
 
 /// Which folder a relocation lands in.
-fn mailbox_for(
-    connection: &PooledConnection,
+async fn mailbox_for(
+    connection: &Checkout,
     account: AccountId,
     to: Destination,
 ) -> Result<MailboxId, CommandError> {
@@ -1946,6 +1983,7 @@ fn mailbox_for(
         Destination::Mailbox(id) => Ok(id),
         Destination::Role(role) => MailboxRepository::new(connection)
             .by_role(account, role)
+            .await
             .map_err(store_failure)?
             .map(|mailbox| mailbox.id)
             .ok_or_else(|| {
@@ -1959,12 +1997,13 @@ fn mailbox_for(
     }
 }
 
-fn thread_messages(
-    connection: &PooledConnection,
+async fn thread_messages(
+    connection: &Checkout,
     thread: ThreadId,
 ) -> Result<Vec<MessageId>, CommandError> {
     let rows = ThreadRepository::new(connection)
         .messages(thread, ThreadOrder::Oldest)
+        .await
         .map_err(store_failure)?;
     if rows.is_empty() {
         return Err(CommandError::rejected("That thread is empty"));
@@ -1999,12 +2038,13 @@ fn store_failure(error: impl std::fmt::Display) -> CommandError {
 /// One row read, and it is a folder rather than a message: a whole-folder
 /// selection names no message to ask, and the account is what finds the
 /// Archive. A scope that already carries its account does not come here.
-fn account_of(
-    connection: &PooledConnection,
+async fn account_of(
+    connection: &Checkout,
     mailbox: MailboxId,
 ) -> Result<AccountId, CommandError> {
     Ok(MailboxRepository::new(connection)
         .get(mailbox)
+        .await
         .map_err(store_failure)?
         .ok_or_else(|| CommandError::rejected("That folder is no longer here"))?
         .account_id)
@@ -2027,12 +2067,14 @@ pub fn dispatcher(actions: Actions) -> postio_core::Dispatcher {
 pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
     builder.on_each(WIRED.iter().copied(), move |invocation| {
         let actions = actions.clone();
-        // Synchronous on purpose: a local-first verb is a handful of
+        // Awaited rather than spawned, which is the same guarantee the
+        // comment here always made: a local-first verb is a handful of
         // indexed writes and their queue rows, and the bus awaits each
         // handler so app state and the undo stack see a total order.
-        // Anything that could actually take time belongs on a spawned
-        // task reporting through its own events.
-        async move { actions.run(&invocation.command, &invocation.events()) }
+        // Anything that could actually take time belongs on a spawned task
+        // reporting through its own events. What changed is only that the
+        // writes themselves are now awaited rather than blocking.
+        async move { actions.run(&invocation.command, &invocation.events()).await }
     })
 }
 
@@ -2041,7 +2083,7 @@ pub fn wire(builder: DispatcherBuilder, actions: Actions) -> DispatcherBuilder {
 /// Deleting rather than letting them run and be skipped: an operation left
 /// in the queue is one that reaches a server, and the whole point of undoing
 /// at `confirmed` is that the forward removal must never run.
-fn withdraw_pending(
+async fn withdraw_pending(
     queue: &OperationQueueRepository<'_>,
     message: Option<MessageId>,
 ) -> Result<(), CommandError> {
@@ -2050,15 +2092,16 @@ fn withdraw_pending(
     };
     while let Some(operation) = queue
         .pending_for(postio_model::OperationTarget::Message(message))
+        .await
         .map_err(store_failure)?
     {
-        queue.delete(operation.id).map_err(store_failure)?;
+        queue.delete(operation.id).await.map_err(store_failure)?;
     }
     Ok(())
 }
 
 /// Undo a saga nothing has left the machine for: pure bookkeeping.
-fn cancel_one(
+async fn cancel_one(
     messages: &MessageRepository<'_>,
     queue: &OperationQueueRepository<'_>,
     sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
@@ -2066,18 +2109,20 @@ fn cancel_one(
 ) -> Result<(), CommandError> {
     // The queue rows first, so a crash between here and the end cannot leave
     // an operation pointing at a row that is gone.
-    withdraw_pending(queue, saga.source_message)?;
-    withdraw_pending(queue, saga.target_message)?;
+    withdraw_pending(queue, saga.source_message).await?;
+    withdraw_pending(queue, saga.target_message).await?;
     if let Some(copy) = saga.target_message {
-        messages.delete(&[copy]).map_err(store_failure)?;
+        messages.delete(&[copy]).await.map_err(store_failure)?;
     }
     if let Some(source) = saga.source_message {
         messages
             .set_deleted_locally(&[source], false)
+            .await
             .map_err(store_failure)?;
     }
     sagas
         .transition(saga.id, postio_storage::repository::MovePhase::Aborted)
+        .await
         .map_err(store_failure)?;
     Ok(())
 }
@@ -2097,7 +2142,7 @@ fn cancel_one(
 /// 1 is idempotent by Message-ID, so when the source copy is still on the
 /// server (the `confirmed` case) the inverse's append finds it and confirms
 /// without making a second.
-fn invert_one(
+async fn invert_one(
     messages: &MessageRepository<'_>,
     queue: &OperationQueueRepository<'_>,
     sagas: &postio_storage::repository::CrossAccountMoveRepository<'_>,
@@ -2120,6 +2165,7 @@ fn invert_one(
 
     let row = messages
         .get(copy)
+        .await
         .map_err(store_failure)?
         .ok_or_else(|| CommandError::rejected("That message is no longer in the store"))?;
 
@@ -2139,6 +2185,7 @@ fn invert_one(
                 .map(|blob| blob.as_str().to_owned()),
             rfc_message_id: row.rfc_message_id.as_ref().map(|id| id.as_str().to_owned()),
         })
+        .await
         .map_err(store_failure)?;
 
     queue
@@ -2148,6 +2195,7 @@ fn invert_one(
             &Operation::CrossAccountCopy { saga: inverse },
             at,
         )
+        .await
         .map_err(store_failure)?;
     // Enqueued while the copy still carries the identity phase 2 wrote onto
     // it, which is what `source_remote_id` snapshots — the ordering #289
@@ -2160,13 +2208,16 @@ fn invert_one(
             &Operation::CrossAccountRemove { saga: inverse },
             at,
         )
+        .await
         .map_err(store_failure)?;
 
     messages
         .set_deleted_locally(&[original], false)
+        .await
         .map_err(store_failure)?;
     messages
         .set_deleted_locally(&[copy], true)
+        .await
         .map_err(store_failure)?;
     Ok(())
 }
@@ -2197,7 +2248,7 @@ mod tests {
     /// An account with the three folders every verb here reaches for, and a
     /// bus over it.
     struct World {
-        database: Database,
+        database: Store,
         account: Account,
         inbox: MailboxId,
         archive: MailboxId,
@@ -2221,7 +2272,7 @@ mod tests {
     fn world() -> World {
         let database = test_support::memory();
         let (account, inbox, archive, trash) = {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection);
             let archive = test_support::mailbox(&connection, &account, "Archive").id;
             let trash = test_support::mailbox(&connection, &account, "Trash").id;
@@ -2247,7 +2298,7 @@ mod tests {
     impl World {
         /// A message in `mailbox`, `flags` already on it.
         fn message(&self, mailbox: MailboxId, flags: &[Flag]) -> MessageId {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let mut message = Message::new(self.account.id, mailbox, Utc::now());
             for flag in flags {
                 message.flags.insert(flag.clone());
@@ -2282,7 +2333,7 @@ mod tests {
         /// every one of them at the same address, which the accounts table
         /// will not have twice.
         fn second_account(&self) -> Elsewhere {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let mut account = Account::new(
                 "Away",
                 postio_model::EmailAddress::new(Some("Away User"), "away@example.com"),
@@ -2303,7 +2354,7 @@ mod tests {
 
         /// A message in another account's `mailbox`.
         fn message_for(&self, account: &Account, mailbox: MailboxId, flags: &[Flag]) -> MessageId {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let mut message = Message::new(account.id, mailbox, Utc::now());
             for flag in flags {
                 message.flags.insert(flag.clone());
@@ -2338,7 +2389,7 @@ mod tests {
 
         /// Puts one flag on a message that is already stored.
         fn flag(&self, message: MessageId, flag: Flag) {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let repository = MessageRepository::new(&connection);
             let mut flags = repository
                 .get(message)
@@ -2352,7 +2403,7 @@ mod tests {
         }
 
         fn count_in(&self, mailbox: MailboxId) -> u32 {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .count_set(&MessageSet::in_mailbox(mailbox))
                 .expect("a count")
@@ -2372,7 +2423,7 @@ mod tests {
 
         /// Two folders that both look like the sent folder, #943's shape.
         fn two_sent_folders(&self) -> (MailboxId, MailboxId) {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let sent = test_support::mailbox(&connection, &self.account, "Sent");
             let sent_messages = test_support::mailbox(&connection, &self.account, "Sent Messages");
             (sent.id, sent_messages.id)
@@ -2380,7 +2431,7 @@ mod tests {
 
         /// The selectable rows wearing `role`, by path.
         fn wearing(&self, role: postio_model::MailboxRole) -> Vec<MailboxId> {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             MailboxRepository::new(&connection)
                 .list_for_account(self.account.id)
                 .expect("a read")
@@ -2392,7 +2443,7 @@ mod tests {
 
         /// What the account's own map says for `role`.
         fn mapped(&self, role: postio_model::MailboxRole) -> Option<String> {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             postio_storage::repository::MailboxRoleRepository::new(&connection)
                 .for_account(self.account.id)
                 .expect("a read")
@@ -2410,7 +2461,7 @@ mod tests {
         }
 
         fn mailbox_of(&self, message: MessageId) -> MailboxId {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .get(message)
                 .expect("a read")
@@ -2420,7 +2471,7 @@ mod tests {
 
         /// A label on this world's account.
         fn label(&self, name: &str) -> postio_model::LabelId {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let mut label = postio_model::Label::new(self.account.id, name);
             postio_storage::repository::LabelRepository::new(&connection)
                 .create(&mut label)
@@ -2428,14 +2479,14 @@ mod tests {
         }
 
         fn labels_of(&self, message: MessageId) -> Vec<postio_model::LabelId> {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             postio_storage::repository::LabelRepository::new(&connection)
                 .for_message(message)
                 .expect("a read")
         }
 
         fn flags_of(&self, message: MessageId) -> postio_model::FlagSet {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .get(message)
                 .expect("a read")
@@ -2444,7 +2495,7 @@ mod tests {
         }
 
         fn snoozed_until_of(&self, message: MessageId) -> Option<chrono::DateTime<Utc>> {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .get(message)
                 .expect("a read")
@@ -2454,7 +2505,7 @@ mod tests {
 
         /// The queue the sync engine will drain when there is a link again.
         fn queued(&self) -> Vec<(OperationTarget, Operation)> {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             OperationQueueRepository::new(&connection)
                 .pending(self.account.id, Utc::now())
                 .expect("a read")
@@ -2489,7 +2540,7 @@ mod tests {
 
         // A second account, with its own inbox and its own Archive.
         let (other_account, other_inbox, other_archive) = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut account = postio_model::Account::new(
                 "Other",
                 postio_model::EmailAddress::new(Some("Other"), "other@example.net"),
@@ -2504,7 +2555,7 @@ mod tests {
 
         let mine = world.message(world.inbox, &[]);
         let theirs = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut message = Message::new(other_account.id, other_inbox, Utc::now());
             MessageRepository::new(&connection)
                 .create(&mut message)
@@ -2537,7 +2588,7 @@ mod tests {
         // queue: rows are per account, and `world.queued()` only sees the
         // first one's — which is the point.
         let theirs_queued: Vec<(OperationTarget, Operation)> = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             OperationQueueRepository::new(&connection)
                 .pending(other_account.id, Utc::now())
                 .expect("a read")
@@ -2667,7 +2718,7 @@ mod tests {
         let first = world.message(world.inbox, &[]);
         let second = world.message(world.inbox, &[]);
         let thread = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).expect("a thread");
@@ -2917,7 +2968,7 @@ mod tests {
         // needs to be able to say so.
         let world = world();
         let id = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let drafts = postio_storage::repository::DraftRepository::new(&connection);
             let mut draft = postio_model::Draft::new(world.account.id);
             draft.to = vec![postio_model::EmailAddress::new(
@@ -2935,7 +2986,7 @@ mod tests {
             .run(Command::MarkSent { draft: Some(id) })
             .expect("marking it sent applies");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         assert_eq!(
             postio_storage::repository::DraftRepository::new(&connection)
                 .get(id)
@@ -3067,7 +3118,7 @@ mod tests {
         // being offered for editing.
         let world = world();
         let id = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let drafts = postio_storage::repository::DraftRepository::new(&connection);
             let mut draft = postio_model::Draft::new(world.account.id);
             drafts.save(&mut draft).expect("save")
@@ -3080,7 +3131,7 @@ mod tests {
         assert!(matches!(error, CommandError::Rejected(_)), "{error:?}");
         assert_eq!(
             postio_storage::repository::DraftRepository::new(
-                &world.database.connection().expect("a connection")
+                &world.database.connect().await.expect("a connection")
             )
             .get(id)
             .expect("read")
@@ -3129,7 +3180,7 @@ mod tests {
         let second = world.message(world.inbox, &[]);
         let third = world.message(world.inbox, &[]);
         let thread = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).expect("a thread");
@@ -3143,7 +3194,7 @@ mod tests {
             .run(Command::MarkReadOnDwell { message: first })
             .expect("the dwell mark applies");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let record = ThreadRepository::new(&connection)
             .get(thread)
             .expect("a read")
@@ -3167,7 +3218,7 @@ mod tests {
         let second = world.message(world.inbox, &[]);
         let third = world.message(world.inbox, &[]);
         {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).expect("a thread");
@@ -3948,7 +3999,7 @@ mod tests {
         // what turns it into per-account units.
         let world = world();
         let (second, second_inbox, second_archive) = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut account = postio_model::Account::new(
                 "Second",
                 postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -3963,7 +4014,7 @@ mod tests {
 
         // The same message at both addresses, threaded in each account.
         let file = |account: AccountId, mailbox: MailboxId| -> ThreadId {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut message = Message::new(account, mailbox, Utc::now());
             message.rfc_message_id = Some(postio_model::RfcMessageId::new("<pair@example.com>"));
             message.subject = Some("Paired".to_owned());
@@ -3984,7 +4035,7 @@ mod tests {
             })
             .expect("the group archives");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         let in_archive = |mailbox: MailboxId| -> u32 {
             messages
@@ -4026,7 +4077,7 @@ mod tests {
         // table so nothing deletes before the copy is confirmed.
         let world = world();
         let (second, second_inbox) = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut account = postio_model::Account::new(
                 "Second",
                 postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -4047,7 +4098,7 @@ mod tests {
             })
             .expect("the move starts");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
         let source_ops = queue.pending(world.account.id, Utc::now()).expect("queue");
         let target_ops = queue.pending(second, Utc::now()).expect("queue");
@@ -4079,7 +4130,7 @@ mod tests {
 
     /// A world with a second account and its inbox, for the saga tests.
     fn second_account(world: &World) -> (postio_model::ids::AccountId, MailboxId) {
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let mut account = postio_model::Account::new(
             "Second",
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
@@ -4120,7 +4171,7 @@ mod tests {
         // fields, or the copy has nothing to wrongly inherit and the test
         // cannot fail.
         let source = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut message = Message::new(world.account.id, world.inbox, Utc::now());
             message.server.uid = Some(4242.into());
             message.server.uid_validity = Some(9.into());
@@ -4143,7 +4194,7 @@ mod tests {
         // handed: the struct is correct right up until `insert` persists all
         // four fields, so anything asserted before the round trip cannot see
         // this bug.
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         let stored: Vec<Message> = messages
             .page(&postio_storage::repository::ListQuery {
@@ -4210,7 +4261,7 @@ mod tests {
         phase: postio_storage::repository::MovePhase,
     ) {
         use postio_storage::repository::{CrossAccountMoveRepository, MovePhase};
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let sagas = CrossAccountMoveRepository::new(&connection);
         let id = sagas
             .for_sources(&[source], OPEN_PHASES)
@@ -4255,7 +4306,7 @@ mod tests {
     /// The saga the world holds, whatever phase it is in.
     fn only_saga(world: &World, source: MessageId) -> postio_storage::repository::CrossAccountMove {
         use postio_storage::repository::MovePhase;
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let mut all = postio_storage::repository::CrossAccountMoveRepository::new(&connection)
             .for_sources(
                 &[source],
@@ -4306,7 +4357,7 @@ mod tests {
             .run(Command::Undo)
             .expect("undo starts the inverse saga");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
 
         // ── what the user sees, immediately ─────────────────────────────
@@ -4400,7 +4451,7 @@ mod tests {
 
         world.run(Command::Undo).expect("undo cancels the saga");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         let source_row = messages.get(message).expect("read").expect("the row");
         assert!(
@@ -4478,7 +4529,7 @@ mod tests {
 
         // The hazard, before the undo: A's queue is holding the removal.
         {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let pending: Vec<String> =
                 postio_storage::repository::OperationQueueRepository::new(&connection)
                     .pending(world.account.id, Utc::now())
@@ -4495,7 +4546,7 @@ mod tests {
 
         world.run(Command::Undo).expect("undo inverts the saga");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let sagas = CrossAccountMoveRepository::new(&connection);
         assert_eq!(
             sagas
@@ -4566,7 +4617,7 @@ mod tests {
         // One reaches the target and proves it; the other cannot be proven.
         advance_saga(&world, first, MovePhase::Done);
         {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let sagas = CrossAccountMoveRepository::new(&connection);
             let id = sagas
                 .for_sources(&[second_message], OPEN_PHASES)
@@ -4597,7 +4648,7 @@ mod tests {
              user believes they have both: {said:?}"
         );
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         assert!(
             !messages
@@ -4643,7 +4694,7 @@ mod tests {
 
         // Walk the saga to the one phase that cannot be walked back.
         {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let sagas = postio_storage::repository::CrossAccountMoveRepository::new(&connection);
             let id = sagas
                 .for_sources(&[message], OPEN_PHASES)
@@ -4662,7 +4713,7 @@ mod tests {
             outcome.is_err(),
             "an unprovable copy cannot be undone by guessing"
         );
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let source_row = MessageRepository::new(&connection)
             .get(message)
             .expect("read")
@@ -4694,7 +4745,7 @@ mod tests {
             })
             .expect("the move applies");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
         let ops = queue.pending(world.account.id, Utc::now()).expect("queue");
         assert_eq!(ops.len(), 1, "one operation on one queue");
@@ -4725,7 +4776,7 @@ mod tests {
     fn an_account_with_no_archive_folder_says_so() {
         let world = world();
         {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mailboxes = MailboxRepository::new(&connection);
             let archive = mailboxes
                 .get(world.archive)
@@ -4888,7 +4939,7 @@ mod tests {
             })
             .expect("label it");
 
-        let connection = world.database.connection().expect("a connection");
+        let connection = world.database.connect().await.expect("a connection");
         let queued = OperationQueueRepository::new(&connection)
             .pending(world.account.id, Utc::now())
             .expect("the queue");

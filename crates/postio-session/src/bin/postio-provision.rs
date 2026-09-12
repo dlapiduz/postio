@@ -56,6 +56,20 @@ fn env(name: &str) -> Option<String> {
 }
 
 fn main() -> ExitCode {
+    // The runtime comes first now: opening the store is async, so everything
+    // below it is too, and there is nothing left for a synchronous `main` to
+    // do before one exists.
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("postio: cannot start a runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    runtime.block_on(run())
+}
+
+async fn run() -> ExitCode {
     let Some(address) = env("POSTIO_ADDRESS") else {
         eprintln!("set POSTIO_ADDRESS to the address to add, e.g. you@your-provider.example");
         return ExitCode::FAILURE;
@@ -99,10 +113,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // `open_store`, not `Database::open`: it is what runs ADR 0014 Q4's
-    // plaintext-to-encrypted migration, so this opens the same store the
-    // application would rather than failing on one it has not converted yet.
-    let (database, _blobs) = match postio_session::open_store(&store_key) {
+    // `open_store`, not `Store::open`: it opens the blob store beside the
+    // database and builds the search index, which is what the application
+    // does -- so this provisions into the same store rather than a partial
+    // one.
+    let (database, _blobs) = match postio_session::open_store(&store_key).await {
         Ok(opened) => opened,
         Err(message) => {
             eprintln!("postio: {message}");
@@ -110,19 +125,13 @@ fn main() -> ExitCode {
         }
     };
 
-    let runtime = match tokio::runtime::Runtime::new() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("postio: cannot start a runtime: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let outcome = runtime.block_on(provision(
+    let outcome = provision(
         &database,
         secrets.as_ref(),
         account_from(&settings),
         Password::new(password),
-    ));
+    )
+    .await;
 
     match outcome {
         Ok(Provisioned::Created(id)) => {
