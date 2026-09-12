@@ -927,3 +927,190 @@ async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
         backend.created()
     );
 }
+
+#[tokio::test]
+async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
+    // FR-031. A refusal is a thing the user can act on -- it is usually a
+    // permission -- so the server's own words are kept for the settings pane.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+    backend.refuse_creates("Permission denied");
+
+    let report = discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("a refusal is not fatal to the pass");
+
+    assert_eq!(
+        roles_with_a_folder(&connection, &account),
+        vec![MailboxRole::Inbox],
+        "nothing was created, so only the folder the server actually has resolves"
+    );
+    assert!(
+        report.known() > 0,
+        "the pass still completed and the account is still usable: {report:?}"
+    );
+
+    let refusals = MailboxRoleRepository::new(&connection)
+        .refusals(account.id)
+        .expect("refusals");
+    let roles: Vec<MailboxRole> = refusals.iter().map(|(role, _)| *role).collect();
+    assert_eq!(
+        roles,
+        vec![
+            MailboxRole::Archive,
+            MailboxRole::Drafts,
+            MailboxRole::Junk,
+            MailboxRole::Sent,
+            MailboxRole::Trash
+        ],
+        "every role that was refused is written down"
+    );
+    assert!(
+        refusals
+            .iter()
+            .all(|(_, reason)| reason.contains("Permission denied")),
+        "the server's own words are what tell somebody what to fix: {refusals:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_is_not_retried_on_the_next_pass() {
+    // The expensive version of this bug is silent: a CREATE per role per pass,
+    // against the user's real server, forever.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+    backend.refuse_creates("Permission denied");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("first pass");
+    let after_first = backend.created().len();
+    assert_eq!(after_first, 5, "the first pass asks once per missing role");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("second pass");
+
+    assert_eq!(
+        backend.created().len(),
+        after_first,
+        "a server that will never allow a folder was asked again"
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_for_one_role_does_not_stop_the_others() {
+    // A single awkward folder must not cost the account every other role.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+
+    // Junk alone is already known to be refused -- the state the pass after a
+    // refusal starts in.
+    MailboxRoleRepository::new(&connection)
+        .refuse(account.id, MailboxRole::Junk, "Permission denied")
+        .expect("record a standing refusal for Junk alone");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    // Exact, not `contains`: the four that were not refused must *all* resolve
+    // and Junk must *not*, which a containment check would let slide either
+    // way round.
+    assert_eq!(
+        roles_with_a_folder(&connection, &account),
+        vec![
+            MailboxRole::Inbox,
+            MailboxRole::Archive,
+            MailboxRole::Sent,
+            MailboxRole::Drafts,
+            MailboxRole::Trash
+        ],
+        "one refused role cost the others, or Junk was created anyway"
+    );
+    let mut created = backend.created();
+    created.sort();
+    assert_eq!(
+        created,
+        vec!["Archive", "Drafts", "Sent", "Trash"],
+        "the standing refusal has to keep Junk out of the asking entirely"
+    );
+}
+
+#[tokio::test]
+async fn a_mailbox_that_already_exists_is_not_an_error() {
+    // Two clients may race, and servers spell "already exists" differently.
+    // What the caller wants is the folder to exist, not to have made it.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+
+    // The server gains the folder between the listing and the create.
+    backend
+        .create_mailbox("Archive")
+        .await
+        .expect("the folder appears");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("an existing folder is not a failure");
+
+    assert_eq!(
+        roles_with_a_folder(&connection, &account),
+        MailboxRole::RESERVED.to_vec()
+    );
+    assert!(
+        MailboxRoleRepository::new(&connection)
+            .refusals(account.id)
+            .expect("refusals")
+            .is_empty(),
+        "nothing was refused"
+    );
+}
+
+#[tokio::test]
+async fn a_created_folder_is_named_after_its_role_whatever_the_provider() {
+    // FR-030, and Principle VII: providers are data, not code. Postio is not
+    // built for any one provider and the code must not say otherwise, so the
+    // name of a folder it creates cannot depend on which server answered.
+    //
+    // Not "two presets, two names": the preset table holds hosts, ports and
+    // security, and carries no folder names at all. Presets that name folders
+    // are #959's durable answer and `spec.md` puts them out of scope. What is
+    // checkable now is that two entirely different servers get identical
+    // names, which is what a provider-specific branch would break.
+    let names_for = |host: &'static str| async move {
+        let database = test_support::memory();
+        let connection = database.connection().expect("checkout");
+        let account = an_account(&connection);
+        let backend = MockBackend::builder()
+            .host(host)
+            .mailbox(MockMailbox::new("INBOX"))
+            .build();
+        backend.connect().await.expect("connect");
+
+        discover(&connection, &backend, account.id, &RoleOverrides::default())
+            .await
+            .expect("discover");
+        let mut created = backend.created();
+        created.sort();
+        created
+    };
+
+    let one = names_for("imap.example.com").await;
+    let other = names_for("imap.example.net").await;
+
+    assert_eq!(one, vec!["Archive", "Drafts", "Junk", "Sent", "Trash"]);
+    assert_eq!(
+        one, other,
+        "the folder names changed with the server, which is the branch \
+         Principle VII forbids"
+    );
+}

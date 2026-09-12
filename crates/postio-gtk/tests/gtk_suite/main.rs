@@ -730,6 +730,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "gtk_settings_account_detail::a_role_the_server_refused_to_create_says_so_and_says_why",
+        gtk_settings_account_detail::a_role_the_server_refused_to_create_says_so_and_says_why as fn(),
+    ),
+    (
         "gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none",
         gtk_settings_filters::filters_render_as_rows_and_hide_when_there_are_none as fn(),
     ),

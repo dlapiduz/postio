@@ -95,11 +95,11 @@ once.
 - [X] T015 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server listing only `INBOX` ends discovery with one selectable mailbox per reserved role, one create per missing role
 - [X] T016 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a second pass over the same account issues **zero** creates (SC-007, FR-028)
 - [X] T017 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: `Inbox` is never created, even when the server does not list it (FR-029)
-- [ ] T018 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refused create leaves the role unmapped and shown, records the server's reason, and the next pass makes no second attempt (FR-031)
-- [ ] T019 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refusal for one role does not stop the others resolving
-- [ ] T020 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server reporting the mailbox already exists is treated as success
-- [ ] T021 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: the created name comes from the role or the preset table, asserted by two presets producing two names (FR-030)
-- [ ] T022 [P] [US3] Test in `crates/postio-storage/tests/storage_suite/mailbox_roles.rs`: a refusal is recorded per account-and-role and cleared when the map changes or the folder appears
+- [X] T018 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refused create leaves the role unmapped and shown, records the server's reason, and the next pass makes no second attempt (FR-031)
+- [X] T019 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a refusal for one role does not stop the others resolving
+- [X] T020 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: a server reporting the mailbox already exists is treated as success
+- [X] T021 [P] [US3] Test in `crates/postio-sync/tests/sync_suite/discover.rs`: the created name is the role's own, identical on every provider (FR-030). **Not** "two presets, two names" as first written — the preset table holds server settings and carries no folder names, and `spec.md` § Out of Scope excludes filling it (#959's durable answer). What FR-030 forbids *today* is a provider-specific branch, and that is what is asserted
+- [X] T022 [P] [US3] Test in `crates/postio-storage/tests/storage_suite/mailbox_roles.rs`: a refusal is recorded per account-and-role and cleared when the map changes or the folder appears
 
 ### Implementation
 
@@ -112,7 +112,7 @@ once.
 - [X] T029 [US3] Read and write the refusal in `crates/postio-storage/src/repository/mailbox_roles.rs`, including clearing it
 - [X] T030 [US3] In `crates/postio-sync/src/discover.rs`, create a reserved role's folder when every tier resolves to nothing — never for `Inbox`, never when a refusal is recorded, never twice
 - [X] T031 [US3] Record a refusal rather than failing the pass in `crates/postio-sync/src/discover.rs`; the other roles still resolve and the account stays usable
-- [ ] T032 [US3] Show an unmapped role and the server's reason in the account's Mailboxes rows in `crates/postio-gtk/src/settings.rs`
+- [X] T032 [US3] Show an unmapped role and the server's reason in the account's Mailboxes rows in `crates/postio-gtk/src/settings.rs`
 - [X] T033 [US3] Log the account id, role and outcome only in `crates/postio-sync/src/discover.rs` — never the folder name a server rejected, never its message verbatim (Principle VI)
 
 **Checkpoint**: `cargo nextest run -p postio-sync -p postio-account -p postio-storage`. Every account has every reserved role, offline drafts have somewhere to be listed.

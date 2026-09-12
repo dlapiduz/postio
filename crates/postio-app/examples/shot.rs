@@ -423,6 +423,10 @@ fn show_account_mailboxes(window: &Window) {
                 (MailboxRole::Drafts, "Drafts".to_owned()),
                 (MailboxRole::Trash, "Deleted Messages".to_owned()),
             ],
+            // The awkward account this shot exists to draw: a role the server
+            // will not make a folder for, so the picker has to say why rather
+            // than just "no folder" (spec 003, FR-031).
+            refused: vec![(MailboxRole::Junk, "Permission denied".to_owned())],
         },
     )]);
     window.open_settings();
