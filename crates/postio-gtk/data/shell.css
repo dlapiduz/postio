@@ -1904,6 +1904,7 @@ button.postio-settings-revert:hover {
   border: 1px solid var(--postio-selected-border);
   background-color: var(--postio-selected-bg);
   color: var(--postio-ink);
+}
 
 /* A group heading inside the account detail view (#966).
 

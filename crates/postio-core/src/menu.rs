@@ -154,7 +154,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::RemoveAccount
         | C::UpdateCredential
         | C::RebuildAccountIndex
-        | C::SetDefaultAccount => None,
+        | C::SetDefaultAccount
+        | C::MapMailboxRole => None,
 
         // ── View ─────────────────────────────────────────────────────────
         C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
