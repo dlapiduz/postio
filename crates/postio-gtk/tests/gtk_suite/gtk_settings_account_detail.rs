@@ -526,7 +526,7 @@ pub fn test_connection_reports_the_account_and_then_shows_what_happened() {
     window.destroy();
 }
 
-// ── The Mailboxes group (ADR 0025, #966) ────────────────────────────────
+// ── The Mailboxes group (ADR 0035, #966) ────────────────────────────────
 
 /// What one account's folders and role map look like coming in.
 fn folders() -> AccountMailboxes {
