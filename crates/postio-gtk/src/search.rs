@@ -416,6 +416,16 @@ impl Live {
 const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narrow.";
 const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
 
+/// What the offer says. A statement of what the other word would find, not a
+/// question: the app has already looked, so "did you mean" asks something it
+/// knows the answer to.
+fn offer_text(term: &str, documents: u64) -> String {
+    match documents {
+        1 => format!("{term} — 1 message"),
+        many => format!("{term} — {many} messages"),
+    }
+}
+
 /// The keys the column offers, drawn at its foot, from the live keymap.
 ///
 /// Canvas 2b's third line, `C-s save as folder`: `CommandId::SaveSearch`
@@ -452,6 +462,10 @@ mod panel_imp {
         pub(super) scopes: gtk::ListBox,
         pub(super) chips: gtk::FlowBox,
         pub(super) nothing: gtk::Label,
+        /// The word to search for instead, when nothing matched. One button,
+        /// hidden until there is something to offer.
+        pub(super) suggestion: gtk::Box,
+        pub(super) on_suggest: RefCell<Vec<RefineHandler>>,
         /// The footer's key line, kept so a rebind can rewrite it (#828).
         pub(super) keys: gtk::Label,
         /// The tokens currently drawn, in the order they are drawn.
@@ -470,6 +484,8 @@ mod panel_imp {
                 scopes: gtk::ListBox::new(),
                 chips: gtk::FlowBox::new(),
                 nothing: gtk::Label::new(None),
+                suggestion: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                on_suggest: RefCell::new(Vec::new()),
                 keys: gtk::Label::new(None),
                 offered: RefCell::new(Vec::new()),
                 scope: Cell::new(Scope::default()),
@@ -585,6 +601,52 @@ impl Panel {
         }
     }
 
+    /// Offer a word to search for instead, or withdraw the offer.
+    ///
+    /// Shown only where `NOTHING_MATCHED` would otherwise stand alone. A
+    /// query that found something is not one to second-guess, and the caller
+    /// enforces that by passing `None` — see ADR 0037.
+    pub fn set_suggestion(&self, offer: Option<(&str, u64)>) {
+        let imp = self.imp();
+        while let Some(child) = imp.suggestion.first_child() {
+            imp.suggestion.remove(&child);
+        }
+        let Some((term, documents)) = offer else {
+            imp.suggestion.set_visible(false);
+            return;
+        };
+
+        let button = gtk::Button::with_label(&offer_text(term, documents));
+        button.add_css_class("postio-refine-chip");
+        // The same control the refinements use, for the same reasons: the
+        // keyboard reaches it, `Enter` activates it, and a screen reader
+        // calls it a button rather than reading a sentence and stopping.
+        let spoken = format!("Search for {} instead", offer_text(term, documents));
+        button.set_tooltip_text(Some(&spoken));
+        button.update_property(&[gtk::accessible::Property::Label(&spoken)]);
+        let term = term.to_owned();
+        button.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                for handler in panel.imp().on_suggest.borrow().iter() {
+                    handler(&term);
+                }
+            }
+        ));
+        imp.suggestion.append(&button);
+        imp.suggestion.set_visible(true);
+    }
+
+    /// Called when the offer is taken, with the term to search for instead.
+    ///
+    /// Deliberately not [`Panel::connect_refine`]. A refinement *appends* a
+    /// token to what is there; this *replaces* the word that found nothing,
+    /// and folding the two together would give one handler two meanings.
+    pub fn connect_suggestion(&self, handler: impl Fn(&str) + 'static) {
+        self.imp().on_suggest.borrow_mut().push(Box::new(handler));
+    }
+
     /// Called when the user picks a scope.
     pub fn connect_scope(&self, handler: impl Fn(Scope) + 'static) {
         self.imp().on_scope.borrow_mut().push(Box::new(handler));
@@ -685,6 +747,8 @@ impl Panel {
         column.append(&kicker("Refine"));
         column.append(&imp.chips);
         column.append(&imp.nothing);
+        imp.suggestion.set_visible(false);
+        column.append(&imp.suggestion);
 
         let filler = gtk::Box::new(gtk::Orientation::Vertical, 0);
         filler.set_vexpand(true);
@@ -1253,6 +1317,24 @@ impl View {
             }
         });
 
+        // Taking the offer *replaces* the word that found nothing, where a
+        // refinement appends one. The result is a query the user could have
+        // typed: nothing downstream can tell an accepted suggestion from the
+        // same letters typed by hand, which is the whole of ADR 0037.
+        //
+        // The box only ever offers this for a single bare word -- the
+        // executor refuses to guess when there are two terms or a filter --
+        // so replacing the whole text is replacing exactly that word.
+        view.panel().connect_suggestion({
+            let finder = finder.clone();
+            move |term| {
+                finder.set_query(crate::finder::Query {
+                    mode: crate::finder::Mode::Search,
+                    text: term.to_owned(),
+                });
+            }
+        });
+
         // The scope is *not* written into the box — switching it must not
         // mean editing what was typed. So the same query is simply asked
         // again, against the new scope, which whoever answers reads off the
@@ -1320,6 +1402,13 @@ impl View {
     /// [`Panel::set_facets`].
     pub fn set_facets(&self, facets: &Facets, total: u64) {
         self.inner.panel.set_facets(facets, total);
+    }
+
+    /// Offer a word to search for instead. See [`Panel::set_suggestion`].
+    pub fn set_suggestion(&self, offer: Option<&postio_search::suggest::Suggestion>) {
+        self.inner
+            .panel
+            .set_suggestion(offer.map(|offer| (offer.term.as_str(), offer.documents)));
     }
 
     /// Show or hide the search surface.
@@ -2093,6 +2182,8 @@ mod tests {
             total_hits_capped: false,
             elapsed: Duration::from_millis(11),
             corpus_complete: true,
+            // Fourteen hits, so there is nothing to suggest instead.
+            suggestion: None,
         };
         assert_eq!(Outcome::of(&results), outcome(14, false, 11));
 

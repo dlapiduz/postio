@@ -264,12 +264,98 @@ pub fn search(
     );
 
     Ok(SearchResults {
+        // Only when nothing matched. A query that worked is not one to
+        // second-guess, and this is the one moment the cost is free: there
+        // are no rows to draw.
+        suggestion: match total_hits {
+            0 => suggestion_for(connection, request.query)?,
+            _ => None,
+        },
         hits,
         total_hits,
         total_hits_capped,
         elapsed,
         corpus_complete: corpus_complete(connection, request)?,
     })
+}
+
+/// The term to offer instead, when a query matched nothing.
+///
+/// # Why only a single bare word
+///
+/// With two terms, correcting one is a guess about which of them was wrong,
+/// and the wrong guess reads as the app misunderstanding the question. With a
+/// filter in the query — `from:ada hanah` — the filter is the likelier reason
+/// nothing matched. Both cases are left alone rather than answered badly.
+///
+/// # Why the vocabulary is a temp table
+///
+/// `fts5vocab` exposes the index's terms with no schema change, and that
+/// matters: `index.rs` versions the metadata half and rebuilds *all* of it
+/// when the schema moves, so a permanent vocabulary table would cost every
+/// user a full reindex to add a suggestion they may never see. In `temp` it
+/// is per-connection, costs nothing to declare, and disappears.
+///
+/// # What it does not read
+///
+/// Body terms. `messages_fts` holds senders, recipients, subjects, filenames
+/// and list ids, which is where the names people mistype live; the body index
+/// is a separate table and a much larger vocabulary. Consulting it too is a
+/// later question, and one for measurement rather than taste.
+fn suggestion_for(
+    connection: &Connection,
+    query: &postio_search::ParsedQuery,
+) -> Result<Option<postio_search::suggest::Suggestion>> {
+    let mut terms = query.text_terms();
+    let Some(term) = terms.next() else {
+        return Ok(None);
+    };
+    if terms.next().is_some() || term.negated || query.filters().next().is_some() {
+        return Ok(None);
+    }
+
+    connection.execute_batch(
+        // `main` named explicitly. `fts5vocab` resolves its target in the
+        // schema the vocabulary itself is declared in, so the two-argument
+        // form here looks for `temp.messages_fts` and finds nothing.
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.messages_fts_vocab
+             USING fts5vocab('main', 'messages_fts', 'row');",
+    )?;
+
+    // A wider net than the rule needs: `postio-search` owns how far a word may
+    // be mistyped, and this only has to avoid carrying the whole vocabulary
+    // across the boundary to find out. Commonest first, so the cap keeps the
+    // terms most likely to be the intended word.
+    let typed = term.value.chars().count() as i64;
+    let mut statement = connection.prepare(
+        "SELECT term, doc FROM temp.messages_fts_vocab
+          WHERE length(term) BETWEEN ? AND ?
+          ORDER BY doc DESC LIMIT ?",
+    )?;
+    let rows = statement.query_map(
+        rusqlite::params![
+            typed - MOST_EDITS_CONSIDERED,
+            typed + MOST_EDITS_CONSIDERED,
+            VOCABULARY_CAP
+        ],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        },
+    )?;
+    let vocabulary: Vec<(String, u64)> = rows.collect::<rusqlite::Result<_>>()?;
+
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        vocabulary
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
 }
 
 /// Whether every message in the searched scope has a body to search.
@@ -351,6 +437,22 @@ const LARGE_TOKEN: &str = "larger:1M";
 /// Two, so a mailbox that files list traffic into a dozen folders does not
 /// spend the whole shortlist on them and crowd out `is:unread`.
 const REFINE_FOLDERS: usize = 2;
+
+/// The widest a suggestion's length may differ from what was typed.
+///
+/// A pre-filter, not the rule: `postio_search::suggest` decides how far a word
+/// of a given length may be mistyped, and this only spares the boundary the
+/// whole vocabulary. It must stay at or above that rule's widest tolerance or
+/// it would quietly overrule it.
+const MOST_EDITS_CONSIDERED: i64 = 2;
+
+/// How many terms a suggestion considers, commonest first.
+///
+/// A mailbox holds far more distinct terms than any of them is worth
+/// comparing, and the intended word is overwhelmingly a common one — a name
+/// in hundreds of messages rather than a token that appeared once. This runs
+/// only on a search that found nothing, so it never sits on the typing path.
+const VOCABULARY_CAP: i64 = 4_096;
 
 /// Measures what the query's result set is made of: how it splits across the
 /// scopes, and which narrowings are worth offering.

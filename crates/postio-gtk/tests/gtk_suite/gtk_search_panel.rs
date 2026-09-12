@@ -337,3 +337,97 @@ fn find(widget: &gtk::Widget, wanted: &dyn Fn(&gtk::Widget) -> bool) -> Option<g
     }
     None
 }
+
+/// The offer a search makes when it found nothing. #1524, ADR 0037.
+///
+/// The word chosen is ranked in `postio-search` with no display; what needs
+/// one is that the offer is a control a person can take, and that taking it
+/// puts the other word in the box rather than beside it.
+pub fn a_search_that_found_nothing_offers_the_word_that_was_meant() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    let view = View::attach(&window.shell(), &window.finder());
+    window.present();
+    pump();
+
+    let finder = window.finder();
+    window.open_finder(Mode::Search);
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "hanah".to_owned(),
+    });
+    pump();
+
+    // Nothing matched and nothing is offered yet: the column says so, and a
+    // blank column would be the shrug the canvas forbids.
+    view.set_suggestion(None);
+    pump();
+    assert!(
+        offer_button(&view).is_none(),
+        "no offer to make, so no button to press"
+    );
+
+    view.set_suggestion(Some(&postio_search::suggest::Suggestion {
+        term: "hannah".to_owned(),
+        documents: 66,
+    }));
+    pump();
+
+    let button = offer_button(&view).expect("the column offers the other word");
+    let label = button
+        .label()
+        .expect("the offer says something")
+        .to_string();
+    assert!(
+        label.contains("hannah") && label.contains("66"),
+        "the offer says what it would find, so it is worth taking: {label}"
+    );
+    assert!(
+        !label.contains('?'),
+        "a statement, not a question -- the app has already looked: {label}"
+    );
+
+    // -- taking it puts the other word in the box -------------------------
+
+    button.emit_clicked();
+    pump();
+    assert_eq!(
+        finder.query().text,
+        "hannah",
+        "taking the offer replaces the word that found nothing, so what is in \
+         the box is a query the user could have typed"
+    );
+
+    // A query that found something is never second-guessed.
+    view.set_suggestion(None);
+    pump();
+    assert!(offer_button(&view).is_none());
+}
+
+/// The offer button, if the column is making one.
+fn offer_button(view: &View) -> Option<gtk::Button> {
+    fn walk(widget: &gtk::Widget, found: &mut Vec<gtk::Button>) {
+        let mut child = widget.first_child();
+        while let Some(node) = child {
+            if let Some(button) = node.downcast_ref::<gtk::Button>()
+                && button
+                    .label()
+                    .is_some_and(|label| label.contains('\u{2014}'))
+            {
+                found.push(button.clone());
+            }
+            walk(&node, found);
+            child = node.next_sibling();
+        }
+    }
+    let mut found = Vec::new();
+    walk(view.panel().upcast_ref::<gtk::Widget>(), &mut found);
+    found.into_iter().next()
+}
