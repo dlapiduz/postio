@@ -1183,6 +1183,22 @@ impl Window {
     }
 
     /// *Account removed — Undo*, with `on_undo` reachable only from this
+    /// This window's toast overlay, once `build` has made one.
+    ///
+    /// `None` on a window that has not been built yet, which is not a state
+    /// the application is ever in and is a state a widget test can be.
+    pub fn toast(&self) -> Option<&crate::toast::Toast> {
+        self.imp().toast.get()
+    }
+
+    /// Say one sentence, with nothing to press — see
+    /// [`crate::toast::Toast::show_notice`].
+    pub fn show_notice(&self, sentence: &str) {
+        if let Some(toast) = self.imp().toast.get() {
+            toast.show_notice(sentence);
+        }
+    }
+
     /// toast's own button — see [`crate::toast::Toast::show_removable`].
     pub fn show_removable_toast(&self, description: &str, on_undo: impl Fn() + 'static) {
         if let Some(toast) = self.imp().toast.get() {
@@ -1983,6 +1999,40 @@ impl Window {
     /// compiler while being equal to the user, which is the whole shape of
     /// ADR 0002.
     fn run_action(&self, id: ActionId) {
+        // **Refuse out loud rather than be swallowed** (#1114). A window is
+        // on screen before its store is, and a key bound to something that
+        // reads mail cannot run there -- but a key that silently does
+        // nothing is indistinguishable from a key that is not bound, which
+        // is how "it randomly stopped working" gets reported. The precedent
+        // is reply in the composer (#426), which is *available* for exactly
+        // this reason: availability is not success, it is the chance to say
+        // so.
+        //
+        // Only this requirement, deliberately. `SingleAccount` has no
+        // sentence to offer and never had one -- `Move` in a unified view
+        // has always simply not resolved to anything -- and inventing one
+        // here would be #182's decision made by the wrong issue.
+        //
+        // **Gated on there being a wait to name, not merely on the store
+        // being shut.** The refusal *is* the sentence: without one there is
+        // nothing to say out loud, and blocking silently would be the bug
+        // this exists to fix wearing a different hat. Every state the
+        // application actually reaches has one -- whoever opens the store
+        // records what it is waiting on before the window is presented --
+        // and a window nobody has told is opening anything is a window
+        // nobody has claimed is missing a store, which is what a widget test
+        // builds.
+        if let Some(waiting) = self.list_state().waiting()
+            && !self.imp().store_open.get()
+            && postio_core::registry::spec(id)
+                .is_some_and(|spec| spec.requires.contains(postio_core::Requirement::StoreOpen))
+        {
+            // The same sentence the plate would show, from the same place,
+            // so the keyboard and the pane cannot describe one wait two
+            // ways.
+            self.show_notice(crate::list_state::describe_wait(waiting).1);
+            return;
+        }
         // ADR 0012 Q6: the first-run orientation is over the moment somebody
         // runs a command from the keyboard or the palette, whether or not it
         // ever appeared. This is the seam that can tell that apart from a
@@ -2556,10 +2606,35 @@ impl Window {
     /// seconds. What it changes is the vocabulary — the palette and the cheat
     /// sheet list only what can actually run — not the window's appearance.
     pub fn set_store_open(&self, open: bool) {
+        if open {
+            // One direction only, and implied rather than a second thing to
+            // remember: a window with a store behind it is not waiting for
+            // one, and a plate still saying so would be the window
+            // disagreeing with itself.
+            self.list_state().set_opening(None);
+        }
         if self.imp().store_open.replace(open) == open {
             return;
         }
         self.publish_availability();
+    }
+
+    /// What this window is waiting for before it has a store (#1114).
+    ///
+    /// Nothing appears when this is called: the list pane says nothing at
+    /// all until the wait has already passed `list_state::OPENING_THRESHOLD`,
+    /// which an ordinary start never does. Calling it again with a different
+    /// wait restarts that clock — see
+    /// [`ListStateView::set_opening`](crate::list_state::ListStateView::set_opening).
+    ///
+    /// It does *not* say the store is closed; [`set_store_open`] is what the
+    /// keyboard, the palette and the cheat sheet read. The two are set
+    /// together by whoever is opening the store, because one is what the
+    /// window can do and the other is what it says.
+    ///
+    /// [`set_store_open`]: Self::set_store_open
+    pub fn set_waiting_on(&self, waiting: crate::list_state::Waiting) {
+        self.list_state().set_opening(Some(waiting));
     }
 
     /// What this window can currently do, as the registry evaluates it.
