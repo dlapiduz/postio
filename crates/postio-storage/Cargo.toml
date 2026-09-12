@@ -12,10 +12,11 @@ repository.workspace = true
 # Test-only: exposes the `test_support` throwaway-database helpers. Off by
 # default; downstream crates enable it from their dev-dependencies so nothing
 # ships in a normal build.
-# `rusqlite/trace` is what `test_support::counting` reads statement and row
-# counts from (#100). It rides on this feature rather than on the plain
-# dependency so an ordinary build still carries no tracing binding at all.
-test-support = ["dep:tempfile", "postio-model/test-corpus", "rusqlite/trace"]
+# `counting` used to ride on `rusqlite/trace`, which read statement and row
+# counts off SQLite's trace hook (#100). Turso exposes no such hook, so the
+# instrument counts at this crate's own seam instead -- see research.md Q5 for
+# what that can and cannot see.
+test-support = ["dep:tempfile", "postio-model/test-corpus"]
 
 [dependencies]
 blake3 = "1.8.7"
@@ -32,13 +33,19 @@ zeroize = "1.9.0"
 chacha20poly1305 = "0.11.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 postio-model = { version = "0.2.0", path = "../postio-model" }
-# SQLCipher, not plain SQLite (ADR 0014 Q1). `bundled-sqlcipher-vendored-openssl`
-# keeps the Flatpak and contributor machines hermetic; the system-libcrypto
-# variant is the recorded alternative if vendored OpenSSL's build cost ever
-# earns its removal. sccache absorbs it machine-wide after the first build.
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
+# Turso, the Rust rewrite of SQLite (specs/004-turso-store). Encryption is
+# the engine's own AES-256-GCM rather than SQLCipher's AES-CBC + HMAC, which
+# takes `openssl-src` out of the graph entirely -- with it goes the 28 s
+# uncacheable build step per cold tree and the `atexit` workaround #794 and
+# #699 needed. Both the encryption and the full-text search are marked
+# experimental upstream and neither has been audited; spec.md makes "no
+# plaintext in the file" and "another key is refused" acceptance criteria
+# rather than assumptions for that reason.
+turso = "=0.8.0-pre.11"
+# Unicode normalisation for the diacritic fold the engine does not do.
+# `postio-index` applies it on both the write and the query path; it lives
+# here because the folded column is written where the body is.
+unicode-normalization = "0.1"
 serde_json = "1.0.151"
 tempfile = { version = "3.27.0", optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
@@ -56,10 +63,7 @@ postio-storage = { path = ".", features = ["test-support"] }
 tempfile = "3.27.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-    "trace",
-] }
+turso = "=0.8.0-pre.11"
 
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.

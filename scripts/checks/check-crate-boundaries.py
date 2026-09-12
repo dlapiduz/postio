@@ -6,27 +6,27 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
     UI-agnostic runtime -- commands in, events out -- which is what makes a
     non-GTK frontend possible later.
-  * ``postio-gtk`` must not depend on ``rusqlite``/``io-imap``. The view layer
+  * ``postio-gtk`` must not depend on ``rusqlite``/``turso``/``io-imap``. The view layer
     does no SQL and speaks no protocol.
   * ``postio-session`` must not depend on ``gtk4``/``libadwaita``. It is the
     composition root without a toolkit -- the store, the runtime, the engines
     and the whole verb vocabulary -- which is what makes a headless frontend
     (an MCP server; see ADR 0010) possible without giving the database a
     second writer that plays by different rules.
-  * ``postio-search`` must not depend on ``rusqlite``/``gtk4``. It is the query
+  * ``postio-search`` must not depend on ``rusqlite``/``turso``/``gtk4``. It is the query
     *language* -- parser, highlighter, facets -- and stays pure so the same
     query string means the same thing in the search bar, the sidebar and
     ``[filters]``; ``postio-index`` is the FTS5 executor that runs it.
-  * ``postio-body`` must not depend on ``rusqlite``/``gtk4``. It is the other
+  * ``postio-body`` must not depend on ``rusqlite``/``turso``/``gtk4``. It is the other
     pure leaf: the composer's document, the HTML subset, quoting and
     sanitising, kept out of ``postio-model`` only because ``ammonia`` pulls an
     HTML parser (ADR 0004) -- not because it needed a toolkit or a database.
   * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
-    ``rusqlite``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
+    ``rusqlite``/``turso``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
     composer's document here for exactly this reason -- dependency weight on
     the crate the whole workspace waits on -- and ADR 0007 admitted the vCard
     parser only because it brings zero dependencies of its own.
-  * ``postio-config`` must not depend on ``rusqlite``/``gtk4``. It parses and
+  * ``postio-config`` must not depend on ``rusqlite``/``turso``/``gtk4``. It parses and
     validates TOML and watches the file for changes; it does no SQL and links
     no toolkit.
 
@@ -105,6 +105,13 @@ RULES: dict[str, dict[str, object]] = {
             "libadwaita-sys",
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
         ],
         # io-imap and io-jmap are banned too, but by the crate's own
         # boundary.rs — the same feature-unification reason as postio-jmap's.
@@ -123,6 +130,13 @@ RULES: dict[str, dict[str, object]] = {
             "libadwaita-sys",
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
         ],
         # io-imap is banned too, but not here: workspace feature unification
         # puts it in the resolved graph however this crate's manifest asks
@@ -156,6 +170,13 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
             "io-imap",
         ],
         "why": (
@@ -192,6 +213,13 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
             "gtk4",
             "gtk4-sys",
             "gtk4-macros",
@@ -209,6 +237,13 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
             "gtk4",
             "gtk4-sys",
             "gtk4-macros",
@@ -229,6 +264,13 @@ RULES: dict[str, dict[str, object]] = {
             "markup5ever_rcdom",
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
             "gtk4",
             "gtk4-sys",
             "gtk4-macros",
@@ -249,6 +291,13 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
+            # The engine, whatever it is currently called. `rusqlite` and
+            # `libsqlite3-sys` stay listed with it: a rule keyed on a
+            # dependency's *name* stops holding the moment the name changes,
+            # and the whole point of this check is that the boundary does not
+            # depend on anyone noticing (specs/004-turso-store T002).
+            "turso",
+            "turso_core",
             "gtk4",
             "gtk4-sys",
             "gtk4-macros",
