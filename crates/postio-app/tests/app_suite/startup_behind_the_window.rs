@@ -1,5 +1,10 @@
-//! A store that will not open, refused at a window somebody is already
-//! looking at (#1114).
+//! Startup with the window already on screen (#1114).
+//!
+//! Two cases, which are the two ways it can go: the store lands and the
+//! window fills, or it does not and the window says why. The first is `run`'s
+//! `activate` handler in everything but the one line that calls it — the
+//! thread, the stages it reports, the assembly on the main context, and the
+//! feed at the end.
 //!
 //! ADR 0014 Q3 makes a store that does not open a hard stop rather than a
 //! degraded mode, and #404 is the screen that says so. Neither of those
@@ -102,6 +107,76 @@ pub fn a_store_refused_after_the_window_is_up_says_so_and_can_be_retried() {
     assert!(
         window.content().is_some(),
         "and it left a window with something in it"
+    );
+
+    window.close();
+    while gtk::glib::MainContext::default().iteration(false) {}
+}
+
+/// The other half: the store opens behind a window that is already up, and
+/// the window fills when it lands.
+///
+/// This is `run`'s `activate` handler in everything but the one line that
+/// calls it — the thread, the channel, the stages it reports, the assembly on
+/// the main context and the feed at the end. Before #1114 none of it existed
+/// and the store was already open before the application was built, so there
+/// is no older test that covers this path by accident.
+pub fn the_store_opens_behind_a_window_that_is_already_up() {
+    let state_dir = tempfile::tempdir().expect("a state directory");
+    let store_dir = tempfile::tempdir().expect("a store directory");
+    // SAFETY: first statements of a single-threaded test.
+    unsafe {
+        std::env::set_var("XDG_STATE_HOME", state_dir.path());
+        std::env::set_var("POSTIO_STORE", store_dir.path().join("postio.db"));
+    }
+
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+    app::install_icons(&display);
+
+    let timeline = postio_gtk::startup::Timeline::start();
+    let window = Window::default();
+    window.set_timeline(timeline.clone());
+    window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    // Nothing is open, and the window is already on screen. That is the
+    // state, and it is the one this whole issue exists for.
+    assert!(window.is_mapped());
+    assert!(
+        !window.availability().store_open,
+        "a window offering mail commands before anything has been read"
+    );
+
+    let context = Rc::new(Installation::new(Arc::new(MemorySecretStore::default())));
+    let opened = Rc::new(std::cell::RefCell::new(None));
+    let fed = Rc::new(std::cell::Cell::new(false));
+    postio_app::open_the_store(&window, &opened, &context, &fed, &timeline);
+
+    assert!(
+        settle_until(|| opened.borrow().is_some()),
+        "the store never landed, so the thread, the channel or the assembly \
+         on the main context is not joined up"
+    );
+    assert!(
+        settle_until(|| window.availability().store_open),
+        "the store opened and the window was never told, so every command \
+         that reads mail is still being withheld from a window that has some"
+    );
+    assert_eq!(
+        window.list_state().waiting(),
+        None,
+        "and nothing is still being waited for"
+    );
+    assert!(
+        timeline.at(postio_gtk::startup::Phase::Store).is_some(),
+        "the phase that measures the wait was never marked, so a trace would \
+         attribute it to whatever phase came next"
     );
 
     window.close();
