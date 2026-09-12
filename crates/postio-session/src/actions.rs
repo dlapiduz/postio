@@ -1122,6 +1122,9 @@ impl Actions {
             arrived: None,
             reloaded: Vec::new(),
             changed,
+            // A label is a keyword on the message, not a move: no folder
+            // gained or lost a row, so the sidebar has nothing to relabel.
+            mailboxes_changed: false,
             inverse: vec![inverse],
         })
     }

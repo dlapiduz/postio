@@ -68,6 +68,7 @@ remove_account	d
 update_credential	c
 rebuild_account_index	r
 set_default_account	m
+map_mailbox_role	M
 next_scope	g a
 refresh	F5 | R
 open_parts	p
