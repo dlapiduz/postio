@@ -29,6 +29,13 @@ cargo nextest run -p postio-ui           # the shared sidebar rows: microseconds
 scripts/test-sanity.sh                   # before landing
 ```
 
+The filters below name tests that exist. They were rewritten after the build:
+the first draft of this guide predicted names and crates before anything was
+written, and three of its five scenarios selected nothing — nextest says
+`error: no tests to run`, which is a failure that looks like a typo rather
+than like a gap. A validation guide whose commands run nothing is worse than
+no guide.
+
 Iterate at the cheapest layer that can fail. Most of this feature's logic is
 pure — role kinds in `postio-model`, row assembly in `postio-ui`, scope
 reactions — and those run in milliseconds. Keep the GTK and app suites for
@@ -40,8 +47,8 @@ The headline. Drive it through the store and the session, with the drainer
 paused so the in-flight window is observable.
 
 ```bash
-cargo nextest run -p postio-storage -E 'test(outbox)'
-cargo nextest run -p postio-session -E 'test(outbox)'
+cargo nextest run -p postio-storage -E 'test(/send|outbox|draft_state/)'
+cargo nextest run -p postio-app --test app_suite resume_queued_draft
 ```
 
 **Expected**
@@ -62,7 +69,7 @@ The one that would have failed if the Outbox had been built over `drafts`
 instead of over the mirror row.
 
 ```bash
-cargo nextest run -p postio-session -E 'test(outbox_offline)'
+cargo nextest run -p postio-storage -E 'test(/does_not_need_a_drafts_mailbox|enqueues_the_operation|never_saved/)'
 ```
 
 **Expected**: with no backend configured, queue a send. The message is listed in
@@ -72,8 +79,8 @@ Navigate away and back: still there. This is Principle I stated as a test.
 ## Scenario 3 — Drafts means unfinished, and says when one needs you (US2)
 
 ```bash
-cargo nextest run -p postio-storage -E 'test(drafts_attention)'
-cargo nextest run -p postio-gtk -E 'test(sidebar)'
+cargo nextest run -p postio-storage -E 'test(/needs_a_person|counts_nothing|retrying_a_failed|keeps_the_reason/)'
+cargo nextest run -p postio-gtk -E 'test(/sidebar|gtk_row/)'
 ```
 
 **Expected**: with one `editing`, one `failed` and one `unconfirmed` draft,
@@ -87,7 +94,7 @@ attention, no attention marker is drawn.
 Against the mock backend; no server is contacted.
 
 ```bash
-cargo nextest run -p postio-sync -E 'test(reserved_roles)'
+cargo nextest run -p postio-sync -E 'test(/reserved_role|created|refus|never_created/)'
 ```
 
 **Expected**
@@ -104,7 +111,7 @@ cargo nextest run -p postio-sync -E 'test(reserved_roles)'
 
 ```bash
 cargo nextest run -p postio-ui
-cargo nextest run -p postio-ffi -E 'test(mailboxes)'
+cargo nextest run -p postio-ffi -E 'binary(mailboxes)'   # binary(), not test(): it is the suite's name
 ```
 
 **Expected**: the same account yields the same rows in the same order from both
@@ -118,7 +125,7 @@ Principle V gates causes, not milliseconds — a shared runner cannot defend
 16 ms, but statements and rows are the same number on every machine.
 
 ```bash
-cargo nextest run -p postio-storage -E 'test(counting)'
+cargo nextest run -p postio-storage -E 'test(/costs_the_same|costs_a_fixed/)'
 ```
 
 **Expected**
