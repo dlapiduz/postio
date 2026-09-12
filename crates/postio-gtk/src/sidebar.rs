@@ -1592,6 +1592,55 @@ impl Sidebar {
         None
     }
 
+    /// What is selected, as the kind of thing it is.
+    ///
+    /// [`selected`](Self::selected) answers a [`MailboxId`], which cannot
+    /// describe a view row: all three share the unassigned id, so it reports
+    /// the same value for Flagged, Snoozed and the Outbox — and for nothing
+    /// selected at all. This answers the question a caller actually has.
+    pub fn selected_choice(&self) -> Option<SidebarChoice> {
+        for list in self.imp().folder_lists.borrow().iter() {
+            if let Some(row) = list.selected_row() {
+                return Some(row_choice(&row));
+            }
+        }
+        None
+    }
+
+    /// Select a view row by its role, without reporting it as a user action.
+    ///
+    /// The other half of [`select`](Self::select), which takes a
+    /// [`MailboxId`] and searches. A view row has no id — ADR 0036 — so a
+    /// search finds whichever view is drawn first rather than the one asked
+    /// for, which is how the keyboard walk came to stick on Snoozed. Callers
+    /// that hold the widget already use the private `select_row_directly`;
+    /// this is for the ones that only know *which view they mean*.
+    ///
+    /// Silently does nothing when the role draws no row, which is the
+    /// ordinary state of the Outbox (spec 003 FR-012) rather than an error.
+    pub fn select_view(&self, role: MailboxRole) {
+        let row = self
+            .imp()
+            .folder_lists
+            .borrow()
+            .iter()
+            .flat_map(|list| {
+                let mut rows = Vec::new();
+                let mut child = list.first_child();
+                while let Some(widget) = child {
+                    child = widget.next_sibling();
+                    if let Ok(row) = widget.downcast::<gtk::ListBoxRow>() {
+                        rows.push(row);
+                    }
+                }
+                rows
+            })
+            .find(|row| row_choice(row) == SidebarChoice::View(role));
+        if let Some(row) = row {
+            self.select_row_directly(&row);
+        }
+    }
+
     /// Select a folder without reporting it back as a user action.
     ///
     /// Opens every collapsed ancestor first (#324): a folder selected while

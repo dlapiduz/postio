@@ -1249,6 +1249,27 @@ impl Window {
         }
     }
 
+    /// Switch to a view — Flagged, Snoozed, the Outbox — the way picking it
+    /// in the sidebar does.
+    ///
+    /// [`open_mailbox`](Self::open_mailbox)'s other half. A view has no
+    /// [`MailboxId`](postio_model::ids::MailboxId) to pass to that one
+    /// (ADR 0036), so without this there is no way in from outside a click at
+    /// all: the shot tool wanted one, and so would a notification about a
+    /// send that stopped.
+    ///
+    /// A no-op before [`install_feeds`](Self::install_feeds), and a no-op for
+    /// a view the sidebar is not currently drawing — an empty Outbox draws no
+    /// row (spec 003 FR-012), and asking for it is a question with the
+    /// answer "there is nothing there", not an error.
+    pub fn open_view(&self, role: postio_model::mailbox::MailboxRole) {
+        let show = self.imp().open_mailbox.borrow().clone();
+        if let Some(show) = show {
+            self.sidebar().select_view(role);
+            show(crate::sidebar::SidebarChoice::View(role));
+        }
+    }
+
     /// Switch to `mailbox` and put the keyboard on `message`, once its row
     /// is resident.
     ///

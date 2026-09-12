@@ -491,3 +491,77 @@ pub fn the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it() {
 
     window.close();
 }
+
+/// A view row can be opened by name, the way a folder can be opened by id.
+///
+/// `select` takes a `MailboxId` and searches for it. Every view row shares
+/// the unassigned id — that is ADR 0036's stated cost — so searching for it
+/// finds whichever view is drawn first, which is Flagged. That is the same
+/// mistake the keyboard walk made when it stuck on Snoozed for ever, and
+/// until now the only way around it was to hold the widget already.
+pub fn a_view_row_is_selectable_by_role_rather_than_by_a_shared_id() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let sidebar = Sidebar::new();
+    let window = gtk::Window::new();
+    style::track(&window);
+    window.set_child(Some(&sidebar));
+    window.set_default_size(212, 700);
+    window.present();
+    sidebar.set_account("lena@example.com");
+
+    let account = AccountId::new(1);
+    // No Flagged folder on the server, so the model synthesises one — which
+    // makes Flagged the first view row and the one a search by id lands on.
+    let folders: Vec<Mailbox> = canvas_mailboxes(12)
+        .into_iter()
+        .filter(|mailbox| mailbox.role != MailboxRole::Flagged)
+        .collect();
+    let mut all = folders.clone();
+    all.extend(postio_ui::sidebar::view_rows(
+        account,
+        &folders,
+        postio_ui::sidebar::ViewCounts {
+            flagged: 3,
+            snoozed: 2,
+            outbox: 1,
+            drafts: 2,
+            attention: 0,
+        },
+    ));
+    sidebar.set_mailboxes(&all);
+    pump();
+
+    for role in [
+        MailboxRole::Flagged,
+        MailboxRole::Snoozed,
+        MailboxRole::Outbox,
+    ] {
+        sidebar.select_view(role);
+        pump();
+        assert_eq!(
+            sidebar.selected_choice(),
+            Some(SidebarChoice::View(role)),
+            "selecting the {role:?} view landed somewhere else"
+        );
+    }
+
+    // And the folder path still works, which is what says this is a second
+    // door rather than a replacement for the first.
+    let inbox = folders[0].id;
+    sidebar.select(inbox);
+    pump();
+    assert_eq!(
+        sidebar.selected_choice(),
+        Some(SidebarChoice::Folder(inbox)),
+        "a folder is still selectable by its id"
+    );
+
+    window.close();
+}
