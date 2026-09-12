@@ -27,13 +27,24 @@ empty box is absorbed and becomes a mode, shown as a marker in the field:
 the same list the sidebar is given, and activating one goes there. It is
 wired, and a test drives it.
 
-**So the gap is not the capability. It is that nothing says the capability
-exists.** The resting field says only *Search all mail*. The prefixes appear
-in no documentation: not in `keybindings.md`, because they are not commands
-in the registry and that file is generated from the registry; not in the `?`
-cheat sheet, for the same reason; not in the product documentation. A person
-who did not write the bar cannot find four of its five modes, which is how
-the maintainer came to ask for a folder jump that had already shipped.
+**So the gap is not the capability. It is that too little says the capability
+exists.** The resting field says only *Search all mail*, and the prefixes are
+absent from `keybindings.md` — they are not commands in the registry, and
+that file is generated from the registry.
+
+**Corrected during implementation.** An earlier draft of this paragraph said
+the `?` cheat sheet did not list them either, reasoning that it too is
+generated from the registry. That was wrong, and reasoned rather than
+checked: `cheatsheet.rs::prefix_section` renders every mode under an "In the
+search box" heading, and a test drives it from the mode table so a new mode
+is covered without anybody editing it. That shipped under `postio-2ee`,
+before this feature.
+
+Which makes the evidence sharper, not weaker. The maintainer — who owns the
+project — asked for a folder jump that had already shipped *and* was already
+in the cheat sheet. One surface behind a key a stuck person presses was not
+enough. That is the case for the bar saying so itself, and for the reference
+a person reads before installing anything carrying it too.
 
 That is what this feature adds, and the built behaviour is written down here
 because it is the thing discoverability has to describe accurately. Sections

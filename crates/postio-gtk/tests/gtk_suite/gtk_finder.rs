@@ -81,11 +81,12 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
         vec![
             "Run a command, >".to_string(),
             "Go to a folder, #".to_string(),
-            "Find a correspondent, @".to_string(),
-            "Add a label, +".to_string(),
         ],
-        "every mode a prefix reaches, with the character that reaches it, and \
-         not search itself -- that is what the box is already doing"
+        "every mode a prefix reaches *and can answer with*, with the character \
+         that reaches it. Not search itself -- that is what the box is already \
+         doing -- and not a mode with nothing behind it: this window has been \
+         given folders, and no contacts and no labels, so offering `@` and `+` \
+         would be teaching two keys that lead to an empty list"
     );
 
     finder.set_query(Query {

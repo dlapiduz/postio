@@ -1208,6 +1208,20 @@ impl Finder {
                         let Some(prefix) = mode.prefix else {
                             continue;
                         };
+                        // A mode with nothing behind it is not worth teaching:
+                        // `+` offered to a window with no labels is a key that
+                        // leads to an empty list, which is worse than not
+                        // knowing the key. The registry is never empty, so
+                        // commands are always worth offering.
+                        let answerable = match Mode::of_prefix(prefix) {
+                            Some(Mode::Mailbox) => !imp.mailboxes.borrow().is_empty(),
+                            Some(Mode::Contact) => !imp.contacts.borrow().is_empty(),
+                            Some(Mode::Label) => !imp.available_labels.borrow().is_empty(),
+                            _ => true,
+                        };
+                        if !answerable {
+                            continue;
+                        }
                         imp.list.append(&hint_row(mode.purpose, prefix));
                         hints.push(format!("{}, {prefix}", mode.purpose));
                     }
