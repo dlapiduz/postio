@@ -447,6 +447,13 @@ fn install_run(
                     // the list, which moves the cursor, which looks them up
                     // here. Announcing first would race the cursor against the
                     // results it is a cursor into.
+                    // The offer rides with the results rather than with the
+                    // facet counts: it is computed by the search itself, and
+                    // the counts arrive on their own job a moment later. Drawn
+                    // before `focus` for the same reason the readout is --
+                    // this is what somebody staring at an empty list is
+                    // waiting to be told.
+                    view.set_suggestion(results.suggestion.as_ref());
                     focus(&view, &results, &database, &runtime);
                     held.replace(Some(results));
                     // Scoped, so the borrow is gone before `facets` runs:
