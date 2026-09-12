@@ -166,3 +166,71 @@ fn the_sidebar_gets_the_inbox_first_and_one_row_per_role() {
     );
     session.shutdown();
 }
+
+// ── The view rows reach macOS too (spec 003, US4) ───────────────────────────
+
+#[test]
+fn the_sidebars_view_rows_cross_the_boundary() {
+    // The assertion that would have failed every day since #1155. `Flagged`
+    // and `Snoozed` were built inside `postio-gtk::feed` as mailboxes with
+    // negative ids, so this boundary — which reads the same store through the
+    // same shared layer — has never carried either row, and the macOS sidebar
+    // has never drawn them.
+    let session = seeded();
+    let folders = session.mailboxes();
+
+    for role in [MailboxRoleFfi::Flagged, MailboxRoleFfi::Snoozed] {
+        let row = folders
+            .iter()
+            .find(|folder| folder.role == role)
+            .unwrap_or_else(|| panic!("{role:?} never reached the frontend"));
+        assert!(
+            row.special,
+            "{role:?} belongs in the special section, not among the folders"
+        );
+        assert!(row.selectable, "{role:?} is a row a person can open");
+        assert!(
+            !row.name.is_empty(),
+            "{role:?} has nothing to draw as a label"
+        );
+    }
+
+    // Not the Outbox: it is hidden when it holds nothing, which is the state
+    // a freshly seeded account is in (spec 003 FR-012).
+    assert!(
+        !folders
+            .iter()
+            .any(|folder| folder.role == MailboxRoleFfi::Outbox),
+        "an empty Outbox was drawn"
+    );
+    session.shutdown();
+}
+
+#[test]
+fn a_view_row_carries_the_count_its_badge_needs() {
+    // `MailboxFfi` carried `unread` and `total` only, so even once the rows
+    // crossed, a macOS `count_for` could not reproduce the badge rules: the
+    // Flagged row shows how many are flagged and the Snoozed row how many are
+    // snoozed, and neither number was on the wire.
+    let session = seeded();
+    let folders = session.mailboxes();
+
+    let flagged = folders
+        .iter()
+        .find(|folder| folder.role == MailboxRoleFfi::Flagged)
+        .expect("a flagged row");
+    assert_eq!(
+        flagged.flagged, flagged.total,
+        "the flagged view's count is how many are flagged"
+    );
+
+    let snoozed = folders
+        .iter()
+        .find(|folder| folder.role == MailboxRoleFfi::Snoozed)
+        .expect("a snoozed row");
+    assert_eq!(
+        snoozed.snoozed, snoozed.total,
+        "the snoozed view's count is how many are snoozed"
+    );
+    session.shutdown();
+}

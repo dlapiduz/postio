@@ -2087,7 +2087,22 @@ impl Session {
             return folders;
         };
         for account in accounts {
-            if let Ok(found) = runtime.block_on(store.mailboxes(account.id)) {
+            if let Ok(mut found) = runtime.block_on(store.mailboxes(account.id)) {
+                // The rows that are views rather than folders -- Flagged,
+                // Snoozed, and the Outbox when it holds something. Built by
+                // the same shared layer the GTK feed asks, which is the whole
+                // point: this boundary has never carried them, so the macOS
+                // sidebar has never drawn them (#1155 moved the *order* here
+                // and left the rows behind).
+                let counts = postio_ui::sidebar::ViewCounts {
+                    flagged: found.iter().map(|folder| folder.counts.flagged).sum(),
+                    snoozed: found.iter().map(|folder| folder.counts.snoozed).sum(),
+                    // Counted by the sidebar's own query in spec 003 T066;
+                    // zero keeps the row hidden, which is right until
+                    // something can count it.
+                    outbox: 0,
+                };
+                found.extend(postio_ui::sidebar::view_rows(account.id, &found, counts));
                 // Ordered and split here rather than in the frontend.
                 // `postio_ui::sidebar` is the canvas' order -- Inbox first --
                 // and the rule that a role gets one row however many folders
@@ -2095,11 +2110,19 @@ impl Session {
                 // to "where is my inbox", and the duplicate rule took a bug
                 // report to find (#501, #1155).
                 let (special, ordinary) = postio_ui::sidebar::sections(&found);
-                folders.extend(special.into_iter().map(|mailbox| crate::MailboxFfi {
-                    special: true,
+                // The name comes from the same place too, not from
+                // `mailbox.name`. A special-use folder is called what Postio
+                // calls the role rather than what the server named it -- an
+                // iCloud account's junk folder is "Junk E-mail" and the
+                // sidebar is not where somebody learns that -- and a view row
+                // has no server name at all, so the raw field is empty.
+                let named = |mailbox: postio_model::Mailbox, special: bool| crate::MailboxFfi {
+                    name: postio_ui::sidebar::display_name(&mailbox, &found),
+                    special,
                     ..crate::MailboxFfi::from(mailbox)
-                }));
-                folders.extend(ordinary.into_iter().map(crate::MailboxFfi::from));
+                };
+                folders.extend(special.into_iter().map(|mailbox| named(mailbox, true)));
+                folders.extend(ordinary.into_iter().map(|mailbox| named(mailbox, false)));
             }
         }
         folders
