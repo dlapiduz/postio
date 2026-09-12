@@ -25,6 +25,7 @@
 //! cargo run -p postio-app --example shot -- /tmp/who.png demo contact
 //! cargo run -p postio-app --example shot -- /tmp/selected.png demo selected
 //! cargo run -p postio-app --example shot -- /tmp/first-run.png demo orientation
+//! cargo run -p postio-app --example shot -- /tmp/outbox.png demo outbox 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/reader.png demo open 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/thread.png demo conversation 1600x900
 //! cargo run -p postio-app --example shot -- /tmp/locked.png locked
@@ -107,6 +108,7 @@ fn populate(
     two_accounts: bool,
     backfill: bool,
     first_run: bool,
+    outbox: bool,
 ) -> Option<&'static postio_app::Wired> {
     let database = postio_storage::test_support::memory();
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
@@ -137,6 +139,34 @@ fn populate(
         let second =
             postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12);
         stamp_as_just_synced(&database, &second);
+    }
+
+    // A message on its way out, for the one row that is absent unless
+    // something is (spec 003 FR-012).
+    //
+    // Queued through `DraftRepository` rather than staged: `queue_send` is
+    // what `Composer::send` calls, it writes `send_state` and the operation
+    // together, and the sidebar's Outbox row and its badge are read back out
+    // of that column by `draft_counts`. Handing the sidebar a row here would
+    // be the #596 trap this file warns about twice already -- a picture that
+    // cannot fail when the path from the store to the pane is broken.
+    //
+    // Nothing drains it: a shot renders a window rather than running a
+    // client, so the message stays where the picture wants it.
+    if outbox {
+        let connection = database.connection().expect("a connection");
+        let drafts = postio_storage::repository::DraftRepository::new(&connection);
+        let mut draft = postio_model::Draft::new(account);
+        draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
+        draft.to = vec![postio_model::EmailAddress::new(
+            Some("Lena Tomlin"),
+            "lena@example.com",
+        )];
+        draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
+        drafts.save(&mut draft).expect("the draft saves");
+        drafts
+            .queue_send(&mut draft, chrono::Utc::now())
+            .expect("the send queues");
     }
 
     // A no-op command handler: a shot renders a window, it does not act on
@@ -977,6 +1007,7 @@ fn main() -> glib::ExitCode {
             flag("accounts"),
             flag("backfill"),
             flag("orientation"),
+            flag("outbox"),
         ) {
             Some(wired) => Some(wired),
             None => {
@@ -1233,6 +1264,16 @@ fn main() -> glib::ExitCode {
     // there the way `e`/`Enter` on a real row would, through the same
     // `Window::show_message` the running application calls, so a shot can
     // show the reader as something other than an empty pane.
+    if flag("outbox") {
+        // Open it the way the sidebar's own handler does, by role. The list
+        // then pages `ListScope::Outbox` out of the store for itself, so what
+        // the picture shows is the predicate over `send_state` rather than a
+        // row handed to the pane.
+        window.open_view(postio_model::mailbox::MailboxRole::Outbox);
+        while glib::MainContext::default().iteration(false) {}
+        settle(&window);
+    }
+
     if flag("open") {
         // A click on the top row, through the same seam a pointer reaches:
         // the reader then loads the body out of the blob store by itself, the

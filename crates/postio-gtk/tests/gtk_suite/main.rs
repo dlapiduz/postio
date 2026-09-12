@@ -825,6 +825,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_sidebar::the_sidebar_lists_folders_and_says_where_sync_stands as fn(),
     ),
     (
+        "gtk_sidebar::a_view_row_is_selectable_by_role_rather_than_by_a_shared_id",
+        gtk_sidebar::a_view_row_is_selectable_by_role_rather_than_by_a_shared_id as fn(),
+    ),
+    (
         "gtk_sidebar::the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it",
         gtk_sidebar::the_sidebar_draws_the_shared_model_rather_than_its_own_idea_of_it as fn(),
     ),
