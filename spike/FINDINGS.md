@@ -219,6 +219,76 @@ machine. The command is one line and the harness is committed.
    `PRAGMA cipher_kdf_algorithm` is still a store somebody has. It is not
    used by anything this build writes.
 
+## Can the gap be closed? Two answers, depending on what is fixed
+
+### Inside SQLCipher's format: yes, and with something already here
+
+`examples/hmac_backends.rs`. The reason `sha2` loses is narrow and worth
+naming: its SHA-256 backends are `soft`, `soft_compact`, `aarch64`,
+`loongarch64_asm` and `x86` — and the x86 one is **SHA-NI only**. There is no
+AVX2 path. So on a CPU with AVX2 and no SHA-NI, OpenSSL runs hand-written
+assembly and `sha2` runs portable Rust. That is the entire 1.86x, and it is
+not a statement about the language.
+
+| HMAC-SHA256, 4 KiB page | | vs openssl |
+|---|---:|---:|
+| openssl | 8926 ns | 1.00x |
+| rustcrypto `sha2` | 16735 ns | 1.87x |
+| `sha2` with the `asm` feature | 14688 ns | 1.48x |
+| `sha2`, `-C target-cpu=native` | 13320 ns | 1.44x |
+| **`ring`** | **9044 ns** | **1.01x** |
+
+`ring` is parity, and it is **already in this workspace's dependency graph** —
+rustls pulls it in for every TLS connection Postio makes, so it would add no
+third-party code at all. It is not pure Rust: it is BoringSSL's assembly in a
+Rust wrapper. Which is the honest description of how you get parity at
+SHA-256 on a machine without the instruction.
+
+### Outside it: pure Rust is not on par, it is several times faster
+
+`examples/page_schemes.rs`, per 4 KiB page, sealed and opened again. The unit
+is the *page*, not the primitive, because SQLCipher's path is two passes —
+cipher, then MAC over the ciphertext — and an AEAD is one. A scheme can win by
+doing less work rather than the same work faster, and these do.
+
+| scheme | open (a page read) | vs today |
+|---|---:|---:|
+| aes-cbc + hmac-sha256 (openssl) — **today** | 10494 ns | 1.00x |
+| aes-cbc + hmac-sha256 (rustcrypto) | 17747 ns | 1.69x |
+| aes-cbc + blake3 keyed (rustcrypto) | 2487 ns | **0.24x** |
+| chacha20-poly1305 (rustcrypto) | 3497 ns | **0.33x** |
+| xchacha20-poly1305 (rustcrypto) | 3602 ns | **0.34x** |
+| aes-256-gcm (rustcrypto) | 1802 ns | **0.17x** |
+
+All pure Rust, no C anywhere, on the machine with no SHA-NI. AES-256-GCM is
+**5.8x faster** than what Postio pays today; ChaCha20-Poly1305 is 3x.
+
+**The one to want is probably XChaCha20-Poly1305, not the fastest.** AES-GCM's
+96-bit nonce has to be unique per encryption under a key, and a page store
+rewrites the same page indefinitely — random nonces there have a birthday
+bound, and a repeat does not merely leak a page, it leaks the authentication
+key. The 192-bit nonce is what makes a random one safe with no counter to
+keep, which is exactly the reasoning `postio-storage`'s own manifest already
+records for sealing blobs with it. 0.34x with a nonce discipline a page store
+can actually hold beats 0.17x with one it cannot.
+
+### And the catch, which is the whole of the difficulty
+
+**None of that is reachable through SQLCipher.** The provider vtable supplies
+primitives; the *format* — CBC, a per-page IV, a separate MAC over the
+ciphertext — is decided above it in the amalgamation. Changing the scheme
+means leaving SQLCipher, and then the options are a different C library
+(SQLite3 Multiple Ciphers has ChaCha20-Poly1305 as its default, but its
+crypto is C, so it answers the speed question and not the Rust one) or a
+page-encrypting VFS written here, which is the WAL, the journal, page one's
+salt and atomic writes — a much larger and more dangerous surface than a
+vtable of five functions.
+
+The store is a cache of the server and the project has no backwards
+compatibility to keep, so the *migration* is a resync rather than a problem —
+`postio_storage::db::PageMac` already says as much for its own format change.
+The risk is all in the page layer, not in the data.
+
 ## One more footgun, walked into while measuring
 
 `restore` used to take a bare `*mut Provider`, and the crate also handed out

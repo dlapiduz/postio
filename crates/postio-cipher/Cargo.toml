@@ -27,7 +27,25 @@ getrandom = "0.2.17"
 # A derived key is key material and must not outlive its buffer.
 zeroize = "1.9.0"
 
+[features]
+# Build `sha2` against its assembly backend, to measure whether it closes the
+# gap `examples/hmac_backends.rs` reports. Off by default because it wants a
+# C toolchain at build time, which is half of what this crate exists to avoid.
+sha2-asm = ["sha2/asm"]
+
 [dev-dependencies]
+# Already in this workspace's graph, pulled in by rustls for every TLS path
+# Postio has. It embeds BoringSSL's assembly, which is where its SHA-256
+# differs from `sha2`'s.
+ring = "0.17.14"
+# Pure-Rust candidates for `examples/page_schemes.rs`. The first two are
+# already in this workspace's graph — `chacha20poly1305` seals every blob
+# (ADR 0017) and `blake3` names them — so only `aes-gcm` is new, and only to
+# be measured.
+chacha20poly1305 = "0.11.0"
+blake3 = "1.8.7"
+aes-gcm = "0.11"
+
 # Only to force SQLCipher's own provider into the process so the two can be
 # compared. The features must match `postio-storage`'s or cargo links two
 # different SQLCiphers and the comparison is meaningless.
