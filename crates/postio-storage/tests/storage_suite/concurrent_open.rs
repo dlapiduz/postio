@@ -124,7 +124,7 @@ fn an_empty_key_string_produces_the_reported_error() {
     for (name, sql, expected_to_fail) in cases {
         let directory = tempfile::tempdir().expect("a temporary directory");
         let connection =
-            rusqlite::Connection::open(directory.path().join("probe.db")).expect("open");
+            Connection::open(directory.path().join("probe.db")).expect("open");
         // The order `db::configure` uses: SQLCipher wants this before the key.
         connection
             .execute_batch("PRAGMA cipher_memory_security = OFF;")

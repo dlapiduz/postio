@@ -13,6 +13,7 @@
 //! opened its own transaction would pass every outcome assertion in this file
 //! and still be unusable by the caller it exists for.
 
+use postio_storage::sql::bind;
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{Flag, MailboxId, Message, MessageId, Operation};
@@ -20,7 +21,7 @@ use postio_storage::actions::{Relocation, relocate, set_flag};
 use postio_storage::repository::{MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
 
-fn at(hour: u32) -> DateTime<Utc> {
+async fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 4, hour, 0, 0).unwrap()
 }
 
@@ -32,24 +33,25 @@ fn at(hour: u32) -> DateTime<Utc> {
 /// either way -- so the assertion that carries the weight is that the verb
 /// *accepted* a borrowed transaction at all, and that nothing is visible
 /// until the caller commits it.
-#[test]
-fn two_relocations_share_one_caller_owned_transaction() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
-    let first = a_message(&connection, inbox, "uid-1");
-    let second = a_message(&connection, inbox, "uid-2");
+#[tokio::test]
+async fn two_relocations_share_one_caller_owned_transaction() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let first = a_message(&connection, inbox, "uid-1").await;
+    let second = a_message(&connection, inbox, "uid-2").await;
 
-    let transaction = connection.transaction().expect("open a transaction");
+    let transaction = connection.transaction().await.expect("open a transaction");
     relocate(
         &transaction,
         account.id,
         &[(inbox, vec![first])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("the first relocation");
     relocate(
         &transaction,
@@ -57,14 +59,15 @@ fn two_relocations_share_one_caller_owned_transaction() {
         &[(inbox, vec![second])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(10),
+        at(10).await,
     )
+    .await
     .expect("the second relocation, in the same transaction");
-    transaction.commit().expect("commit");
+    transaction.commit().await.expect("commit");
 
     let messages = MessageRepository::new(&connection);
     for id in [first, second] {
-        let row = messages.get(id).expect("read back").expect("still there");
+        let row = messages.get(id).await.expect("read back").expect("still there");
         assert_eq!(
             row.mailbox_id, archive,
             "both relocations should have landed once the caller committed"
@@ -85,28 +88,30 @@ fn two_relocations_share_one_caller_owned_transaction() {
 /// What it does prove is that the enqueue happens at all and that the
 /// coordinate reaches the queue row, which is what the drain addresses the
 /// server with (#289).
-#[test]
-fn the_queue_row_carries_the_messages_server_identity() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
-    let message = a_message(&connection, inbox, "uid-9");
+#[tokio::test]
+async fn the_queue_row_carries_the_messages_server_identity() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let message = a_message(&connection, inbox, "uid-9").await;
 
-    let transaction = connection.transaction().expect("open a transaction");
+    let transaction = connection.transaction().await.expect("open a transaction");
     relocate(
         &transaction,
         account.id,
         &[(inbox, vec![message])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("relocate");
-    transaction.commit().expect("commit");
+    transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23))
+        .pending(account.id, at(23).await)
+        .await
         .expect("read the queue");
     assert_eq!(queued.len(), 1, "one operation for one move");
     assert!(
@@ -133,28 +138,30 @@ fn the_queue_row_carries_the_messages_server_identity() {
 /// The distinction is the server operation, and it is the only thing the
 /// caller's `Relocation` chooses. `UndoKind` stays in `postio-session`:
 /// nothing down here knows what an undo entry is.
-#[test]
-fn a_trash_relocation_enqueues_a_delete() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let trash = test_support::mailbox(&connection, &account, "Trash").id;
-    let message = a_message(&connection, inbox, "uid-9");
+#[tokio::test]
+async fn a_trash_relocation_enqueues_a_delete() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let trash = test_support::mailbox(&connection, &account, "Trash").await.id;
+    let message = a_message(&connection, inbox, "uid-9").await;
 
-    let transaction = connection.transaction().expect("open a transaction");
+    let transaction = connection.transaction().await.expect("open a transaction");
     relocate(
         &transaction,
         account.id,
         &[(inbox, vec![message])].into_iter().collect(),
         trash,
         Relocation::Trash,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("relocate");
-    transaction.commit().expect("commit");
+    transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23))
+        .pending(account.id, at(23).await)
+        .await
         .expect("read the queue");
     assert!(
         matches!(
@@ -171,28 +178,30 @@ fn a_trash_relocation_enqueues_a_delete() {
 /// The other half of "the caller owns the transaction": a rule whose sync
 /// pass fails must leave no trace, and a verb that committed internally would
 /// leave the move behind with the insert rolled back.
-#[test]
-fn a_rolled_back_transaction_relocates_nothing() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
-    let message = a_message(&connection, inbox, "uid-9");
+#[tokio::test]
+async fn a_rolled_back_transaction_relocates_nothing() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let message = a_message(&connection, inbox, "uid-9").await;
 
-    let transaction = connection.transaction().expect("open a transaction");
+    let transaction = connection.transaction().await.expect("open a transaction");
     relocate(
         &transaction,
         account.id,
         &[(inbox, vec![message])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("relocate");
     drop(transaction);
 
     let row = MessageRepository::new(&connection)
         .get(message)
+        .await
         .expect("read back")
         .expect("still there");
     assert_eq!(
@@ -201,7 +210,8 @@ fn a_rolled_back_transaction_relocates_nothing() {
     );
     assert!(
         OperationQueueRepository::new(&connection)
-            .pending(account.id, at(23))
+            .pending(account.id, at(23).await)
+            .await
             .expect("read the queue")
             .is_empty(),
         "and must enqueue nothing"
@@ -213,12 +223,12 @@ fn a_rolled_back_transaction_relocates_nothing() {
 /// The `remote_id` is not decoration: it is the coordinate `enqueue_many`
 /// snapshots and `move_to` nulls, so it is the only thing that can tell the
 /// two orderings apart (#289).
-fn a_message(connection: &rusqlite::Connection, mailbox: MailboxId, remote: &str) -> MessageId {
+async fn a_message(connection: &Connection, mailbox: MailboxId, remote: &str) -> MessageId {
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, remote_id)
              SELECT account_id, id, 0, ?2 FROM mailboxes WHERE id = ?1",
-            rusqlite::params![mailbox.get(), remote],
+            bind![mailbox.get(), remote],
         )
         .expect("insert a message");
     MessageId::new(connection.last_insert_rowid())
@@ -229,24 +239,25 @@ fn a_message(connection: &rusqlite::Connection, mailbox: MailboxId, remote: &str
 /// Same contract as [`relocate`]: the rules pass will call this from inside
 /// the sync transaction that inserted the message, so the verb takes a borrow
 /// and never commits.
-#[test]
-fn two_flag_changes_share_one_caller_owned_transaction() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let first = a_message(&connection, inbox, "uid-1");
-    let second = a_message(&connection, inbox, "uid-2");
-    let rows = read(&connection, &[first, second]);
+#[tokio::test]
+async fn two_flag_changes_share_one_caller_owned_transaction() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let first = a_message(&connection, inbox, "uid-1").await;
+    let second = a_message(&connection, inbox, "uid-2").await;
+    let rows = read(&connection, &[first, second]).await;
 
-    let transaction = connection.transaction().expect("open a transaction");
+    let transaction = connection.transaction().await.expect("open a transaction");
     set_flag(
         &transaction,
         account.id,
         &[&rows[0]],
         &Flag::Seen,
         true,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("the first flag change");
     set_flag(
         &transaction,
@@ -254,14 +265,16 @@ fn two_flag_changes_share_one_caller_owned_transaction() {
         &[&rows[1]],
         &Flag::Seen,
         true,
-        at(10),
+        at(10).await,
     )
+    .await
     .expect("the second, in the same transaction");
-    transaction.commit().expect("commit");
+    transaction.commit().await.expect("commit");
 
     for id in [first, second] {
         let row = MessageRepository::new(&connection)
             .get(id)
+            .await
             .expect("read back")
             .expect("still there");
         assert!(
@@ -272,38 +285,41 @@ fn two_flag_changes_share_one_caller_owned_transaction() {
 }
 
 /// Setting a flag enqueues `SetFlags`; clearing it enqueues `ClearFlags`.
-#[test]
-fn clearing_a_flag_enqueues_the_opposite_operation() {
-    let database = test_support::memory();
-    let mut connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let message = a_message(&connection, inbox, "uid-9");
+#[tokio::test]
+async fn clearing_a_flag_enqueues_the_opposite_operation() {
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let message = a_message(&connection, inbox, "uid-9").await;
 
-    let transaction = connection.transaction().expect("open a transaction");
-    let rows = read(&transaction, &[message]);
+    let transaction = connection.transaction().await.expect("open a transaction");
+    let rows = read(&transaction, &[message]).await;
     set_flag(
         &transaction,
         account.id,
         &[&rows[0]],
         &Flag::Seen,
         true,
-        at(9),
+        at(9).await,
     )
+    .await
     .expect("set");
-    let rows = read(&transaction, &[message]);
+    let rows = read(&transaction, &[message]).await;
     set_flag(
         &transaction,
         account.id,
         &[&rows[0]],
         &Flag::Seen,
         false,
-        at(10),
+        at(10).await,
     )
+    .await
     .expect("clear");
-    transaction.commit().expect("commit");
+    transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23))
+        .pending(account.id, at(23).await)
+        .await
         .expect("read the queue");
     assert_eq!(queued.len(), 2, "one operation per change");
     assert!(
@@ -320,12 +336,13 @@ fn clearing_a_flag_enqueues_the_opposite_operation() {
 
 /// Rows as the verb wants them: it is given the messages, not their ids,
 /// because it needs each one's current flags and thread.
-fn read(connection: &rusqlite::Connection, ids: &[MessageId]) -> Vec<Message> {
+async fn read(connection: &Connection, ids: &[MessageId]) -> Vec<Message> {
     let messages = MessageRepository::new(connection);
     ids.iter()
         .map(|id| {
             messages
                 .get(*id)
+                .await
                 .expect("read a message")
                 .expect("the message exists")
         })

@@ -232,7 +232,7 @@ fn signature_picker(panel: &postio_gtk::settings::SettingsPanel) -> gtk::DropDow
 }
 
 fn read_default_signature(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> Option<postio_model::ids::SignatureId> {
     let connection = database.connection().expect("a connection");
@@ -249,7 +249,7 @@ fn pump() {
 }
 
 fn read_display_name(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> String {
     let connection = database.connection().expect("a connection");
@@ -260,7 +260,7 @@ fn read_display_name(
         .display_name
 }
 
-fn read_imap_host(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> String {
+fn read_imap_host(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> String {
     let connection = database.connection().expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
@@ -346,7 +346,7 @@ fn collect(widget: &gtk::Widget, class: &str) -> Vec<gtk::Widget> {
 }
 
 fn folder_paths(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Vec<String> {
     let connection = database.connection().expect("a connection");
@@ -360,7 +360,7 @@ fn folder_paths(
 }
 
 fn mapped_archive(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Option<String> {
     let connection = database.connection().expect("a connection");
@@ -373,7 +373,7 @@ fn mapped_archive(
 }
 
 fn archive_folder(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Option<String> {
     let connection = database.connection().expect("a connection");

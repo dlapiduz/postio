@@ -5,6 +5,7 @@
 //! `executor.rs` — nothing here needs to reproduce those, only confirm the
 //! executor calls through to it and returns results in that order.
 
+use postio_storage::sql::bind;
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
@@ -13,7 +14,7 @@ use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
@@ -1152,7 +1153,7 @@ fn sender_affinity_from_contacts_reaches_the_ranking() {
         .execute(
             "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
              VALUES (?1, ?2, ?2, 80)",
-            rusqlite::params![account.id.get(), "ada@example.com"],
+            bind![account.id.get(), "ada@example.com"],
         )
         .expect("seed ada's contact");
 

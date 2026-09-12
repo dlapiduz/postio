@@ -15,7 +15,7 @@ use postio_model::headers::{Headers, VALUE_LIMIT};
 use postio_model::{BodyState, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 /// A message with a stored header block, which is what the catch-up pass
 /// looks for. The block's *content* does not matter here — every one of
@@ -53,7 +53,7 @@ fn rows(connection: &Connection, message_id: i64) -> Vec<(String, String, i64)> 
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .expect("query")
-        .collect::<rusqlite::Result<_>>()
+        .collect::<Result<_>>()
         .expect("rows")
 }
 

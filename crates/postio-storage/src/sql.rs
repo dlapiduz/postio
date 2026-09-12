@@ -237,6 +237,21 @@ impl RowExt for Row {
     }
 }
 
+/// Count a statement and the rows it yielded, for `test_support::counting`.
+///
+/// A no-op in an ordinary build: the whole module is behind `test-support`,
+/// and without it these compile to nothing.
+#[inline]
+fn count(rows: usize) {
+    #[cfg(feature = "test-support")]
+    {
+        crate::test_support::counting::statement();
+        crate::test_support::counting::rows(rows);
+    }
+    #[cfg(not(feature = "test-support"))]
+    let _ = rows;
+}
+
 /// Every row the query returns, mapped.
 ///
 /// Collects before returning, so the `Rows` is dropped and the connection is
@@ -257,6 +272,7 @@ where
         mapped.push(map(&row)?);
     }
     drop(rows);
+    count(mapped.len());
     Ok(mapped)
 }
 
@@ -279,6 +295,7 @@ where
         None => None,
     };
     drop(rows);
+    count(usize::from(mapped.is_some()));
     Ok(mapped)
 }
 
@@ -302,6 +319,7 @@ where
         out.push(map(&row)?);
     }
     drop(rows);
+    count(out.len());
     Ok(out)
 }
 

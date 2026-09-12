@@ -22,15 +22,15 @@ use postio_storage::{WriteGate, WritePriority, test_support};
 /// still be correct if it were longer; they would merely be slower.
 const ENOUGH_TO_BLOCK: Duration = Duration::from_millis(50);
 
-fn gate() -> WriteGate {
+async fn gate() -> WriteGate {
     // Through a real database, because that is how every caller reaches one
     // and it is worth knowing the wiring is there.
-    test_support::memory().write_gate().clone()
+    test_support::memory().await.write_gate().clone()
 }
 
-#[test]
-fn an_interactive_writer_goes_first_even_though_it_asked_second() {
-    let gate = gate();
+#[tokio::test]
+async fn an_interactive_writer_goes_first_even_though_it_asked_second() {
+    let gate = gate().await;
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Nobody writes until this is dropped, so both threads below are
@@ -81,13 +81,13 @@ fn an_interactive_writer_goes_first_even_though_it_asked_second() {
     );
 }
 
-#[test]
-fn a_background_writer_waits_for_a_queued_interactive_one() {
+#[tokio::test]
+async fn a_background_writer_waits_for_a_queued_interactive_one() {
     // The same property from the other side, and the one that actually bounds
     // the wait: a background writer must not *begin* while an interactive
     // writer is waiting. Beginning and then yielding would be yielding after
     // taking SQLite's lock, which is too late to help.
-    let gate = gate();
+    let gate = gate().await;
 
     let blocking = gate.acquire(WritePriority::Background);
 
@@ -129,19 +129,19 @@ fn a_background_writer_waits_for_a_queued_interactive_one() {
     waiting.join().expect("the interactive writer finishes");
 }
 
-#[test]
-fn two_interactive_writers_do_not_hold_the_lock_at_once() {
+#[tokio::test]
+async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
     // The gate is a lock as well as a queue: whatever the priorities, exactly
     // one permit is outstanding at a time. Without this the sync batch and a
     // keystroke could both be inside `BEGIN IMMEDIATE`, which is the
     // SQLITE_BUSY that #79 was.
-    let gate = gate();
+    let gate = gate().await;
     let holders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let threads: Vec<_> = (0..8)
         .map(|n| {
-            let gate = gate.clone();
+            let gate = gate.await.clone();
             let holders = Arc::clone(&holders);
             let peak = Arc::clone(&peak);
             let priority = if n % 2 == 0 {

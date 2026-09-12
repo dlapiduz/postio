@@ -6,10 +6,11 @@
 //! recorded benchmark; the first two have tests here, and
 //! `the_message_list_plan_never_sorts` is the structural half of the first.
 
+use postio_storage::sql::bind;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use postio_model::{
     Attachment, BodyState, Disposition, EmailAddress, Flag, FlagSet, MailboxId, Message, MessageId,
@@ -20,15 +21,15 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 
-fn at(seconds: i64) -> DateTime<Utc> {
+async fn at(seconds: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(1_770_000_000 + seconds, 0)
         .single()
         .unwrap()
 }
 
 /// A message with enough on it to be worth round-tripping.
-fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
-    let mut message = Message::new(account, mailbox, at(seconds));
+async fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = Message::new(account, mailbox, at(seconds).await);
     message.rfc_message_id = Some(RfcMessageId::new(format!("<m{seconds}@example.com>")));
     message.in_reply_to = Some(RfcMessageId::new("<parent@example.com>"));
     message.references = vec![
@@ -42,7 +43,7 @@ fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64)
     ];
     message.cc = vec![EmailAddress::new(None::<String>, "cc@example.com")];
     message.subject = Some(format!("Re: Subject {seconds}"));
-    message.date = Some(at(seconds - 10));
+    message.date = Some(at(seconds - 10).await);
     message.preview = Some("A short snippet".to_owned());
     message.size = 4_096;
     message.flags = [Flag::Seen, Flag::Keyword("Work".to_owned())]
@@ -63,14 +64,14 @@ fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64)
 // Create, read, update, delete
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_message_round_trips_with_its_recipients_and_attachments() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_round_trips_with_its_recipients_and_attachments() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 100);
+    let mut message = a_message(inbox, account.id, 100).await;
     let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
     attachment.filename = Some("layout.pdf".to_owned());
     attachment.part_id = Some("2".to_owned());
@@ -80,7 +81,7 @@ fn a_message_round_trips_with_its_recipients_and_attachments() {
     inline.content_id = Some("logo@example.com".to_owned());
     message.attachments = vec![attachment, inline];
 
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     assert!(id.is_assigned());
     for attachment in &message.attachments {
@@ -88,7 +89,7 @@ fn a_message_round_trips_with_its_recipients_and_attachments() {
         assert_eq!(attachment.message_id, id);
     }
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.rfc_message_id, message.rfc_message_id);
     assert_eq!(stored.in_reply_to, message.in_reply_to);
     assert_eq!(stored.references, message.references);
@@ -107,120 +108,120 @@ fn a_message_round_trips_with_its_recipients_and_attachments() {
     assert_eq!(stored.sync.body_state, BodyState::HeadersOnly);
 }
 
-#[test]
-fn a_message_s_own_content_type_round_trips() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_s_own_content_type_round_trips() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 200);
+    let mut message = a_message(inbox, account.id, 200).await;
     message.content_type = Some("multipart/related".to_owned());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.content_type.as_deref(), Some("multipart/related"));
 }
 
-#[test]
-fn a_message_with_no_content_type_recorded_reads_back_as_none() {
+#[tokio::test]
+async fn a_message_with_no_content_type_recorded_reads_back_as_none() {
     // A row synced before this field existed, or a draft nothing has parsed
     // `BODYSTRUCTURE` for yet -- distinct from an empty string, which would
     // be a wrong answer rather than an honest "not known".
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 201);
+    let mut message = a_message(inbox, account.id, 201).await;
     assert_eq!(message.content_type, None);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.content_type, None);
 }
 
-#[test]
-fn a_message_s_text_is_flowed_flag_round_trips() {
+#[tokio::test]
+async fn a_message_s_text_is_flowed_flag_round_trips() {
     // #456: a reply built from a message loaded back out of storage needs
     // this to survive the round trip, or every message a user actually
     // replies to (loaded from the database, never straight off the parser)
     // would silently lose it.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 202);
+    let mut message = a_message(inbox, account.id, 202).await;
     message.text_is_flowed = true;
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert!(stored.text_is_flowed);
 }
 
-#[test]
-fn a_message_with_no_flag_recorded_reads_back_as_not_flowed() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_with_no_flag_recorded_reads_back_as_not_flowed() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 203);
+    let mut message = a_message(inbox, account.id, 203).await;
     assert!(!message.text_is_flowed);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert!(!stored.text_is_flowed);
 }
 
-#[test]
-fn a_message_s_list_id_round_trips() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_s_list_id_round_trips() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 300);
+    let mut message = a_message(inbox, account.id, 300).await;
     message.list_id = Some("harbour-dev.lists.example.org".to_owned());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(
         stored.list_id.as_deref(),
         Some("harbour-dev.lists.example.org")
     );
 }
 
-#[test]
-fn a_message_with_no_list_id_reads_back_as_none() {
+#[tokio::test]
+async fn a_message_with_no_list_id_reads_back_as_none() {
     // Most mail is not list mail; a `None` here must stay `None`, not an
     // empty string that would misread as a list with no name.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 301);
+    let mut message = a_message(inbox, account.id, 301).await;
     assert_eq!(message.list_id, None);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.list_id, None);
 }
 
-#[test]
-fn flags_are_denormalized_so_the_list_never_parses_a_string() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 1);
+    let mut message = a_message(inbox, account.id, 1).await;
     message.flags = [Flag::Seen, Flag::Flagged, Flag::Answered, Flag::Recent]
         .into_iter()
         .collect();
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) = connection
         .query_row(
@@ -247,6 +248,7 @@ fn flags_are_denormalized_so_the_list_never_parses_a_string() {
     assert!(
         !messages
             .get(id)
+            .await
             .expect("get")
             .expect("the message")
             .flags
@@ -254,22 +256,22 @@ fn flags_are_denormalized_so_the_list_never_parses_a_string() {
     );
 }
 
-#[test]
-fn updating_a_message_replaces_its_recipients_rather_than_appending() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn updating_a_message_replaces_its_recipients_rather_than_appending() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 2);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 2).await;
+    let id = messages.create(&mut message).await.expect("create");
 
     message.to = vec![EmailAddress::new(None::<String>, "only@example.com")];
     message.subject = Some("Rewritten".to_owned());
     message.attachments.clear();
-    messages.update(&mut message).expect("update");
+    messages.update(&mut message).await.expect("update");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.to.len(), 1);
     assert_eq!(stored.subject.as_deref(), Some("Rewritten"));
 
@@ -279,20 +281,20 @@ fn updating_a_message_replaces_its_recipients_rather_than_appending() {
     assert_eq!(recipients, 3, "from + to + cc, with no leftovers");
 }
 
-#[test]
-fn deleting_messages_takes_their_recipients_and_attachments() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn deleting_messages_takes_their_recipients_and_attachments() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut first = a_message(inbox, account.id, 3);
-    let mut second = a_message(inbox, account.id, 4);
-    let first_id = messages.create(&mut first).expect("create");
-    let second_id = messages.create(&mut second).expect("create");
+    let mut first = a_message(inbox, account.id, 3).await;
+    let mut second = a_message(inbox, account.id, 4).await;
+    let first_id = messages.create(&mut first).await.expect("create");
+    let second_id = messages.create(&mut second).await.expect("create");
 
-    assert_eq!(messages.delete(&[first_id, second_id]).expect("delete"), 2);
-    assert!(messages.get(first_id).expect("get").is_none());
+    assert_eq!(messages.delete(&[first_id, second_id]).await.expect("delete"), 2);
+    assert!(messages.get(first_id).await.expect("get").is_none());
 
     for table in ["messages", "recipients", "attachments"] {
         let remaining: i64 = connection
@@ -303,7 +305,7 @@ fn deleting_messages_takes_their_recipients_and_attachments() {
         assert_eq!(remaining, 0, "{table}");
     }
     assert_eq!(
-        messages.delete(&[first_id]).expect("delete again"),
+        messages.delete(&[first_id]).await.expect("delete again"),
         0,
         "deleting what is gone is zero, not an error"
     );
@@ -315,20 +317,20 @@ fn deleting_messages_takes_their_recipients_and_attachments() {
 /// That is the whole reason `body` is a separate call: the list pages over
 /// rows of a few hundred bytes, and a body on every `Message` would put the
 /// mailbox in memory. `tests/body.rs` holds down the round trip itself.
-#[test]
-fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 5);
+    let mut message = a_message(inbox, account.id, 5).await;
     // The raw `.eml` is still a blob: large, streamed, deduplicated.
     message.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     assert_eq!(
-        messages.body(id).expect("body").expect("the row"),
+        messages.body(id).await.expect("body").expect("the row"),
         StoredBody::default(),
         "nothing has been downloaded yet"
     );
@@ -345,9 +347,10 @@ fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.raw_blob_id, message.raw_blob_id);
     assert_eq!(stored.sync.body_state, BodyState::Full);
     assert!(
@@ -360,23 +363,23 @@ fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() {
 // Backfill candidates
 // ---------------------------------------------------------------------------
 
-#[test]
-fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut oldest = a_message(inbox, account.id, 1);
-    let mut newest = a_message(inbox, account.id, 3);
-    let mut already_full = a_message(inbox, account.id, 2);
+    let mut oldest = a_message(inbox, account.id, 1).await;
+    let mut newest = a_message(inbox, account.id, 3).await;
+    let mut already_full = a_message(inbox, account.id, 2).await;
     already_full.sync.body_state = BodyState::Full;
 
     for message in [&mut oldest, &mut newest, &mut already_full] {
-        messages.create(message).expect("create");
+        messages.create(message).await.expect("create");
     }
 
-    let candidates = messages.needing_backfill(inbox, 10).expect("query");
+    let candidates = messages.needing_backfill(inbox, 10).await.expect("query");
     assert_eq!(
         candidates.iter().map(|c| c.message_id).collect::<Vec<_>>(),
         vec![newest.id, oldest.id],
@@ -388,27 +391,29 @@ fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
     assert_eq!(candidates[0].received_at, newest.received_at);
 }
 
-#[test]
-fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+#[tokio::test]
+async fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
     for seconds in 0..5 {
         messages
-            .create(&mut a_message(inbox, account.id, seconds))
+            .create(&mut a_message(inbox, account.id, seconds).await)
+            .await
             .expect("create");
     }
     messages
-        .create(&mut a_message(archive.id, account.id, 99))
+        .create(&mut a_message(archive.id, account.id, 99).await)
+        .await
         .expect("create in another mailbox");
 
-    let limited = messages.needing_backfill(inbox, 2).expect("query");
+    let limited = messages.needing_backfill(inbox, 2).await.expect("query");
     assert_eq!(limited.len(), 2, "the window caps how many come back");
 
-    let archived = messages.needing_backfill(archive.id, 10).expect("query");
+    let archived = messages.needing_backfill(archive.id, 10).await.expect("query");
     assert_eq!(
         archived.len(),
         1,
@@ -416,43 +421,46 @@ fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
     );
 }
 
-#[test]
-fn a_message_with_no_uid_yet_is_not_a_backfill_candidate() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_with_no_uid_yet_is_not_a_backfill_candidate() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut composed = a_message(inbox, account.id, 1);
+    let mut composed = a_message(inbox, account.id, 1).await;
     composed.server.uid = None;
-    messages.create(&mut composed).expect("create");
+    messages.create(&mut composed).await.expect("create");
 
     assert!(
         messages
             .needing_backfill(inbox, 10)
+            .await
             .expect("query")
             .is_empty()
     );
     assert!(
         messages
             .backfill_candidate(composed.id)
+            .await
             .expect("query")
             .is_none()
     );
 }
 
-#[test]
-fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 7);
-    messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 7).await;
+    messages.create(&mut message).await.expect("create");
 
     let candidate = messages
         .backfill_candidate(message.id)
+        .await
         .expect("query")
         .expect("a candidate, since the body is headers-only");
     assert_eq!(candidate.mailbox_id, inbox);
@@ -461,10 +469,12 @@ fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
 
     messages
         .set_body(message.id, &StoredBody::default(), BodyState::Full)
+        .await
         .expect("mark it fetched");
     assert!(
         messages
             .backfill_candidate(message.id)
+            .await
             .expect("query")
             .is_none(),
         "a message that already has its full body is not a candidate"
@@ -475,18 +485,18 @@ fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
 // Batch upsert, the shape sync writes in
 // ---------------------------------------------------------------------------
 
-#[test]
-fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut batch = vec![
-        a_message(inbox, account.id, 10),
-        a_message(inbox, account.id, 11),
+        a_message(inbox, account.id, 10).await,
+        a_message(inbox, account.id, 11).await,
     ];
-    let report = messages.upsert_batch(&mut batch).expect("first upsert");
+    let report = messages.upsert_batch(&mut batch).await.expect("first upsert");
     assert_eq!(report.inserted, 2);
     assert_eq!(report.updated, 0);
     let ids: Vec<MessageId> = batch.iter().map(|message| message.id).collect();
@@ -494,12 +504,12 @@ fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
 
     // The same UIDs come back with a flag change, plus one genuinely new one.
     let mut again = vec![
-        a_message(inbox, account.id, 10),
-        a_message(inbox, account.id, 11),
-        a_message(inbox, account.id, 12),
+        a_message(inbox, account.id, 10).await,
+        a_message(inbox, account.id, 11).await,
+        a_message(inbox, account.id, 12).await,
     ];
     again[0].flags = [Flag::Seen, Flag::Flagged].into_iter().collect();
-    let report = messages.upsert_batch(&mut again).expect("second upsert");
+    let report = messages.upsert_batch(&mut again).await.expect("second upsert");
 
     assert_eq!(report.inserted, 1);
     assert_eq!(report.updated, 2);
@@ -515,6 +525,7 @@ fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
     assert!(
         messages
             .get(ids[0])
+            .await
             .expect("get")
             .expect("the message")
             .flags
@@ -522,20 +533,20 @@ fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
     );
 }
 
-#[test]
-fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut first = a_message(inbox, account.id, 20);
+    let mut first = a_message(inbox, account.id, 20).await;
     first.server = Default::default();
-    let mut second = a_message(inbox, account.id, 21);
+    let mut second = a_message(inbox, account.id, 21).await;
     second.server = Default::default();
 
     let mut batch = vec![first, second];
-    let report = messages.upsert_batch(&mut batch).expect("upsert");
+    let report = messages.upsert_batch(&mut batch).await.expect("upsert");
 
     assert_eq!(
         report.inserted, 2,
@@ -548,21 +559,22 @@ fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
 // Lookups
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_message_can_be_found_by_its_server_uid() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_can_be_found_by_its_server_uid() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 30);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 30).await;
+    let id = messages.create(&mut message).await.expect("create");
     let uid = message.server.uid.unwrap();
     let validity = postio_model::Generation::new(message.server.uid_validity.unwrap().get());
 
     assert_eq!(
         messages
             .by_uid(inbox, validity, uid)
+            .await
             .expect("by uid")
             .map(|message| message.id),
         Some(id)
@@ -570,36 +582,39 @@ fn a_message_can_be_found_by_its_server_uid() {
     assert!(
         messages
             .by_uid(inbox, postio_model::Generation::new(100), uid)
+            .await
             .expect("by uid")
             .is_none(),
         "a UID means nothing under a different UIDVALIDITY"
     );
-    assert_eq!(messages.uids_in(inbox, validity).expect("uids"), vec![uid]);
+    assert_eq!(messages.uids_in(inbox, validity).await.expect("uids"), vec![uid]);
     assert!(
         messages
             .uids_in(inbox, postio_model::Generation::new(100))
+            .await
             .expect("uids")
             .is_empty()
     );
 }
 
-#[test]
-fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let shared = RfcMessageId::new("<shared@example.com>");
-    let mut first = a_message(inbox, account.id, 40);
+    let mut first = a_message(inbox, account.id, 40).await;
     first.rfc_message_id = Some(shared.clone());
-    let mut second = a_message(inbox, account.id, 41);
+    let mut second = a_message(inbox, account.id, 41).await;
     second.rfc_message_id = Some(shared.clone());
-    let first_id = messages.create(&mut first).expect("create");
-    let second_id = messages.create(&mut second).expect("create");
+    let first_id = messages.create(&mut first).await.expect("create");
+    let second_id = messages.create(&mut second).await.expect("create");
 
     let found = messages
         .ids_by_rfc_message_id(account.id, &shared)
+        .await
         .expect("lookup");
 
     assert_eq!(
@@ -610,12 +625,14 @@ fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() {
     assert!(
         messages
             .ids_by_rfc_message_id(account.id, &RfcMessageId::new("nothing@example.com"))
+            .await
             .expect("lookup")
             .is_empty()
     );
     assert_eq!(
         messages
             .ids_by_rfc_message_id(account.id, &RfcMessageId::new("<SHARED@EXAMPLE.COM>"))
+            .await
             .expect("lookup"),
         vec![first_id, second_id],
         "Message-IDs compare case-insensitively, the way threading needs"
@@ -626,23 +643,24 @@ fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() {
 // Flags, moves, local delete
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 50);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 50).await;
+    let id = messages.create(&mut message).await.expect("create");
 
     let mut flags = FlagSet::new();
     flags.insert(Flag::Flagged);
     messages
         .set_flags(id, &flags, FlagSource::Local)
+        .await
         .expect("local change");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert!(stored.flags.is_flagged() && !stored.flags.is_seen());
     assert!(
         stored.sync.flags_dirty,
@@ -651,10 +669,12 @@ fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
 
     messages
         .set_flags(id, &flags, FlagSource::Server)
+        .await
         .expect("server change");
     assert!(
         !messages
             .get(id)
+            .await
             .expect("get")
             .expect("the message")
             .sync
@@ -663,20 +683,20 @@ fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
     );
 }
 
-#[test]
-fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+#[tokio::test]
+async fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 60);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 60).await;
+    let id = messages.create(&mut message).await.expect("create");
 
-    assert_eq!(messages.move_to(&[id], archive.id).expect("move"), 1);
+    assert_eq!(messages.move_to(&[id], archive.id).await.expect("move"), 1);
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.mailbox_id, archive.id);
     assert_eq!(
         stored.server.uid, None,
@@ -689,55 +709,58 @@ fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
     );
 }
 
-#[test]
-fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 70).await;
+    let id = messages.create(&mut message).await.expect("create");
 
-    assert_eq!(messages.set_deleted_locally(&[id], true).expect("hide"), 1);
+    assert_eq!(messages.set_deleted_locally(&[id], true).await.expect("hide"), 1);
     assert!(
         messages
             .page(&ListQuery::mailbox(inbox))
+            .await
             .expect("page")
             .is_empty(),
         "the list hides it the instant the user presses the key"
     );
     assert!(
-        messages.get(id).expect("get").is_some(),
+        messages.get(id).await.expect("get").is_some(),
         "but undo has to be able to bring it back"
     );
 
-    messages.set_deleted_locally(&[id], false).expect("undo");
+    messages.set_deleted_locally(&[id], false).await.expect("undo");
     assert_eq!(
         messages
             .page(&ListQuery::mailbox(inbox))
+            .await
             .expect("page")
             .len(),
         1
     );
 }
 
-#[test]
-fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 70).await;
+    let id = messages.create(&mut message).await.expect("create");
     let until = Utc::now() + Duration::from_secs(3600);
 
-    assert_eq!(messages.snooze(&[id], until).expect("snooze"), 1);
+    assert_eq!(messages.snooze(&[id], until).await.expect("snooze"), 1);
 
     assert!(
         messages
             .page(&ListQuery::mailbox(inbox))
+            .await
             .expect("page")
             .is_empty(),
         "a snoozed message must leave the folder it is filed in"
@@ -745,6 +768,7 @@ fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() {
     assert!(
         messages
             .page(&ListQuery::account(account.id))
+            .await
             .expect("page")
             .is_empty(),
         "and the unified account view too, or it would just reappear there"
@@ -752,39 +776,42 @@ fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() {
     assert_eq!(
         messages
             .page(&ListQuery::snoozed(account.id))
+            .await
             .expect("page")
             .len(),
         1,
         "but the whole point is that it is still findable, in its own view"
     );
     assert!(
-        messages.get(id).expect("get").is_some(),
+        messages.get(id).await.expect("get").is_some(),
         "snoozing is not deleting"
     );
 }
 
-#[test]
-fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_changed() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+#[tokio::test]
+async fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_changed() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut due = a_message(inbox, account.id, 70);
-    let due_id = messages.create(&mut due).expect("create due");
-    let mut not_due = a_message(archive.id, account.id, 71);
-    let not_due_id = messages.create(&mut not_due).expect("create not due");
+    let mut due = a_message(inbox, account.id, 70).await;
+    let due_id = messages.create(&mut due).await.expect("create due");
+    let mut not_due = a_message(archive.id, account.id, 71).await;
+    let not_due_id = messages.create(&mut not_due).await.expect("create not due");
 
     let now = Utc::now();
     messages
         .snooze(&[due_id], now - Duration::from_secs(1))
+        .await
         .expect("snooze the one whose time has already come");
     messages
         .snooze(&[not_due_id], now + Duration::from_secs(3600))
+        .await
         .expect("snooze the one whose time has not come");
 
-    let woken = messages.wake_due(account.id, now).expect("wake due");
+    let woken = messages.wake_due(account.id, now).await.expect("wake due");
     assert_eq!(
         woken,
         vec![inbox],
@@ -792,13 +819,14 @@ fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_changed()
     );
 
     assert_eq!(
-        messages.get(due_id).expect("get").unwrap().snoozed_until,
+        messages.get(due_id).await.expect("get").unwrap().snoozed_until,
         None,
         "waking clears the snooze rather than merely revealing it"
     );
     assert!(
         messages
             .page(&ListQuery::mailbox(inbox))
+            .await
             .expect("page")
             .iter()
             .any(|row| row.id == due_id),
@@ -807,69 +835,72 @@ fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_changed()
     assert!(
         messages
             .page(&ListQuery::mailbox(archive.id))
+            .await
             .expect("page")
             .is_empty(),
         "the one whose time has not come stays hidden"
     );
 
     assert_eq!(
-        messages.wake_due(account.id, now).expect("wake due again"),
+        messages.wake_due(account.id, now).await.expect("wake due again"),
         Vec::new(),
         "nothing left to wake, so nothing left to repaint"
     );
 }
 
-#[test]
-fn waking_due_snoozes_never_touches_another_accounts_rows() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account_a, inbox_a) = test_support::account_with_inbox(&connection);
-    let (account_b, inbox_b) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn waking_due_snoozes_never_touches_another_accounts_rows() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account_a, inbox_a) = test_support::account_with_inbox(&connection).await;
+    let (account_b, inbox_b) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message_a = a_message(inbox_a, account_a.id, 70);
-    let id_a = messages.create(&mut message_a).expect("create a");
-    let mut message_b = a_message(inbox_b, account_b.id, 71);
-    let id_b = messages.create(&mut message_b).expect("create b");
+    let mut message_a = a_message(inbox_a, account_a.id, 70).await;
+    let id_a = messages.create(&mut message_a).await.expect("create a");
+    let mut message_b = a_message(inbox_b, account_b.id, 71).await;
+    let id_b = messages.create(&mut message_b).await.expect("create b");
 
     let now = Utc::now();
     // Truncated to millisecond precision: that is what the column stores,
     // and the round trip below has to match it exactly.
     let due =
         DateTime::from_timestamp_millis((now - Duration::from_secs(1)).timestamp_millis()).unwrap();
-    messages.snooze(&[id_a], due).expect("snooze a");
-    messages.snooze(&[id_b], due).expect("snooze b");
+    messages.snooze(&[id_a], due).await.expect("snooze a");
+    messages.snooze(&[id_b], due).await.expect("snooze b");
 
     assert_eq!(
-        messages.wake_due(account_a.id, now).expect("wake a"),
+        messages.wake_due(account_a.id, now).await.expect("wake a"),
         vec![inbox_a],
         "only account a's engine asked, so only account a's row may wake"
     );
     assert_eq!(
-        messages.get(id_b).expect("get b").unwrap().snoozed_until,
+        messages.get(id_b).await.expect("get b").unwrap().snoozed_until,
         Some(due),
         "account b's own engine has not ticked yet, so its snooze must stand"
     );
 }
 
-#[test]
-fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 70).await;
+    let id = messages.create(&mut message).await.expect("create");
     messages
         .snooze(&[id], Utc::now() + Duration::from_secs(3600))
+        .await
         .expect("snooze");
 
-    assert_eq!(messages.unsnooze(&[id]).expect("unsnooze"), 1);
-    assert_eq!(messages.get(id).expect("get").unwrap().snoozed_until, None);
+    assert_eq!(messages.unsnooze(&[id]).await.expect("unsnooze"), 1);
+    assert_eq!(messages.get(id).await.expect("get").unwrap().snoozed_until, None);
     assert_eq!(
         messages
             .page(&ListQuery::mailbox(inbox))
+            .await
             .expect("page")
             .len(),
         1,
@@ -885,7 +916,7 @@ fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
 ///
 /// Raw SQL and one statement: this is the fixture for the paging tests, and
 /// building it through the repository would make them a test of insert speed.
-fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
+async fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
     connection
         .execute(
             "WITH RECURSIVE seq(n) AS (
@@ -897,8 +928,9 @@ fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
                     1770000000000 + n * 1000, 'Subject ' || n, 'Preview ' || n,
                     '', n % 2, n % 7 = 0, 1024
                FROM seq",
-            rusqlite::params![mailbox.get(), count],
+            bind![mailbox.get(), count],
         )
+        .await
         .expect("seed messages");
     connection
         .execute(
@@ -908,6 +940,7 @@ fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
              ON CONFLICT (address_normalized) DO NOTHING",
             [mailbox.get()],
         )
+        .await
         .expect("seed addresses");
     connection
         .execute(
@@ -919,19 +952,21 @@ fn seed(connection: &Connection, mailbox: MailboxId, count: u32) {
               WHERE m.mailbox_id = ?1",
             [mailbox.get()],
         )
+        .await
         .expect("seed senders");
 }
 
-#[test]
-fn a_page_is_newest_first_and_no_longer_than_the_window() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection);
-    seed(&connection, inbox, 10);
+#[tokio::test]
+async fn a_page_is_newest_first_and_no_longer_than_the_window() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
+    seed(&connection, inbox, 10).await;
     let messages = MessageRepository::new(&connection);
 
     let page = messages
         .page(&ListQuery::mailbox(inbox).limit(4))
+        .await
         .expect("page");
 
     assert_eq!(page.len(), 4);
@@ -950,12 +985,12 @@ fn a_page_is_newest_first_and_no_longer_than_the_window() {
     assert!(!page[0].seen, "message 10 is odd, so unread");
 }
 
-#[test]
-fn paging_with_a_cursor_walks_the_whole_mailbox_exactly_once() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection);
-    seed(&connection, inbox, 250);
+#[tokio::test]
+async fn paging_with_a_cursor_walks_the_whole_mailbox_exactly_once() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
+    seed(&connection, inbox, 250).await;
     let messages = MessageRepository::new(&connection);
 
     let mut seen: Vec<MessageId> = Vec::new();
@@ -965,7 +1000,7 @@ fn paging_with_a_cursor_walks_the_whole_mailbox_exactly_once() {
         if let Some(cursor) = cursor {
             query = query.after(cursor);
         }
-        let page = messages.page(&query).expect("page");
+        let page = messages.page(&query).await.expect("page");
         if page.is_empty() {
             break;
         }
@@ -980,25 +1015,27 @@ fn paging_with_a_cursor_walks_the_whole_mailbox_exactly_once() {
     assert_eq!(unique.len(), 250, "and none of them twice");
 }
 
-#[test]
-fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    seed(&connection, inbox, 100);
+#[tokio::test]
+async fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    seed(&connection, inbox, 100).await;
     let messages = MessageRepository::new(&connection);
 
     let first = messages
         .page(&ListQuery::mailbox(inbox).limit(10))
+        .await
         .expect("first page");
     let cursor = first.last().expect("a row").cursor();
 
     // IDLE delivers a new message at the top while the user is still scrolling.
-    let mut arrival = a_message(inbox, account.id, 1_000_000);
-    messages.create(&mut arrival).expect("create");
+    let mut arrival = a_message(inbox, account.id, 1_000_000).await;
+    messages.create(&mut arrival).await.expect("create");
 
     let second = messages
         .page(&ListQuery::mailbox(inbox).limit(10).after(cursor))
+        .await
         .expect("second page");
 
     assert_eq!(
@@ -1012,16 +1049,17 @@ fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
     assert!(!overlap, "and nothing is shown twice");
 }
 
-#[test]
-fn paging_by_offset_is_available_for_a_windowed_list_model() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection);
-    seed(&connection, inbox, 100);
+#[tokio::test]
+async fn paging_by_offset_is_available_for_a_windowed_list_model() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
+    seed(&connection, inbox, 100).await;
     let messages = MessageRepository::new(&connection);
 
     let page = messages
         .page_at(&ListQuery::mailbox(inbox).limit(5), 20)
+        .await
         .expect("page at an offset");
 
     assert_eq!(page.len(), 5);
@@ -1031,28 +1069,29 @@ fn paging_by_offset_is_available_for_a_windowed_list_model() {
         "row 21 counting from the newest"
     );
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
         100
     );
 }
 
-#[test]
-fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
-    seed(&connection, inbox, 10);
-    seed(&connection, archive.id, 10);
+#[tokio::test]
+async fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
+    seed(&connection, inbox, 10).await;
+    seed(&connection, archive.id, 10).await;
     let messages = MessageRepository::new(&connection);
 
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
         10
     );
     assert_eq!(
         messages
             .count(&ListQuery::account(account.id))
+            .await
             .expect("count"),
         20,
         "the unified view spans mailboxes"
@@ -1060,6 +1099,7 @@ fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
     assert_eq!(
         messages
             .count(&ListQuery::flagged(account.id))
+            .await
             .expect("count"),
         2,
         "every seventh message, in each of the two mailboxes"
@@ -1067,36 +1107,40 @@ fn the_list_can_be_scoped_to_an_account_or_to_flagged_messages() {
     assert!(
         messages
             .page(&ListQuery::flagged(account.id))
+            .await
             .expect("page")
             .iter()
             .all(|row| row.flagged)
     );
 }
 
-#[test]
-fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_second_query() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_second_query() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 80);
-    let id = messages.create(&mut message).expect("create");
+    let mut message = a_message(inbox, account.id, 80).await;
+    let id = messages.create(&mut message).await.expect("create");
     connection
         .execute(
             "INSERT INTO threads (id, account_id) VALUES (1, ?1)",
             [account.id.get()],
         )
+        .await
         .expect("a thread");
     messages
         .set_thread(id, Some(ThreadId::new(1)))
+        .await
         .expect("assign");
 
-    let page = messages.page(&ListQuery::mailbox(inbox)).expect("page");
+    let page = messages.page(&ListQuery::mailbox(inbox)).await.expect("page");
     assert_eq!(page[0].thread_id, Some(ThreadId::new(1)));
     assert_eq!(
         messages
             .get(id)
+            .await
             .expect("get")
             .expect("the message")
             .thread_id,
@@ -1104,18 +1148,19 @@ fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_second_qu
     );
 }
 
-#[test]
-fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_folder() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+#[tokio::test]
+async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_folder() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
     connection
         .execute(
             "INSERT INTO threads (id, account_id) VALUES (1, ?1), (2, ?1)",
             [account.id.get()],
         )
+        .await
         .expect("two threads");
 
     // A conversation half of which has been archived, which is what an
@@ -1124,27 +1169,29 @@ fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_folder() {
     // would be caught rather than passing by luck.
     let mut ours = Vec::new();
     for (mailbox, minute) in [(inbox, 10), (archive.id, 20), (inbox, 30), (archive.id, 40)] {
-        let mut message = a_message(mailbox, account.id, minute);
-        let id = messages.create(&mut message).expect("create");
+        let mut message = a_message(mailbox, account.id, minute).await;
+        let id = messages.create(&mut message).await.expect("create");
         messages
             .set_thread(id, Some(ThreadId::new(1)))
+            .await
             .expect("assign");
         ours.push(id);
     }
-    let mut other = a_message(inbox, account.id, 50);
-    let elsewhere = messages.create(&mut other).expect("create");
+    let mut other = a_message(inbox, account.id, 50).await;
+    let elsewhere = messages.create(&mut other).await.expect("create");
     messages
         .set_thread(elsewhere, Some(ThreadId::new(2)))
+        .await
         .expect("assign");
 
     let thread = ListQuery::thread(ThreadId::new(1));
     assert_eq!(
-        messages.count(&thread).expect("count"),
+        messages.count(&thread).await.expect("count"),
         4,
         "the thread spans two folders and the scope has to span them too"
     );
 
-    let page = messages.page(&thread).expect("page");
+    let page = messages.page(&thread).await.expect("page");
     let mut found: Vec<_> = page.iter().map(|row| row.id).collect();
     found.sort_by_key(|id| id.get());
     assert_eq!(found, ours, "every message of the thread, and only those");
@@ -1159,9 +1206,10 @@ fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_folder() {
 // ---------------------------------------------------------------------------
 
 /// Whether a plan resolves through an index rather than a scan or a sort.
-fn plan_of(connection: &Connection, sql: &str) -> String {
+async fn plan_of(connection: &Connection, sql: &str) -> String {
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .await
         .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
     // The list query is parameterised; the planner does not care what the
     // values are, only that there are the right number of them.
@@ -1176,11 +1224,11 @@ fn plan_of(connection: &Connection, sql: &str) -> String {
     rows.join("\n")
 }
 
-#[test]
-fn the_message_list_plan_never_sorts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn the_message_list_plan_never_sorts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     for (label, query) in [
@@ -1200,12 +1248,12 @@ fn the_message_list_plan_never_sorts() {
             (
                 "cursor page",
                 messages.explain(&query.clone().after(ListCursor {
-                    received_at: at(0),
+                    received_at: at(0).await,
                     id: MessageId::new(1),
                 })),
             ),
         ] {
-            let plan = plan_of(&connection, &sql);
+            let plan = plan_of(&connection, &sql).await;
             assert!(
                 !plan.contains("TEMP B-TREE"),
                 "{label} / {kind}: the list must never sort at query time:\n{plan}"
@@ -1222,18 +1270,18 @@ fn the_message_list_plan_never_sorts() {
     }
 }
 
-#[test]
-fn paging_stays_flat_over_a_hundred_thousand_messages() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (_account, inbox) = test_support::account_with_inbox(&connection);
-    seed(&connection, inbox, 100_000);
+#[tokio::test]
+async fn paging_stays_flat_over_a_hundred_thousand_messages() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = test_support::account_with_inbox(&connection).await;
+    seed(&connection, inbox, 100_000).await;
     let messages = MessageRepository::new(&connection);
 
     let query = ListQuery::mailbox(inbox).limit(50);
     let time = |query: &ListQuery| -> (Duration, Vec<_>) {
         let start = Instant::now();
-        let page = messages.page(query).expect("page");
+        let page = messages.page(query).await.expect("page");
         (start.elapsed(), page)
     };
 
@@ -1244,7 +1292,7 @@ fn paging_stays_flat_over_a_hundred_thousand_messages() {
     let mut cursor = first.last().expect("a row").cursor();
     let mut pages = 1;
     while pages < 1_900 {
-        let page = messages.page(&query.clone().after(cursor)).expect("page");
+        let page = messages.page(&query.clone().after(cursor)).await.expect("page");
         let Some(last) = page.last() else { break };
         cursor = last.cursor();
         pages += 1;
@@ -1260,7 +1308,7 @@ fn paging_stays_flat_over_a_hundred_thousand_messages() {
     // And the whole mailbox is never materialized: the only way to see every
     // row is to ask for one window at a time.
     assert_eq!(
-        messages.count(&ListQuery::mailbox(inbox)).expect("count"),
+        messages.count(&ListQuery::mailbox(inbox)).await.expect("count"),
         100_000
     );
 }
@@ -1269,11 +1317,11 @@ fn paging_stays_flat_over_a_hundred_thousand_messages() {
 // Reading an explicit, ranked set of ids
 // ---------------------------------------------------------------------------
 
-#[test]
-fn rows_for_answers_in_the_order_it_was_asked() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn rows_for_answers_in_the_order_it_was_asked() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     // Created oldest first, so id order and received_at order agree. That is
@@ -1281,15 +1329,15 @@ fn rows_for_answers_in_the_order_it_was_asked() {
     // rather than a coincidence of how SQLite walked the table.
     let mut ids = Vec::new();
     for step in 0..5 {
-        let mut message = a_message(inbox, account.id, step * 10);
-        messages.create(&mut message).expect("create");
+        let mut message = a_message(inbox, account.id, step * 10).await;
+        messages.create(&mut message).await.expect("create");
         ids.push(message.id);
     }
 
     // A ranking is neither of those orders. This one is deliberately not
     // sorted, not reverse-sorted, and not contiguous.
     let ranked = vec![ids[3], ids[0], ids[4], ids[1]];
-    let rows = messages.rows_for(&ranked).expect("rows");
+    let rows = messages.rows_for(&ranked).await.expect("rows");
 
     assert_eq!(
         rows.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -1305,26 +1353,26 @@ fn rows_for_answers_in_the_order_it_was_asked() {
     assert!(rows[0].seen, "the flags did not come with the row");
 }
 
-#[test]
-fn rows_for_drops_what_the_store_no_longer_holds() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn rows_for_drops_what_the_store_no_longer_holds() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut ids = Vec::new();
     for step in 0..3 {
-        let mut message = a_message(inbox, account.id, step * 10);
-        messages.create(&mut message).expect("create");
+        let mut message = a_message(inbox, account.id, step * 10).await;
+        messages.create(&mut message).await.expect("create");
         ids.push(message.id);
     }
 
     // The index and the store are allowed to disagree for a moment: a search
     // can hand back a message deleted between the query and this read. That
     // is a shorter answer, not an error, and certainly not a fabricated row.
-    messages.delete(&[ids[1]]).expect("delete");
+    messages.delete(&[ids[1]]).await.expect("delete");
 
-    let rows = messages.rows_for(&ids).expect("rows");
+    let rows = messages.rows_for(&ids).await.expect("rows");
     assert_eq!(
         rows.iter().map(|row| row.id).collect::<Vec<_>>(),
         vec![ids[0], ids[2]],
@@ -1333,12 +1381,13 @@ fn rows_for_drops_what_the_store_no_longer_holds() {
 
     // Nothing asked for, nothing read -- and no SQL with an empty `IN ()`,
     // which SQLite rejects outright.
-    assert!(messages.rows_for(&[]).expect("rows").is_empty());
+    assert!(messages.rows_for(&[]).await.expect("rows").is_empty());
 
     // An id that was never real is the same case.
     assert!(
         messages
             .rows_for(&[MessageId::new(999_999)])
+            .await
             .expect("rows")
             .is_empty()
     );
@@ -1357,7 +1406,7 @@ fn rows_for_drops_what_the_store_no_longer_holds() {
 /// Enqueues `operation` against `message`, exactly as the local write does:
 /// the enqueue snapshots the server coordinates before the local half nulls
 /// them (#289).
-fn enqueue_and_move_locally(
+async fn enqueue_and_move_locally(
     connection: &Connection,
     account: postio_model::AccountId,
     message: MessageId,
@@ -1370,8 +1419,9 @@ fn enqueue_and_move_locally(
             account,
             postio_model::OperationTarget::Message(message),
             operation,
-            at(0),
+            at(0).await,
         )
+        .await
         .expect("enqueue");
     // The local half: the row moves, and its server coordinates go with the
     // queue row rather than staying on a message that is no longer there.
@@ -1381,6 +1431,7 @@ fn enqueue_and_move_locally(
               WHERE id = ?1",
             [message.get(), destination.get()],
         )
+        .await
         .expect("local move");
 }
 
@@ -1394,17 +1445,17 @@ fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
         .expect("count") as usize
 }
 
-#[test]
-fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive");
+#[tokio::test]
+async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
     // A message the server has in INBOX, synced normally.
-    let mut batch = vec![a_message(inbox, account.id, 40)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    let mut batch = vec![a_message(inbox, account.id, 40).await];
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
         batch[0].server.uid.expect("uid"),
@@ -1421,7 +1472,7 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
             to: archive.id,
         },
         archive.id,
-    );
+    ).await;
     assert_eq!(
         rows_in(&connection, inbox),
         0,
@@ -1431,11 +1482,11 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
 
     // Now an INBOX resync runs before the queue drains. The server still
     // lists the message in INBOX, so this is exactly what it hands back.
-    let mut resynced = vec![a_message(inbox, account.id, 40)];
+    let mut resynced = vec![a_message(inbox, account.id, 40).await];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    let report = messages.upsert_batch(&mut resynced).expect("resync upsert");
+    let report = messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert_eq!(
         rows_in(&connection, inbox),
@@ -1455,16 +1506,16 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     );
 }
 
-#[test]
-fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let trash = test_support::mailbox(&connection, &account, "Trash");
+#[tokio::test]
+async fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let trash = test_support::mailbox(&connection, &account, "Trash").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut batch = vec![a_message(inbox, account.id, 41)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    let mut batch = vec![a_message(inbox, account.id, 41).await];
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
         batch[0].server.uid.expect("uid"),
@@ -1480,13 +1531,13 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
             trash: trash.id,
         },
         trash.id,
-    );
+    ).await;
 
-    let mut resynced = vec![a_message(inbox, account.id, 41)];
+    let mut resynced = vec![a_message(inbox, account.id, 41).await];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).expect("resync upsert");
+    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert_eq!(
         rows_in(&connection, inbox),
@@ -1497,20 +1548,20 @@ fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
     assert_eq!(rows_in(&connection, trash.id), 1);
 }
 
-#[test]
-fn the_shadow_lifts_once_the_operation_settles() {
+#[tokio::test]
+async fn the_shadow_lifts_once_the_operation_settles() {
     use postio_model::OperationState;
     use postio_storage::repository::OperationQueueRepository;
 
     for settled in [OperationState::Done, OperationState::Failed] {
-        let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        let archive = test_support::mailbox(&connection, &account, "Archive");
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let archive = test_support::mailbox(&connection, &account, "Archive").await;
         let messages = MessageRepository::new(&connection);
 
-        let mut batch = vec![a_message(inbox, account.id, 42)];
-        messages.upsert_batch(&mut batch).expect("first sync");
+        let mut batch = vec![a_message(inbox, account.id, 42).await];
+        messages.upsert_batch(&mut batch).await.expect("first sync");
         let message = batch[0].id;
         let (uid, validity) = (
             batch[0].server.uid.expect("uid"),
@@ -1526,16 +1577,17 @@ fn the_shadow_lifts_once_the_operation_settles() {
                 to: archive.id,
             },
             archive.id,
-        );
+        ).await;
 
         // The queue row settles, one way or the other.
         let queue = OperationQueueRepository::new(&connection);
-        let pending = queue.pending(account.id, at(0)).expect("pending");
+        let pending = queue.pending(account.id, at(0).await).await.expect("pending");
         let id = pending.first().expect("one queued row").id;
         match settled {
-            OperationState::Done => queue.mark_done(id, at(1)).expect("done"),
+            OperationState::Done => queue.mark_done(id, at(1).await).await.expect("done"),
             _ => queue
-                .mark_failed(id, at(1), "server said no")
+                .mark_failed(id, at(1).await, "server said no")
+                .await
                 .expect("failed"),
         }
 
@@ -1544,10 +1596,10 @@ fn the_shadow_lifts_once_the_operation_settles() {
         // it happened and this is a genuinely different message at that UID.
         // Either way the shadow must be gone, or a failed move hides a
         // message for ever.
-        let mut resynced = vec![a_message(inbox, account.id, 42)];
+        let mut resynced = vec![a_message(inbox, account.id, 42).await];
         resynced[0].server.uid = Some(uid);
         resynced[0].server.uid_validity = Some(validity);
-        messages.upsert_batch(&mut resynced).expect("resync upsert");
+        messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
         assert_eq!(
             rows_in(&connection, inbox),
@@ -1558,51 +1610,51 @@ fn the_shadow_lifts_once_the_operation_settles() {
     }
 }
 
-#[test]
-fn the_sections_holding_a_message_s_text_round_trip() {
+#[tokio::test]
+async fn the_sections_holding_a_message_s_text_round_trip() {
     // What the text axis fetches instead of `BODY.PEEK[]` (ADR 0017). The
     // header sync already parses these out of `BODYSTRUCTURE` and then throws
     // them away; without them the backfill cannot name the parts it wants and
     // has to pull the whole message, attachments included.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 202);
+    let mut message = a_message(inbox, account.id, 202).await;
     message.text_part_id = Some("1.1".to_owned());
     message.html_part_id = Some("1.2".to_owned());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.text_part_id.as_deref(), Some("1.1"));
     assert_eq!(stored.html_part_id.as_deref(), Some("1.2"));
 }
 
-#[test]
-fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() {
+#[tokio::test]
+async fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() {
     // The migration cannot invent these for rows already on disk, and
     // guessing `1` would be a wrong answer for every multipart message. NULL
     // is the honest "not known", and the backfill falls back to fetching the
     // whole message for such a row -- the same convention `content_type`
     // (migration 0004) set for this table.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 203);
+    let mut message = a_message(inbox, account.id, 203).await;
     assert_eq!(message.text_part_id, None);
     assert_eq!(message.html_part_id, None);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.text_part_id, None);
     assert_eq!(stored.html_part_id, None);
 }
 
-#[test]
-fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
+#[tokio::test]
+async fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
     // The bug the e2e gate caught. `partial` means text local, payloads not
     // (ADR 0017), and it is a *settled* state -- there is nothing more the
     // background lane should do for such a message.
@@ -1612,21 +1664,22 @@ fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
     // its text, store it, settle at `partial`, and be handed back by the very
     // next seed. The backfill spun on one message forever and starved
     // everything behind it, including newly arriving mail.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut settled = a_message(inbox, account.id, 300);
+    let mut settled = a_message(inbox, account.id, 300).await;
     settled.sync.body_state = BodyState::Partial;
-    messages.create(&mut settled).expect("create");
+    messages.create(&mut settled).await.expect("create");
 
-    let mut wanted = a_message(inbox, account.id, 301);
+    let mut wanted = a_message(inbox, account.id, 301).await;
     wanted.sync.body_state = BodyState::HeadersOnly;
-    let wanted_id = messages.create(&mut wanted).expect("create");
+    let wanted_id = messages.create(&mut wanted).await.expect("create");
 
     let candidates = messages
         .needing_backfill_from(inbox, 10, 0)
+        .await
         .expect("candidates");
 
     assert_eq!(
@@ -1636,23 +1689,23 @@ fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
     );
 }
 
-#[test]
-fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
+#[tokio::test]
+async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
     // The other side of it. `partial` is settled for the *background* lane,
     // not for the user: opening an attachment on such a message has to be
     // able to ask for the parts the background lane deliberately declined,
     // so the interactive lookup still answers for it.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 302);
+    let mut message = a_message(inbox, account.id, 302).await;
     message.sync.body_state = BodyState::Partial;
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     assert!(
-        messages.backfill_candidate(id).expect("look up").is_some(),
+        messages.backfill_candidate(id).await.expect("look up").is_some(),
         "the user can still ask for the rest of it"
     );
 }
@@ -1662,8 +1715,8 @@ fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
 // ---------------------------------------------------------------------------
 
 /// A message carrying one named payload part, text already local.
-fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
-    let mut message = a_message(mailbox, account, seconds);
+async fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = a_message(mailbox, account, seconds).await;
     message.sync.body_state = BodyState::Partial;
     message.content_type = Some("multipart/mixed".to_owned());
     let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 1_024);
@@ -1674,95 +1727,97 @@ fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds:
     message
 }
 
-#[test]
-fn a_fetched_payload_is_recorded_against_the_part_that_asked_for_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_fetched_payload_is_recorded_against_the_part_that_asked_for_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut message = with_a_payload(inbox, account.id, 400);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     let blob = postio_model::BlobId::new("a".repeat(64));
     assert!(
         messages
             .set_attachment_blob(id, "2", &blob)
+            .await
             .expect("write the key"),
         "the part is there to write against"
     );
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.attachments[0].blob_id, Some(blob));
     assert!(stored.attachments[0].is_downloaded());
 }
 
-#[test]
-fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
+#[tokio::test]
+async fn a_payload_key_for_a_part_the_message_does_not_have_writes_nothing() {
     // The `part_id` the reading pane carries survives a refetch; an id from a
     // structure the server has since changed does not. Answering `false`
     // rather than erroring is what lets the caller treat it as "that part is
     // gone" -- the same answer `Outcome::Gone` gives for a whole message.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut message = with_a_payload(inbox, account.id, 401);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     let blob = postio_model::BlobId::new("b".repeat(64));
-    assert!(!messages.set_attachment_blob(id, "7.3", &blob).expect("ask"));
+    assert!(!messages.set_attachment_blob(id, "7.3", &blob).await.expect("ask"));
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.attachments[0].blob_id, None);
 }
 
-#[test]
-fn what_explains_a_payloads_bytes_is_kept_beside_it() {
+#[tokio::test]
+async fn what_explains_a_payloads_bytes_is_kept_beside_it() {
     // Same reason `text_part_headers` exists (#376): `BODY[2]` hands back a
     // part's *encoded* bytes and none of its headers, so nothing in the
     // response says whether they are base64. `BODYSTRUCTURE` said so at
     // header-sync time and this is where the answer is kept.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut message = with_a_payload(inbox, account.id, 402);
     message.attachments[0].part_headers =
         Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n".to_owned());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(
         stored.attachments[0].part_headers.as_deref(),
         Some("Content-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n"),
     );
 }
 
-#[test]
-fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
+#[tokio::test]
+async fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
     // What `eager` drains. The background *text* lane treats `partial` as
     // settled (#376); the payload lane is the one that has work left there.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut wanted = with_a_payload(inbox, account.id, 403);
-    let wanted_id = messages.create(&mut wanted).expect("create");
+    let wanted_id = messages.create(&mut wanted).await.expect("create");
 
     let mut done = with_a_payload(inbox, account.id, 404);
     done.attachments[0].blob_id = Some(postio_model::BlobId::new("c".repeat(64)));
-    messages.create(&mut done).expect("create");
+    messages.create(&mut done).await.expect("create");
 
-    let mut no_text_yet = a_message(inbox, account.id, 405);
+    let mut no_text_yet = a_message(inbox, account.id, 405).await;
     no_text_yet.sync.body_state = BodyState::HeadersOnly;
-    messages.create(&mut no_text_yet).expect("create");
+    messages.create(&mut no_text_yet).await.expect("create");
 
     let candidates = messages
         .needing_payloads_from(inbox, 10, 0)
+        .await
         .expect("candidates");
 
     assert_eq!(
@@ -1772,47 +1827,50 @@ fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
     );
 }
 
-#[test]
-fn a_message_whose_payloads_have_all_landed_becomes_full() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_message_whose_payloads_have_all_landed_becomes_full() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut message = with_a_payload(inbox, account.id, 406);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     messages
         .set_attachment_blob(id, "2", &postio_model::BlobId::new("d".repeat(64)))
+        .await
         .expect("write the key");
     messages
         .set_body_state(id, BodyState::Full)
+        .await
         .expect("settle it");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.sync.body_state, BodyState::Full);
     assert!(
         messages
             .needing_payloads_from(inbox, 10, 0)
+            .await
             .expect("candidates")
             .is_empty(),
         "nothing left to fetch for it"
     );
 }
 
-#[test]
-fn two_messages_from_the_same_sender_share_one_address_row() {
+#[tokio::test]
+async fn two_messages_from_the_same_sender_share_one_address_row() {
     // `recipients` and its indexes are 56 MB of a 163 MB database -- 34%, and
     // larger than `messages` itself -- because 378,819 rows each store an
     // address and its lowercased near-duplicate. An account corresponds with
     // tens of thousands of distinct addresses, not 378,819 (ADR 0017).
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     for uid in [400, 401, 402] {
-        let mut message = a_message(inbox, account.id, uid);
+        let mut message = a_message(inbox, account.id, uid).await;
         // Exactly two correspondents, the same two every time -- the shape a
         // real mailbox has at scale, where a few thousand people account for
         // hundreds of thousands of header rows.
@@ -1825,7 +1883,7 @@ fn two_messages_from_the_same_sender_share_one_address_row() {
             "grace@example.com",
         )];
         message.cc.clear();
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
     }
 
     let addresses: i64 = connection
@@ -1839,23 +1897,23 @@ fn two_messages_from_the_same_sender_share_one_address_row() {
     assert_eq!(addresses, 2, "but only two distinct addresses stored");
 }
 
-#[test]
-fn an_address_is_shared_case_insensitively() {
+#[tokio::test]
+async fn an_address_is_shared_case_insensitively() {
     // The point of `address_normalized` in the first place: `Ada@Example.com`
     // and `ada@example.com` are one correspondent, and `from:` has always
     // matched them as one. Sharing a row is what makes that structural rather
     // than a rule every query has to remember.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     for (uid, spelling) in [(410, "Ada@Example.com"), (411, "ada@example.com")] {
-        let mut message = a_message(inbox, account.id, uid);
+        let mut message = a_message(inbox, account.id, uid).await;
         message.from = vec![postio_model::EmailAddress::new(None::<String>, spelling)];
         message.to.clear();
         message.cc.clear();
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
     }
 
     let addresses: i64 = connection
@@ -1879,17 +1937,17 @@ fn an_address_is_shared_case_insensitively() {
     assert_eq!(stored, "Ada@Example.com");
 }
 
-#[test]
-fn a_message_still_reads_back_the_addresses_it_was_given() {
+#[tokio::test]
+async fn a_message_still_reads_back_the_addresses_it_was_given() {
     // The normalization must be invisible above the repository: the verbatim
     // spelling and the display name are per-header facts and stay on the
     // recipient row, while only the addr-spec is shared.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 420);
+    let mut message = a_message(inbox, account.id, 420).await;
     message.from = vec![postio_model::EmailAddress::new(
         Some("Ada Lovelace"),
         "Ada@Example.com",
@@ -1898,9 +1956,9 @@ fn a_message_still_reads_back_the_addresses_it_was_given() {
         postio_model::EmailAddress::new(Some("Grace Hopper"), "grace@example.com"),
         postio_model::EmailAddress::new(None::<String>, "katherine@example.com"),
     ];
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let stored = messages.get(id).expect("get").expect("the message");
+    let stored = messages.get(id).await.expect("get").expect("the message");
     assert_eq!(stored.from, message.from, "verbatim spelling and name kept");
     assert_eq!(stored.to, message.to, "and header order preserved");
 }
@@ -1918,19 +1976,19 @@ fn a_message_still_reads_back_the_addresses_it_was_given() {
 
 /// The shared fixture, but unread — which is the state a message the cursor
 /// has not rested on is in, and the one these tests are about.
-fn an_unread_message(
+async fn an_unread_message(
     mailbox: MailboxId,
     account: postio_model::AccountId,
     seconds: i64,
 ) -> Message {
-    let mut message = a_message(mailbox, account, seconds);
+    let mut message = a_message(mailbox, account, seconds).await;
     message.flags.remove(&postio_model::Flag::Seen);
     message
 }
 
 /// Marks `message` read locally and queues the flag, in the order the dwell
 /// does it: the local write first, then the operation that will carry it.
-fn read_locally_and_enqueue(
+async fn read_locally_and_enqueue(
     connection: &Connection,
     account: postio_model::AccountId,
     message: MessageId,
@@ -1940,46 +1998,49 @@ fn read_locally_and_enqueue(
     flags.insert(postio_model::Flag::Seen);
     MessageRepository::new(connection)
         .set_flags(message, &flags, FlagSource::Local)
+        .await
         .expect("the local write");
     OperationQueueRepository::new(connection)
         .enqueue(
             account,
             postio_model::OperationTarget::Message(message),
             &postio_model::Operation::SetFlags { flags },
-            at(0),
+            at(0).await,
         )
+        .await
         .expect("enqueue");
 }
 
-fn is_seen(connection: &Connection, message: MessageId) -> bool {
+async fn is_seen(connection: &Connection, message: MessageId) -> bool {
     MessageRepository::new(connection)
         .get(message)
+        .await
         .expect("read")
         .expect("the message")
         .flags
         .contains(&postio_model::Flag::Seen)
 }
 
-#[test]
-fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+#[tokio::test]
+async fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     // A message the server has, unread, synced normally.
     let mut batch = vec![an_unread_message(inbox, account.id, 40)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
         batch[0].server.uid.expect("uid"),
         batch[0].server.uid_validity.expect("validity"),
     );
-    assert!(!is_seen(&connection, message), "it starts unread");
+    assert!(!is_seen(&connection, message).await, "it starts unread");
 
     // The cursor rests on it: read locally, and queued for the server.
-    read_locally_and_enqueue(&connection, account.id, message);
-    assert!(is_seen(&connection, message), "the dwell wrote it");
+    read_locally_and_enqueue(&connection, account.id, message).await;
+    assert!(is_seen(&connection, message).await, "the dwell wrote it");
 
     // A CHANGEDSINCE pass runs before the drainer gets there. The server has
     // not been told yet, so it hands back exactly what it still believes.
@@ -1987,10 +2048,10 @@ fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).expect("resync upsert");
+    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert!(
-        is_seen(&connection, message),
+        is_seen(&connection, message).await,
         "the message went bold again: a resync wrote the server's stale flags \
          over a local read the server has not heard about yet, so the dwell is \
          silently undone and the queued operation ends up setting a \\Seen \
@@ -1998,26 +2059,26 @@ fn a_resync_does_not_unread_a_message_whose_flag_has_not_drained() {
     );
 }
 
-#[test]
-fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
+#[tokio::test]
+async fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
     // The other half, and the reason this cannot be solved by skipping the
     // message the way an undrained move is. A flag the user never touched is
     // the server's to report -- somebody flagged it on their phone -- and it
     // has to arrive even while a *different* flag is mid-flight.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut batch = vec![an_unread_message(inbox, account.id, 40)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
         batch[0].server.uid.expect("uid"),
         batch[0].server.uid_validity.expect("validity"),
     );
 
-    read_locally_and_enqueue(&connection, account.id, message);
+    read_locally_and_enqueue(&connection, account.id, message).await;
 
     // The server reports it flagged -- and still unseen, because it has not
     // heard about the read yet.
@@ -2026,9 +2087,9 @@ fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
     resynced[0].flags.insert(postio_model::Flag::Flagged);
-    messages.upsert_batch(&mut resynced).expect("resync upsert");
+    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
-    let stored = messages.get(message).expect("read").expect("the message");
+    let stored = messages.get(message).await.expect("read").expect("the message");
     assert!(
         stored.flags.contains(&postio_model::Flag::Flagged),
         "a flag set elsewhere never arrived: preserving local intent must not \
@@ -2040,34 +2101,34 @@ fn a_resync_still_takes_the_flags_the_queue_is_not_holding() {
     );
 }
 
-#[test]
-fn a_drained_flag_stops_being_protected() {
+#[tokio::test]
+async fn a_drained_flag_stops_being_protected() {
     // The bound on the rule: local intent wins only until the operation that
     // carries it has settled. After that the server is authoritative again,
     // and a message someone marked unread on their phone must be able to come
     // back unread here.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut batch = vec![an_unread_message(inbox, account.id, 40)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
         batch[0].server.uid.expect("uid"),
         batch[0].server.uid_validity.expect("validity"),
     );
 
-    read_locally_and_enqueue(&connection, account.id, message);
+    read_locally_and_enqueue(&connection, account.id, message).await;
 
     // The drainer pushes it and marks the row done.
     {
         use postio_storage::repository::OperationQueueRepository;
         let queue = OperationQueueRepository::new(&connection);
-        let pending = queue.pending(account.id, at(1)).expect("pending");
+        let pending = queue.pending(account.id, at(1).await).await.expect("pending");
         for row in pending {
-            queue.mark_done(row.id, at(2)).expect("settle");
+            queue.mark_done(row.id, at(2).await).await.expect("settle");
         }
     }
 
@@ -2077,51 +2138,51 @@ fn a_drained_flag_stops_being_protected() {
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
-    messages.upsert_batch(&mut resynced).expect("resync upsert");
+    messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert!(
-        !is_seen(&connection, message),
+        !is_seen(&connection, message).await,
         "a settled operation goes on protecting the flag it carried, so the \
          server can never mark anything unread again"
     );
 }
 
-#[test]
-fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
+#[tokio::test]
+async fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
     // #544: a non-IMAP backend's uid is a synthetic enumeration hint and can
     // shift between passes; the identity is what names the message. A fetch
     // carrying a known remote_id under a different uid must update the row
     // it names, never insert a second copy of the same message.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut batch = vec![a_message(inbox, account.id, 40)];
-    messages.upsert_batch(&mut batch).expect("first sync");
+    let mut batch = vec![a_message(inbox, account.id, 40).await];
+    messages.upsert_batch(&mut batch).await.expect("first sync");
     let id = batch[0].id;
 
-    let mut shifted = vec![a_message(inbox, account.id, 40)];
+    let mut shifted = vec![a_message(inbox, account.id, 40).await];
     shifted[0].server.uid = Some(Uid::new(999));
-    let report = messages.upsert_batch(&mut shifted).expect("second pass");
+    let report = messages.upsert_batch(&mut shifted).await.expect("second pass");
 
     assert_eq!(report.updated, 1, "{report:?}");
     assert_eq!(report.inserted, 0, "{report:?}");
     assert_eq!(shifted[0].id, id, "the identity resolved to the same row");
 }
 
-#[test]
-fn a_truncated_header_block_says_so_when_it_is_read_back() {
+#[tokio::test]
+async fn a_truncated_header_block_says_so_when_it_is_read_back() {
     // The flag is the difference between "this message has no such header" and
     // "the part of it that was kept has none". An evaluator that could not
     // tell those apart would report absence with the same confidence either
     // way, which is the one thing a search must not do.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     messages
         .set_body(
@@ -2135,9 +2196,10 @@ fn a_truncated_header_block_says_so_when_it_is_read_back() {
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
-    let stored = messages.body(id).expect("body").expect("the row");
+    let stored = messages.body(id).await.expect("body").expect("the row");
     assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
     assert!(
         stored.headers_truncated,
@@ -2145,16 +2207,16 @@ fn a_truncated_header_block_says_so_when_it_is_read_back() {
     );
 }
 
-#[test]
-fn a_whole_header_block_is_not_marked_truncated() {
+#[tokio::test]
+async fn a_whole_header_block_is_not_marked_truncated() {
     // The ordinary case, and the one that must not drift to `true` by
     // accident: every message in a real store takes this path.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     messages
         .set_body(
@@ -2168,30 +2230,32 @@ fn a_whole_header_block_is_not_marked_truncated() {
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
     assert!(
         !messages
             .body(id)
+            .await
             .expect("body")
             .expect("the row")
             .headers_truncated
     );
 }
 
-#[test]
-fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped() {
+#[tokio::test]
+async fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped() {
     // `ParsedMessage::into_message` has always filled `Message.headers`, and
     // the repository has never read or written them -- so a `Message` loaded
     // from the store came back with an empty block however much mail was in
     // it. That asymmetry is what #479's differential test exists to catch: the
     // in-memory matcher and the index have to be looking at the same headers.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
     messages
         .set_body(
@@ -2218,9 +2282,10 @@ fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped()
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
-    let headers = messages.headers(id).expect("headers").expect("the row");
+    let headers = messages.headers(id).await.expect("headers").expect("the row");
 
     assert_eq!(headers.get("x-mailer"), Some("mutt 1.5.24"));
     assert_eq!(
@@ -2234,36 +2299,36 @@ fn the_stored_block_comes_back_as_headers_rather_than_being_parsed_and_dropped()
     );
 }
 
-#[test]
-fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
+#[tokio::test]
+async fn a_message_with_no_stored_block_has_no_headers_rather_than_an_error() {
     // Every message in every store today, until the repair pass reaches it.
     // "Nothing downloaded yet" is not a fault.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
 
-    let headers = messages.headers(id).expect("headers").expect("the row");
+    let headers = messages.headers(id).await.expect("headers").expect("the row");
 
     assert!(headers.is_empty());
 }
 
-#[test]
-fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
+#[tokio::test]
+async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
     // Every message in every store that exists today: `body_headers` has been
     // NULL since migration 0001 because nothing ever wrote it. The pass has to
     // find them, and has to stop finding them once they are done or it spins
     // (#500).
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut fetched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     fetched.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
-    let fetched_id = messages.create(&mut fetched).expect("create");
+    let fetched_id = messages.create(&mut fetched).await.expect("create");
     messages
         .set_body(
             fetched_id,
@@ -2276,15 +2341,16 @@ fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
     // Never downloaded: not a repair candidate. Its block will arrive with its
     // body like any other, and offering it here would put a message on the
     // queue that the pass can do nothing about.
     let mut untouched = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    messages.create(&mut untouched).expect("create");
+    messages.create(&mut untouched).await.expect("create");
 
-    let candidates = messages.messages_missing_headers(10).expect("candidates");
+    let candidates = messages.messages_missing_headers(10).await.expect("candidates");
 
     assert_eq!(candidates.len(), 1, "got: {candidates:?}");
     assert_eq!(candidates[0].message_id, fetched_id);
@@ -2303,17 +2369,19 @@ fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
                 truncated: false,
             }),
         )
+        .await
         .expect("repair");
     assert!(
         messages
             .messages_missing_headers(10)
+            .await
             .expect("candidates")
             .is_empty()
     );
 }
 
-#[test]
-fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
+#[tokio::test]
+async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
     // The hazard in repairing one column of three: the row carries a single
     // `body_dictionary_id` for `body_text`, `body_html` and `body_headers`
     // together. A repair that compressed the block against a newer dictionary
@@ -2321,9 +2389,9 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
     // ADR 0020's frames can only be read with the dictionary they were written
     // against. Losing a message's text to a pass that was only supposed to add
     // its headers would be the worst possible trade.
-    let database = test_support::memory();
-    let connection = database.connection().expect("a connection");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     // A corpus, so that a dictionary exists and the row under test actually
@@ -2332,7 +2400,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
     // reason it is about.
     for seed in 0..64 {
         let mut filler = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-        let filler_id = messages.create(&mut filler).expect("create");
+        let filler_id = messages.create(&mut filler).await.expect("create");
         messages
             .set_body(
                 filler_id,
@@ -2352,6 +2420,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
                 },
                 BodyState::Full,
             )
+            .await
             .expect("set");
     }
     postio_storage::body::train_dictionary(&connection)
@@ -2359,7 +2428,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
         .expect("a corpus this size trains");
 
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
     let words = "the text nobody may lose to a header repair".repeat(20);
     messages
         .set_body(
@@ -2373,6 +2442,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
             },
             BodyState::Full,
         )
+        .await
         .expect("set");
 
     // A second dictionary, so "the newest" and "the one this row names" are
@@ -2404,6 +2474,7 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
                 truncated: true,
             }),
         )
+        .await
         .expect("repair");
 
     let dictionary: Option<i64> = connection
@@ -2418,15 +2489,15 @@ fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
         "the row names no dictionary, so this test cannot see the hazard it is about"
     );
 
-    let stored = messages.body(id).expect("body").expect("the row");
+    let stored = messages.body(id).await.expect("body").expect("the row");
     assert_eq!(stored.text.as_deref(), Some(words.as_str()));
     assert_eq!(stored.html.as_deref(), Some("<p>and the html</p>"));
     assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
     assert!(stored.headers_truncated);
 }
 
-#[test]
-fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() {
+#[tokio::test]
+async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() {
     // #942. A sent message is written into Sent locally the moment it is on
     // its way, so the user can see it — before the IMAP `APPEND` has given it
     // a server identity. The identity arrives afterwards.
@@ -2440,24 +2511,25 @@ fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() 
     // ADR 0021 already uses to answer "did this send arrive?" against the Sent
     // folder, and it is only consulted for a local row that has no server
     // identity at all — a row nothing but this client could have written.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, sent) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, sent) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let reserved = RfcMessageId::new("<reserved.once@example.com>");
-    let mut ours = a_message(sent, account.id, 20);
+    let mut ours = a_message(sent, account.id, 20).await;
     ours.rfc_message_id = Some(reserved.clone());
     ours.server = Default::default();
-    messages.create(&mut ours).expect("the local copy");
+    messages.create(&mut ours).await.expect("the local copy");
     assert!(ours.server.remote_id.is_none(), "written before the append");
 
     // The server's copy of the same message, arriving through an ordinary
     // sync of the Sent folder.
-    let mut fetched = a_message(sent, account.id, 21);
+    let mut fetched = a_message(sent, account.id, 21).await;
     fetched.rfc_message_id = Some(reserved.clone());
     let report = messages
         .upsert_batch(&mut vec![fetched.clone()])
+        .await
         .expect("the resync");
 
     assert_eq!(
@@ -2473,6 +2545,7 @@ fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() 
             limit: 50,
             after: None,
         })
+        .await
         .expect("a page");
     assert_eq!(
         all.len(),
@@ -2484,6 +2557,7 @@ fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() 
 
     let stored = messages
         .get(ours.id)
+        .await
         .expect("get")
         .expect("the original row is the one that survived");
     assert_eq!(
@@ -2493,28 +2567,29 @@ fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_one() 
     );
 }
 
-#[test]
-fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identity() {
+#[tokio::test]
+async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identity() {
     // The narrow half of the rule above. Adoption is only ever right for a
     // row this client wrote and the server has not yet named; a row that
     // already carries a `remote_id` is a different message that happens to
     // share a `Message-ID` — a mailing list copy of one's own post is the
     // ordinary case — and collapsing the two would lose one of them.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let shared = RfcMessageId::new("<shared@example.com>");
-    let mut existing = a_message(inbox, account.id, 30);
+    let mut existing = a_message(inbox, account.id, 30).await;
     existing.rfc_message_id = Some(shared.clone());
-    messages.create(&mut existing).expect("an ordinary message");
+    messages.create(&mut existing).await.expect("an ordinary message");
     assert!(existing.server.remote_id.is_some());
 
-    let mut fetched = a_message(inbox, account.id, 31);
+    let mut fetched = a_message(inbox, account.id, 31).await;
     fetched.rfc_message_id = Some(shared);
     let report = messages
         .upsert_batch(&mut vec![fetched])
+        .await
         .expect("the resync");
 
     assert_eq!(

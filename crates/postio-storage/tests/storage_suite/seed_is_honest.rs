@@ -24,11 +24,11 @@ use postio_storage::seed::{seed_large, seed_small};
 use postio_storage::test_support;
 
 /// Every folder's cached counts, against the rows actually in it.
-fn assert_counts_are_real(
-    database: &postio_storage::Database,
+async fn assert_counts_are_real(
+    database: &postio_storage::Store,
     mailboxes: &[postio_model::Mailbox],
 ) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     for mailbox in mailboxes {
         let total: u32 = connection
             .query_row(
@@ -62,35 +62,35 @@ fn assert_counts_are_real(
     }
 }
 
-#[test]
-fn a_small_seed_leaves_counts_the_triggers_maintained() {
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+#[tokio::test]
+async fn a_small_seed_leaves_counts_the_triggers_maintained() {
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
 
     assert!(report.message_count > 0, "seeded nothing to count");
-    assert_counts_are_real(&database, &report.mailboxes);
+    assert_counts_are_real(&database, &report.mailboxes).await;
 }
 
-#[test]
-fn a_large_seed_leaves_counts_the_triggers_maintained() {
+#[tokio::test]
+async fn a_large_seed_leaves_counts_the_triggers_maintained() {
     // Batched inserts, which is the shape a real sync writes in and the one
     // where a trigger that fires per statement rather than per row would be
     // caught.
-    let database = test_support::memory();
-    let report = seed_large(&database, 7, 2_000);
+    let database = test_support::memory().await;
+    let report = seed_large(&database, 7, 2_000).await;
 
     assert!(report.message_count >= 2_000);
-    assert_counts_are_real(&database, &report.mailboxes);
+    assert_counts_are_real(&database, &report.mailboxes).await;
 }
 
-#[test]
-fn a_seeded_inbox_is_not_empty() {
+#[tokio::test]
+async fn a_seeded_inbox_is_not_empty() {
     // The property the application actually depends on, stated plainly: a
     // seeded store has mail *and says so*. `postio-app`'s `tests/wiring.rs`
     // asserts the window lists it; this asserts the store it lists from is
     // not lying about being empty.
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
 
     let inbox = report
         .mailbox(MailboxRole::Inbox)

@@ -9,6 +9,7 @@
 //! that minted a fresh key on the second open would look fine on first run
 //! and lose every mailbox on the second.
 
+use postio_storage::sql::bind;
 use std::sync::Arc;
 
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};
@@ -259,7 +260,7 @@ fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String
     use postio_storage::repository::MessageRepository;
 
     let path = directory.join("postio.db");
-    let mut connection = rusqlite::Connection::open(&path).expect("a plaintext database");
+    let mut connection = Connection::open(&path).expect("a plaintext database");
     postio_storage::migrate(&mut connection).expect("migrate");
 
     let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
@@ -281,7 +282,7 @@ fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String
     connection
         .execute(
             "UPDATE messages SET raw_blob_id = ?1 WHERE id = ?2",
-            rusqlite::params![digest, id.get()],
+            bind![digest, id.get()],
         )
         .expect("point the message at its source");
     connection
@@ -326,7 +327,7 @@ fn opening_a_plaintext_store_encrypts_it_first() {
 fn a_store_with_work_still_queued_refuses_and_says_what_to_do() {
     let directory = tempfile::tempdir().expect("a directory");
     let (path, _) = a_plaintext_store(directory.path());
-    let connection = rusqlite::Connection::open(&path).expect("open");
+    let connection = Connection::open(&path).expect("open");
     connection
         .execute(
             "INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)

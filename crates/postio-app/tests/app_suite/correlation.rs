@@ -42,7 +42,7 @@ use postio_storage::test_support;
 
 /// The application's bus over a store holding one message in the inbox.
 struct World {
-    database: postio_storage::Database,
+    database: postio_storage::Store,
     message: MessageId,
     dispatcher: Dispatcher,
 }
@@ -105,7 +105,7 @@ pub fn a_programmatic_caller_gets_the_answer_to_its_own_archive() {
 
     assert!(
         matches!(
-            ours.last(),
+            ours.last().await,
             Some(Event::InvocationFinished {
                 outcome: InvocationOutcome::Completed,
                 ..

@@ -4,6 +4,7 @@
 //! same content written twice occupies one blob", "an interrupted write leaves
 //! no partial blob visible" and "orphan collection is tested".
 
+use postio_storage::sql::bind;
 use std::io::{self, Read};
 
 use postio_model::BlobId;
@@ -272,9 +273,9 @@ fn a_temporary_file_left_by_a_crash_is_purged_and_never_served() {
 // ---------------------------------------------------------------------------
 
 /// A database with one account, one mailbox, and the ids to hang rows off.
-fn database() -> postio_storage::test_support::TempDatabase {
-    let database = postio_storage::test_support::temp();
-    let connection = database.connection().expect("checkout");
+async fn database() -> postio_storage::test_support::TempStore {
+    let database = postio_storage::test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     connection
         .execute_batch(
             "INSERT INTO accounts (id, display_name, address, incoming_host, incoming_port,
@@ -284,6 +285,7 @@ fn database() -> postio_storage::test_support::TempDatabase {
                      'smtp.example.com', 587, 'test', 0);
              INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX');",
         )
+        .await
         .expect("seed");
     drop(connection);
     database
@@ -294,22 +296,22 @@ fn database() -> postio_storage::test_support::TempDatabase {
 /// There is no body parameter: since ADR 0020 a body is a compressed column on
 /// this row, not a file, so it is not something the blob store can reference,
 /// collect or evict.
-fn insert_message(connection: &rusqlite::Connection, raw: Option<&BlobId>) -> i64 {
+fn insert_message(connection: &Connection, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id)
              VALUES (1, 1, 0, ?1)",
-            rusqlite::params![raw.map(BlobId::as_str)],
+            bind![raw.map(BlobId::as_str)],
         )
         .expect("insert a message");
     connection.last_insert_rowid()
 }
 
-#[test]
-fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
+#[tokio::test]
+async fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let raw = store.put(b"the raw message").expect("put");
     let attached = store.put(b"an attachment").expect("put");
@@ -326,13 +328,15 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
             .execute(
                 "INSERT INTO attachments (message_id, mime_type, size, blob_id)
                  VALUES (?1, 'application/pdf', 13, ?2)",
-                rusqlite::params![message, blob.as_str()],
+                bind![message, blob.as_str()],
             )
+            .await
             .expect("insert an attachment");
     }
 
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())
+        .await
         .expect("collect");
 
     assert_eq!(report.scanned, 4);
@@ -345,11 +349,11 @@ fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     assert!(!store.contains(&orphan));
 }
 
-#[test]
-fn a_blob_becomes_collectable_once_its_last_reference_goes() {
+#[tokio::test]
+async fn a_blob_becomes_collectable_once_its_last_reference_goes() {
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let shared = store.put(b"referenced twice").expect("put");
     let first = insert_message(&connection, Some(&shared));
@@ -357,28 +361,32 @@ fn a_blob_becomes_collectable_once_its_last_reference_goes() {
 
     connection
         .execute("DELETE FROM messages WHERE id = ?1", [first])
+        .await
         .expect("delete one of them");
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())
+        .await
         .expect("collect");
     assert_eq!(report.removed, 0, "the other message still points at it");
     assert!(store.contains(&shared));
 
     connection
         .execute("DELETE FROM messages", ())
+        .await
         .expect("delete the rest");
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())
+        .await
         .expect("collect");
     assert_eq!(report.removed, 1, "now nothing does");
     assert!(!store.contains(&shared));
 }
 
-#[test]
-fn a_blob_younger_than_the_grace_period_is_never_collected() {
+#[tokio::test]
+async fn a_blob_younger_than_the_grace_period_is_never_collected() {
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     // The window every real caller lives in: the bytes are on disk, the row
     // that will reference them is not written yet.
@@ -386,6 +394,7 @@ fn a_blob_younger_than_the_grace_period_is_never_collected() {
 
     let report = store
         .collect_garbage(&connection, GarbageCollection::default())
+        .await
         .expect("collect");
 
     assert_eq!(
@@ -396,14 +405,15 @@ fn a_blob_younger_than_the_grace_period_is_never_collected() {
     assert!(store.contains(&in_flight));
 }
 
-#[test]
-fn collecting_an_empty_store_is_a_no_op() {
+#[tokio::test]
+async fn collecting_an_empty_store_is_a_no_op() {
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let report = store
         .collect_garbage(&connection, GarbageCollection::immediate())
+        .await
         .expect("collect");
 
     assert_eq!(report.scanned, 0);
@@ -753,7 +763,7 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 
 /// A message received `received_at`, holding the raw `.eml` blob if it has one.
 fn insert_message_at(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     received_at: i64,
     raw: Option<&BlobId>,
 ) -> i64 {
@@ -761,31 +771,31 @@ fn insert_message_at(
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id, body_state)
              VALUES (1, 1, ?1, ?2, 'full')",
-            rusqlite::params![received_at, raw.map(BlobId::as_str)],
+            bind![received_at, raw.map(BlobId::as_str)],
         )
         .expect("insert a message");
     connection.last_insert_rowid()
 }
 
-fn attach(connection: &rusqlite::Connection, message: i64, blob: &BlobId, size: i64) {
+fn attach(connection: &Connection, message: i64, blob: &BlobId, size: i64) {
     connection
         .execute(
             "INSERT INTO attachments (message_id, mime_type, size, blob_id, part_id)
              VALUES (?1, 'application/pdf', ?2, ?3, '2')",
-            rusqlite::params![message, size, blob.as_str()],
+            bind![message, size, blob.as_str()],
         )
         .expect("insert an attachment");
 }
 
-#[test]
-fn eviction_takes_raw_source_before_it_takes_a_payload() {
+#[tokio::test]
+async fn eviction_takes_raw_source_before_it_takes_a_payload() {
     // The order ADR 0017 fixes. Raw source is the cheapest thing to lose: it
     // is a cache of bytes nothing reads except view-source and
     // forward-as-message/rfc822, both refetchable and both rare. An
     // attachment somebody downloaded is a thing they asked for.
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let raw = store.put(&vec![b'r'; 40_000]).expect("put");
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
@@ -794,15 +804,15 @@ fn eviction_takes_raw_source_before_it_takes_a_payload() {
 
     // A budget that only one of the two big blobs can fit under.
     let budget = store.len_of(&payload).expect("len") + 16;
-    let report = store.evict_to_fit(&connection, budget).expect("evict");
+    let report = store.evict_to_fit(&connection, budget).await.expect("evict");
 
     assert!(report.removed >= 1);
     assert!(!store.contains(&raw), "raw source goes first");
     assert!(store.contains(&payload), "the attachment survives it");
 }
 
-#[test]
-fn eviction_cannot_reach_the_text_that_search_is_made_of() {
+#[tokio::test]
+async fn eviction_cannot_reach_the_text_that_search_is_made_of() {
     // Message text is the one class that is not refetchable in any meaningful
     // sense: losing it silently shrinks search, and #352's honesty surface
     // could not even report the gap because `body_state` would still say the
@@ -814,9 +824,9 @@ fn eviction_cannot_reach_the_text_that_search_is_made_of() {
     // nothing at all across a message whose body is stored, and asserts the
     // words are still readable afterwards.
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
 
     let mut message = postio_model::Message::new(
         account.id,
@@ -826,7 +836,7 @@ fn eviction_cannot_reach_the_text_that_search_is_made_of() {
             .expect("a timestamp"),
     );
     let messages = postio_storage::repository::MessageRepository::new(&connection);
-    let id = messages.create(&mut message).expect("create");
+    let id = messages.create(&mut message).await.expect("create");
     let words = "the words, which are never evicted".repeat(40);
     messages
         .set_body(
@@ -837,21 +847,22 @@ fn eviction_cannot_reach_the_text_that_search_is_made_of() {
             },
             postio_model::BodyState::Full,
         )
+        .await
         .expect("store a body");
 
     // A budget of nothing at all: even then, the words stay.
-    let report = store.evict_to_fit(&connection, 0).expect("evict");
+    let report = store.evict_to_fit(&connection, 0).await.expect("evict");
     assert_eq!(report.removed, 0);
 
     assert_eq!(
-        messages.body(id).expect("body").expect("the row").text,
+        messages.body(id).await.expect("body").expect("the row").text,
         Some(words),
         "no eviction budget can reach a body: it is not in the blob store"
     );
 }
 
-#[test]
-fn eviction_takes_the_oldest_mail_first() {
+#[tokio::test]
+async fn eviction_takes_the_oldest_mail_first() {
     // Recency without an access-time column. Blobs are immutable, so their
     // mtime is when they were written and not when they were read, and
     // `relatime`/`noatime` make atime unusable -- but the *message* already
@@ -860,8 +871,8 @@ fn eviction_takes_the_oldest_mail_first() {
     // It is also the exact mirror of the backfill: bodies are fetched newest
     // first, so they are evicted oldest first. Symmetry worth having.
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let old = store.put(&vec![b'o'; 40_000]).expect("put");
     let new = store.put(&vec![b'n'; 40_000]).expect("put");
@@ -869,26 +880,26 @@ fn eviction_takes_the_oldest_mail_first() {
     insert_message_at(&connection, 9_000, Some(&new));
 
     let budget = store.len_of(&new).expect("len") + 16;
-    store.evict_to_fit(&connection, budget).expect("evict");
+    store.evict_to_fit(&connection, budget).await.expect("evict");
 
     assert!(!store.contains(&old), "the mail nobody has opened in years");
     assert!(store.contains(&new), "not this week's");
 }
 
-#[test]
-fn an_evicted_payload_puts_its_message_back_to_partial() {
+#[tokio::test]
+async fn an_evicted_payload_puts_its_message_back_to_partial() {
     // Or the UI would lie: `full` means every part is local, and the
     // attachment chip would offer "open" for bytes that are no longer here.
     // #352's incomplete-corpus reporting reads the same column.
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
     let message = insert_message_at(&connection, 1_000, None);
     attach(&connection, message, &payload, 40_000);
 
-    store.evict_to_fit(&connection, 0).expect("evict");
+    store.evict_to_fit(&connection, 0).await.expect("evict");
 
     assert!(!store.contains(&payload));
     let state: String = connection
@@ -909,17 +920,18 @@ fn an_evicted_payload_puts_its_message_back_to_partial() {
     assert_eq!(blob, None, "and the row stops claiming bytes it lost");
 }
 
-#[test]
-fn a_store_already_under_its_budget_evicts_nothing() {
+#[tokio::test]
+async fn a_store_already_under_its_budget_evicts_nothing() {
     let (_directory, store) = store();
-    let database = database();
-    let connection = database.connection().expect("checkout");
+    let database = database().await;
+    let connection = database.connect().await.expect("checkout");
 
     let raw = store.put(&vec![b'r'; 4_000]).expect("put");
     insert_message_at(&connection, 1_000, Some(&raw));
 
     let report = store
         .evict_to_fit(&connection, 100 * 1024 * 1024)
+        .await
         .expect("evict");
 
     assert_eq!(report.removed, 0);

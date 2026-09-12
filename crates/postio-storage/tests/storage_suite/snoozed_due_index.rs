@@ -37,9 +37,8 @@
 //! an index the planner declines to use still returns the right rows, by
 //! scanning, so neither the shape nor the results alone can fail usefully.
 
-use rusqlite::Connection;
+use postio_storage::Connection;
 
-use postio_storage::migrate;
 
 /// Enough mail that a walk over all of it is a real cost, and enough that
 /// SQLite would not simply scan a tiny table whatever the index says.
@@ -54,18 +53,16 @@ const DUE: &str = "SELECT DISTINCT mailbox_id FROM messages
 const CLEAR: &str = "UPDATE messages SET snoozed_until = NULL
      WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500";
 
-fn migrated() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
-    connection
-        .pragma_update(None, "foreign_keys", false)
-        .expect("foreign keys off: this fills messages without their parents");
-    migrate(&mut connection).expect("migrate");
-    connection
+async fn migrated() -> (postio_storage::Store, Connection) {
+    let store = postio_storage::test_support::memory().await;
+    let connection = store.connect().await.expect("a connection");
+    (store, connection)
 }
 
-fn plan(connection: &Connection, query: &str) -> String {
+async fn plan(connection: &Connection, query: &str) -> String {
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+        .await
         .expect("a query plan");
     statement
         .query_map([], |row| row.get::<_, String>(3))
@@ -76,7 +73,7 @@ fn plan(connection: &Connection, query: &str) -> String {
 }
 
 /// A mailbox the size of a real one, with three messages snoozed in it.
-fn fill(connection: &Connection) {
+async fn fill(connection: &Connection) {
     connection
         .execute_batch(&format!(
             "INSERT INTO messages (account_id, mailbox_id, remote_id, received_at, snoozed_until)
@@ -85,18 +82,20 @@ fn fill(connection: &Connection) {
                     CASE WHEN i % 7000 = 0 THEN 1700000100 ELSE NULL END
                FROM n;"
         ))
+        .await
         .expect("fill the mailbox");
     connection
         .execute_batch("ANALYZE")
+        .await
         .expect("let the planner see what it is choosing between");
 }
 
-#[test]
-fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
-    let connection = migrated();
-    fill(&connection);
+#[tokio::test]
+async fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
-    let due = plan(&connection, DUE);
+    let due = plan(&connection, DUE).await;
     assert!(
         due.contains("idx_messages_snoozed_due"),
         "the due-snooze query must be served by the partial index over snoozed \
@@ -108,7 +107,7 @@ fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
          which is what it did before #1237:\n{due}"
     );
 
-    let clear = plan(&connection, CLEAR);
+    let clear = plan(&connection, CLEAR).await;
     assert!(
         clear.contains("idx_messages_snoozed_due"),
         "the update that follows it walks the same rows and needs the same \
@@ -116,9 +115,9 @@ fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_account() {
     );
 }
 
-#[test]
-fn the_index_holds_only_snoozed_rows() {
-    let connection = migrated();
+#[tokio::test]
+async fn the_index_holds_only_snoozed_rows() {
+    let (_store, connection) = migrated().await;
     let definition: String = connection
         .query_row(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
@@ -136,16 +135,16 @@ fn the_index_holds_only_snoozed_rows() {
     );
 }
 
-#[test]
-fn the_index_does_not_change_which_messages_wake() {
-    let connection = migrated();
-    fill(&connection);
+#[tokio::test]
+async fn the_index_does_not_change_which_messages_wake() {
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
     // Three of the 20,000 are snoozed and due (i = 7000, 14000, 21000 -- the
     // last is past the end), across whichever mailboxes the modulus put them
     // in. An index the planner declines to use would still return these, by
     // scanning, which is why the plan is asserted above as well.
-    let mut statement = connection.prepare(DUE).expect("prepare");
+    let mut statement = connection.prepare(DUE).await.expect("prepare");
     let woken: Vec<i64> = statement
         .query_map([], |row| row.get(0))
         .expect("rows")
@@ -158,6 +157,7 @@ fn the_index_does_not_change_which_messages_wake() {
               WHERE snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
               ORDER BY mailbox_id",
         )
+        .await
         .expect("prepare")
         .query_map([], |row| row.get(0))
         .expect("rows")

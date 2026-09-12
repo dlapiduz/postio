@@ -126,7 +126,7 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
     bridge.shutdown();
 }
 
-fn read_excluded(database: &postio_storage::Database, id: postio_model::ids::MailboxId) -> bool {
+fn read_excluded(database: &postio_storage::Store, id: postio_model::ids::MailboxId) -> bool {
     let connection = database.connection().expect("a connection");
     MailboxRepository::new(&connection)
         .backfill_excluded(id)

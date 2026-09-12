@@ -20,7 +20,7 @@ use postio_index::index::{ensure_schema, index_body, messages_missing_body_text}
 use postio_model::{BodyState, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 fn a_message(connection: &Connection, subject: &str) -> i64 {
     let (account, mailbox) = test_support::account_with_inbox(connection);
@@ -43,7 +43,7 @@ fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
     statement
         .query_map([query], |row| row.get(0))
         .expect("query")
-        .collect::<rusqlite::Result<_>>()
+        .collect::<Result<_>>()
         .expect("rows")
 }
 

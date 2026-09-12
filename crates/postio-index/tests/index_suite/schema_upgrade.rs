@@ -20,7 +20,7 @@ use postio_model::{AccountScope, Message};
 use postio_search::facets::Scope;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 /// The index schema as it stood before `list_id` (48a2f96): no `list_id`
 /// column anywhere, and the trigger set that maintained it. Abbreviated to

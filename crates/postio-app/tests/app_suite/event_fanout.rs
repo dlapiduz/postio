@@ -41,7 +41,7 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
 struct World {
-    database: postio_storage::Database,
+    database: postio_storage::Store,
     message: MessageId,
     dispatcher: postio_core::Dispatcher,
 }
@@ -134,7 +134,7 @@ pub fn a_second_frontend_sees_everything_the_window_sees() {
             .collect();
         assert!(
             matches!(
-                ours.last(),
+                ours.last().await,
                 Some(Event::InvocationFinished {
                     outcome: InvocationOutcome::Completed,
                     ..

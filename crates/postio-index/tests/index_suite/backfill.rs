@@ -24,7 +24,7 @@ use postio_storage::test_support;
 /// A message written *before* the index exists, which is every message on a
 /// store that predates the feature.
 fn existing_message(
-    connection: &rusqlite::Connection,
+    connection: &Connection,
     account: postio_model::AccountId,
     mailbox: postio_model::MailboxId,
     subject: &str,
@@ -38,7 +38,7 @@ fn existing_message(
     message
 }
 
-fn find(connection: &rusqlite::Connection, account: postio_model::AccountId, text: &str) -> usize {
+fn find(connection: &Connection, account: postio_model::AccountId, text: &str) -> usize {
     let query = parse(text, Utc::now().date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(account),

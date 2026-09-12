@@ -62,7 +62,7 @@ const LARGE: usize = 10_000;
 /// than measuring one.
 struct Opened {
     counts: Counts,
-    database: postio_storage::Database,
+    database: postio_storage::Store,
     account: postio_model::AccountId,
     _blobs: tempfile::TempDir,
     _bridge: Bridge,

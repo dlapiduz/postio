@@ -36,21 +36,17 @@
 //! an index the planner declines to use still returns the right rows, by
 //! scanning, so neither the shape nor the results alone can fail usefully.
 
-use rusqlite::Connection;
+use postio_storage::Connection;
 
-use postio_storage::migrate;
 
 /// Enough contacts that a sort over all of them is a real cost, and enough
 /// that SQLite would not simply scan a tiny table whatever the index says.
 const CONTACTS: usize = 20_000;
 
-fn migrated() -> Connection {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite");
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .expect("foreign keys");
-    migrate(&mut connection).expect("migrate");
-    connection
+async fn migrated() -> (postio_storage::Store, Connection) {
+    let store = postio_storage::test_support::memory().await;
+    let connection = store.connect().await.expect("a connection");
+    (store, connection)
 }
 
 fn definition(connection: &Connection, index: &str) -> String {
@@ -63,9 +59,10 @@ fn definition(connection: &Connection, index: &str) -> String {
         .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
 
-fn plan(connection: &Connection, query: &str) -> String {
+async fn plan(connection: &Connection, query: &str) -> String {
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+        .await
         .expect("a query plan");
     let rows = statement
         .query_map([], |row| row.get::<_, String>(3))
@@ -76,7 +73,7 @@ fn plan(connection: &Connection, query: &str) -> String {
 }
 
 /// An address book the size of a real one.
-fn fill(connection: &Connection) {
+async fn fill(connection: &Connection) {
     connection
         .execute_batch(&format!(
             "INSERT INTO contacts
@@ -87,6 +84,7 @@ fn fill(connection: &Connection) {
                     CASE WHEN i % 3 = 0 THEN 'user' ELSE 'mail' END
                FROM n;"
         ))
+        .await
         .expect("fill the address book");
 }
 
@@ -100,12 +98,12 @@ const SEARCH: &str = "SELECT id FROM contacts \
               last_seen_at DESC, times_seen DESC, id \
      LIMIT 20";
 
-#[test]
-fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone() {
-    let connection = migrated();
-    fill(&connection);
+#[tokio::test]
+async fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone() {
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
-    let plan = plan(&connection, SEARCH);
+    let plan = plan(&connection, SEARCH).await;
     assert!(
         !plan.contains("TEMP B-TREE"),
         "contact autocomplete sorts the whole address book on every \
@@ -120,13 +118,13 @@ fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone() {
     );
 }
 
-#[test]
-fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
+#[tokio::test]
+async fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
     // The shape half. It is asserted separately from the plan because the
     // plan can be right for the wrong reason -- a future SQLite that
     // materialises differently, a table small enough to scan -- and because
     // this is the sentence that says *why* the index looks unusual.
-    let connection = migrated();
+    let (_store, connection) = migrated().await;
     let sql = definition(&connection, "idx_contacts_rank");
     assert!(
         sql.contains("source") && sql.contains("last_seen_at") && sql.contains("times_seen"),
@@ -145,16 +143,16 @@ fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
     );
 }
 
-#[test]
-fn the_rows_still_come_back_in_the_order_the_product_promises() {
+#[tokio::test]
+async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     // The results half. An index nothing uses still returns the right rows,
     // and an index the planner *does* use can return the wrong ones -- so
     // this asserts the answer rather than the plan: a user-created contact
     // outranks a harvested one, and within a band the more recent wins.
-    let connection = migrated();
-    fill(&connection);
+    let (_store, connection) = migrated().await;
+    fill(&connection).await;
 
-    let mut statement = connection.prepare(SEARCH).expect("prepare");
+    let mut statement = connection.prepare(SEARCH).await.expect("prepare");
     let ids: Vec<i64> = statement
         .query_map([], |row| row.get(0))
         .expect("query")

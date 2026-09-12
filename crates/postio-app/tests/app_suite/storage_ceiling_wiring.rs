@@ -35,7 +35,7 @@ use postio_storage::{BlobStore, test_support};
 /// `postio-session/tests/reclaim.rs`'s own `store_with_messages` uses, so
 /// eviction here takes the same "oldest first" mail it is proven to there.
 fn store_with_messages(
-    database: &postio_storage::Database,
+    database: &postio_storage::Store,
     blobs: &BlobStore,
     count: usize,
     size: usize,

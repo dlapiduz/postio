@@ -116,7 +116,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
         .mailbox(MockMailbox::new("Sent Messages"))
         .build();
     backend.connect().await.expect("connect");
-    let sent_paths = |database: &postio_storage::Database| -> Vec<String> {
+    let sent_paths = |database: &postio_storage::Store| -> Vec<String> {
         let connection = database.connection().expect("a connection");
         MailboxRepository::new(&connection)
             .list_for_account(account.id)

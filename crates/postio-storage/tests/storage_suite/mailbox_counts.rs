@@ -21,7 +21,7 @@
 //! recounted first would pass against the bug.
 
 use chrono::{TimeZone, Utc};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use postio_model::{
     Account, Flag, FlagSet, MailboxId, MailboxRole, Message, MessageId, Uid, UidValidity,
@@ -31,16 +31,17 @@ use postio_storage::test_support;
 
 /// The cached counts as the sidebar reads them: off the mailbox row, with
 /// nothing recounted on the way.
-fn cached(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
+async fn cached(connection: &Connection, mailbox: MailboxId) -> (u32, u32, u32) {
     let counts = MailboxRepository::new(connection)
         .counts(mailbox)
+        .await
         .expect("read the cached counts")
         .expect("the mailbox exists");
     (counts.total, counts.unread, counts.flagged)
 }
 
 /// A message with only what the counts care about.
-fn a_message(account: &Account, mailbox: MailboxId, uid: u32, flags: &[Flag]) -> Message {
+async fn a_message(account: &Account, mailbox: MailboxId, uid: u32, flags: &[Flag]) -> Message {
     let at = Utc
         .timestamp_opt(1_770_000_000 + i64::from(uid), 0)
         .unwrap();
@@ -53,7 +54,7 @@ fn a_message(account: &Account, mailbox: MailboxId, uid: u32, flags: &[Flag]) ->
 }
 
 /// Writes `count` messages and hands back their ids.
-fn write(
+async fn write(
     connection: &Connection,
     account: &Account,
     mailbox: MailboxId,
@@ -64,8 +65,8 @@ fn write(
         .iter()
         .enumerate()
         .map(|(index, flags)| {
-            let mut message = a_message(account, mailbox, index as u32 + 1, flags);
-            messages.create(&mut message).expect("write a message")
+            let mut message = a_message(account, mailbox, index as u32 + 1, flags).await;
+            messages.create(&mut message).await.expect("write a message")
         })
         .collect()
 }
@@ -74,65 +75,65 @@ fn write(
 // The counts follow the messages
 // ---------------------------------------------------------------------------
 
-#[test]
-fn writing_messages_moves_the_counts_without_anyone_recounting() {
+#[tokio::test]
+async fn writing_messages_moves_the_counts_without_anyone_recounting() {
     // The failure this is about: a sync writes tens of thousands of rows and
     // the list still believes the folder is empty.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    assert_eq!(cached(&connection, inbox), (0, 0, 0), "a new folder");
+    assert_eq!(cached(&connection, inbox).await, (0, 0, 0), "a new folder");
 
     write(
         &connection,
         &account,
         inbox,
         &[&[], &[Flag::Seen], &[Flag::Seen, Flag::Flagged]],
-    );
+    ).await;
 
     assert_eq!(
-        cached(&connection, inbox),
+        cached(&connection, inbox).await,
         (3, 1, 1),
         "three messages, one unread, one flagged — and nothing called recount"
     );
 }
 
-#[test]
-fn a_batch_upsert_counts_each_row_once() {
+#[tokio::test]
+async fn a_batch_upsert_counts_each_row_once() {
     // The sync path. `upsert_batch` inserts what is new and updates what is
     // already there, in one transaction, and a second pass over the same UIDs
     // must not double the folder.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut batch: Vec<Message> = (1..=4)
-        .map(|uid| a_message(&account, inbox, uid, &[]))
+        .map(|uid| a_message(&account, inbox, uid, &[]).await)
         .collect();
-    messages.upsert_batch(&mut batch).expect("first pass");
-    assert_eq!(cached(&connection, inbox), (4, 4, 0));
+    messages.upsert_batch(&mut batch).await.expect("first pass");
+    assert_eq!(cached(&connection, inbox).await, (4, 4, 0));
 
     // The same UIDs again — an interrupted pass resuming, which is ordinary.
     let mut again: Vec<Message> = (1..=4)
-        .map(|uid| a_message(&account, inbox, uid, &[Flag::Seen]))
+        .map(|uid| a_message(&account, inbox, uid, &[Flag::Seen]).await)
         .collect();
-    messages.upsert_batch(&mut again).expect("second pass");
+    messages.upsert_batch(&mut again).await.expect("second pass");
     assert_eq!(
-        cached(&connection, inbox),
+        cached(&connection, inbox).await,
         (4, 0, 0),
         "the same four messages, now read — not eight messages"
     );
 }
 
-#[test]
-fn reading_a_message_moves_the_unread_count() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let ids = write(&connection, &account, inbox, &[&[], &[]]);
-    assert_eq!(cached(&connection, inbox), (2, 2, 0));
+#[tokio::test]
+async fn reading_a_message_moves_the_unread_count() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let ids = write(&connection, &account, inbox, &[&[], &[]]).await;
+    assert_eq!(cached(&connection, inbox).await, (2, 2, 0));
 
     MessageRepository::new(&connection)
         .set_flags(
@@ -140,96 +141,101 @@ fn reading_a_message_moves_the_unread_count() {
             &[Flag::Seen].into_iter().collect(),
             FlagSource::Local,
         )
+        .await
         .expect("mark it read");
 
     assert_eq!(
-        cached(&connection, inbox),
+        cached(&connection, inbox).await,
         (2, 1, 0),
         "reading a message does not remove it from the folder"
     );
 }
 
-#[test]
-fn moving_a_message_moves_its_count_with_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let archive = test_support::mailbox(&connection, &account, "Archive").id;
+#[tokio::test]
+async fn moving_a_message_moves_its_count_with_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
 
-    let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]);
-    assert_eq!(cached(&connection, inbox), (2, 2, 1));
+    let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]).await;
+    assert_eq!(cached(&connection, inbox).await, (2, 2, 1));
 
     MessageRepository::new(&connection)
         .move_to(&ids[1..], archive)
+        .await
         .expect("archive it");
 
-    assert_eq!(cached(&connection, inbox), (1, 1, 0), "the folder it left");
+    assert_eq!(cached(&connection, inbox).await, (1, 1, 0), "the folder it left");
     assert_eq!(
-        cached(&connection, archive),
+        cached(&connection, archive).await,
         (1, 1, 1),
         "and the one it joined"
     );
 }
 
-#[test]
-fn a_message_hidden_locally_leaves_the_counts_and_comes_back() {
+#[tokio::test]
+async fn a_message_hidden_locally_leaves_the_counts_and_comes_back() {
     // `deleted_locally` is what makes delete feel instant: the row stays and
     // the list stops showing it. The counts have to agree with the list, or
     // the sidebar promises rows the folder will not produce — and undo has to
     // put the number back.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]).await;
     let messages = MessageRepository::new(&connection);
 
-    messages.set_deleted_locally(&ids[1..], true).expect("hide");
-    assert_eq!(cached(&connection, inbox), (1, 1, 0));
+    messages.set_deleted_locally(&ids[1..], true).await.expect("hide");
+    assert_eq!(cached(&connection, inbox).await, (1, 1, 0));
 
     messages
         .set_deleted_locally(&ids[1..], false)
+        .await
         .expect("undo");
-    assert_eq!(cached(&connection, inbox), (2, 2, 1), "undo restores it");
+    assert_eq!(cached(&connection, inbox).await, (2, 2, 1), "undo restores it");
 }
 
-#[test]
-fn deleting_a_row_takes_it_out_of_the_counts() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let ids = write(&connection, &account, inbox, &[&[], &[]]);
+#[tokio::test]
+async fn deleting_a_row_takes_it_out_of_the_counts() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let ids = write(&connection, &account, inbox, &[&[], &[]]).await;
 
     MessageRepository::new(&connection)
         .delete(&ids[..1])
+        .await
         .expect("expunge it");
 
-    assert_eq!(cached(&connection, inbox), (1, 1, 0));
+    assert_eq!(cached(&connection, inbox).await, (1, 1, 0));
 }
 
-#[test]
-fn hiding_a_message_twice_does_not_take_it_out_twice() {
+#[tokio::test]
+async fn hiding_a_message_twice_does_not_take_it_out_twice() {
     // The counts are maintained by arithmetic, so a write that sets a column
     // to what it already held is the case that would drift.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
-    let ids = write(&connection, &account, inbox, &[&[], &[]]);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let ids = write(&connection, &account, inbox, &[&[], &[]]).await;
     let messages = MessageRepository::new(&connection);
 
-    messages.set_deleted_locally(&ids[..1], true).expect("hide");
+    messages.set_deleted_locally(&ids[..1], true).await.expect("hide");
     messages
         .set_deleted_locally(&ids[..1], true)
+        .await
         .expect("hide it again");
 
-    assert_eq!(cached(&connection, inbox), (1, 1, 0));
+    assert_eq!(cached(&connection, inbox).await, (1, 1, 0));
 }
 
 // ---------------------------------------------------------------------------
 // Repairing a store written before the column had a writer
 // ---------------------------------------------------------------------------
 
-#[test]
-fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
+#[tokio::test]
+async fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
     // `postio-qhz.7`: a store of 81,716 messages whose every `total_count`
     // was 0, so the list drew nothing in every folder while
     // `select count(*) from messages` returned the real number.
@@ -245,16 +251,16 @@ fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
     // head repaired the counts. There are no old stores and no migration
     // history any more (ADR 0020), and a fresh schema has the triggers from
     // its first statement, so the drift is induced directly instead.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     write(
         &connection,
         &account,
         inbox,
         &[&[], &[], &[], &[Flag::Seen], &[Flag::Seen, Flag::Flagged]],
-    );
-    assert_eq!(cached(&connection, inbox), (5, 3, 1));
+    ).await;
+    assert_eq!(cached(&connection, inbox).await, (5, 3, 1));
 
     // Drift, spelled out: the rows are all there and the column is a lie.
     connection
@@ -262,45 +268,49 @@ fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
             "UPDATE mailboxes SET total_count = 0, unread_count = 0, flagged_count = 0",
             [],
         )
+        .await
         .expect("zero the counts");
     assert_eq!(
-        cached(&connection, inbox),
+        cached(&connection, inbox).await,
         (0, 0, 0),
         "the state the bug leaves behind"
     );
 
     MailboxRepository::new(&connection)
         .recount(inbox)
+        .await
         .expect("recount");
     assert_eq!(
-        cached(&connection, inbox),
+        cached(&connection, inbox).await,
         (5, 3, 1),
         "the store repairs its counts from its own rows"
     );
 
     // And the triggers keep them from there on, without a second recount.
-    let mut sixth = a_message(&account, inbox, 6, &[]);
+    let mut sixth = a_message(&account, inbox, 6, &[]).await;
     MessageRepository::new(&connection)
         .create(&mut sixth)
+        .await
         .expect("one more");
-    assert_eq!(cached(&connection, inbox), (6, 4, 1));
+    assert_eq!(cached(&connection, inbox).await, (6, 4, 1));
 }
 
-#[test]
-fn a_seeded_store_still_agrees_with_a_recount() {
+#[tokio::test]
+async fn a_seeded_store_still_agrees_with_a_recount() {
     // The counts now have two writers — the triggers, and `recount` as the
     // repair path. They must not disagree, or which one ran last decides what
     // the sidebar says.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let report = postio_storage::seed::seed_small(&database, 12);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let report = postio_storage::seed::seed_small(&database, 12).await;
     let inbox = report
         .mailbox(MailboxRole::Inbox)
         .expect("the seed makes an inbox");
 
-    let before = cached(&connection, inbox.id);
+    let before = cached(&connection, inbox.id).await;
     let recounted = MailboxRepository::new(&connection)
         .recount(inbox.id)
+        .await
         .expect("recount");
 
     assert_eq!(
@@ -313,12 +323,12 @@ fn a_seeded_store_still_agrees_with_a_recount() {
 // ── What the sidebar draws beside Drafts and the Outbox (spec 003, T066) ────
 
 /// Seeds one draft per state and returns the account.
-fn an_account_mid_send(connection: &rusqlite::Connection) -> postio_model::AccountId {
+async fn an_account_mid_send(connection: &Connection) -> postio_model::AccountId {
     use postio_model::{Draft, DraftState};
     use postio_storage::repository::DraftRepository;
 
-    let account = test_support::account(connection);
-    test_support::mailbox(connection, &account, "Drafts");
+    let account = test_support::account(connection).await;
+    test_support::mailbox(connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(connection);
 
     for state in [
@@ -331,24 +341,25 @@ fn an_account_mid_send(connection: &rusqlite::Connection) -> postio_model::Accou
     ] {
         let mut draft = Draft::new(account.id);
         draft.subject = format!("{state:?}");
-        drafts.save(&mut draft).expect("save");
-        drafts.set_state(draft.id, state).expect("move it");
+        drafts.save(&mut draft).await.expect("save");
+        drafts.set_state(draft.id, state).await.expect("move it");
     }
     account.id
 }
 
-#[test]
-fn the_sidebar_counts_what_is_on_its_way_and_what_needs_a_person() {
+#[tokio::test]
+async fn the_sidebar_counts_what_is_on_its_way_and_what_needs_a_person() {
     // Three numbers from one read. The Outbox has no mailbox row to hold a
     // cached count -- it is not a mailbox -- and the Drafts badge can no
     // longer be `total_count`, which still counts every message row filed
     // there including the ones in flight.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = an_account_mid_send(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = an_account_mid_send(&connection).await;
 
     let counts = MailboxRepository::new(&connection)
         .draft_counts(account)
+        .await
         .expect("counts");
 
     assert_eq!(counts.outbox, 2, "queued and sending are on their way");
@@ -363,37 +374,38 @@ fn the_sidebar_counts_what_is_on_its_way_and_what_needs_a_person() {
     );
 }
 
-#[test]
-fn an_account_sending_nothing_counts_nothing() {
+#[tokio::test]
+async fn an_account_sending_nothing_counts_nothing() {
     // The ordinary state, and the one that keeps the Outbox row hidden.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
 
     let counts = MailboxRepository::new(&connection)
         .draft_counts(account.id)
+        .await
         .expect("counts");
     assert_eq!((counts.outbox, counts.attention, counts.drafts), (0, 0, 0));
 }
 
-#[test]
-fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
+#[tokio::test]
+async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
     // SC-008, and Principle V's "counts, not timings". The sidebar refreshes
     // on every arrival, so a read that grew with the mailbox would be paid
     // for on the surface redrawn most often. `idx_messages_send_state` is
     // partial on exactly this predicate, so the account's mail is not touched.
     use postio_storage::test_support::counting::{counted, install};
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = an_account_mid_send(&connection);
-    let inbox = test_support::mailbox(&connection, &test_support::account(&connection), "INBOX");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = an_account_mid_send(&connection).await;
+    let inbox = test_support::mailbox(&connection, &test_support::account(&connection).await, "INBOX");
     install(&connection);
 
     let mailboxes = MailboxRepository::new(&connection);
-    let _ = mailboxes.draft_counts(account).expect("warm");
+    let _ = mailboxes.draft_counts(account).await.expect("warm");
     let small = counted(|| {
-        mailboxes.draft_counts(account).expect("counts");
+        mailboxes.draft_counts(account).await.expect("counts");
     });
 
     // A mailbox's worth of ordinary mail, none of it a draft.
@@ -401,11 +413,12 @@ fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
         let mut message = postio_model::Message::new(account, inbox.id, chrono::Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
+            .await
             .expect("file it");
     }
 
     let large = counted(|| {
-        mailboxes.draft_counts(account).expect("counts");
+        mailboxes.draft_counts(account).await.expect("counts");
     });
 
     assert_eq!(
@@ -418,20 +431,20 @@ fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
     );
 }
 
-#[test]
-fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_you() {
+#[tokio::test]
+async fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_you() {
     // FR-024. The whole point of counting attention separately: the number
     // goes down when you deal with one. A retry that left it at 2 would make
     // the badge a thing to ignore.
     use postio_model::{Draft, DraftState};
     use postio_storage::repository::DraftRepository;
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = an_account_mid_send(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = an_account_mid_send(&connection).await;
     let mailboxes = MailboxRepository::new(&connection);
 
-    let before = mailboxes.draft_counts(account).expect("counts");
+    let before = mailboxes.draft_counts(account).await.expect("counts");
     assert_eq!((before.outbox, before.attention), (2, 2));
 
     // The gesture: open the failed one and send it again. `queue_send` is
@@ -439,16 +452,18 @@ fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_you() {
     let drafts = DraftRepository::new(&connection);
     let failed = drafts
         .by_state(DraftState::Failed)
+        .await
         .expect("by_state")
         .into_iter()
         .next()
         .expect("one failed draft");
-    let mut failed = drafts.get(failed.id).expect("get").expect("the draft");
+    let mut failed = drafts.get(failed.id).await.expect("get").expect("the draft");
     drafts
         .queue_send(&mut failed, chrono::Utc::now())
+        .await
         .expect("send it again");
 
-    let after = mailboxes.draft_counts(account).expect("counts");
+    let after = mailboxes.draft_counts(account).await.expect("counts");
     assert_eq!(
         after.attention, 1,
         "retrying one of two should leave one needing a person"
@@ -462,8 +477,8 @@ fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_you() {
     let _ = Draft::new(account);
 }
 
-#[test]
-fn a_failed_send_keeps_the_reason_the_composer_shows() {
+#[tokio::test]
+async fn a_failed_send_keeps_the_reason_the_composer_shows() {
     // FR-025. #1487 computed the reason, wrote it to the queue row and
     // carried it up the engine's report, where nobody read it; `compose.rs`
     // reads it now and says "Not sent — {reason}". This is the half that can
@@ -472,31 +487,35 @@ fn a_failed_send_keeps_the_reason_the_composer_shows() {
     use postio_model::{Draft, DraftState, Operation, OperationTarget};
     use postio_storage::repository::{DraftRepository, OperationQueueRepository};
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    test_support::mailbox(&connection, &account, "Drafts");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    test_support::mailbox(&connection, &account, "Drafts").await;
 
     let drafts = DraftRepository::new(&connection);
     let mut draft = Draft::new(account.id);
     draft.subject = "Re: the contract".to_owned();
-    drafts.save(&mut draft).expect("save");
+    drafts.save(&mut draft).await.expect("save");
     let queued = drafts
         .queue_send(&mut draft, chrono::Utc::now())
+        .await
         .expect("send");
 
     let queue = OperationQueueRepository::new(&connection);
     queue
         .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
+        .await
         .expect("the server refuses it");
     drafts
         .set_state(draft.id, DraftState::Failed)
+        .await
         .expect("the drainer gives up");
 
     // Read back the way `compose.rs` reads it: by the draft it is about,
     // which is all the composer has when somebody reopens the row.
     let reason = queue
         .last_failure_for(OperationTarget::Draft(draft.id))
+        .await
         .expect("last_failure_for");
     assert!(
         reason

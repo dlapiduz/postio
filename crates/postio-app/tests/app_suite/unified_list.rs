@@ -86,7 +86,7 @@ pub fn picking_unified_lists_mail_from_every_account() {
     );
     let inbox_rows = list.model().n_items();
     assert!(matches!(
-        feeds.messages.scope(),
+        feeds.messages.scope().await,
         Some(ListScope::Mailbox(_))
     ));
 

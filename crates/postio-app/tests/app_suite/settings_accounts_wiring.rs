@@ -174,7 +174,7 @@ pub fn account_rows_persist_enable_and_mark_removal() {
     bridge.shutdown();
 }
 
-fn read_enabled(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> bool {
+fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connection().expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
@@ -183,7 +183,7 @@ fn read_enabled(database: &postio_storage::Database, id: postio_model::ids::Acco
         .enabled
 }
 
-fn read_default(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> bool {
+fn read_default(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connection().expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
@@ -192,7 +192,7 @@ fn read_default(database: &postio_storage::Database, id: postio_model::ids::Acco
         .is_default
 }
 
-fn read_pending(database: &postio_storage::Database, id: postio_model::ids::AccountId) -> bool {
+fn read_pending(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connection().expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
