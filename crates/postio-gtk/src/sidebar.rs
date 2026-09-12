@@ -335,33 +335,11 @@ pub(crate) fn age(elapsed: Duration) -> String {
 }
 
 /// The count a folder shows, or `None` when it shows none.
-///
-/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
-/// total, and nothing at all beside Sent or Archive. A count of zero is not
-/// drawn — an empty column is quieter than a row of noughts.
-pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
-    let counts = &mailbox.counts;
-    let count = match mailbox.role {
-        // A draft you have not finished is not "unread".
-        MailboxRole::Drafts => counts.total,
-        MailboxRole::Flagged => counts.flagged,
-        MailboxRole::Snoozed => counts.snoozed,
-        // How many are on their way. The row is hidden entirely when this is
-        // zero, which is its ordinary state -- see spec 003 FR-012.
-        MailboxRole::Outbox => counts.total,
-        // Nothing arrives in these unread, so a count would only ever be
-        // "how much have you kept", which is not a thing to nag about.
-        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
-        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
-    };
-    (count > 0).then_some(count)
-}
-
 // Moved to `postio-ui` in #1155 so the macOS sidebar draws the same order and
 // the same one-row-per-role rule rather than deciding either for itself. The
 // names are re-exported so nothing in this crate had to change, and so every
 // comment that names `sections` still reads.
-pub use postio_ui::sidebar::{primary_within, role_order, sections};
+pub use postio_ui::sidebar::{count_for, display_name, primary_within, role_order, sections};
 
 /// One row of the accounts strip.
 ///
@@ -2198,38 +2176,6 @@ fn announce(name: &str, mailbox: &Mailbox) -> String {
         MailboxRole::Flagged => format!("{name}, {count} flagged"),
         MailboxRole::Snoozed => format!("{name}, {count} snoozed"),
         _ => format!("{name}, {count} unread"),
-    }
-}
-
-/// What a folder is called in the sidebar.
-///
-/// The special-use folders get the name Postio uses for the role, not the one
-/// the server happens to have picked: an iCloud account calls its archive
-/// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
-/// place to learn that.
-///
-/// Public because the list pane's header names the same folder, and two
-/// places calling one mailbox by two names is exactly the vocabulary drift
-/// this function exists to prevent.
-pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
-    if !primary_within(mailbox, among) {
-        // The role's *twin* (#501): a second folder the server reports with
-        // the same role. It renders as an ordinary folder, and an ordinary
-        // folder is called what the server calls it — the role name belongs
-        // to exactly one row, or the sidebar reads `Sent, Sent`.
-        return mailbox.name.clone();
-    }
-    match mailbox.role {
-        MailboxRole::Inbox => "Inbox".to_string(),
-        MailboxRole::Flagged => "Flagged".to_string(),
-        MailboxRole::Snoozed => "Snoozed".to_string(),
-        MailboxRole::Drafts => "Drafts".to_string(),
-        MailboxRole::Outbox => "Outbox".to_string(),
-        MailboxRole::Sent => "Sent".to_string(),
-        MailboxRole::Archive => "Archive".to_string(),
-        MailboxRole::Junk => "Junk".to_string(),
-        MailboxRole::Trash => "Trash".to_string(),
-        MailboxRole::Regular => mailbox.name.clone(),
     }
 }
 

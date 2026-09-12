@@ -190,6 +190,68 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
+// ── What a row is called, and the number beside it ──────────────────────────
+//
+// Both moved out of `postio-gtk::sidebar` by spec 003, for the reason
+// `role_order` and `sections` moved in #1155: they are product decisions, not
+// widget details, and the frontend that had to re-derive them did not. The
+// FFI sent `mailbox.name` raw, which is empty for a view row — so even once
+// Flagged and Snoozed crossed the boundary, macOS had two rows with no label.
+
+///
+/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
+/// total, and nothing at all beside Sent or Archive. A count of zero is not
+/// drawn — an empty column is quieter than a row of noughts.
+pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
+    let counts = &mailbox.counts;
+    let count = match mailbox.role {
+        // A draft you have not finished is not "unread".
+        MailboxRole::Drafts => counts.total,
+        MailboxRole::Flagged => counts.flagged,
+        MailboxRole::Snoozed => counts.snoozed,
+        // How many are on their way. The row is hidden entirely when this is
+        // zero, which is its ordinary state -- see spec 003 FR-012.
+        MailboxRole::Outbox => counts.total,
+        // Nothing arrives in these unread, so a count would only ever be
+        // "how much have you kept", which is not a thing to nag about.
+        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
+        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
+    };
+    (count > 0).then_some(count)
+}
+
+/// What a folder is called in the sidebar.
+///
+/// The special-use folders get the name Postio uses for the role, not the one
+/// the server happens to have picked: an iCloud account calls its archive
+/// "Archive" but its junk folder "Junk E-mail", and the sidebar is not the
+/// place to learn that.
+///
+/// Public because the list pane's header names the same folder, and two
+/// places calling one mailbox by two names is exactly the vocabulary drift
+/// this function exists to prevent.
+pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
+    if !primary_within(mailbox, among) {
+        // The role's *twin* (#501): a second folder the server reports with
+        // the same role. It renders as an ordinary folder, and an ordinary
+        // folder is called what the server calls it — the role name belongs
+        // to exactly one row, or the sidebar reads `Sent, Sent`.
+        return mailbox.name.clone();
+    }
+    match mailbox.role {
+        MailboxRole::Inbox => "Inbox".to_string(),
+        MailboxRole::Flagged => "Flagged".to_string(),
+        MailboxRole::Snoozed => "Snoozed".to_string(),
+        MailboxRole::Drafts => "Drafts".to_string(),
+        MailboxRole::Outbox => "Outbox".to_string(),
+        MailboxRole::Sent => "Sent".to_string(),
+        MailboxRole::Archive => "Archive".to_string(),
+        MailboxRole::Junk => "Junk".to_string(),
+        MailboxRole::Trash => "Trash".to_string(),
+        MailboxRole::Regular => mailbox.name.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
