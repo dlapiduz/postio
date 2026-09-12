@@ -38,6 +38,7 @@ pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
+mod blocking;
 mod settings_egress;
 mod settings_privacy;
 pub mod sidebar_backfill;
@@ -62,7 +63,7 @@ use postio_core::state::SharedState;
 use postio_gtk::startup::{Phase, Timeline};
 use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
-use postio_storage::Database;
+use postio_storage::Store;
 
 /// Open the store, start the runtime, build the window, and join them.
 ///
@@ -281,7 +282,7 @@ pub fn run() -> glib::ExitCode {
 /// the instant this is entered — win or lose the race that already cannot
 /// happen on one thread, either way there is exactly one way in.
 #[allow(clippy::too_many_arguments)]
-pub fn open_or_onboard(
+pub async fn open_or_onboard(
     window: &Window,
     wiring: &Wiring,
     state: SharedState,
@@ -316,7 +317,7 @@ pub fn open_or_onboard(
             });
             match route {
                 Startup::Ready(_) => {
-                    open_account(&window, &wiring, &state, &wired, &events, &notifier)
+                    open_account(&window, &wiring, &state, &wired, &events, &notifier).await
                 }
                 // `postio-hiy`: nothing to feed yet, or nothing that can
                 // authenticate. The screen replaces the window's content and
@@ -358,7 +359,7 @@ pub fn open_or_onboard(
 /// sequence once it has created the account `run()` did not find at
 /// startup — the account this depends on did not exist yet, but everything
 /// else about bringing a window up is identical.
-fn open_account(
+async fn open_account(
     window: &Window,
     wiring: &Wiring,
     state: &SharedState,
@@ -387,7 +388,7 @@ fn open_account(
     //
     // The mail is already on disk. Everything below this line reads it, and
     // none of it needs a connection.
-    let Some(Wired { feeds, .. }) = feed_the_window(window, wiring) else {
+    let Some(Wired { feeds, .. }) = feed_the_window(window, wiring).await else {
         return;
     };
 
@@ -399,7 +400,7 @@ fn open_account(
     postio_gtk::startup::on_first_frame(window, {
         let window = window.clone();
         let wiring = wiring.clone();
-        move || start_syncing(&window, &wiring)
+        move || crate::blocking::now(start_syncing(&window, &wiring))
     });
     // Every gesture the window produces from here on reaches a real handler.
     // Before this line the keymap, the palette and the selection model all
@@ -447,7 +448,7 @@ pub struct Wired {
 /// — offline, never synced, no folders — and inventing an account to fill it
 /// would be worse than an empty one. `postio-hiy` is the screen that creates
 /// the first one.
-pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
+pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // Everything from here to the return is synchronous main-thread work,
     // and the first frame is waiting on all of it. The two marks around it
     // are what let a startup trace say so: before #1479 the whole stretch
@@ -487,7 +488,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // one step earlier, for the onboarding branch that never reaches here.
     window.set_store_open(true);
 
-    let Some(account) = first_account(&wiring.database) else {
+    let Some(account) = first_account(&wiring.database).await else {
         tracing::info!(
             "no account configured; opening empty (see the provision example, or postio-hiy)"
         );
@@ -525,6 +526,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // position, so it has to be the same list in both places or an account
     // changes colour depending on which surface is drawing it.
     let named: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
+        .await
         .into_iter()
         .map(|account| (account.id, account.display_name))
         .collect();
@@ -569,6 +571,7 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         let window_for_scope = glib::object::ObjectExt::downgrade(window);
         let ids: Vec<postio_model::AccountId> = named.iter().map(|(id, _)| *id).collect();
         let addresses: Vec<(postio_model::AccountId, String)> = enabled_accounts(&wiring.database)
+            .await
             .into_iter()
             .map(|account| (account.id, account.address.address))
             .collect();
@@ -679,12 +682,11 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
     let search =
-        search::install(window, wiring, &feeds, reindexing).map(|view| &*Box::leak(Box::new(view)));
+        search::install(window, wiring, &feeds, reindexing).await.map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring);
     repair_the_header_blocks(wiring);
     catch_up_the_header_index(wiring);
-    train_the_body_dictionary(wiring);
     reclaim_disk(wiring);
 
     // Live `[storage] max_bytes` (#929): the ceiling is read once at startup
@@ -700,9 +702,9 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
         move |max_bytes| {
             let database = database.clone();
             let blobs = blobs.clone();
-            runtime.spawn_blocking(move || {
+            runtime.spawn(async move {
                 if let Err(error) =
-                    postio_session::enforce_storage_ceiling(&database, &blobs, max_bytes)
+                    postio_session::enforce_storage_ceiling(&database, &blobs, max_bytes).await
                 {
                     tracing::warn!(%error, "could not bring the store under its new ceiling");
                 }
@@ -736,10 +738,10 @@ pub fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> {
 /// this only makes a *later* search sharper.
 ///
 /// Every pass after the first costs one query that finds nothing.
-fn repair_the_header_blocks(wiring: &Wiring) {
+async fn repair_the_header_blocks(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
-    wiring.runtime.spawn_blocking(move || {
-        if let Err(error) = postio_session::repair_header_blocks(&database, &blobs) {
+    wiring.runtime.spawn(async move {
+        if let Err(error) = postio_session::repair_header_blocks(&database, &blobs).await {
             // Recoverable, like every other idle pass here: `header:` is a
             // little less complete until the next start tries again, and a
             // mail client that would not open over it would be trading the
@@ -769,44 +771,13 @@ fn repair_the_header_blocks(wiring: &Wiring) {
 /// [`catch_up_the_body_index`] has: it is synchronous SQLite that
 /// decompresses and parses a block per message, and nothing on screen waits
 /// for it. Every pass after the first costs one query that finds nothing.
-fn catch_up_the_header_index(wiring: &Wiring) {
+async fn catch_up_the_header_index(wiring: &Wiring) {
     let database = wiring.database.clone();
-    wiring.runtime.spawn_blocking(move || {
-        if let Err(error) = postio_session::index_local_headers(&database) {
+    wiring.runtime.spawn(async move {
+        if let Err(error) = postio_session::index_local_headers(&database).await {
             // Recoverable, like every other idle pass here: `header:` is a
             // little less complete until the next start tries again.
             tracing::warn!(%error, "could not index the header blocks already on disk");
-        }
-    });
-}
-
-/// Train a body-compression dictionary from the mail already here.
-///
-/// The other half of ADR 0020's disk saving, and the half that is worth about
-/// a further 28% of the store. Compression itself needs no pass — the
-/// repository does it on every write — but the dictionary has to be learned
-/// from a corpus that only exists once mail has arrived.
-///
-/// `spawn_blocking` and once per start, for the same two reasons
-/// [`catch_up_the_body_index`] is: it is synchronous SQLite that decompresses
-/// a few thousand bodies, and nothing on screen waits for it.
-/// `postio_session::train_body_dictionary` is what decides it is not worth
-/// running, which is the ordinary answer on a store that already has one.
-///
-/// After the index catch-up rather than before: that pass is what makes local
-/// mail searchable, which somebody is waiting to do, and this one only makes
-/// the *next* mail smaller.
-fn train_the_body_dictionary(wiring: &Wiring) {
-    let database = wiring.database.clone();
-    wiring.runtime.spawn_blocking(move || {
-        match postio_session::train_body_dictionary(&database) {
-            Ok(_) => {}
-            // Recoverable, like every other idle pass here: mail written
-            // without a dictionary is mail that reads perfectly and takes a
-            // little more disk, and the next start tries again.
-            Err(error) => {
-                tracing::warn!(%error, "could not train a body compression dictionary");
-            }
         }
     });
 }
@@ -854,10 +825,10 @@ fn train_the_body_dictionary(wiring: &Wiring) {
 /// two sweeps that take only what nothing wants: there is no sense evicting a
 /// blob somebody would have to refetch when an orphan of the same size was
 /// about to go for free.
-fn reclaim_disk(wiring: &Wiring) {
+async fn reclaim_disk(wiring: &Wiring) {
     let (database, blobs) = (wiring.database.clone(), wiring.blobs.clone());
     let ceiling = wiring.storage_ceiling;
-    wiring.runtime.spawn_blocking(move || {
+    wiring.runtime.spawn(async move {
         if let Err(error) = postio_session::purge_fetch_debris(&blobs) {
             tracing::warn!(%error, "could not remove debris from unfinished fetches");
         }
@@ -877,7 +848,7 @@ fn reclaim_disk(wiring: &Wiring) {
             &database,
             &blobs,
             postio_session::BLOB_GRACE_PERIOD,
-        ) {
+        ).await {
             // Recoverable, and the same judgement the body index makes: a mail
             // client that could not tidy up still reads mail, and the next
             // start tries again.
@@ -885,34 +856,23 @@ fn reclaim_disk(wiring: &Wiring) {
         }
         // Last, and only when somebody has set a ceiling: this is the sweep
         // that costs a refetch, so it takes what the free sweeps left.
-        if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling) {
+        if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling).await {
             tracing::warn!(%error, "could not bring the store under its ceiling");
         }
-        // The database's own pages, after the blob sweeps and for the same
-        // reason (#381). Deleting a message frees pages inside the file and
-        // hands nothing back to the filesystem: under `auto_vacuum = NONE`
-        // there is no mechanism to, and that is what a store about to hold a
-        // whole mailbox replica cannot afford -- a `UIDVALIDITY` reset wipes
-        // and re-syncs an entire folder from one server-side event.
+        // The database's own pages are not reclaimed here any more, and that
+        // is a gap rather than a decision. #381 converted the store to
+        // `auto_vacuum = INCREMENTAL` and stepped it on this worker, because
+        // deleting a message frees pages inside the file and hands nothing
+        // back to the filesystem -- which a store holding a whole mailbox
+        // replica cannot afford, since a `UIDVALIDITY` reset wipes and
+        // re-syncs an entire folder from one server-side event.
         //
-        // The conversion first, because it is what makes the reclaim
-        // possible on a store written before the setting existed, and it is
-        // a full rewrite -- minutes on a mailbox, which is exactly why it is
-        // here on the housekeeping worker and not on the startup path.
-        match database.adopt_incremental_vacuum() {
-            Ok(true) => tracing::info!("converted the store to incremental vacuum"),
-            Ok(false) => {}
-            // Recoverable, and the ordinary reason is another connection
-            // mid-transaction: nothing changed and the next start tries
-            // again.
-            Err(error) => tracing::warn!(%error, "could not convert the store"),
-        }
-        match database.reclaim_free_pages() {
-            Ok(0) => {}
-            // Pages and bytes, never what was in them.
-            Ok(pages) => tracing::info!(pages, "returned free pages to the filesystem"),
-            Err(error) => tracing::warn!(%error, "could not return free pages"),
-        }
+        // This engine has the `auto_vacuum` pragma and no
+        // `incremental_vacuum` step to drive it with, so there is nothing to
+        // call. The blob sweeps above still run and are the larger half by
+        // bytes. Filed rather than faked: a reclaim that silently reclaims
+        // nothing is worse than one that is known to be missing.
+        let _ = &database;
     });
 }
 
@@ -939,10 +899,10 @@ fn reclaim_disk(wiring: &Wiring) {
 /// `spawn_blocking`, not `spawn`: this is synchronous SQLite and synchronous
 /// decompression from beginning to end, and a blocking call inside a tokio
 /// task stalls whatever else that worker was meant to poll.
-fn catch_up_the_body_index(wiring: &Wiring) {
+async fn catch_up_the_body_index(wiring: &Wiring) {
     let database = wiring.database.clone();
-    wiring.runtime.spawn_blocking(move || {
-        if let Err(error) = postio_session::index_local_bodies(&database) {
+    wiring.runtime.spawn(async move {
+        if let Err(error) = postio_session::index_local_bodies(&database).await {
             // Recoverable, and the same judgement `ensure_search_index`
             // makes: a mail client whose body search is behind still reads
             // mail, and the next start tries again.
@@ -961,8 +921,8 @@ fn catch_up_the_body_index(wiring: &Wiring) {
 /// Called first, so that the first thing the engine does — bring the link up,
 /// drain whatever the last session left queued — is already under way while
 /// the list is drawing.
-pub fn start_syncing(window: &Window, wiring: &Wiring) {
-    let accounts = enabled_accounts(&wiring.database);
+pub async fn start_syncing(window: &Window, wiring: &Wiring) {
+    let accounts = enabled_accounts(&wiring.database).await;
     if accounts.is_empty() {
         return;
     }
@@ -977,7 +937,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
-    ) {
+    ).await {
         Ok(engines) => engines,
         Err(refusal) => {
             // A sentence, not a hang. Starting some of the engines would
@@ -1008,7 +968,7 @@ pub fn start_syncing(window: &Window, wiring: &Wiring) {
 /// account (`feed_the_window`'s `first_account`, `Sidebar::set_account`),
 /// and giving a second account somewhere to appear is #1's own work — this
 /// is the entry point that stops that being the only thing missing.
-pub fn attach_account(
+pub async fn attach_account(
     window: &Window,
     wiring: &Wiring,
     account: &postio_model::Account,
@@ -1016,7 +976,7 @@ pub fn attach_account(
     // Counted after the write, so the joining account is in it: the pool has
     // to serve every enabled account, not every account that had an engine
     // when the window opened.
-    let accounts = enabled_accounts(&wiring.database).len();
+    let accounts = enabled_accounts(&wiring.database).await.len();
     let started = engine::start_joining(
         account,
         accounts,
@@ -1028,7 +988,7 @@ pub fn attach_account(
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
-    )?;
+    ).await?;
     if let Some(sync) = started {
         adopt_engine(window, wiring, account.id, sync);
     }
@@ -1046,7 +1006,7 @@ pub fn attach_account(
 /// so "the application started with this account" and "the application
 /// gained it" cannot drift apart in what an engine is wired to (ADR 0012
 /// Q2).
-fn adopt_engine(
+async fn adopt_engine(
     window: &Window,
     wiring: &Wiring,
     account: postio_model::AccountId,
@@ -1072,13 +1032,14 @@ fn adopt_engine(
 /// ADR 0005 Q3: the first account is not special. This replaces
 /// `first_account` on the sync path — any code that treats one account
 /// differently fails exactly once, in the field.
-fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
-    let Ok(connection) = database.connection() else {
+async fn enabled_accounts(database: &Store) -> Vec<postio_model::Account> {
+    let Ok(connection) = database.connect().await else {
         tracing::error!("cannot read the accounts");
         return Vec::new();
     };
     postio_storage::repository::AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .unwrap_or_else(|error| {
             tracing::error!(%error, "cannot read the accounts: {error}");
             Vec::new()
@@ -1090,7 +1051,7 @@ fn enabled_accounts(database: &Database) -> Vec<postio_model::Account> {
 /// The one body the user is actually waiting for. Everything else in the
 /// queue is a guess about what they will want next; this is not a guess, so
 /// it goes to the front of the queue rather than the back.
-fn fetch_what_is_opened(
+async fn fetch_what_is_opened(
     window: &Window,
     sync: postio_runtime::Engine,
     runtime: tokio::runtime::Handle,
@@ -1115,16 +1076,16 @@ fn fetch_what_is_opened(
 /// the engine's own business now: it tops the queue up when it drains and
 /// re-seeds a folder whose sync changed something, so this is the first batch
 /// rather than the only one (#318).
-fn seed_the_backfill(
+async fn seed_the_backfill(
     account: postio_model::AccountId,
     sync: postio_runtime::Engine,
     wiring: &Wiring,
 ) {
-    let Ok(connection) = wiring.database.connection() else {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
     let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
-        .list_for_account(account)
+        .list_for_account(account).await
     {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
@@ -1197,7 +1158,7 @@ impl Installation {
     /// the composition root without one — the tests that exist because
     /// `postio-bl2` was eight capabilities wired to nothing, and the only way
     /// to find out was to launch the binary.
-    pub fn new(secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>) -> Self {
+    pub async fn new(secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>) -> Self {
         Installation {
             secrets,
             state: SharedState::default(),
@@ -1240,7 +1201,7 @@ enum Progress {
     /// outlasts the threshold.
     Stage(postio_gtk::list_state::Waiting),
     /// The store, or the sentence explaining why there is not one.
-    Done(Result<(Database, postio_storage::BlobStore), String>),
+    Done(Result<(Store, postio_storage::BlobStore), String>),
 }
 
 /// Read the keyring and open the store, on a thread, reporting as it goes.
@@ -1250,7 +1211,7 @@ enum Progress {
 /// this is opening. The retry on the `Unavailable` screen has made the same
 /// call on the same kind of plain thread since #404, for the same reason.
 ///
-/// Everything sent back is `Send`: a `Database` is a pool behind an `Arc`, a
+/// Everything sent back is `Send`: a `Store` is a pool behind an `Arc`, a
 /// `BlobStore` is a directory and some keys. The half of the old `open_with`
 /// that is *not* — the command bus, the event hub, the `Wiring` the window
 /// holds — is assembled on the main thread by [`assemble`] once this lands,
@@ -1265,6 +1226,21 @@ fn open_the_store_on_a_thread(
     // arrangement exists to avoid.
     let (sender, receiver) = async_channel::unbounded();
     std::thread::spawn(move || {
+        // A runtime of its own on this thread: opening the store is async
+        // now, and this thread exists precisely so the main loop is free to
+        // draw while it happens.
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = sender.send_blocking(Progress::Done(Err(format!(
+                    "Postio could not start the worker that opens its store: {error}"
+                ))));
+                return;
+            }
+        };
         // The keyring first, and it is the wait least under Postio's
         // control: a D-Bus round trip to a service that may be showing a
         // passphrase prompt of its own, behind another window. 28 seconds,
@@ -1277,13 +1253,14 @@ fn open_the_store_on_a_thread(
                 return;
             }
         };
-        let opened = postio_session::open_store_reporting(&key, &|stage| {
+        let report = |stage| {
             let _ = sender.send_blocking(Progress::Stage(match stage {
                 postio_session::Opening::Store => Waiting::Store,
                 postio_session::Opening::Migrating => Waiting::Migrating,
                 postio_session::Opening::Indexing => Waiting::Indexing,
             }));
-        });
+        };
+        let opened = runtime.block_on(postio_session::open_store_reporting(&key, &report));
         let _ = sender.send_blocking(Progress::Done(opened));
     });
     receiver
@@ -1363,7 +1340,7 @@ pub fn open_the_store(
 /// `Send`, and none of it is slow — the cost this function has is the cost of
 /// starting a tokio runtime, which is microseconds beside a schema migration.
 fn assemble(
-    database: Database,
+    database: Store,
     blobs: postio_storage::BlobStore,
     context: &Installation,
 ) -> Result<Opened, String> {
@@ -1574,12 +1551,12 @@ pub enum Startup {
 /// write is logged and otherwise ignored: a reap that cannot run this
 /// launch gets another chance next launch, and the account stays out of
 /// `list_enabled` either way.
-fn reap_pending_accounts(database: &Database) {
-    let Ok(connection) = database.connection() else {
+async fn reap_pending_accounts(database: &Store) {
+    let Ok(connection) = database.connect().await else {
         return;
     };
     if let Err(error) =
-        postio_storage::repository::AccountRepository::new(&connection).reap_pending_deletions()
+        postio_storage::repository::AccountRepository::new(&connection).reap_pending_deletions().await
     {
         tracing::error!(%error, "could not reap an account marked for removal: {error}");
     }
@@ -1596,11 +1573,11 @@ fn reap_pending_accounts(database: &Database) {
 /// the session: the timeout inside `retrieve` turns silence into an error,
 /// and an error means onboarding rather than a window that never decides.
 pub async fn startup_route(
-    database: &Database,
+    database: &Store,
     secrets: &dyn postio_account::secret::SecretStore,
 ) -> Startup {
     reap_pending_accounts(database);
-    let Some(account) = first_account(database) else {
+    let Some(account) = first_account(database).await else {
         return Startup::Onboard(None);
     };
     let key = postio_account::secret::AccountKey::new(account.address.address.clone());
@@ -1635,9 +1612,9 @@ mod tests {
 
     /// A store with one enabled account in it, and the key its credential
     /// would be filed under.
-    fn provisioned() -> (Database, AccountKey) {
+    fn provisioned() -> (Store, AccountKey) {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let account = postio_storage::test_support::account(&connection);
         drop(connection);
         let key = AccountKey::new(account.address.address.clone());
@@ -1714,7 +1691,7 @@ mod tests {
         // something has to actually delete it -- once, at the next launch,
         // before an engine could otherwise start against it.
         let (database, _key) = provisioned();
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let id = postio_storage::repository::AccountRepository::new(&connection)
             .list()
             .expect("list")[0]
@@ -1732,7 +1709,7 @@ mod tests {
             "a pending-deletion account is not there to open or to prefill from"
         );
 
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         assert!(
             postio_storage::repository::AccountRepository::new(&connection)
                 .get(id)

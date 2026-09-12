@@ -903,8 +903,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn rng_below_stays_in_bounds_and_is_reproducible_from_its_seed() {
+    #[test]
+    fn rng_below_stays_in_bounds_and_is_reproducible_from_its_seed() {
         let mut a = Rng::new(42);
         let mut b = Rng::new(42);
         for _ in 0..1_000 {

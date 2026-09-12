@@ -15,7 +15,7 @@
 use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MessageRepository, UnsubscribeRepository};
 
 use crate::Wiring;
@@ -41,7 +41,7 @@ pub fn install(window: &Window, wiring: &Wiring) {
     });
 }
 
-fn refresh(window: &Window, database: &Database) {
+async fn refresh(window: &Window, database: &Store) {
     // **Only when the pane is on screen.** Everything below this line is a
     // store read for a figure drawn in the privacy pane, and [`install`] runs
     // inside `feed_the_window` -- so every launch spent it before the first
@@ -65,20 +65,24 @@ fn refresh(window: &Window, database: &Database) {
     if !gtk::prelude::WidgetExt::is_visible(&window.settings()) {
         return;
     }
-    let Ok(connection) = database.connection() else {
+    let Ok(connection) = database.connect().await else {
         return;
     };
     let accounts = AccountRepository::new(&connection)
         .list()
+        .await
         .unwrap_or_default();
 
     let log = UnsubscribeRepository::new(&connection);
     let mut activations: Vec<_> = accounts
         .iter()
         .flat_map(|account| {
-            log.for_account(account.id).unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not read the unsubscribe-activation log");
-                Vec::new()
+            crate::blocking::now(async {
+                log.for_account(account.id).await.unwrap_or_else(|error| {
+                    tracing::warn!(%error, "could not read the unsubscribe-activation log");
+                    Vec::new()
+                })
+        
             })
         })
         .collect();
@@ -91,12 +95,16 @@ fn refresh(window: &Window, database: &Database) {
     let read_receipt_count: u64 = accounts
         .iter()
         .map(|account| {
-            messages
-                .read_receipt_requested_count(account.id)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, "could not count read-receipt requests");
-                    0
-                })
+            crate::blocking::now(async {
+                messages
+                    .read_receipt_requested_count(account.id)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "could not count read-receipt requests");
+                        0
+                    })
+        
+            })
         })
         .sum();
     window.settings().set_read_receipt_count(read_receipt_count);

@@ -33,14 +33,15 @@ const SEEN_KEY: &str = "orientation_seen";
 
 /// Wire the strip to the sync engine, to the store, and to every command
 /// the window runs.
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
+pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     let state = Rc::new(RefCell::new(Orientation::default()));
 
     // Has some earlier run already shown it? The answer is in SQLite, so it
     // arrives asynchronously — which is exactly why [`Orientation`] takes
     // its four inputs in any order rather than assuming this one is first.
-    let answer = crate::search::ask(&wiring.database, &wiring.runtime, |connection| {
-        SettingsRepository::new(connection).get(SEEN_KEY).ok()
+    let answer = crate::search::ask(&wiring.database, &wiring.runtime, |connection| async move {
+        SettingsRepository::new(&connection).get(SEEN_KEY).await.ok()
+
     });
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -116,14 +117,14 @@ fn act(window: &Window, wiring: &Wiring, effect: Effect) {
 /// string either way. Spawned rather than awaited — ADR 0012 Q4 asks for a
 /// strip that does not block the list, and that includes not blocking it on
 /// the way out.
-fn remember(wiring: &Wiring) {
+async fn remember(wiring: &Wiring) {
     let database = wiring.database.clone();
-    wiring.runtime.spawn_blocking(move || {
-        let Ok(connection) = database.connection() else {
+    wiring.runtime.spawn(async move {
+        let Ok(connection) = database.connect().await else {
             return;
         };
         if let Err(error) =
-            SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339())
+            SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339()).await
         {
             tracing::warn!(%error, "could not remember that the orientation was seen");
         }

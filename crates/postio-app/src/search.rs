@@ -60,7 +60,7 @@ use postio_search::{ParsedQuery, SearchResults};
 // merely called through.
 use postio_session::search::{HIT_LIMIT, execute as run};
 use postio_storage::repository::{ContactRepository, LabelRepository};
-use postio_storage::{Database, PooledConnection};
+use postio_storage::{Store, Checkout};
 
 use crate::Wiring;
 use crate::settings_accounts::Reindexing;
@@ -75,13 +75,13 @@ use crate::settings_accounts::Reindexing;
 /// optional in the running application — `feed_the_window` builds both — and
 /// is taken by reference here rather than found, because which `Feeds` a
 /// window has is the composition root's business, the same as the source.
-pub fn install(
+pub async fn install(
     window: &Window,
     wiring: &Wiring,
     feeds: &Feeds,
     reindexing: Reindexing,
 ) -> Option<View> {
-    let account = crate::first_account(&wiring.database)?;
+    let account = crate::first_account(&wiring.database).await?;
     let finder = window.finder();
     let view = View::attach(&window.shell(), &finder);
 
@@ -309,19 +309,26 @@ fn install_order_toggle(window: &Window, finder: &Finder, feeds: &Feeds, order: 
 /// or a connection that could not be checked out — reaches the caller as
 /// `None`, which every caller here treats as "draw nothing", because a search
 /// that could not run has no answer and must not invent one.
-pub(crate) fn ask<T, F>(database: &Database, runtime: &tokio::runtime::Handle, work: F) -> Answer<T>
+pub(crate) fn ask<T, F, Fut>(
+    database: &Store,
+    runtime: &tokio::runtime::Handle,
+    work: F,
+) -> Answer<T>
 where
     T: Send + 'static,
-    F: FnOnce(&PooledConnection) -> Option<T> + Send + 'static,
+    F: FnOnce(Checkout) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Option<T>> + Send,
 {
     let (sender, receiver) = async_channel::bounded(1);
     let database = database.clone();
-    runtime.spawn_blocking(move || {
-        let answer = database
-            .connection_interactive()
-            .map_err(|error| tracing::warn!(%error, "no connection to read the index with"))
-            .ok()
-            .and_then(|connection| work(&connection));
+    runtime.spawn(async move {
+        let answer = match database.connect().await {
+            Ok(connection) => work(connection).await,
+            Err(error) => {
+                tracing::warn!(%error, "no connection to read the index with");
+                None
+            }
+        };
         let _ = sender.send_blocking(answer);
     });
     receiver
@@ -332,7 +339,7 @@ type Answer<T> = async_channel::Receiver<Option<T>>;
 
 /// Run a search when the box says a query is due.
 #[allow(clippy::too_many_arguments)]
-fn install_run(
+async fn install_run(
     view: &View,
     finder: &Finder,
     window: &Window,
@@ -381,7 +388,9 @@ fn install_run(
             let order = order.get();
             let hits = ask(&database, &runtime, {
                 let query = query.clone();
-                move |connection| run(connection, account, &query, scope, order)
+                move |connection| async move {
+                    run(&connection, account, &query, scope, order).await
+                }
             });
 
             glib::spawn_future_local({
@@ -478,21 +487,21 @@ fn install_run(
 /// read behind an answer that was current when it started and may not be by
 /// the time it finishes.
 #[allow(clippy::too_many_arguments)]
-fn facets(
+async fn facets(
     view: &View,
     live: &postio_gtk::search::Live,
     sequence: u64,
     account: AccountScope,
     query: &ParsedQuery,
     scope: Scope,
-    database: &Database,
+    database: &Store,
     runtime: &tokio::runtime::Handle,
 ) {
     let answer = ask(database, runtime, {
         let query = query.clone();
-        move |connection| {
+        move |connection| async move {
             postio_index::executor::facets(
-                connection,
+                &connection,
                 &SearchRequest {
                     // The scope the hits were counted under, carried rather
                     // than re-read: the columns have to describe *this*
@@ -505,8 +514,10 @@ fn facets(
                     order: postio_search::ResultOrder::Relevance,
                 },
             )
+            .await
             .map_err(|error| tracing::warn!(%error, "the facet counts did not run"))
             .ok()
+    
         }
     });
     glib::spawn_future_local({
@@ -559,7 +570,7 @@ type Held = Rc<std::cell::RefCell<Option<SearchResults>>>;
 fn focus(
     view: &View,
     results: &SearchResults,
-    database: &Database,
+    database: &Store,
     runtime: &tokio::runtime::Handle,
 ) {
     view.set_focused(results.hits.first());
@@ -570,10 +581,10 @@ fn focus(
 }
 
 /// Draw `hit`'s body into the preview.
-fn preview(
+async fn preview(
     view: &View,
     hit: &postio_search::SearchHit,
-    database: &Database,
+    database: &Store,
     runtime: &tokio::runtime::Handle,
 ) {
     // The snippet is already on screen — highlighted, from the index — so this
@@ -581,8 +592,8 @@ fn preview(
     // show anything at all.
     let message = hit.message_id;
     let sender = hit.from.as_ref().map(|from| from.address.clone());
-    let answer = ask(database, runtime, move |connection| {
-        Some(crate::compose::load_body(connection, message))
+    let answer = ask(database, runtime, move |connection| async move {
+        Some(crate::compose::load_body(&connection, message).await)
     });
     glib::spawn_future_local({
         let view = view.clone();
@@ -811,12 +822,14 @@ fn install_open(preview: &postio_gtk::search::Preview, window: &Window) {
 /// the UI thread because it is the one read here whose size is set by the
 /// mailbox rather than by the query, and a window that paused at startup to
 /// count someone's correspondents would be paying the whole cost up front.
-fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(&wiring.database, &wiring.runtime, move |connection| {
-        ContactRepository::new(connection)
+async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
+    let answer = ask(&wiring.database, &wiring.runtime, move |connection| async move {
+        ContactRepository::new(&connection)
             .search(Some(account), "", CONTACT_LIMIT)
+            .await
             .map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
             .ok()
+
     });
     glib::spawn_future_local({
         let finder = finder.clone();
@@ -842,12 +855,14 @@ fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
 /// that is not offered until the next start -- which is the same limit the
 /// correspondents list has, and worth stating rather than discovering: there
 /// is no label-creation surface yet, so nothing can create one mid-session.
-fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(&wiring.database, &wiring.runtime, move |connection| {
-        LabelRepository::new(connection)
+async fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
+    let answer = ask(&wiring.database, &wiring.runtime, move |connection| async move {
+        LabelRepository::new(&connection)
             .list(account)
+            .await
             .map_err(|error| tracing::warn!(%error, "could not read the labels"))
             .ok()
+
     });
     glib::spawn_future_local({
         let finder = finder.clone();
@@ -888,7 +903,7 @@ mod tests {
         body: &str,
     ) -> (postio_storage::test_support::TempDatabase, AccountId) {
         let database = test_support::temp();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_index::index::ensure_schema(&connection).expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
 
@@ -923,7 +938,7 @@ mod tests {
         account: AccountId,
         text: &str,
     ) -> SearchResults {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let query = postio_search::parse(text, chrono::Utc::now().date_naive());
         run(
             &connection,
@@ -1005,7 +1020,7 @@ mod tests {
         // server. An excerpt cut from nothing would be an empty line that
         // looks like a body with no match in it.
         let database = test_support::temp();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         postio_index::index::ensure_schema(&connection).expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
         let mut message = postio_model::Message::new(account.id, mailbox, chrono::Utc::now());
@@ -1099,7 +1114,7 @@ mod interactive_read {
     use postio_storage::repository::{
         AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
     };
-    use postio_storage::{BlobStore, Database, test_support};
+    use postio_storage::{BlobStore, Store, test_support};
 
     /// Long enough that a thread which has announced it is about to block
     /// really is blocked by the time the next step runs.
@@ -1137,7 +1152,7 @@ mod interactive_read {
     /// and sizing it down to force exhaustion risks starving *that* instead
     /// of exercising #672. The test creates its own exhaustion later, on
     /// purpose, by holding connections itself.
-    fn engine_over(backend: Arc<MockBackend>) -> (Database, Engine, tempfile::TempDir) {
+    fn engine_over(backend: Arc<MockBackend>) -> (Store, Engine, tempfile::TempDir) {
         let directory = tempfile::tempdir().expect("a database directory");
         let database = Database::open_with(
             directory.path().join("postio.db"),
@@ -1146,7 +1161,7 @@ mod interactive_read {
         )
         .expect("a database");
         let account = {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             test_support::account(&connection)
         };
         let blobs_directory = tempfile::tempdir().expect("a blob directory");
@@ -1182,8 +1197,8 @@ mod interactive_read {
 
     /// How many messages the store holds under `path`, or `0` before the
     /// mailbox itself has arrived.
-    fn stored(database: &Database, path: &str) -> u32 {
-        let Ok(connection) = database.connection() else {
+    fn stored(database: &Store, path: &str) -> u32 {
+        let Ok(connection) = database.connect().await else {
             return 0;
         };
         let Ok(accounts) = AccountRepository::new(&connection).list() else {
@@ -1208,8 +1223,8 @@ mod interactive_read {
     }
 
     /// The id of the first message under `path`, once there is one.
-    fn first_message(database: &Database, path: &str) -> Option<MessageId> {
-        let connection = database.connection().ok()?;
+    fn first_message(database: &Store, path: &str) -> Option<MessageId> {
+        let connection = database.connect().await.ok()?;
         let accounts = AccountRepository::new(&connection).list().ok()?;
         let account = accounts.into_iter().next()?;
         let mailbox = MailboxRepository::new(&connection)
@@ -1344,7 +1359,7 @@ mod interactive_read {
             // timing the *order's* answer would measure that extra latency
             // instead of which of the two actually got a connection first.
             order_for_interactive.lock().unwrap().push("interactive");
-            MessageRepository::new(connection)
+            MessageRepository::new(&connection)
                 .get(message)
                 .ok()
                 .flatten()

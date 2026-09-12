@@ -8,7 +8,7 @@
 use gtk::glib;
 use gtk::prelude::*;
 use postio_gtk::window::Window;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::EgressLogRepository;
 
 use crate::Wiring;
@@ -38,11 +38,11 @@ pub fn install(window: &Window, wiring: &Wiring) {
     });
 }
 
-fn refresh(window: &Window, database: &Database) {
-    let Ok(connection) = database.connection() else {
+async fn refresh(window: &Window, database: &Store) {
+    let Ok(connection) = database.connect().await else {
         return;
     };
-    match EgressLogRepository::new(&connection).recent(EGRESS_ROWS) {
+    match EgressLogRepository::new(&connection).recent(EGRESS_ROWS).await {
         Ok(entries) => window.settings().set_egress(entries),
         Err(error) => tracing::warn!(%error, "could not read the egress log"),
     }

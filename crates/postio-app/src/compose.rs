@@ -48,7 +48,7 @@ use postio_storage::repository::{
     AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
     DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
 };
-use postio_storage::{BlobStore, Database};
+use postio_storage::{BlobStore, Store};
 
 /// How many recipient suggestions to offer at once — a popover, not a list
 /// the user scrolls.
@@ -72,7 +72,7 @@ pub type Announce = Rc<dyn Fn(&postio_core::Event)>;
 pub fn install(
     window: &Window,
     account: AccountId,
-    database: Database,
+    database: Store,
     blobs: BlobStore,
     runtime: tokio::runtime::Handle,
     showing: crate::reading::Showing,
@@ -106,11 +106,11 @@ pub fn install(
 /// The id is the blob digest at `postio.invalid` — unique by construction
 /// (same bytes, same blob, same reference) and on a reserved domain, so it
 /// can never collide with, or be mistaken for, anything real.
-fn install_inline_image(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
+async fn install_inline_image(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
     composer.connect_inline_image(move |bytes, mime_type, then| {
         let blobs = blobs.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        runtime.spawn_blocking(move || {
+        runtime.spawn(async move {
             let attachment = inline_attachment(&blobs, bytes, &mime_type);
             let _ = sender.send_blocking(attachment);
         });
@@ -168,16 +168,16 @@ fn install_attachment_bytes(composer: &Composer, blobs: BlobStore) {
 /// tested and shown with an empty model since it was written: every draft
 /// signed with whatever `apply_identity` found on an account of none, which
 /// is nothing.
-fn install_identities(
+async fn install_identities(
     window: &Window,
     composer: &Composer,
-    database: &Database,
+    database: &Store,
     account: AccountId,
 ) {
-    let Ok(connection) = database.connection() else {
+    let Ok(connection) = database.connect().await else {
         return;
     };
-    match AccountRepository::new(&connection).get(account) {
+    match AccountRepository::new(&connection).get(account).await {
         Ok(Some(account)) => {
             // The conversation pane needs the same fact for a different
             // reason: it marks the user's own messages with an outline
@@ -209,25 +209,38 @@ fn install_identities(
 fn install_signature_default(
     composer: &Composer,
     window: &Window,
-    database: Database,
+    database: Store,
     account: AccountId,
 ) {
     let sidebar = window.sidebar();
     composer.connect_signature_default(move || {
-        let connection = database
-            .connection()
-            .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
-            .ok()?;
-        let account_default = AccountRepository::new(&connection)
-            .get(account)
-            .ok()
-            .flatten()?
-            .default_signature_id;
-        let mailbox_signature = sidebar
-            .selected()
-            .and_then(|id| MailboxRepository::new(&connection).get(id).ok().flatten())
-            .and_then(|mailbox| mailbox.signature_id);
-        signature_default::resolve(mailbox_signature, account_default)
+        crate::blocking::now(async {
+            let connection = database
+                .connect()
+
+                .await
+                .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
+                .ok()?;
+            let account_default = AccountRepository::new(&connection)
+                .get(account)
+                .await
+                .ok()
+                .flatten()?
+                .default_signature_id;
+            // Spelled out rather than chained: `and_then` takes a closure,
+            // and a closure cannot await.
+            let mailbox_signature = match sidebar.selected() {
+                Some(id) => MailboxRepository::new(&connection)
+                    .get(id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|mailbox| mailbox.signature_id),
+                None => None,
+            };
+            signature_default::resolve(mailbox_signature, account_default)
+    
+        })
     });
 }
 
@@ -265,58 +278,68 @@ const SEND_CANCELLED: &str = "send cancelled — you're editing this draft again
 fn install_resume(
     window: &Window,
     composer: &Composer,
-    database: Database,
+    database: Store,
     last_id: Rc<Cell<Option<DraftId>>>,
 ) {
-    // Weak: the window owns the list that owns this handler (#1072).
-    let weak = glib::object::ObjectExt::downgrade(window);
-    window.list().connect_activated({
-        let composer = composer.clone();
-        move |row| {
-            if row.send_state.is_none() {
-                return;
-            }
-            let Some(window) = weak.upgrade() else {
-                return;
-            };
-            let Some(draft) = draft_behind(&database, row.id) else {
-                return;
-            };
-            let draft = if draft.state == DraftState::Queued {
-                // #433: the row stays in the Drafts folder for as long as the
-                // send sits in the queue, and opening it here used to reopen
-                // it live for editing while the drainer could pick the same
-                // row up at any moment — an edit landed or did not, purely on
-                // timing. Cancelling the send is what makes editing it again
-                // safe: see `DraftRepository::cancel_send`.
-                let Some(reopened) = cancel_queued_send(&database, draft.id) else {
-                    return;
-                };
-                window.show_action_completed(SEND_CANCELLED, false);
-                reopened
-            } else {
-                draft
-            };
-            // FR-066's third clause, and #1487: a failed send has to name
-            // what went wrong. The reason was computed, written to the queue
-            // row and carried all the way up the engine's report -- whose own
-            // doc says "the reason the user should see" -- and then read by
-            // nobody. Said here because this is where the person has come
-            // back to do something about it.
-            let failure = (draft.state == DraftState::Failed)
-                .then(|| why_the_send_failed(&database, draft.id))
-                .flatten();
+                crate::blocking::now(async {
+        // Weak: the window owns the list that owns this handler (#1072).
+        let weak = glib::object::ObjectExt::downgrade(window);
+        window.list().connect_activated({
+            let composer = composer.clone();
+            move |row| {
+                crate::blocking::now(async {
+                    if row.send_state.is_none() {
+                        return;
+                    }
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    let Some(draft) = draft_behind(&database, row.id).await else {
+                        return;
+                    };
+                    let draft = if draft.state == DraftState::Queued {
+                        // #433: the row stays in the Drafts folder for as long as the
+                        // send sits in the queue, and opening it here used to reopen
+                        // it live for editing while the drainer could pick the same
+                        // row up at any moment — an edit landed or did not, purely on
+                        // timing. Cancelling the send is what makes editing it again
+                        // safe: see `DraftRepository::cancel_send`.
+                        let Some(reopened) = cancel_queued_send(&database, draft.id).await else {
+                            return;
+                        };
+                        window.show_action_completed(SEND_CANCELLED, false);
+                        reopened
+                    } else {
+                        draft
+                    };
+                    // FR-066's third clause, and #1487: a failed send has to name
+                    // what went wrong. The reason was computed, written to the queue
+                    // row and carried all the way up the engine's report -- whose own
+                    // doc says "the reason the user should see" -- and then read by
+                    // nobody. Said here because this is where the person has come
+                    // back to do something about it.
+                    // Spelled out rather than chained: `then` takes a
+                    // closure, and a closure cannot await.
+                    let failure = if draft.state == DraftState::Failed {
+                        why_the_send_failed(&database, draft.id).await
+                    } else {
+                        None
+                    };
 
-            // So that closing it empty clears the right row: `connect_closed`
-            // carries what became of the draft and not which one it was.
-            last_id.set(Some(draft.id));
-            composer.resume(draft);
-            if let Some(reason) = failure {
-                composer.set_status(&format!("Not sent — {reason}"));
+                    // So that closing it empty clears the right row: `connect_closed`
+                    // carries what became of the draft and not which one it was.
+                    last_id.set(Some(draft.id));
+                    composer.resume(draft);
+                    if let Some(reason) = failure {
+                        composer.set_status(&format!("Not sent — {reason}"));
+                    }
+        
+                })
             }
-        }
-    });
-}
+        });
+
+                })
+            }
 
 /// Cancels a queued draft's pending send and returns it as it now stands, so
 /// the caller can resume the composer on live state rather than the stale
@@ -327,15 +350,18 @@ fn install_resume(
 /// non-[`CancelSendOutcome::Cancelled`] outcomes. Opening the composer on a
 /// draft mid-send would risk a second, different message going out behind
 /// the one already on the wire, so this declines rather than guessing.
-fn cancel_queued_send(database: &Database, id: DraftId) -> Option<Draft> {
+async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> {
     let connection = database
-        .connection()
+        .connect()
+
+        .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
         .ok()?;
     let drafts = DraftRepository::new(&connection);
-    match drafts.cancel_send(id, Utc::now()) {
+    match drafts.cancel_send(id, Utc::now()).await {
         Ok(CancelSendOutcome::Cancelled) => drafts
             .get(id)
+            .await
             .map_err(|error| tracing::warn!(%error, "could not reread a draft after cancelling its send"))
             .ok()
             .flatten(),
@@ -352,26 +378,32 @@ fn cancel_queued_send(database: &Database, id: DraftId) -> Option<Draft> {
 /// Read from the queue row rather than from the draft, because that is where
 /// the drainer writes it and a second copy is one that can come to disagree
 /// with the first (#1487).
-fn why_the_send_failed(database: &Database, id: DraftId) -> Option<String> {
+async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
     let connection = database
-        .connection()
+        .connect()
+
+        .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to read a send failure"))
         .ok()?;
     OperationQueueRepository::new(&connection)
         .last_failure_for(OperationTarget::Draft(id))
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read why a send failed"))
         .ok()
         .flatten()
 }
 
 /// The draft a message row is listing, if it is listing one.
-fn draft_behind(database: &Database, message: MessageId) -> Option<Draft> {
+async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
     let connection = database
-        .connection()
+        .connect()
+
+        .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
         .ok()?;
     DraftRepository::new(&connection)
         .by_message(message)
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the draft behind a row"))
         .ok()?
 }
@@ -380,52 +412,64 @@ fn draft_behind(database: &Database, message: MessageId) -> Option<Draft> {
 /// there is nothing left to keep — sent, discarded, or closed empty.
 fn install_autosave(
     composer: &Composer,
-    database: Database,
+    database: Store,
     account: AccountId,
 ) -> Rc<Cell<Option<DraftId>>> {
-    // The id of whatever `connect_save`'s handler last persisted. Not read
-    // from the composer's own draft afterward because `connect_closed` does
-    // not carry the draft — only what became of it — so this is the one
-    // piece of bookkeeping this module has to keep for itself.
-    let last_id: Rc<Cell<Option<DraftId>>> = Rc::new(Cell::new(None));
+    crate::blocking::now(async {
+        // The id of whatever `connect_save`'s handler last persisted. Not read
+        // from the composer's own draft afterward because `connect_closed` does
+        // not carry the draft — only what became of it — so this is the one
+        // piece of bookkeeping this module has to keep for itself.
+        let last_id: Rc<Cell<Option<DraftId>>> = Rc::new(Cell::new(None));
 
-    composer.connect_save({
-        let database = database.clone();
-        let last_id = Rc::clone(&last_id);
-        move |draft| match save_draft(&database, draft) {
-            Ok(()) => last_id.set(Some(draft.id)),
-            Err(error) => tracing::error!(%error, "could not autosave the draft: {error}"),
-        }
-    });
-
-    composer.connect_closed({
-        let database = database.clone();
-        let last_id = Rc::clone(&last_id);
-        move |outcome| {
-            // Kept: Esc with something still in it. The row stays exactly as
-            // autosaved, ready to recover it right back.
-            if outcome != Closing::Drop {
-                return;
+        composer.connect_save({
+            let database = database.clone();
+            let last_id = Rc::clone(&last_id);
+            move |draft| {
+                crate::blocking::now(async {
+                    match save_draft(&database, draft).await {
+                        Ok(()) => last_id.set(Some(draft.id)),
+                        Err(error) => {
+                            tracing::error!(%error, "could not autosave the draft: {error}")
+                        }
+                    }
+                })
             }
-            let Some(id) = last_id.take() else {
-                return;
-            };
-            if let Err(error) = delete_draft(&database, id) {
-                tracing::warn!(%error, "could not clear the finished draft");
-            }
-        }
-    });
+        });
 
-    // Only after a crash. `DraftState::Editing` alone is not evidence of
-    // one — Esc parks a draft in exactly that state on purpose — and the
-    // difference is the whole of #491: a client that opens into a stale
-    // compose buffer instead of the inbox reads as broken. `begin_session`
-    // is what knows how the last session ended, and this is its one caller,
-    // before anything else consults the marker it flips.
-    if postio_session::begin_session(&database) {
-        recover(composer, &database, account, &last_id);
-    }
-    last_id
+        composer.connect_closed({
+            let database = database.clone();
+            let last_id = Rc::clone(&last_id);
+            move |outcome| {
+                crate::blocking::now(async {
+                    // Kept: Esc with something still in it. The row stays exactly as
+                    // autosaved, ready to recover it right back.
+                    if outcome != Closing::Drop {
+                        return;
+                    }
+                    let Some(id) = last_id.take() else {
+                        return;
+                    };
+                    if let Err(error) = delete_draft(&database, id).await {
+                        tracing::warn!(%error, "could not clear the finished draft");
+                    }
+        
+                })
+            }
+        });
+
+        // Only after a crash. `DraftState::Editing` alone is not evidence of
+        // one — Esc parks a draft in exactly that state on purpose — and the
+        // difference is the whole of #491: a client that opens into a stale
+        // compose buffer instead of the inbox reads as broken. `begin_session`
+        // is what knows how the last session ended, and this is its one caller,
+        // before anything else consults the marker it flips.
+        if postio_session::begin_session(&database).await {
+            recover(composer, &database, account, &last_id);
+        }
+        last_id
+
+    })
 }
 
 /// Autosave: the local row, and the queue row that carries it to the account's
@@ -439,16 +483,16 @@ fn install_autosave(
 /// `interactive_write` rather than a bare connection: a draft autosave is a
 /// write the person typing is waiting on, so it goes ahead of a backfill's
 /// bulk writes rather than queueing behind them (#425).
-fn save_draft(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write()?;
-    DraftRepository::new(&connection).save_and_sync(draft, Utc::now())?;
+async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
+    let (connection, _permit) = database.interactive_write().await?;
+    DraftRepository::new(&connection).save_and_sync(draft, Utc::now()).await?;
     Ok(())
 }
 
 /// Discard: the local row goes now, and the server copy is queued for removal.
-fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write()?;
-    DraftRepository::new(&connection).discard(id, Utc::now())?;
+async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
+    let (connection, _permit) = database.interactive_write().await?;
+    DraftRepository::new(&connection).discard(id, Utc::now()).await?;
     Ok(())
 }
 
@@ -483,44 +527,47 @@ fn delete_draft(database: &Database, id: DraftId) -> postio_storage::Result<()> 
 /// the message is not.
 fn install_send(
     composer: &Composer,
-    database: Database,
+    database: Store,
     last_id: Rc<Cell<Option<DraftId>>>,
     account: AccountId,
     announce: Announce,
 ) {
     composer.connect_send(move |draft| {
-        // Cloned because the seam hands out `&Draft`: unlike a save, which
-        // writes the assigned id back onto the composer's own draft, nothing
-        // survives this — the composer is about to be refilled and closed.
-        let mut draft = draft.clone();
-        last_id.set(None);
-        if let Err(error) = queue_send(&database, &mut draft) {
-            // The draft is still in the store, unsent and unqueued. Not a
-            // status line: `Composer::send` closes straight after this, so
-            // there is nothing on screen left to read it.
-            tracing::error!(%error, "could not queue the draft for sending: {error}");
-            return;
-        }
-        // Say so, or the write is invisible until something else redraws.
-        //
-        // This is the last step of the local-first order -- write, enqueue,
-        // emit, repaint -- and it was missing: the draft moved from Drafts to
-        // the Outbox in the store and nothing on screen knew. `Composer::send`
-        // closes the pane straight after this, so the user is looking at the
-        // list while it happens.
-        //
-        // `MessageListChanged` rather than a state-change event of its own.
-        // What happened *is* a list membership change, in both directions at
-        // once: the row leaves Drafts and joins the Outbox. Both scopes
-        // already answer `Reload` to it, and the Drafts mailbox scope answers
-        // `Refetch` to `MessagesChanged`, which would keep drawing a row that
-        // is no longer a member.
-        if let Some(drafts) = drafts_mailbox(&database, account) {
-            announce(&postio_core::Event::MessageListChanged {
-                account,
-                mailbox: drafts,
-            });
-        }
+        crate::blocking::now(async {
+            // Cloned because the seam hands out `&Draft`: unlike a save, which
+            // writes the assigned id back onto the composer's own draft, nothing
+            // survives this — the composer is about to be refilled and closed.
+            let mut draft = draft.clone();
+            last_id.set(None);
+            if let Err(error) = queue_send(&database, &mut draft).await {
+                // The draft is still in the store, unsent and unqueued. Not a
+                // status line: `Composer::send` closes straight after this, so
+                // there is nothing on screen left to read it.
+                tracing::error!(%error, "could not queue the draft for sending: {error}");
+                return;
+            }
+            // Say so, or the write is invisible until something else redraws.
+            //
+            // This is the last step of the local-first order -- write, enqueue,
+            // emit, repaint -- and it was missing: the draft moved from Drafts to
+            // the Outbox in the store and nothing on screen knew. `Composer::send`
+            // closes the pane straight after this, so the user is looking at the
+            // list while it happens.
+            //
+            // `MessageListChanged` rather than a state-change event of its own.
+            // What happened *is* a list membership change, in both directions at
+            // once: the row leaves Drafts and joins the Outbox. Both scopes
+            // already answer `Reload` to it, and the Drafts mailbox scope answers
+            // `Refetch` to `MessagesChanged`, which would keep drawing a row that
+            // is no longer a member.
+            if let Some(drafts) = drafts_mailbox(&database, account).await {
+                announce(&postio_core::Event::MessageListChanged {
+                    account,
+                    mailbox: drafts,
+                });
+            }
+    
+        })
     });
 }
 
@@ -530,10 +577,11 @@ fn install_send(
 ///
 /// `None` before the first sync has found one, in which case the draft has no
 /// row to have moved and there is nothing to announce.
-fn drafts_mailbox(database: &Database, account: AccountId) -> Option<MailboxId> {
-    let connection = database.connection().ok()?;
+async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<MailboxId> {
+    let connection = database.connect().await.ok()?;
     postio_storage::repository::MailboxRepository::new(&connection)
         .by_role(account, postio_model::MailboxRole::Drafts)
+        .await
         .ok()
         .flatten()
         .map(|mailbox| mailbox.id)
@@ -541,9 +589,9 @@ fn drafts_mailbox(database: &Database, account: AccountId) -> Option<MailboxId> 
 
 /// Send: the draft goes to `Queued` and its `Operation::Send` row is written,
 /// in one transaction — see `DraftRepository::queue_send`.
-fn queue_send(database: &Database, draft: &mut Draft) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write()?;
-    DraftRepository::new(&connection).queue_send(draft, Utc::now())?;
+async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
+    let (connection, _permit) = database.interactive_write().await?;
+    DraftRepository::new(&connection).queue_send(draft, Utc::now()).await?;
     Ok(())
 }
 
@@ -555,26 +603,29 @@ fn queue_send(database: &Database, draft: &mut Draft) -> postio_storage::Result<
 /// closes the instant a time is chosen, the same way it does for an
 /// immediate send, so there is nothing on screen left to read a status line
 /// from by the time a queue error could be reported.
-fn install_send_later(composer: &Composer, database: Database, last_id: Rc<Cell<Option<DraftId>>>) {
+fn install_send_later(composer: &Composer, database: Store, last_id: Rc<Cell<Option<DraftId>>>) {
     composer.connect_send_later(move |draft, send_at| {
-        let mut draft = draft.clone();
-        last_id.set(None);
-        if let Err(error) = queue_send_at(&database, &mut draft, send_at) {
-            tracing::error!(%error, "could not schedule the draft for sending: {error}");
-        }
+        crate::blocking::now(async {
+            let mut draft = draft.clone();
+            last_id.set(None);
+            if let Err(error) = queue_send_at(&database, &mut draft, send_at).await {
+                tracing::error!(%error, "could not schedule the draft for sending: {error}");
+            }
+    
+        })
     });
 }
 
 /// Schedule send: the draft goes to `Queued` and its `Operation::Send` row is
 /// written with `send_at` as the time the drainer must not touch it before —
 /// see `DraftRepository::queue_send_at`.
-fn queue_send_at(
-    database: &Database,
+async fn queue_send_at(
+    database: &Store,
     draft: &mut Draft,
     send_at: chrono::DateTime<Utc>,
 ) -> postio_storage::Result<()> {
-    let (connection, _permit) = database.interactive_write()?;
-    DraftRepository::new(&connection).queue_send_at(draft, Utc::now(), send_at)?;
+    let (connection, _permit) = database.interactive_write().await?;
+    DraftRepository::new(&connection).queue_send_at(draft, Utc::now(), send_at).await?;
     Ok(())
 }
 
@@ -591,16 +642,16 @@ fn queue_send_at(
 /// at a time (`postio-cj7`'s "one composition" invariant); a v1 with several
 /// concurrent drafts would recover all of them into a real Drafts mailbox
 /// instead, which does not exist yet.
-fn recover(
+async fn recover(
     composer: &Composer,
-    database: &Database,
+    database: &Store,
     account: AccountId,
     last_id: &Rc<Cell<Option<DraftId>>>,
 ) {
-    let Ok(connection) = database.connection() else {
+    let Ok(connection) = database.connect().await else {
         return;
     };
-    let drafts = match DraftRepository::new(&connection).list_for_account(account) {
+    let drafts = match DraftRepository::new(&connection).list_for_account(account).await {
         Ok(drafts) => drafts,
         Err(error) => {
             tracing::error!(%error, "could not read drafts to recover: {error}");
@@ -632,55 +683,58 @@ fn recover(
 /// Recipient completion: contact groups whose name matches `prefix`, then
 /// contacts ranked by [`ContactRepository::search`] — groups first, since a
 /// group is a deliberate choice the user is more likely typing towards.
-fn install_recipient_suggestions(composer: &Composer, database: Database, account: AccountId) {
+async fn install_recipient_suggestions(composer: &Composer, database: Store, account: AccountId) {
     composer.connect_recipient_suggestions(move |prefix| {
-        let connection = match database.connection() {
-            Ok(connection) => connection,
-            Err(error) => {
-                tracing::warn!(%error, "could not search contacts");
-                return Vec::new();
-            }
-        };
+        crate::blocking::now(async {
+            let connection = match database.connect().await {
+                Ok(connection) => connection,
+                Err(error) => {
+                    tracing::warn!(%error, "could not search contacts");
+                    return Vec::new();
+                }
+            };
 
-        let mut candidates: Vec<RecipientCandidate> = Vec::new();
-        let groups = ContactGroupRepository::new(&connection);
-        match groups.list(Some(account)) {
-            Ok(list) => {
-                let prefix_lower = prefix.to_lowercase();
-                for group in list {
-                    if !group.name.to_lowercase().starts_with(&prefix_lower) {
-                        continue;
-                    }
-                    match groups.members(group.id) {
-                        // A group with no members yet expands to nothing, so
-                        // offering it would be a suggestion that does nothing
-                        // when accepted.
-                        Ok(members) if !members.is_empty() => {
-                            candidates.push(RecipientCandidate::Group {
-                                name: group.name,
-                                members: members.iter().map(resolved_address).collect(),
-                            });
+            let mut candidates: Vec<RecipientCandidate> = Vec::new();
+            let groups = ContactGroupRepository::new(&connection);
+            match groups.list(Some(account)).await {
+                Ok(list) => {
+                    let prefix_lower = prefix.to_lowercase();
+                    for group in list {
+                        if !group.name.to_lowercase().starts_with(&prefix_lower) {
+                            continue;
                         }
-                        Ok(_) => {}
-                        Err(error) => tracing::warn!(%error, "could not read group members"),
+                        match groups.members(group.id).await {
+                            // A group with no members yet expands to nothing, so
+                            // offering it would be a suggestion that does nothing
+                            // when accepted.
+                            Ok(members) if !members.is_empty() => {
+                                candidates.push(RecipientCandidate::Group {
+                                    name: group.name,
+                                    members: members.iter().map(resolved_address).collect(),
+                                });
+                            }
+                            Ok(_) => {}
+                            Err(error) => tracing::warn!(%error, "could not read group members"),
+                        }
                     }
                 }
+                Err(error) => tracing::warn!(%error, "could not search contact groups"),
             }
-            Err(error) => tracing::warn!(%error, "could not search contact groups"),
-        }
 
-        match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT) {
-            Ok(contacts) => candidates.extend(
-                contacts
-                    .iter()
-                    .map(resolved_address)
-                    .map(RecipientCandidate::Contact),
-            ),
-            Err(error) => tracing::warn!(%error, "could not search contacts"),
-        }
+            match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT).await {
+                Ok(contacts) => candidates.extend(
+                    contacts
+                        .iter()
+                        .map(resolved_address)
+                        .map(RecipientCandidate::Contact),
+                ),
+                Err(error) => tracing::warn!(%error, "could not search contacts"),
+            }
 
-        candidates.truncate(SUGGESTION_LIMIT as usize);
-        candidates
+            candidates.truncate(SUGGESTION_LIMIT as usize);
+            candidates
+    
+        })
     });
 }
 
@@ -706,27 +760,33 @@ fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
 /// message", updated by different signals, can only ever be one signal away
 /// from disagreeing; reading `showing` is the version of this that has no
 /// second copy to drift.
-fn install_reply_source(composer: &Composer, database: Database, showing: crate::reading::Showing) {
+async fn install_reply_source(composer: &Composer, database: Store, showing: crate::reading::Showing) {
     composer.connect_reply_source(move || {
-        // `None` is ordinary: `e` on a window nobody has read from yet is
-        // nothing to reply to, not an error. It is logged all the same,
-        // because the *other* way to reach here is a miswiring, and #325
-        // spent its whole life indistinguishable from working software.
-        let Some(id) = showing.get() else {
-            tracing::debug!("reply asked for with no message in the reading pane");
-            return None;
-        };
-        let connection = database
-            .connection()
-            .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
-            .ok()?;
-        let mut message = MessageRepository::new(&connection).get(id).ok().flatten()?;
-        message.body = load_body(&connection, id);
-        let account = AccountRepository::new(&connection)
-            .get(message.account_id)
-            .ok()
-            .flatten()?;
-        Some((message, account))
+        crate::blocking::now(async {
+            // `None` is ordinary: `e` on a window nobody has read from yet is
+            // nothing to reply to, not an error. It is logged all the same,
+            // because the *other* way to reach here is a miswiring, and #325
+            // spent its whole life indistinguishable from working software.
+            let Some(id) = showing.get() else {
+                tracing::debug!("reply asked for with no message in the reading pane");
+                return None;
+            };
+            let connection = database
+                .connect()
+
+                .await
+                .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
+                .ok()?;
+            let mut message = MessageRepository::new(&connection).get(id).await.ok().flatten()?;
+            message.body = load_body(&connection, id).await;
+            let account = AccountRepository::new(&connection)
+                .get(message.account_id)
+                .await
+                .ok()
+                .flatten()?;
+            Some((message, account))
+    
+        })
     });
 }
 
@@ -740,7 +800,7 @@ fn install_attach(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime
     composer.connect_attach(move |path, then| {
         let blobs = blobs.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        runtime.spawn_blocking(move || {
+        runtime.spawn(async move {
             let attachment = attach_file(&blobs, &path);
             let _ = sender.send_blocking(attachment);
         });
@@ -834,8 +894,8 @@ mod tests {
 
     /// A real account row, since `DraftRepository::save`'s first insert
     /// requires one to reference.
-    fn seed_account(database: &Database) -> AccountId {
-        let connection = database.connection().unwrap();
+    fn seed_account(database: &Store) -> AccountId {
+        let connection = database.connect().await.unwrap();
         let mut account = postio_model::Account::new(
             "Test",
             EmailAddress::new(None::<String>, "ada@example.com"),
@@ -854,7 +914,7 @@ mod tests {
     #[test]
     fn a_message_with_no_body_yet_names_offline_only_when_the_engine_is() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.sync.body_state = postio_model::BodyState::HeadersOnly;
@@ -863,7 +923,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
 
         assert!(
             matches!(
@@ -888,7 +948,7 @@ mod tests {
         // yet. A message with real bytes on disk must read the same whether
         // or not the engine happens to be connected right now.
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.sync.body_state = postio_model::BodyState::Full;
@@ -897,7 +957,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
 
         // No blobs were ever named for it, so this is the "fetched, naming
         // no blobs" case -- `Absent::Empty` -- either way.
@@ -920,7 +980,7 @@ mod tests {
     #[test]
     fn a_foreign_drafts_row_says_so_even_once_its_body_has_arrived() {
         let database = postio_storage::test_support::memory();
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection);
         let mut message = postio_model::Message::new(account.id, inbox, Utc::now());
         message.flags.insert(postio_model::Flag::Draft);
@@ -930,7 +990,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let connection = database.connection().unwrap();
+        let connection = database.connect().await.unwrap();
 
         // No local `DraftRepository` row exists for this message, which is
         // exactly what makes it another client's draft rather than one this
@@ -1072,7 +1132,7 @@ mod tests {
             );
             // Never lost: the row is still in Drafts, exactly as autosaved,
             // reachable through the Drafts folder's own resume path.
-            let connection = database.connection().unwrap();
+            let connection = database.connect().await.unwrap();
             let parked = DraftRepository::new(&connection)
                 .list_for_account(account)
                 .expect("drafts read");

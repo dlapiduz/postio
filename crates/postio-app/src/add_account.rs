@@ -167,15 +167,15 @@ pub fn open(
 /// is what [`crate::attach_account`] has to start an engine from, it carries
 /// the id only the insert knows, and `onboarding::save` may have *updated*
 /// an account that was already there rather than creating one.
-fn join(window: &Window, wiring: &Wiring, address: &str) {
-    let Some(account) = written(wiring, address) else {
+async fn join(window: &Window, wiring: &Wiring, address: &str) {
+    let Some(account) = written(wiring, address).await else {
         // The row was written a moment ago, so this is a store that has
         // stopped answering — which the panes are about to say far more
         // loudly than a toast would.
         tracing::error!("the account was saved and could not be read back");
         return;
     };
-    if let Err(refusal) = crate::attach_account(window, wiring, &account) {
+    if let Err(refusal) = crate::attach_account(window, wiring, &account).await {
         // The account exists and is enabled; what it has not got is an
         // engine. Said on screen rather than only logged, because the
         // sentence names the two things the user can do about it and
@@ -187,10 +187,11 @@ fn join(window: &Window, wiring: &Wiring, address: &str) {
 }
 
 /// The account row for `address`, however it was written.
-fn written(wiring: &Wiring, address: &str) -> Option<postio_model::Account> {
-    let connection = wiring.database.connection().ok()?;
+async fn written(wiring: &Wiring, address: &str) -> Option<postio_model::Account> {
+    let connection = wiring.database.connect().await.ok()?;
     AccountRepository::new(&connection)
         .list()
+        .await
         .ok()?
         .into_iter()
         .find(|account| account.address.address.eq_ignore_ascii_case(address))

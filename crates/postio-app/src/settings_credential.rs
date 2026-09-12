@@ -43,11 +43,11 @@ use crate::onboarding::{ProbeCancellation, configured, probe, submit};
 /// Opens a dialog over `window` letting the user re-enter `id`'s credential
 /// (and, since the same form carries them, its server settings). Does
 /// nothing if the account is gone by the time this runs.
-pub fn install(window: &Window, wiring: &Wiring, id: AccountId) {
-    let Ok(connection) = wiring.database.connection() else {
+pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
+    let Ok(connection) = wiring.database.connect().await else {
         return;
     };
-    let Ok(Some(account)) = AccountRepository::new(&connection).get(id) else {
+    let Ok(Some(account)) = AccountRepository::new(&connection).get(id).await else {
         return;
     };
     drop(connection);
