@@ -151,14 +151,6 @@ pub struct Provider {
     next: *mut Provider,
 }
 
-// SAFETY: every field is a `'static` function pointer or a raw pointer
-// SQLCipher owns and mutates only under its own provider mutex. Nothing here
-// is dropped, and nothing here points at anything this crate frees.
-#[allow(unsafe_code)]
-unsafe impl Sync for Provider {}
-#[allow(unsafe_code)]
-unsafe impl Send for Provider {}
-
 impl Provider {
     /// A table with nothing in it, for [`postio_cipher_setup`] to fill.
     const fn empty() -> Provider {
@@ -197,49 +189,75 @@ unsafe extern "C" {
     /// SQLCipher's own allocator. A provider it is going to free at shutdown
     /// has to have come from here — see [`install`].
     fn sqlcipher_malloc(size: u64) -> *mut c_void;
+    /// The matching free, for a table that never reached the chain.
+    fn sqlcipher_free(memory: *mut c_void, size: u64);
+    /// SQLite's own initialiser: idempotent, thread-safe, and what runs
+    /// SQLCipher's `sqlcipher_extra_init`. [`install`] calls it so that it
+    /// has no precondition of its own.
+    fn sqlite3_initialize() -> c_int;
 }
 
 /// Fill `provider` in — the shape `-DSQLCIPHER_CRYPTO_CUSTOM=postio_cipher_setup`
 /// expects.
 ///
 /// SQLCipher calls this once, with a table it allocated, and registers the
-/// result itself. That is the shipping path; [`install`] is the same table by
-/// the runtime door.
+/// result itself. That is the shipping path, and it is the one with no
+/// ownership question in it at all: SQLCipher allocates, this fills, SQLCipher
+/// frees.
 ///
 /// # Safety
 ///
-/// `provider` must point at a writable `sqlcipher_provider`.
+/// `provider` must be non-null, aligned for `Provider`, and writable for
+/// `size_of::<Provider>()` bytes. It does **not** have to be initialised.
+///
+/// That last sentence is load-bearing and was not true of the first version
+/// of this function, which took `&mut *provider` to fill the fields. A
+/// reference — even a `&mut` that is only written through — asserts that what
+/// it points at is a valid `Provider`, and most of `Provider` is
+/// `Option<fn(..)>`, a type with invalid bit patterns. Forming one over
+/// uninitialised memory is undefined behaviour whatever you do with it
+/// afterwards.
+///
+/// It happened to work because `sqlcipher_malloc` zeroes, so every `Option`
+/// really was a valid `None` — which is the worst way for this kind of bug to
+/// behave: correct by the allocator's habit rather than by anything the
+/// signature says, and silent the day a caller hands over a plain `malloc`.
+/// Writing through raw pointers asks nothing of the memory and costs nothing.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn postio_cipher_setup(provider: *mut Provider) -> c_int {
     if provider.is_null() {
         return ERROR;
     }
-    // SAFETY: the caller's contract, and SQLCipher's own: it passes a table
-    // it has just allocated and is about to register.
-    unsafe { std::ptr::write(&raw mut (*provider).next, std::ptr::null_mut()) };
-    // SAFETY: as above. Written field by field rather than as a whole struct
-    // so `next` — which SQLCipher owns — is left exactly as it was.
-    unsafe {
-        let p = &mut *provider;
-        p.init = None;
-        p.shutdown = None;
-        p.get_provider_name = Some(get_provider_name);
-        p.add_random = Some(add_random);
-        p.random = Some(random);
-        p.hmac = Some(hmac);
-        p.kdf = Some(kdf);
-        p.cipher = Some(cipher);
-        p.get_cipher = Some(get_cipher);
-        p.get_key_sz = Some(get_key_sz);
-        p.get_iv_sz = Some(get_iv_sz);
-        p.get_block_sz = Some(get_block_sz);
-        p.get_hmac_sz = Some(get_hmac_sz);
-        p.ctx_init = Some(ctx_init);
-        p.ctx_free = Some(ctx_free);
-        p.fips_status = Some(fips_status);
-        p.get_provider_version = Some(get_provider_version);
+    /// Write one field without asserting anything about what is there now.
+    macro_rules! put {
+        ($field:ident, $value:expr) => {
+            // SAFETY: the caller's contract — `provider` is writable and
+            // aligned for `Provider`, so the field projection is in bounds
+            // and `write` needs no valid value at the destination.
+            unsafe { std::ptr::write(&raw mut (*provider).$field, $value) }
+        };
     }
+    put!(init, None);
+    put!(shutdown, None);
+    put!(get_provider_name, Some(get_provider_name as _));
+    put!(add_random, Some(add_random as _));
+    put!(random, Some(random as _));
+    put!(hmac, Some(hmac as _));
+    put!(kdf, Some(kdf as _));
+    put!(cipher, Some(cipher as _));
+    put!(get_cipher, Some(get_cipher as _));
+    put!(get_key_sz, Some(get_key_sz as _));
+    put!(get_iv_sz, Some(get_iv_sz as _));
+    put!(get_block_sz, Some(get_block_sz as _));
+    put!(get_hmac_sz, Some(get_hmac_sz as _));
+    put!(ctx_init, Some(ctx_init as _));
+    put!(ctx_free, Some(ctx_free as _));
+    put!(fips_status, Some(fips_status as _));
+    put!(get_provider_version, Some(get_provider_version as _));
+    // SQLCipher sets this itself at registration; writing it keeps the table
+    // wholly initialised rather than mostly.
+    put!(next, std::ptr::null_mut());
     OK
 }
 
@@ -249,16 +267,24 @@ pub unsafe extern "C" fn postio_cipher_setup(provider: *mut Provider) -> c_int {
 /// already open goes on using whatever it was opened with, which is
 /// SQLCipher's own rule rather than this crate's.
 ///
-/// **Call it after SQLite is initialised.** Registration takes SQLCipher's
-/// provider mutex, and the mutex subsystem does not exist until
-/// `sqlite3_initialize` has run — which opening any connection does.
+/// # Why this is a safe function and what it had to do to earn it
+///
+/// An earlier version of this was safe and should not have been. It
+/// documented "call it after SQLite is initialised" and then did FFI that
+/// depended on it — which is a safety precondition on a safe function, and
+/// therefore a hole: `sqlcipher_malloc` reaches for a private heap and a
+/// mutex that `sqlite3_initialize` is what creates, and nothing stopped a
+/// caller from asking first.
+///
+/// It discharges that itself now. `sqlite3_initialize` is idempotent and is
+/// what runs SQLCipher's own `sqlcipher_extra_init`, so after it returns
+/// `SQLITE_OK` the heap and the mutexes exist and there is no precondition
+/// left for a caller to get wrong.
 ///
 /// # The table has to be SQLCipher's to free
 ///
 /// This allocates through `sqlcipher_malloc` and hands the pointer over for
-/// good, and that is not fastidiousness — it is the one thing the spike got
-/// wrong on the first run and only a real process exit revealed.
-/// `sqlcipher_extra_shutdown` walks the provider chain and calls
+/// good. `sqlcipher_extra_shutdown` walks the provider chain and calls
 /// `sqlcipher_free(provider, sizeof(sqlcipher_provider))` on every link, so a
 /// table that was a `static` in this crate aborts the process at exit:
 ///
@@ -267,33 +293,56 @@ pub unsafe extern "C" fn postio_cipher_setup(provider: *mut Provider) -> c_int {
 /// free(): invalid pointer
 /// ```
 ///
-/// Note that the *shipping* path cannot make this mistake.
-/// `-DSQLCIPHER_CRYPTO_CUSTOM` has SQLCipher allocate the table and call
-/// [`postio_cipher_setup`] only to fill it in, so ownership is never in
-/// question. It is the runtime door that has this hazard, and it has it
-/// whatever language the provider is written in.
+/// The *shipping* path cannot make either mistake.
+/// `-DSQLCIPHER_CRYPTO_CUSTOM` has SQLCipher allocate the table, call
+/// [`postio_cipher_setup`] to fill it, and register it — this crate never
+/// holds a pointer at all. This function is the runtime door, which exists so
+/// the spike could be tested against the real amalgamation without patching
+/// anybody's build script, and it is the half that needs the care.
+///
+/// Calling it more than once registers more than one table. That is not
+/// unsound — SQLCipher owns and frees each of them — but the second is a
+/// waste, and only the last is the default.
 #[allow(unsafe_code)]
 pub fn install() -> Result<(), &'static str> {
-    // SAFETY: SQLCipher's own allocator, asked for exactly the size of the
-    // table it is about to be handed. It takes ownership at registration and
-    // frees it at `sqlcipher_extra_shutdown`; nothing here frees it, and
-    // nothing here holds the pointer afterwards.
-    let provider =
-        unsafe { sqlcipher_malloc(std::mem::size_of::<Provider>() as u64).cast::<Provider>() };
+    // SAFETY: `sqlite3_initialize` takes no arguments, is documented as safe
+    // to call any number of times and from any thread, and is what every
+    // `sqlite3_open` calls first. It is the call that makes everything below
+    // it defined.
+    if unsafe { sqlite3_initialize() } != OK {
+        return Err("sqlite would not initialise");
+    }
+
+    let size = std::mem::size_of::<Provider>() as u64;
+    // SAFETY: SQLite is initialised, so SQLCipher's private heap and its
+    // memory mutex exist. The allocation is exactly the size of the table it
+    // is about to be handed.
+    let provider = unsafe { sqlcipher_malloc(size).cast::<Provider>() };
     if provider.is_null() {
         return Err("sqlcipher would not allocate a provider table");
     }
-    // SAFETY: the allocation above, writable and the right size.
+
+    // SAFETY: the allocation above — non-null, aligned, and `size` bytes,
+    // which is `postio_cipher_setup`'s whole contract.
     if unsafe { postio_cipher_setup(provider) } != OK {
+        // SAFETY: nothing has been told about this table, so this crate is
+        // still the only owner and freeing it is this crate's to do. The
+        // size is the one it was allocated with.
+        unsafe { sqlcipher_free(provider.cast(), size) };
         return Err("the provider table would not fill in");
     }
-    // SAFETY: as above, and this is the call that transfers ownership.
+
+    // SAFETY: as above. This is the call that transfers ownership: after it
+    // succeeds the table is on SQLCipher's chain and SQLCipher frees it at
+    // shutdown, so nothing here may free it or keep the pointer.
     let rc = unsafe { sqlcipher_register_provider(provider) };
     if rc == OK {
-        Ok(())
-    } else {
-        Err("sqlcipher refused the provider")
+        return Ok(());
     }
+    // Refused, so it never reached the chain and nothing else will free it.
+    // SAFETY: ownership never transferred; see above.
+    unsafe { sqlcipher_free(provider.cast(), size) };
+    Err("sqlcipher refused the provider")
 }
 
 /// Put `provider` back in force.
@@ -738,6 +787,49 @@ mod tests {
             std::mem::size_of::<Provider>(),
             18 * std::mem::size_of::<*const c_void>()
         );
+    }
+
+    /// The contract [`postio_cipher_setup`] states, exercised over memory
+    /// that really is uninitialised.
+    ///
+    /// The first version of that function took `&mut *provider` to fill the
+    /// fields, which asserts the memory already holds a valid `Provider` —
+    /// and most of a `Provider` is `Option<fn(..)>`, which has invalid bit
+    /// patterns. It passed everything, because `sqlcipher_malloc` zeroes and
+    /// every `Option` really was a valid `None`.
+    ///
+    /// This is deliberately `alloc`, not `alloc_zeroed`: the point is memory
+    /// with no promise attached, which is what the doc comment now says is
+    /// enough. On its own it proves the function *works* there; run under
+    /// Miri it would also have failed on the version that did not.
+    #[test]
+    #[allow(unsafe_code)]
+    fn the_table_fills_in_over_memory_that_was_never_initialised() {
+        let layout = std::alloc::Layout::new::<Provider>();
+        // SAFETY: a non-zero-sized layout, and the allocation is freed below
+        // with the same one.
+        let raw = unsafe { std::alloc::alloc(layout) }.cast::<Provider>();
+        assert!(!raw.is_null(), "the test allocator gave up");
+
+        // SAFETY: non-null, aligned and `size_of::<Provider>()` bytes, which
+        // is the whole of what `postio_cipher_setup` asks for. It is *not*
+        // initialised, which is the point.
+        assert_eq!(unsafe { postio_cipher_setup(raw) }, OK);
+
+        // SAFETY: initialised by the call above, so a reference is now
+        // sound — which it was not a line earlier.
+        let filled: &Provider = unsafe { &*raw };
+        assert_eq!(filled.name(), "rust");
+        assert_eq!(filled.sizes(), (32, 16, 16));
+        assert!(
+            filled.next.is_null(),
+            "a table handed over with a stale `next` would splice whatever \
+             was in that memory into SQLCipher's provider chain"
+        );
+
+        // SAFETY: the allocation above, with the layout it was made with,
+        // and nothing else holds it.
+        unsafe { std::alloc::dealloc(raw.cast(), layout) };
     }
 
     #[test]

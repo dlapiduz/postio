@@ -68,9 +68,66 @@ above this table. **So there is no migration and no re-encrypt.**
   crypto DSO to finalise.
 - **One fewer thing to keep hermetic** for the Flatpak and for contributors.
 
+## Memory safety, honestly
+
+The first write-up of this called the ownership problem "a hazard of the
+runtime door" and moved on. That was too comfortable, and re-reading the crate
+against it turned up three real defects and two lines of dead `unsafe`.
+
+**`install` was a safe function with a safety precondition.** It documented
+"call it after SQLite is initialised" and then called `sqlcipher_malloc`,
+which reaches for a private heap and a mutex that `sqlite3_initialize` is what
+creates. A safe function may not have preconditions — that is the whole
+meaning of the word — and nothing stopped a caller from asking first. It
+discharges it now: `sqlite3_initialize` is idempotent and thread-safe, it is
+what runs SQLCipher's own `sqlcipher_extra_init`, and after it returns there
+is no precondition left for a caller to get wrong.
+
+**It leaked the table if registration was refused.** The allocation only
+becomes SQLCipher's when `sqlcipher_register_provider` succeeds; on either
+failure path this crate is still the only owner and now frees it.
+
+**`postio_cipher_setup` took `&mut *provider` over the caller's memory.** A
+reference asserts that what it points at is a valid value of its type, and
+most of `Provider` is `Option<fn(..)>`, which has invalid bit patterns. It
+is filled through raw pointers now, field by field, which asks nothing of the
+memory and costs nothing — and the documented contract says so.
+
+Two caveats on that last one, because overstating it would be its own
+dishonesty. It never actually misbehaved: `sqlcipher_malloc` zeroes, so every
+`Option` really was a valid `None`. And **Miri does not catch it**, with
+default flags or strict ones — reference creation is not where it checks value
+validity. So this was UB by the letter of the validity invariant, invisible to
+the tool that exists to find such things, and correct in practice by the
+allocator's habit rather than by anything the signature promised. Which is the
+worst way for this class of bug to behave, and the argument for writing it the
+way that needs no habit.
+
+**And two `unsafe impl`s were dead.** `Send`/`Sync` for `Provider` were left
+over from the version with a `static mut` table; nothing needed them once that
+went. They are gone.
+
+## What is actually checked, and what cannot be
+
+`cargo miri test --lib` is clean over the six unit tests, including the one
+that fills a table in over memory from `std::alloc::alloc` — deliberately not
+`alloc_zeroed`. It has to be run outside the workspace, because this
+repository's `.cargo/config.toml` sets a target runner for the headless
+compositor and Miri sets its own; `spike/FINDINGS.md` is where that is written
+down rather than a script, since it is a spike.
+
+What no tool checks, and what is irreducible: the five functions that do work
+are called by C with raw pointers and lengths. `hmac` writes the digest into a
+buffer SQLCipher sized from `get_hmac_sz`; `cipher` writes `in_sz` bytes into
+`out` because the amalgamation asserts they are equal on its side. Those are
+contracts, not proofs, and they would be contracts for a provider written in
+any language — it is the same trust OpenSSL's provider is extended two
+branches away in the same file. What Rust buys here is the primitives, not the
+boundary.
+
 ## What the spike found by doing rather than reading
 
-**A provider registered at run time must be `sqlcipher_malloc`'d.**
+**A provider registered at run time has to be `sqlcipher_malloc`'d.**
 `sqlcipher_extra_shutdown` walks the provider chain and calls
 `sqlcipher_free(provider, sizeof(sqlcipher_provider))` on every link, so the
 first version — a `static` table in Rust — passed every test and then aborted
