@@ -1,0 +1,16 @@
+[package]
+name = "prove"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `bundled-sqlcipher`, NOT `-vendored-openssl`: the point is that no OpenSSL
+# is needed at all.
+rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher"] }
+postio-cipher = { path = "../../crates/postio-cipher" }
+tempfile = "3"
+
+[patch.crates-io]
+libsqlite3-sys = { path = "./libsqlite3-sys" }
+
+[workspace]

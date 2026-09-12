@@ -736,7 +736,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -2831,6 +2831,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-cipher"
+version = "0.2.0"
+dependencies = [
+ "aes",
+ "cbc",
+ "getrandom 0.2.17",
+ "hmac",
+ "pbkdf2",
+ "rusqlite",
+ "sha1",
+ "sha2 0.10.9",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "postio-config"
 version = "0.2.0"
 dependencies = [
@@ -3603,6 +3619,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0a0068df419f9d9b6488fdded3f1c818522cdea328e02ce9d9f147380265a432"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
 ]
 
 [[package]]

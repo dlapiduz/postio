@@ -1,0 +1,41 @@
+[package]
+name = "postio-cipher"
+description = "A SQLCipher crypto provider written in Rust, in place of OpenSSL."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# AES-256-CBC, no padding: SQLCipher hands whole pages, always a multiple of
+# the block size, and does its own framing.
+aes = "0.8.4"
+cbc = "0.1.2"
+# PBKDF2-HMAC-SHA512 for the key derivation, HMAC-SHA512 for the page MAC.
+# Both are SQLCipher 4's defaults; the SHA-1 and SHA-256 arms exist because
+# the vtable has to answer for a store written under an older `PRAGMA`.
+hmac = "0.12.1"
+pbkdf2 = { version = "0.12.2", default-features = false, features = ["hmac"] }
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+# The provider's `random`, which SQLCipher uses for salts and page IVs. The
+# OS entropy pool with no generator in front of it, the same choice ADR 0014
+# made for the store key itself.
+getrandom = "0.2.17"
+# A derived key is key material and must not outlive its buffer.
+zeroize = "1.9.0"
+
+[dev-dependencies]
+# Only to force SQLCipher's own provider into the process so the two can be
+# compared. The features must match `postio-storage`'s or cargo links two
+# different SQLCiphers and the comparison is meaningless.
+rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl"] }
+tempfile = "3.27.0"
+
+[lints.rust]
+# This crate exists to hand C a table of function pointers, so the
+# workspace's `unsafe_code = "forbid"` floor cannot apply. Every block says
+# what it is upholding.
+unsafe_code = "allow"

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/postio-cipher",
     "crates/postio-model",
     "crates/postio-storage",
     "crates/postio-search",
@@ -40,6 +41,7 @@ members = [
 # cargo command silently stops building it; that is deliberate for this one
 # crate and an accident anywhere else (#1500).
 default-members = [
+    "crates/postio-cipher",
     "crates/postio-model",
     "crates/postio-storage",
     "crates/postio-search",

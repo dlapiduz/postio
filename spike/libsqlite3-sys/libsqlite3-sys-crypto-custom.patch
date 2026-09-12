@@ -1,0 +1,40 @@
+--- build.rs.orig	2026-09-12 08:28:57.713091831 -0400
++++ libsqlite3-sys/build.rs	2026-09-12 08:29:40.756582728 -0400
+@@ -177,6 +177,29 @@
+                 .flag("-DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown")
+                 .flag("-DHAVE_STDINT_H=1");
+ 
++            // SQLCipher's crypto provider is pluggable and this crate has
++            // no way to say so. Everything below finds, includes and links a
++            // crypto library, and the amalgamation falls back to OpenSSL
++            // when none of its four provider macros is defined.
++            //
++            // `SQLCIPHER_CRYPTO_CUSTOM` names a setup function the caller
++            // supplies -- `int SQLCIPHER_CRYPTO_CUSTOM(sqlcipher_provider *)`
++            // -- so a downstream crate can fill the provider table itself
++            // and there is no crypto library to find at all. The symbol
++            // resolves at the final link, like any other extern.
++            //
++            // A labelled block rather than an `else` so the diff is the
++            // lines that are new; an upstream patch would indent the rest.
++            'crypto: {
++            println!("cargo:rerun-if-env-changed=LIBSQLITE3_SYS_CRYPTO_CUSTOM");
++            if let Some(setup) = env::var_os("LIBSQLITE3_SYS_CRYPTO_CUSTOM") {
++                cfg.flag(&format!(
++                    "-DSQLCIPHER_CRYPTO_CUSTOM={}",
++                    setup.to_string_lossy()
++                ));
++                break 'crypto;
++            }
++
+             let target = env::var("TARGET").unwrap();
+             let host = env::var("HOST").unwrap();
+ 
+@@ -251,6 +274,7 @@
+                 // branch not taken on Windows, just `crypto` is fine.
+                 println!("cargo:rustc-link-lib=dylib=crypto");
+             }
++            }
+         }
+ 
+         // on android sqlite can't figure out where to put the temp files.
