@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use gtk::gdk;
 use gtk::prelude::*;
 use postio_core::ConnectionState;
+use postio_gtk::sidebar::SidebarChoice;
 use postio_gtk::sidebar::{Sidebar, SyncStatus};
 use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
@@ -65,7 +66,10 @@ pub fn the_sidebar_lists_folders_and_says_where_sync_stands() {
     let picked: Rc<RefCell<Vec<MailboxId>>> = Rc::new(RefCell::new(Vec::new()));
     sidebar.connect_selected({
         let picked = picked.clone();
-        move |id| picked.borrow_mut().push(id)
+        move |choice| match choice {
+            SidebarChoice::Folder(id) => picked.borrow_mut().push(id),
+            SidebarChoice::View(role) => panic!("a folder was expected, got the {role:?} view"),
+        }
     });
 
     sidebar.select(MailboxId::new(1));

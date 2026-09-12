@@ -56,7 +56,7 @@ type CommandHandler = Box<dyn Fn(CommandId)>;
 
 /// Switch to a mailbox, the way picking it in the sidebar does. See
 /// [`Window::open_mailbox`].
-type OpenMailbox = std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)>;
+type OpenMailbox = std::rc::Rc<dyn Fn(crate::sidebar::SidebarChoice)>;
 
 /// What to call with a whole invocation — the verb *and* what it is aimed at.
 type ActionHandler = Box<dyn Fn(postio_core::Command)>;
@@ -1243,7 +1243,9 @@ impl Window {
         let show = self.imp().open_mailbox.borrow().clone();
         if let Some(show) = show {
             self.sidebar().select(mailbox);
-            show(mailbox);
+            // Always a real folder: this is a notification's click, and a
+            // notification is about a message that arrived somewhere.
+            show(crate::sidebar::SidebarChoice::Folder(mailbox));
         }
     }
 
@@ -1285,12 +1287,22 @@ impl Window {
 
         // One way to show a folder, whether the user picked it or the window
         // is opening on the one they were last in.
-        let show: std::rc::Rc<dyn Fn(postio_model::ids::MailboxId)> = {
+        let show: OpenMailbox = {
             let feed = feed.clone();
             let folders = folders.clone();
             let list = list.clone();
-            std::rc::Rc::new(move |id| {
-                if let Some(mailbox) = folders.mailbox(id) {
+            std::rc::Rc::new(move |choice| {
+                // A view row is in `mailboxes()` like any other — it just has
+                // no id — so the header above the rows is named the same way
+                // whichever kind was picked.
+                let chosen = match choice {
+                    crate::sidebar::SidebarChoice::Folder(id) => folders.mailbox(id),
+                    crate::sidebar::SidebarChoice::View(role) => folders
+                        .mailboxes()
+                        .into_iter()
+                        .find(|m| postio_ui::sidebar::is_view(m) && m.role == role),
+                };
+                if let Some(mailbox) = chosen {
                     // The same word the sidebar uses, from the same place:
                     // the folder the user clicked must not change its name
                     // on the way to the header above the rows. Among its
@@ -1304,7 +1316,7 @@ impl Window {
                 // The sidebar deals in row ids; everything below here deals
                 // in scopes, because "Flagged" is a query and has no folder
                 // to name.
-                feed.open(folders.scope_of(id));
+                feed.open(folders.scope_of(choice));
             })
         };
         *self.imp().open_mailbox.borrow_mut() = Some(show.clone());
@@ -1366,7 +1378,9 @@ impl Window {
                     return;
                 }
                 window.sidebar().select(id);
-                show(id);
+                // A drop target is a folder by definition: a view is not a
+                // place a message can be put.
+                show(crate::sidebar::SidebarChoice::Folder(id));
             }
         ));
 
@@ -1416,7 +1430,9 @@ impl Window {
                     // arrive.
                     picked_for.set(Some(generation));
                     sidebar.select(id);
-                    show(id);
+                    // `default_mailbox` answers with a real folder -- it
+                    // skips anything unassigned for exactly this reason.
+                    show(crate::sidebar::SidebarChoice::Folder(id));
                 }
             }
         });

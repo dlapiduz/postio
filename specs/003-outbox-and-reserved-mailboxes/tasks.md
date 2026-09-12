@@ -146,12 +146,12 @@ frontends render that same answer, view rows included.
 
 - [X] T039 [US4] Build the view rows in `crates/postio-ui/src/sidebar.rs` — no id, no path, kind `View` — and return them with the folder rows
 - [ ] T040 [US4] Move the count rules from `count_for` in `crates/postio-gtk/src/sidebar.rs` into `crates/postio-ui/src/sidebar.rs` — **not yet**: `view_rows` carries each view's own count, but `count_for`'s per-role table is still in the widget and moves with T043
-- [ ] T041 [US4] Delete `flagged_folder`, `snoozed_folder`, `FLAGGED_ROW` and `SNOOZED_ROW` from `crates/postio-gtk/src/feed.rs`, and the `id.get() > 0` filtering they forced
-- [ ] T042 [US4] Resolve a scope from a view row by its role rather than by a sentinel id in `crates/postio-gtk/src/feed.rs` — **`Folders::scope_of(MailboxId)` has to take the row, not the id**: every view row is unassigned, so three of them now share id 0 and cannot be told apart by it. Reaches the sidebar's selection signal, the drop handler and the context menus
-- [ ] T043 [US4] Render what the shared model hands over in `crates/postio-gtk/src/sidebar.rs`, deciding nothing locally
+- [X] T041 [US4] Delete `flagged_folder`, `snoozed_folder`, `FLAGGED_ROW` and `SNOOZED_ROW` from `crates/postio-gtk/src/feed.rs`, and the `id.get() > 0` filtering they forced
+- [X] T042 [US4] Resolve a scope from a view row by its role rather than by a sentinel id in `crates/postio-gtk/src/feed.rs` — **`Folders::scope_of(MailboxId)` has to take the row, not the id**: every view row is unassigned, so three of them now share id 0 and cannot be told apart by it. Reaches the sidebar's selection signal, the drop handler and the context menus
+- [X] T043 [US4] Render what the shared model hands over in `crates/postio-gtk/src/sidebar.rs`, deciding nothing locally
 - [ ] T044 [P] [US4] Add `flagged` and `snoozed` counts to `MailboxFfi` in `crates/postio-ffi/src/mailbox.rs`
 - [ ] T045 [US4] Emit the shared model's rows, view rows included, from `Session::mailboxes` in `crates/postio-ffi/src/session.rs`
-- [ ] T046 [P] [US4] Add a `scripts/checks/` invariant that no negative `MailboxId` is constructed anywhere, and register it in `scripts/check.sh`
+- [X] T046 [P] [US4] Add a `scripts/checks/` invariant that no negative `MailboxId` is constructed anywhere, and register it in `scripts/check.sh`
 
 **Checkpoint**: `cargo nextest run -p postio-ui -p postio-gtk -p postio-ffi`. macOS gains Flagged and Snoozed; the Outbox now has one place to be defined.
 

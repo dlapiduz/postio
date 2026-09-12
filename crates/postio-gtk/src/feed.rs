@@ -71,11 +71,11 @@ use gtk::glib;
 use gtk::prelude::*;
 use postio_core::{ConnectionState, Event};
 use postio_model::ids::{AccountId, MailboxId, MessageId};
-use postio_model::mailbox::Mailbox;
+use postio_model::mailbox::{Mailbox, MailboxRole};
 use postio_model::{Arrival, Reaction};
 
 use crate::list::{MessageList, PAGE_SIZE, PageSource, Row};
-use crate::sidebar::SyncStatus;
+use crate::sidebar::{SidebarChoice, SyncStatus};
 
 /// One page of a mailbox, as the runtime answered it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -954,15 +954,21 @@ impl FolderInner {
             }
             moved
         };
-        // The smart folder goes in here, before anything else sees the list,
-        // so the sidebar keeps drawing exactly what it is handed and learns
-        // nothing about folders the server does not have. The next one — a
-        // saved search — joins the same way.
+        // The view rows go in here, before anything else sees the list, so
+        // the sidebar keeps drawing exactly what it is handed and learns
+        // nothing about folders the server does not have. *Which* rows and
+        // what they hold is `postio_ui::sidebar`'s answer, not this file's —
+        // that is what makes the macOS sidebar draw the same ones.
         if let Some(account) = self.account.get() {
-            let flagged = mailboxes.iter().map(|folder| folder.counts.flagged).sum();
-            let snoozed = mailboxes.iter().map(|folder| folder.counts.snoozed).sum();
-            mailboxes.push(flagged_folder(account, flagged));
-            mailboxes.push(snoozed_folder(account, snoozed));
+            let counts = postio_ui::sidebar::ViewCounts {
+                flagged: mailboxes.iter().map(|folder| folder.counts.flagged).sum(),
+                snoozed: mailboxes.iter().map(|folder| folder.counts.snoozed).sum(),
+                // Filled by the sidebar's own count query in spec 003 T066;
+                // zero keeps the row hidden, which is the right answer until
+                // something can count it.
+                outbox: 0,
+            };
+            mailboxes.extend(postio_ui::sidebar::view_rows(account, &mailboxes, counts));
         }
         self.sidebar.set_mailboxes(&mailboxes);
         *self.mailboxes.borrow_mut() = mailboxes;
@@ -985,61 +991,6 @@ impl FolderInner {
             handler(&status);
         }
     }
-}
-
-/// The id the synthetic "Flagged" row is keyed by in the sidebar.
-///
-/// # Why a sentinel is safe here, and where it must not go
-///
-/// The sidebar keys its rows by [`MailboxId`], so a folder it draws needs one
-/// even when nothing in the database corresponds to it. Negative is
-/// unambiguous: SQLite rowids start at 1 and `MailboxId::UNASSIGNED` is 0, so
-/// this can never collide with a real folder.
-///
-/// It is contained to exactly one hop. The sidebar hands it back on a click,
-/// [`Folders::scope_of`] turns it into a [`ListScope`], and from there the
-/// list, the store and app state all deal in scopes. It must never reach a
-/// query — `MessageSet::InMailbox { mailbox: -1 }` matches nothing, silently
-/// — nor `Command::Move`, whose destination is a foreign key.
-const FLAGGED_ROW: MailboxId = MailboxId::new(-1);
-
-/// The sidebar's "Flagged" row: a query wearing a folder's clothes.
-///
-/// Not a mailbox the server has, and deliberately not one the store has
-/// either. `path` is empty because there is nothing to `SELECT`, and
-/// `last_synced_at` stays `None` because a query is never out of date.
-fn flagged_folder(account: AccountId, flagged: u32) -> Mailbox {
-    let mut folder = Mailbox::new(account, "", None);
-    folder.id = FLAGGED_ROW;
-    folder.role = postio_model::mailbox::MailboxRole::Flagged;
-    folder.counts = postio_model::mailbox::MailboxCounts {
-        total: flagged,
-        unread: 0,
-        flagged,
-        snoozed: 0,
-    };
-    folder
-}
-
-/// The id the synthetic "Snoozed" row is keyed by — see [`FLAGGED_ROW`] for
-/// why a sentinel is safe and where it must not go. A second, distinct
-/// negative value: the two synthetic rows must never collide with each
-/// other any more than with a real folder.
-const SNOOZED_ROW: MailboxId = MailboxId::new(-2);
-
-/// The sidebar's "Snoozed" row — [`flagged_folder`]'s own shape, for the
-/// other view every ordinary scope hides its rows from.
-fn snoozed_folder(account: AccountId, snoozed: u32) -> Mailbox {
-    let mut folder = Mailbox::new(account, "", None);
-    folder.id = SNOOZED_ROW;
-    folder.role = postio_model::mailbox::MailboxRole::Snoozed;
-    folder.counts = postio_model::mailbox::MailboxCounts {
-        total: snoozed,
-        unread: 0,
-        flagged: 0,
-        snoozed,
-    };
-    folder
 }
 
 /// The sidebar, fed.
@@ -1131,13 +1082,26 @@ impl Folders {
     ///
     /// The one place a sidebar row becomes a query. Everything downstream —
     /// the list, the store, app state — deals in [`ListScope`], so this is
-    /// where [`FLAGGED_ROW`] stops being an id and starts being what it
-    /// actually meant.
-    pub fn scope_of(&self, id: MailboxId) -> ListScope {
-        match self.0.account.get() {
-            Some(account) if id == FLAGGED_ROW => ListScope::Flagged(account),
-            Some(account) if id == SNOOZED_ROW => ListScope::Snoozed(account),
-            _ => ListScope::Mailbox(id),
+    /// where a [`SidebarChoice::View`] stops being a row and starts being
+    /// what it actually meant.
+    pub fn scope_of(&self, choice: SidebarChoice) -> ListScope {
+        match (choice, self.0.account.get()) {
+            (SidebarChoice::Folder(id), _) => ListScope::Mailbox(id),
+            (SidebarChoice::View(role), Some(account)) => match role {
+                MailboxRole::Flagged => ListScope::Flagged(account),
+                MailboxRole::Snoozed => ListScope::Snoozed(account),
+                // `MailboxRole::Outbox` belongs here and is not reachable
+                // yet: `postio_ui::sidebar::view_rows` draws that row only
+                // when the Outbox holds something, and nothing counts it
+                // until `ListScope::Outbox` exists (spec 003, T061). Mapped
+                // to the account rather than left to a catch-all so the gap
+                // is stated: a superset of what was asked for is wrong, but
+                // it is visibly wrong, where a scope matching nothing would
+                // look like an empty folder.
+                _ => ListScope::Account(account),
+            },
+            // A view with no account in scope: nothing to narrow to.
+            (SidebarChoice::View(_), None) => ListScope::Unified,
         }
     }
 

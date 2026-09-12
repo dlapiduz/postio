@@ -36,7 +36,26 @@ use postio_model::ids::{AccountId, MailboxId};
 use postio_model::mailbox::{Mailbox, MailboxRole};
 
 /// What to call when the user picks a folder.
-type SelectionHandler = Box<dyn Fn(MailboxId)>;
+/// Which sidebar row a person chose.
+///
+/// A folder is named by its id. A **view** — Flagged, Snoozed, Outbox — has no
+/// id, because it has no row in the store, so it is named by its role.
+///
+/// This replaces the negative-id sentinels the GTK feed used to invent. Two
+/// things went wrong with those: an id that means "not an id" travels
+/// everywhere a real one does and is only safe while every reader remembers
+/// the convention, and the frontend that did not remember (macOS) never had
+/// the rows at all. The type now says which kind of thing was picked, so a
+/// reader cannot forget to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarChoice {
+    /// A real folder, by the id everything downstream points at.
+    Folder(MailboxId),
+    /// A view over messages filed elsewhere, by the role that defines it.
+    View(MailboxRole),
+}
+
+type SelectionHandler = Box<dyn Fn(SidebarChoice)>;
 
 /// Called when the user picks an account, or Unified, from the strip.
 type ScopeSelectionHandler = Box<dyn Fn(AccountScope)>;
@@ -1707,13 +1726,16 @@ impl Sidebar {
                 if sidebar.imp().echoing.get() {
                     return;
                 }
+                let choice = row_choice(row);
                 let id = MailboxId::new(row_id(row));
-                if !sidebar.is_openable(id) {
+                // Only a folder can be an unopenable container; a view is
+                // always openable and has nothing to expand.
+                if matches!(choice, SidebarChoice::Folder(_)) && !sidebar.is_openable(id) {
                     sidebar.toggle(id);
                     return;
                 }
                 for callback in sidebar.imp().selected.borrow().iter() {
-                    callback(id);
+                    callback(choice);
                 }
             }
         ));
@@ -1849,18 +1871,19 @@ impl Sidebar {
             self.imp().saved.select_row(Some(row));
             return None;
         }
+        let choice = row_choice(row);
         let id = MailboxId::new(row_id(row));
         self.select(id);
         // A `\Noselect` container has nothing to open: stepping onto it
         // moves the keyboard there — so `toggle_focused` (#324) has
         // something to act on — but must not report it as an open folder,
-        // the same gate the click handler applies.
-        if self.is_openable(id) {
+        // the same gate the click handler applies. A view is never one.
+        if matches!(choice, SidebarChoice::View(_)) || self.is_openable(id) {
             // `select` is deliberately quiet — it is what the window calls
             // to echo a folder it opened — so the keyboard has to announce
             // its own move, the same way a click does.
             for handler in self.imp().selected.borrow().iter() {
-                handler(id);
+                handler(choice);
             }
         }
         Some(id)
@@ -1903,7 +1926,7 @@ impl Sidebar {
             .push(Box::new(callback));
     }
 
-    pub fn connect_selected(&self, callback: impl Fn(MailboxId) + 'static) {
+    pub fn connect_selected(&self, callback: impl Fn(SidebarChoice) + 'static) {
         self.imp().selected.borrow_mut().push(Box::new(callback));
     }
 
@@ -2119,7 +2142,9 @@ fn update_row(row: &gtk::ListBoxRow, mailbox: &Mailbox) {
     // in this file is what lets `row_id` be safe.
     #[allow(unsafe_code)]
     unsafe {
-        row.set_data("postio-mailbox-id", mailbox.id.get())
+        row.set_data("postio-mailbox-id", mailbox.id.get());
+        // Beside the id, because a view row has no id to tell it apart by.
+        row.set_data("postio-mailbox-role", mailbox.role.as_str().to_owned())
     };
 
     let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
@@ -2283,7 +2308,8 @@ fn update_tree_row(row: &gtk::ListBoxRow, data: &FolderRow, sidebar: &Sidebar) {
     // `row_id` reads it back without caring which kind of row wrote it.
     #[allow(unsafe_code)]
     unsafe {
-        row.set_data("postio-mailbox-id", data.mailbox.id.get())
+        row.set_data("postio-mailbox-id", data.mailbox.id.get());
+        row.set_data("postio-mailbox-role", data.mailbox.role.as_str().to_owned())
     };
 
     let Some(line) = row.child().and_then(|c| c.downcast::<gtk::Box>().ok()) else {
@@ -2380,6 +2406,31 @@ fn row_id(row: &gtk::ListBoxRow) -> i64 {
         row.data::<i64>("postio-mailbox-id")
             .map(|p| *p.as_ref())
             .unwrap_or_default()
+    }
+}
+
+/// The role [`update_row`] stored on `row`, for telling view rows apart.
+fn row_role(row: &gtk::ListBoxRow) -> MailboxRole {
+    #[allow(unsafe_code)]
+    let stored = unsafe {
+        row.data::<String>("postio-mailbox-role")
+            .map(|p| p.as_ref().clone())
+            .unwrap_or_default()
+    };
+    MailboxRole::from_name(&stored).unwrap_or_default()
+}
+
+/// What picking `row` means: a folder by id, or a view by role.
+///
+/// The id decides, not the role: a server that really has a `\Flagged`
+/// folder gives a row with both an id *and* the Flagged role, and that is a
+/// folder — the one the account's own mail is in.
+fn row_choice(row: &gtk::ListBoxRow) -> SidebarChoice {
+    let id = MailboxId::new(row_id(row));
+    if id.is_assigned() {
+        SidebarChoice::Folder(id)
+    } else {
+        SidebarChoice::View(row_role(row))
     }
 }
 
