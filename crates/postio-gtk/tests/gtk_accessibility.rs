@@ -253,6 +253,34 @@ fn every_widget_a_screen_reader_meets_has_a_role_and_a_name() {
 
     require_an_accessibility_backend();
 
+    // ── a mode says which one it is, and how to leave it ─────────────────
+    // The ⌫ chip on the field is decoration -- announcing a bare glyph reads
+    // as furniture -- so the fact it carries belongs to the field the user is
+    // typing in. Drawn and not spoken is the same mode with no door for
+    // anybody not looking at it.
+    window.open_finder(finder::Mode::Mailbox);
+    pump();
+    let field = window
+        .finder()
+        .field()
+        .expect("the box drives the header field");
+    assert!(
+        gtk::test_accessible_has_property(
+            field.text.upcast_ref::<gtk::Widget>(),
+            AccessibleProperty::Description
+        ),
+        "the field says which question is being asked and how to stop asking it"
+    );
+    assert!(
+        gtk::test_accessible_has_role(
+            field.hint.upcast_ref::<gtk::Widget>(),
+            AccessibleRole::Presentation
+        ),
+        "the chip stays decoration; the field it sits in is what speaks"
+    );
+    window.close_finder();
+    pump();
+
     // ── the panes are landmarks a screen reader can navigate by ──────────
     assert!(gtk::test_accessible_has_role(
         &window.shell().sidebar(),

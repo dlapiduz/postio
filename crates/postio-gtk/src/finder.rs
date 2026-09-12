@@ -766,6 +766,12 @@ impl Finder {
         self.imp().folders.borrow().clone()
     }
 
+    /// The header field this box drives, for a test that has to ask a widget
+    /// what a screen reader would find on it.
+    pub fn field(&self) -> Option<Field> {
+        self.imp().field.borrow().clone()
+    }
+
     /// How to get out of the mode the box is in, or `None` in search --
     /// which is not a mode anyone backed into.
     pub fn way_back(&self) -> Option<String> {
@@ -1302,6 +1308,25 @@ impl Finder {
             let way_back = (open && !searching).then_some(WAY_BACK);
             field.hint.set_text(way_back.unwrap_or("/"));
             field.hint.set_visible(!open || way_back.is_some());
+
+            // The chip stays decoration -- a screen reader announcing a bare
+            // "⌫" would be reading furniture. The fact it carries belongs to
+            // the field the user is actually typing in, so that focusing the
+            // box says which question is being asked and how to stop asking
+            // it. Without this the way out is drawn and not spoken, which is
+            // the same mode with no door for anybody not looking at it.
+            field.text.update_property(&[
+                gtk::accessible::Property::Label(query.mode.placeholder()),
+                gtk::accessible::Property::Description(&match way_back {
+                    Some(_) => format!(
+                        "{}. Backspace at the start goes back to searching mail.",
+                        query.mode.placeholder()
+                    ),
+                    None => "Type to search. A prefix asks something else of the \
+                             same box; the empty box lists them."
+                        .to_owned(),
+                }),
+            ]);
         }
 
         // The operators, read back under the field rather than drawn inside
