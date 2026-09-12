@@ -431,6 +431,32 @@ mod tests {
     }
 
     #[test]
+    fn a_window_with_no_store_offers_only_what_can_run() {
+        // #1114. The palette is where somebody looks to find out what is
+        // available, so it is the one surface that must not offer something
+        // that cannot be: pressing Return on a row that does nothing reads
+        // as a broken application rather than as an unavailable command.
+        let waiting = Availability {
+            scope: Scope::Account(AccountId::new(1)),
+            store_open: false,
+        };
+        assert!(
+            entries(&defaults(), Context::List, waiting, "archive").is_empty(),
+            "archive is offered at a window whose store has not opened"
+        );
+        assert!(
+            !entries(&defaults(), Context::List, an_account(), "archive").is_empty(),
+            "and comes back once it has, so this is a wait rather than a \
+             removal"
+        );
+        assert!(
+            !entries(&defaults(), Context::List, waiting, "").is_empty(),
+            "an empty query still has to answer with something, or the box \
+             looks broken at exactly the moment it is being consulted"
+        );
+    }
+
+    #[test]
     fn a_query_that_matches_nothing_lists_nothing() {
         assert!(entries(&defaults(), Context::List, an_account(), "zzzzz").is_empty());
     }

@@ -571,6 +571,41 @@ mod tests {
     }
 
     #[test]
+    fn a_window_with_no_store_is_taught_only_what_it_can_do() {
+        // #1114: the sheet is "what can I do now", and before the store
+        // opens the honest answer is short. It must not teach `a` for
+        // archive at a window with nothing to archive -- a reader who tries
+        // it gets a key that cannot work, which is worse than not having
+        // been told about it.
+        let ids = |state| -> Vec<ActionId> {
+            sections(&defaults(), Context::List, state)
+                .into_iter()
+                .flat_map(|section| section.rows)
+                .filter_map(|row| row.id)
+                .collect()
+        };
+        let account = Scope::Account(AccountId::new(1));
+        let waiting = ids(Availability {
+            scope: account,
+            store_open: false,
+        });
+        let open = ids(Availability::open(account));
+
+        for mail in [CommandId::Archive, CommandId::Reply, CommandId::Search] {
+            assert!(
+                !waiting.contains(&ActionId::Builtin(mail)),
+                "the sheet teaches `{mail}` at a window with no store behind it"
+            );
+            assert!(open.contains(&ActionId::Builtin(mail)));
+        }
+        assert!(
+            waiting.contains(&ActionId::Builtin(CommandId::CheatSheet)),
+            "and the sheet still lists the key that opened it, or there is \
+             no way back to it"
+        );
+    }
+
+    #[test]
     fn a_unified_view_lists_no_move() {
         let ids = |scope| -> Vec<ActionId> {
             sections(&defaults(), Context::List, scope)
