@@ -90,6 +90,9 @@ pub struct Row {
     /// one are both "a draft", and drawing them the same is the defect the
     /// Outbox exists to fix (#1491).
     pub send_state: Option<postio_model::DraftState>,
+    /// When a scheduled send is due, so the row can say *when* rather than
+    /// just that it is waiting (spec 003 FR-007).
+    pub send_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.

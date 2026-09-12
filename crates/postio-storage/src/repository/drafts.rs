@@ -296,6 +296,15 @@ impl<'a> DraftRepository<'a> {
             send_at,
         )?;
 
+        // The chosen time, on the row the list draws. Only here: a
+        // `next_attempt_at` set by backoff is the retry clock, not a plan
+        // anybody made, and showing it as one would be a lie about intent.
+        scope.execute(
+            "UPDATE messages SET send_at = ?2
+              WHERE id IN (SELECT message_id FROM drafts
+                            WHERE id = ?1 AND message_id IS NOT NULL)",
+            params![draft.id.get(), to_millis(send_at)],
+        )?;
         scope.commit()?;
         Ok(queued)
     }
@@ -581,7 +590,11 @@ impl<'a> DraftRepository<'a> {
         // what moves a message between the Outbox and Drafts.
         transaction.execute(
             "UPDATE messages
-                SET send_state = ?2
+                SET send_state = ?2,
+                    -- Cleared unless it is still merely waiting: once the
+                    -- drainer has it, or it has failed, the time somebody
+                    -- chose is history rather than a plan.
+                    send_at = CASE WHEN ?2 = 'queued' THEN send_at ELSE NULL END
               WHERE id IN (SELECT message_id FROM drafts
                             WHERE id = ?1 AND message_id IS NOT NULL)",
             params![id.get(), state.as_str()],

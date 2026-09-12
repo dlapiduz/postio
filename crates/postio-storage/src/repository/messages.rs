@@ -80,6 +80,11 @@ pub struct MessageListRow {
     /// Outbox holds what is on its way — and a row that can only say "draft"
     /// renders all five identically, which is the defect this replaces.
     pub send_state: Option<DraftState>,
+    /// When a scheduled send is due, for the rows that are one.
+    ///
+    /// `None` for everything else, including a send waiting only on the
+    /// drainer — "as soon as you can" is not a time anybody chose (FR-007).
+    pub send_at: Option<DateTime<Utc>>,
     /// Whether it has an attachment, for the paperclip.
     pub has_attachments: bool,
     /// Size in bytes.
@@ -660,7 +665,7 @@ const ID_CHUNK: usize = 500;
 pub(crate) const LIST_COLUMNS: &str = "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
-messages.size, messages.send_state,
+messages.size, messages.send_state, messages.send_at,
 (SELECT name FROM recipients
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
@@ -2396,14 +2401,14 @@ fn read_message(row: &Row<'_>) -> rusqlite::Result<Message> {
 }
 
 pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
-    let from_address: Option<String> = row.get(13)?;
+    let from_address: Option<String> = row.get(14)?;
     Ok(MessageListRow {
         id: MessageId::new(row.get(0)?),
         thread_id: row.get::<_, Option<i64>>(1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
                 Ok::<_, rusqlite::Error>(EmailAddress::new(
-                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<String>>(13)?,
                     address,
                 ))
             })
@@ -2418,6 +2423,7 @@ pub(crate) fn read_list_row(row: &Row<'_>) -> rusqlite::Result<MessageListRow> {
             .get::<_, Option<String>>(11)?
             .as_deref()
             .and_then(DraftState::from_name),
+        send_at: row.get::<_, Option<i64>>(12)?.map(from_millis),
         has_attachments: row.get(9)?,
         size: row.get::<_, i64>(10)? as u64,
     })

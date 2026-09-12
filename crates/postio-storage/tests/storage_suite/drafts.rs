@@ -1844,3 +1844,55 @@ fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
         );
     }
 }
+
+#[test]
+fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
+    // FR-007. `Queued` covers two things a person means -- "as soon as you
+    // can" and "on Thursday" -- and without the time they read identically.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    test_support::mailbox(&connection, &account, "Drafts");
+    let drafts = DraftRepository::new(&connection);
+
+    let due_at = |draft: DraftId| -> Option<i64> {
+        connection
+            .query_row(
+                "SELECT messages.send_at FROM messages
+                   JOIN drafts ON drafts.message_id = messages.id
+                  WHERE drafts.id = ?1",
+                [draft.get()],
+                |row| row.get(0),
+            )
+            .expect("the mirror row")
+    };
+
+    let mut now = a_draft(account.id);
+    drafts.save(&mut now).expect("save");
+    drafts.queue_send(&mut now, at(0)).expect("send now");
+    assert_eq!(
+        due_at(now.id),
+        None,
+        "an immediate send has no time anybody chose"
+    );
+
+    let mut later = a_draft(account.id);
+    drafts.save(&mut later).expect("save");
+    drafts
+        .queue_send_at(&mut later, at(0), at(600))
+        .expect("send later");
+    assert!(
+        due_at(later.id).is_some(),
+        "a scheduled send has to carry the time, or the row cannot say it"
+    );
+
+    // And it stops being a plan the moment it is no longer merely waiting.
+    drafts
+        .set_state(later.id, DraftState::Sending)
+        .expect("the drainer takes it");
+    assert_eq!(
+        due_at(later.id),
+        None,
+        "a send in flight has no future time to show"
+    );
+}

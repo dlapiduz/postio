@@ -50,6 +50,7 @@ impl MessageSource for TinyThread {
                 flagged: false,
                 answered: false,
                 send_state: None,
+                send_at: None,
                 has_attachments: false,
                 thread_count: 2,
                 participants: Vec::new(),

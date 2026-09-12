@@ -84,6 +84,8 @@ pub struct MessageSummary {
     /// confirmed, the Outbox holds what is on its way, and a row that cannot
     /// tell them apart renders all five the same (#1491).
     pub send_state: Option<postio_model::DraftState>,
+    /// When a scheduled send is due (spec 003 FR-007). `None` otherwise.
+    pub send_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether it has an attachment.
     pub has_attachments: bool,
     /// How many messages are in its thread; the badge appears above one.

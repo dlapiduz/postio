@@ -184,6 +184,7 @@ fn message(id: i64) -> ListRow {
         flagged: false,
         answered: false,
         send_state: None,
+        send_at: None,
         has_attachments: false,
         thread_count: 6,
         participants: Vec::new(),

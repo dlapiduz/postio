@@ -108,7 +108,16 @@ pub fn accessible_label(row: &Row) -> String {
         parts.push("Flagged".to_string());
     }
     if let Some(state) = row.send_state {
-        parts.push(postio_ui::row::send_state_word(state).to_string());
+        let word = postio_ui::row::send_state_word(state);
+        // *When*, where somebody chose one. The same timestamp vocabulary the
+        // row's own date column uses, so "Thu" means the same thing in both.
+        parts.push(match row.send_at {
+            Some(due) => format!(
+                "{word} {}",
+                postio_ui::row::timestamp(due, chrono::Local::now())
+            ),
+            None => word.to_string(),
+        });
     }
     // A thread row is a conversation, and a screen reader has to hear that
     // before it hears a name — otherwise "from Ada, 6 in thread" reads as a
@@ -1569,6 +1578,7 @@ mod tests {
             flagged: false,
             answered: false,
             send_state: None,
+            send_at: None,
             has_attachments: true,
             thread_count: 14,
             participants: Vec::new(),
@@ -1605,6 +1615,7 @@ mod tests {
             flagged: false,
             answered: false,
             send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -1629,6 +1640,7 @@ mod tests {
 
         let draft = accessible_label(&Row {
             send_state: Some(postio_model::DraftState::Editing),
+            send_at: None,
             ..base.clone()
         });
         assert!(draft.contains("Draft"), "{draft}");
@@ -1652,6 +1664,7 @@ mod tests {
             flagged: false,
             answered: false,
             send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
@@ -1659,6 +1672,7 @@ mod tests {
         let says = |state| {
             accessible_label(&Row {
                 send_state: Some(state),
+                send_at: None,
                 ..base.clone()
             })
         };
@@ -1699,6 +1713,46 @@ mod tests {
     }
 
     #[test]
+    fn a_scheduled_send_says_when_and_an_immediate_one_says_only_that_it_waits() {
+        // FR-007. `Queued` covers "as soon as you can" and "on Thursday", and
+        // a person worries about the second reading like the first: a message
+        // they deliberately held looks stuck.
+        let base = Row {
+            id: MessageId::new(1),
+            thread: None,
+            from: Some(addr(Some("Lena Tomlin"), "lena@example.com")),
+            subject: Some("Re: maildir index rebuild".into()),
+            preview: None,
+            received_at: Utc.with_ymd_and_hms(2026, 8, 23, 9, 14, 0).unwrap(),
+            seen: true,
+            flagged: false,
+            answered: false,
+            send_state: Some(postio_model::DraftState::Queued),
+            send_at: None,
+            has_attachments: false,
+            thread_count: 1,
+            participants: Vec::new(),
+        };
+
+        let immediate = accessible_label(&base);
+        assert!(immediate.contains("Waiting to send"), "{immediate}");
+
+        let scheduled = accessible_label(&Row {
+            send_at: Some(Utc.with_ymd_and_hms(2026, 8, 27, 9, 0, 0).unwrap()),
+            ..base.clone()
+        });
+        assert!(
+            scheduled.contains("Waiting to send"),
+            "it is still waiting: {scheduled}"
+        );
+        assert_ne!(
+            scheduled, immediate,
+            "a held message has to read differently from one the drainer has \
+             simply not reached"
+        );
+    }
+
+    #[test]
     fn a_row_with_nothing_in_it_still_says_something() {
         let row = Row {
             id: MessageId::new(1),
@@ -1711,6 +1765,7 @@ mod tests {
             flagged: false,
             answered: false,
             send_state: None,
+            send_at: None,
             has_attachments: false,
             thread_count: 1,
             participants: Vec::new(),
