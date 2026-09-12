@@ -89,18 +89,23 @@ impl Mode {
         Mode::Label,
     ];
 
+    /// This mode's row in [`postio_ui::finder::MODES`].
+    ///
+    /// The strings moved there so the macOS frontend reads the same ones
+    /// rather than re-deriving them (ADR 0019), and so the bar's own hint and
+    /// the generated documentation have one table to read. The variants are
+    /// declared in the table's order, which is what makes the cast right, and
+    /// `the_enum_and_the_table_stay_in_step` is what keeps it right.
+    const fn entry(self) -> &'static postio_ui::finder::FinderMode {
+        &postio_ui::finder::MODES[self as usize]
+    }
+
     /// The character that switches into this mode from an empty box.
     ///
     /// `None` for [`Mode::Search`]: it is what the box already is, so there
     /// is nothing to type to get there.
     pub const fn prefix(self) -> Option<char> {
-        match self {
-            Mode::Search => None,
-            Mode::Command => Some('>'),
-            Mode::Mailbox => Some('#'),
-            Mode::Contact => Some('@'),
-            Mode::Label => Some('+'),
-        }
+        self.entry().prefix
     }
 
     /// The mode a prefix character asks for.
@@ -114,24 +119,12 @@ impl Mode {
     ///
     /// Search wears the `/` the canvas already draws on the field.
     pub const fn marker(self) -> &'static str {
-        match self {
-            Mode::Search => "/",
-            Mode::Command => ">",
-            Mode::Mailbox => "#",
-            Mode::Contact => "@",
-            Mode::Label => "+",
-        }
+        self.entry().marker
     }
 
     /// What the empty box invites the user to do.
     pub const fn placeholder(self) -> &'static str {
-        match self {
-            Mode::Search => "Search all mail",
-            Mode::Command => "Run a command",
-            Mode::Mailbox => "Go to a folder",
-            Mode::Contact => "Find a correspondent",
-            Mode::Label => "Add a label",
-        }
+        self.entry().purpose
     }
 
     /// The keyboard context this mode owns while the box is open.
@@ -1455,6 +1448,33 @@ mod tests {
         let folder = box_.typed("#lk");
         assert_eq!(folder.mode, Mode::Mailbox);
         assert_eq!(folder.text, "lk");
+    }
+
+    #[test]
+    fn the_enum_and_the_table_stay_in_step() {
+        // `Mode::entry` indexes the shared table by the variant's own
+        // discriminant, so the enum's declaration order *is* the mapping.
+        // Reorder the variants and every mode silently answers to somebody
+        // else's character.
+        //
+        // Zipping `Mode::ALL` against `MODES` would not notice: `prefix()`
+        // reads the table through that same index, so such a test compares
+        // each row with itself and passes however wrong the order is. These
+        // assertions name the character each variant owes, which is the one
+        // statement of the mapping that does not go through it.
+        assert_eq!(Mode::Search.prefix(), None);
+        assert_eq!(Mode::Command.prefix(), Some('>'));
+        assert_eq!(Mode::Mailbox.prefix(), Some('#'));
+        assert_eq!(Mode::Contact.prefix(), Some('@'));
+        assert_eq!(Mode::Label.prefix(), Some('+'));
+        assert_eq!(Mode::Mailbox.placeholder(), "Go to a folder");
+
+        assert_eq!(
+            Mode::ALL.len(),
+            postio_ui::finder::MODES.len(),
+            "a row was added to the table with no variant to reach it, or the \
+             other way about"
+        );
     }
 
     #[test]
