@@ -30,7 +30,7 @@ use postio_account::imap::{
 use postio_account::secret::{AccountKey, SecretStore};
 use postio_model::{Account, AccountId};
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
-use postio_storage::{BlobStore, Database};
+use postio_storage::{BlobStore, Store};
 
 use postio_core::bridge::EventSink;
 
@@ -47,9 +47,9 @@ use postio_core::bridge::EventSink;
 // docs' whole argument. `start_joining` below already carries the allow for
 // the same reason.
 #[allow(clippy::too_many_arguments)]
-pub fn start(
+pub async fn start(
     account: &Account,
-    database: &Database,
+    database: &Store,
     blobs: BlobStore,
     events: EventSink,
     secrets: Arc<dyn SecretStore>,
@@ -105,7 +105,7 @@ pub fn start(
         network: NetworkSource::NetworkManager,
         mailbox_roles,
         clock: Arc::new(SystemClock),
-    }) {
+    }).await {
         Ok(engine) => Some(engine),
         Err(error) => {
             tracing::error!(%error, "the sync engine did not start: {error}");
@@ -285,9 +285,9 @@ pub fn engine_budget(max_connections: usize) -> usize {
 /// can serve. Starting nine of ten engines would leave the tenth account
 /// looking permanently offline with nothing in the interface explaining why.
 #[allow(clippy::too_many_arguments)]
-pub fn start_all(
+pub async fn start_all(
     accounts: &[Account],
-    database: &Database,
+    database: &Store,
     blobs: BlobStore,
     events: EventSink,
     secrets: Arc<dyn SecretStore>,
@@ -297,7 +297,7 @@ pub fn start_all(
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Vec<(AccountId, Engine)>, StartupRefusal> {
     let enabled: Vec<&Account> = accounts.iter().filter(|account| account.enabled).collect();
-    let budget = engine_budget(database.pool().max_connections());
+    let budget = engine_budget(postio_storage::MAX_CONCURRENT_PASSES);
 
     if enabled.len() > budget {
         return Err(StartupRefusal::TooManyAccounts {
@@ -320,7 +320,7 @@ pub fn start_all(
             backfill,
             watch,
             egress.for_account(account.id),
-        ) {
+        ).await {
             engines.push((account.id, engine));
         }
     }
@@ -345,10 +345,10 @@ pub fn start_all(
 /// `Ok(None)` is the same "no usable transport" answer [`start`] gives, and
 /// costs that account its sync and nothing else.
 #[allow(clippy::too_many_arguments)]
-pub fn start_joining(
+pub async fn start_joining(
     account: &Account,
     accounts: usize,
-    database: &Database,
+    database: &Store,
     blobs: BlobStore,
     events: EventSink,
     secrets: Arc<dyn SecretStore>,
@@ -357,7 +357,7 @@ pub fn start_joining(
     watch: postio_sync::WatchPolicy,
     egress: &Arc<crate::egress::EgressRecorder>,
 ) -> Result<Option<Engine>, StartupRefusal> {
-    let budget = engine_budget(database.pool().max_connections());
+    let budget = engine_budget(postio_storage::MAX_CONCURRENT_PASSES);
     if accounts > budget {
         return Err(StartupRefusal::TooManyAccounts { accounts, budget });
     }
@@ -371,7 +371,7 @@ pub fn start_joining(
         backfill,
         watch,
         egress.for_account(account.id),
-    ))
+    ).await)
 }
 
 #[cfg(test)]

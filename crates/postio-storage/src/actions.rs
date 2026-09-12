@@ -37,13 +37,13 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use rusqlite::Transaction;
 
 use postio_model::{
     AccountId, Flag, FlagSet, MailboxId, Message, MessageId, Operation, OperationTarget, ThreadId,
 };
 
 use crate::Result;
+use crate::store::Connection;
 use crate::repository::{
     FlagSource, MessageRepository, OperationQueueRepository, ThreadOrder, ThreadRepository,
 };
@@ -76,8 +76,8 @@ pub enum Relocation {
 /// move at all but ADR 0005 Q9's three-phase saga, and resolving that is the
 /// caller's business — this verb would write a row claiming a mailbox the
 /// account does not own.
-pub fn relocate(
-    transaction: &Transaction<'_>,
+pub async fn relocate(
+    transaction: &Connection,
     account: AccountId,
     by_source: &BTreeMap<MailboxId, Vec<MessageId>>,
     destination: MailboxId,
@@ -106,8 +106,8 @@ pub fn relocate(
         // and no test here can tell them apart. The order is kept because
         // this is a move and because it is the safe one if the snapshot ever
         // widens to a column the move does clear. See #1125 for the check.
-        queue.enqueue_many(account, ids, &operation, at)?;
-        messages.move_to(ids, destination)?;
+        queue.enqueue_many(account, ids, &operation, at).await?;
+        messages.move_to(ids, destination).await?;
     }
     Ok(())
 }
@@ -126,8 +126,8 @@ pub fn relocate(
 /// flags to compute the new set, and its thread to recompute. Rows whose flag
 /// is already `wanted` are the caller's to filter -- this writes what it is
 /// given.
-pub fn set_flag(
-    transaction: &Transaction<'_>,
+pub async fn set_flag(
+    transaction: &Connection,
     account: AccountId,
     rows: &[&Message],
     flag: &Flag,
@@ -144,7 +144,7 @@ pub fn set_flag(
         } else {
             flags.remove(flag);
         }
-        messages.set_flags(message.id, &flags, FlagSource::Local)?;
+        messages.set_flags(message.id, &flags, FlagSource::Local).await?;
         let operation = if wanted {
             Operation::SetFlags { flags: one.clone() }
         } else {
@@ -155,7 +155,7 @@ pub fn set_flag(
             OperationTarget::Message(message.id),
             &operation,
             at,
-        )?;
+        ).await?;
     }
 
     let threads = ThreadRepository::new(transaction);
@@ -164,8 +164,8 @@ pub fn set_flag(
     conversations.dedup();
     let mut siblings: Vec<MessageId> = Vec::new();
     for thread in &conversations {
-        threads.recompute(*thread)?;
-        for row in threads.messages(*thread, ThreadOrder::Oldest)? {
+        threads.recompute(*thread).await?;
+        for row in threads.messages(*thread, ThreadOrder::Oldest).await? {
             siblings.push(row.id);
         }
     }

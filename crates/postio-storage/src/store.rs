@@ -432,6 +432,18 @@ impl std::ops::Deref for Checkout {
     }
 }
 
+/// `DerefMut` because [`Connection::transaction`] takes `&mut self`.
+///
+/// It does not mutate anything a caller can observe -- the engine's own
+/// transaction guard needs the exclusive borrow to make a second overlapping
+/// transaction on one connection a compile error rather than a runtime one,
+/// which is the same guarantee this crate wants.
+impl std::ops::DerefMut for Checkout {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
+}
+
 /// Translate a failed page authentication into the sentence a person can act
 /// on.
 ///
