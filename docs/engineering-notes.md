@@ -3357,6 +3357,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [An aggregate hides from a row count](notes/2026-09-11-an-aggregate-hides-from-a-row-count.md) — a `count(*)` over a mailbox is one statement and one row, so the two counted budgets in the workspace were blind to a full scan on the first-frame path (2026-09-11, #1479)
 - [Where 475 gigabytes went](notes/2026-09-09-where-475-gigabytes-went.md) — a full disk reports itself as a compile error; cargo never prunes `deps/`; and `git cherry`, not shas, is what tells a landed worktree from a live one (2026-09-09, #1428)
 - 2026-08-25 — [A slow query whose SQL is fast is measuring the machine (#500)](notes/2026-08-25-a-slow-query-whose-sql-is-fast-is-measuring-the-machine.md)
 - 2026-08-28 — [Encrypting the store, and the things it made visible (2026-08-28, #610/#300)](notes/2026-08-28-encrypting-the-store-and-the-things-it-made-visible.md)
