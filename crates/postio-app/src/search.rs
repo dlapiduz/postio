@@ -115,12 +115,12 @@ pub async fn install(
         held.clone(),
         order.clone(),
         reindexing,
-    );
+    ).await;
     install_scope_rerun(window, &finder);
-    install_results(window, feeds, &view, held, wiring, order.clone());
+    install_results(window, feeds, &view, held, wiring, order.clone()).await;
     install_order_toggle(window, &finder, feeds, order);
-    load_contacts(&finder, account.id, wiring);
-    load_labels(&finder, account.id, wiring);
+    load_contacts(&finder, account.id, wiring).await;
+    load_labels(&finder, account.id, wiring).await;
 
     Some(view)
 }
@@ -431,10 +431,14 @@ async fn install_run(
                     // actually ran under -- the user is free to switch scope
                     // while the store is answering, and a caveat about the
                     // scope they moved to would be about a different question.
-                    let unreachable = window
-                        .upgrade()
-                        .map(|window| unreachable_accounts(&window, &folders, account))
-                        .unwrap_or_default();
+                    // Spelled out rather than chained: the read awaits, and
+                    // a closure cannot.
+                    let unreachable = match window.upgrade() {
+                        Some(window) => {
+                            unreachable_accounts(&window, &folders, account)
+                        }
+                        None => Vec::new(),
+                    };
                     // Whether an account this answer covers is rebuilding
                     // its local index right now (#981) -- read against the
                     // same scope the search ran under, for the reason
@@ -463,7 +467,7 @@ async fn install_run(
                     // this is what somebody staring at an empty list is
                     // waiting to be told.
                     view.set_suggestion(results.suggestion.as_ref());
-                    focus(&view, &results, &database, &runtime);
+                    focus(&view, &results, &database, &runtime).await;
                     held.replace(Some(results));
                     // Scoped, so the borrow is gone before `facets` runs:
                     // nothing downstream needs `held` today, and a borrow
@@ -474,7 +478,7 @@ async fn install_run(
                     }
                     facets(
                         &view, &live, sequence, account, &query, scope, &database, &runtime,
-                    );
+                    ).await;
                 }
             });
         }
@@ -567,7 +571,7 @@ type Held = Rc<std::cell::RefCell<Option<SearchResults>>>;
 /// `follow_cursor` takes over from the next keystroke on. Both go through
 /// [`preview`], so there is one path to the pane rather than two that can
 /// disagree.
-fn focus(
+async fn focus(
     view: &View,
     results: &SearchResults,
     database: &Store,
@@ -577,7 +581,7 @@ fn focus(
     let Some(hit) = results.hits.first() else {
         return;
     };
-    preview(view, hit, database, runtime);
+    preview(view, hit, database, runtime).await;
 }
 
 /// Draw `hit`'s body into the preview.
@@ -640,7 +644,7 @@ fn announce(events: &postio_core::bridge::EventSink, query: &ParsedQuery, result
 /// * the column header counts results rather than naming a folder,
 /// * the cursor moving through them moves the preview,
 /// * `Esc` puts the mailbox back, where it was.
-fn install_results(
+async fn install_results(
     window: &Window,
     feeds: &Feeds,
     view: &View,
@@ -709,21 +713,24 @@ fn install_results(
         let database = wiring.database.clone();
         let runtime = wiring.runtime.clone();
         move |_| {
-            if !feeds.messages.showing_results() {
-                return;
-            }
-            let Some(id) = list.cursor_id() else {
-                return;
-            };
-            let held = held.borrow();
-            let Some(hit) = held
-                .as_ref()
-                .and_then(|results| results.hits.iter().find(|hit| hit.message_id == id))
-            else {
-                return;
-            };
-            view.set_focused(Some(hit));
-            preview(&view, hit, &database, &runtime);
+            crate::blocking::now(async {
+                if !feeds.messages.showing_results() {
+                    return;
+                }
+                let Some(id) = list.cursor_id() else {
+                    return;
+                };
+                let held = held.borrow();
+                let Some(hit) = held
+                    .as_ref()
+                    .and_then(|results| results.hits.iter().find(|hit| hit.message_id == id))
+                else {
+                    return;
+                };
+                view.set_focused(Some(hit));
+                preview(&view, hit, &database, &runtime).await;
+        
+            })
         }
     });
 

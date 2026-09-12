@@ -429,7 +429,7 @@ async fn submit(
         // mark has to come back off — otherwise `resolve` would refuse the
         // retry the ordinary backoff is about to schedule, and a 4xx from a
         // rate-limited server would end the message's life.
-        release(connection, job);
+        release(connection, job).await;
         return outcome_from_smtp_error(error);
     }
 

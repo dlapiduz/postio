@@ -785,7 +785,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                             .poll(parts.backend.as_ref(), Utc::now(), entropy())
                             .await;
                         announce_link(&parts, &mut state, moved);
-                        wake_due_snoozes(&parts, &store);
+                        wake_due_snoozes(&parts, &store).await;
                     }
                     // The machine's own opinion of the network. It only ever moves
                     // the link between waiting and offline — the attempt count is
@@ -829,7 +829,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 if state.supervisor.link().is_online() && has_queued_work(&parts, &store).await {
                     state.busy.set("draining after a wave");
                     let outcome = drain(&parts, &store, &mut state).await;
-                    announce_drain(&parts, &outcome);
+                    announce_drain(&parts, &outcome).await;
                 }
 
                 // Then fetch bodies, but only while nothing else is asking. One
@@ -1030,13 +1030,13 @@ async fn handle_link_transition(parts: &EngineParts, store: &Store, state: &mut 
         // grown one.
         state.backfill_covered = false;
         let outcome = drain(parts, store, state).await;
-        announce_drain(parts, &outcome);
+        announce_drain(parts, &outcome).await;
         // Before anything asks what is *in* a folder, find out which
         // folders there are. Everything below reads the local table, and on
         // a new account that table is empty until this runs.
         discover(parts, store).await;
         // And find out what the server has been doing meanwhile.
-        queue_every_mailbox(parts, store, state);
+        queue_every_mailbox(parts, store, state).await;
         start_watching(parts, store, state).await;
     } else if state.supervisor.link().is_online() && has_queued_work(parts, store).await {
         // The queue is filled by whoever performed the action — a flag, an
@@ -1047,7 +1047,7 @@ async fn handle_link_transition(parts: &EngineParts, store: &Store, state: &mut 
         // *reconnection* to go out, which on a machine that stays online is
         // never.
         let outcome = drain(parts, store, state).await;
-        announce_drain(parts, &outcome);
+        announce_drain(parts, &outcome).await;
     }
 }
 
@@ -1421,7 +1421,7 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
         if queued > 0 {
             // Counts and a folder id, which is all a log may carry about mail.
             tracing::debug!(mailbox = mailbox.id.get(), queued, "backfill topped up");
-            announce_backfill(parts, state, std::time::Instant::now());
+            announce_backfill(parts, state, std::time::Instant::now()).await;
             return queued;
         }
     }
@@ -1453,7 +1453,7 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
                 queued,
                 "header blocks topped up"
             );
-            announce_backfill(parts, state, std::time::Instant::now());
+            announce_backfill(parts, state, std::time::Instant::now()).await;
             return queued;
         }
     }
@@ -1481,7 +1481,7 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             };
             if queued > 0 {
                 tracing::debug!(mailbox = mailbox.id.get(), queued, "payloads topped up");
-                announce_backfill(parts, state, std::time::Instant::now());
+                announce_backfill(parts, state, std::time::Instant::now()).await;
                 return queued;
             }
         }
@@ -1610,7 +1610,7 @@ impl Repaint {
     /// visible row widget — the right answer while the list is being built
     /// out of nothing, and the wrong one for a delivery. If an incremental
     /// path ever starts reporting progress, it must not come through here.
-    async fn batch_committed(&mut self, now: Instant) {
+    fn batch_committed(&mut self, now: Instant) {
         if !self.due(now) {
             return;
         }
@@ -1763,7 +1763,7 @@ async fn pump_body(
         });
     }
     state.backfill.finished(message, outcome);
-    announce_backfill(parts, state, std::time::Instant::now());
+    announce_backfill(parts, state, std::time::Instant::now()).await;
     true
 }
 
@@ -1800,7 +1800,7 @@ async fn pump_body(
 /// see engine.rs's own unit tests below, and issue #316's second cause,
 /// which a real-time integration test could reproduce only by accident of
 /// how fast the machine running it happened to be.
-fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+async fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
 
     let opening = state.backfill_announced.is_none();
@@ -1811,7 +1811,7 @@ fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Ins
     if !(drained || opening || due) {
         return;
     }
-    emit_backfill_progress(parts, state, done, total, drained, now);
+    emit_backfill_progress(parts, state, done, total, drained, now).await;
 }
 
 /// How often [`announce_backfill`] is allowed to report a settled body, at
@@ -1832,9 +1832,9 @@ const BACKFILL_ANNOUNCE_INTERVAL: std::time::Duration = std::time::Duration::fro
 /// puts it as "the interactive lane always wins"; the status line honours
 /// the same rule by never making a click wait out a background pass's
 /// throttle window.
-fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+async fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
-    emit_backfill_progress(parts, state, done, total, drained, now);
+    emit_backfill_progress(parts, state, done, total, drained, now).await;
 }
 
 /// `(done, total, drained)` as of right now — the read [`announce_backfill`]
@@ -1900,7 +1900,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
     match job {
         Job::Drain { reply } => {
             let outcome = drain(parts, store, state).await;
-            announce_drain(parts, &outcome);
+            announce_drain(parts, &outcome).await;
             let _ = reply.send(outcome);
         }
         Job::SeedBackfill {
@@ -1920,7 +1920,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             // denominator becomes known, and a status line that appears only
             // once a fetch has completed is silent for exactly the stretch
             // the user is most likely to be watching it.
-            announce_backfill(parts, state, std::time::Instant::now());
+            announce_backfill(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
         Job::RequestBody { message, reply } => {
@@ -1934,7 +1934,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             };
             // Unconditional, not the throttled `announce_backfill` above:
             // the interactive lane always wins (#316).
-            announce_backfill_now(parts, state, std::time::Instant::now());
+            announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
         Job::RequestPayloads {
@@ -1952,7 +1952,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             };
             // Interactive, like `RequestBody`: the user opened that chip and
             // is watching a spinner for exactly these bytes (#316).
-            announce_backfill_now(parts, state, std::time::Instant::now());
+            announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
         Job::RequestWholeMessage { message, reply } => {
@@ -1965,7 +1965,7 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
             // Interactive, like `RequestBody`: the user is waiting on it.
-            announce_backfill_now(parts, state, std::time::Instant::now());
+            announce_backfill_now(parts, state, std::time::Instant::now()).await;
             let _ = reply.send(outcome);
         }
         Job::RetryNow { reply } => {
@@ -2125,9 +2125,11 @@ const RESERVED_FOR_ELSEWHERE: usize = 2;
 ///
 /// The number used to be the connection pool's size. There is no pool to ask
 /// any more -- the engine keeps its own and a checkout is cheap -- so the
-/// limit it was standing in for is named directly.
-fn sync_lanes(_store: &Store) -> usize {
-    postio_storage::MAX_CONCURRENT_PASSES
+/// limit it was standing in for is passed in, which is also what keeps both
+/// halves of the rule testable: the shipped ceiling, and a larger one that
+/// reaches [`MAX_SYNC_LANES`].
+fn sync_lanes(concurrent_passes: usize) -> usize {
+    concurrent_passes
         .saturating_sub(RESERVED_FOR_ELSEWHERE)
         .clamp(1, MAX_SYNC_LANES)
 }
@@ -2197,7 +2199,7 @@ async fn sync_wave(
     // Every connection this wave will ever need, taken one at a time while
     // nothing else on this thread is running. See the note above.
     let mut lanes: Vec<(MailboxId, Checkout)> = Vec::new();
-    for _ in 0..sync_lanes(store) {
+    for _ in 0..sync_lanes(postio_storage::MAX_CONCURRENT_PASSES) {
         let Some(mailbox) = state.to_sync.pop_front() else {
             break;
         };
@@ -2922,19 +2924,19 @@ mod tests {
     ///
     /// Green when written -- the behaviour was always right; it was the
     /// description that was wrong. Its job is to fail if
-    /// `DEFAULT_MAX_CONNECTIONS`, `RESERVED_FOR_ELSEWHERE` or
-    /// `MAX_SYNC_LANES` move without the doc comments moving with them.
-    #[test]
-    fn the_database_pool_is_what_bounds_the_lanes_not_the_imap_ceiling() {
-        let database = postio_storage::test_support::memory();
+    /// `MAX_CONCURRENT_PASSES`, `RESERVED_FOR_ELSEWHERE` or `MAX_SYNC_LANES`
+    /// move without the doc comments moving with them.
+    ///
+    /// It asked the connection pool for its size until the engine changed.
+    /// There is no pool to ask -- the engine keeps its own and a checkout is
+    /// cheap -- so the limit the pool size was standing in for is named
+    /// directly, and the relationship this test guards is unchanged.
+    #[tokio::test]
+    async fn the_store_is_what_bounds_the_lanes_not_the_imap_ceiling() {
+        let database = postio_storage::test_support::memory().await;
         assert_eq!(
-            database.store().max_connections(),
-            postio_storage::db::DEFAULT_MAX_CONNECTIONS,
-            "a default store opens the default store"
-        );
-        assert_eq!(
-            sync_lanes(database.store()),
-            postio_storage::db::DEFAULT_MAX_CONNECTIONS - RESERVED_FOR_ELSEWHERE,
+            sync_lanes(postio_storage::MAX_CONCURRENT_PASSES),
+            postio_storage::MAX_CONCURRENT_PASSES - RESERVED_FOR_ELSEWHERE,
             "the reserve against the database store decides, not MAX_SYNC_LANES"
         );
         // Asserted on what the store actually yields rather than on the
@@ -2942,28 +2944,27 @@ mod tests {
         // constant, and reading it back off the store is the honest form
         // anyway -- the store's answer is the thing that matters.
         assert!(
-            sync_lanes(database.store()) < MAX_SYNC_LANES,
+            sync_lanes(postio_storage::MAX_CONCURRENT_PASSES) < MAX_SYNC_LANES,
             "MAX_SYNC_LANES is a ceiling held in reserve: it does not bind on \
              the shipped store, and #733 measured what reaching it would buy"
         );
     }
 
-    /// A store large enough that the IMAP-side ceiling is what stops it.
+    /// A ceiling high enough that the IMAP-side one is what stops it.
     ///
     /// The other half of the same rule: `MAX_SYNC_LANES` is not dead, it is
-    /// simply not reached today. Raising the database store is what would
-    /// reach it, which is why the constant stays.
+    /// simply not reached today. Raising `MAX_CONCURRENT_PASSES` is what
+    /// would reach it, which is why the constant stays.
+    ///
+    /// It used to open a roomier *pool* to prove this. There is no pool to
+    /// size any more, so it passes the larger ceiling directly -- which tests
+    /// the same clamp and does not need a database at all.
     #[test]
-    fn a_larger_database_pool_runs_into_max_sync_lanes() {
-        let database = Store::open_in_memory_with(
-            &postio_storage::test_support::key(),
-            MAX_SYNC_LANES * 4,
-        )
-        .expect("a roomier database");
+    fn a_larger_ceiling_runs_into_max_sync_lanes() {
         assert_eq!(
-            sync_lanes(database.store()),
+            sync_lanes(MAX_SYNC_LANES * 4),
             MAX_SYNC_LANES,
-            "with connections to spare the IMAP ceiling is what caps a wave"
+            "with passes to spare the IMAP ceiling is what caps a wave"
         );
     }
 
@@ -3026,7 +3027,7 @@ mod tests {
     /// `EngineParts` over `database`, with the receiving end of its own
     /// event channel — kept, not discarded, so a test can see what got
     /// announced.
-    fn parts_over(
+    async fn parts_over(
         database: Store,
     ) -> (
         EngineParts,
@@ -3034,7 +3035,7 @@ mod tests {
         tempfile::TempDir,
     ) {
         let connection = database.connect().await.expect("checkout");
-        let account = postio_storage::test_support::account(&connection);
+        let account = postio_storage::test_support::account(&connection).await;
         drop(connection);
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -3070,32 +3071,32 @@ mod tests {
     /// `queue_every_mailbox` must put INBOX first, then the folders a person
     /// reads next, then everything else, regardless of the order the
     /// mailboxes were created in.
-    #[test]
-    fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
-        let database = postio_storage::test_support::memory();
-        let (parts, _events, _directory) = parts_over(database.clone());
+    #[tokio::test]
+    async fn queueing_every_mailbox_puts_inbox_first_and_orders_the_rest_by_role() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, _events, _directory) = parts_over(database.clone()).await;
         let connection = database.connect().await.expect("checkout");
 
         // Created deliberately out of role order, archive first, so a queue
         // built from creation or discovery order would fail this test.
         let archive =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Archive");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Archive").await;
         let regular =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Projects");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Projects").await;
         let trash =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Trash");
-        let sent = postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Sent");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Trash").await;
+        let sent = postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Sent").await;
         let inbox =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "INBOX");
-        let junk = postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Junk");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX").await;
+        let junk = postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Junk").await;
         let drafts =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Drafts");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Drafts").await;
         let flagged =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "Flagged");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Flagged").await;
         drop(connection);
 
         let mut state = empty_state();
-        queue_every_mailbox(&parts, database.store(), &mut state);
+        queue_every_mailbox(&parts, &database, &mut state);
 
         let queued: Vec<MailboxId> = state.to_sync.into_iter().collect();
         assert_eq!(
@@ -3108,10 +3109,11 @@ mod tests {
         );
     }
 
-    fn account_of(parts: &EngineParts) -> postio_model::Account {
+    async fn account_of(parts: &EngineParts) -> postio_model::Account {
         let connection = parts.database.connect().await.expect("checkout");
         postio_storage::repository::AccountRepository::new(&connection)
             .get(parts.account)
+            .await
             .expect("read the test account")
             .expect("the test account exists")
     }
@@ -3178,10 +3180,10 @@ mod tests {
     /// Documents the throttle `announce_backfill` still has, over an
     /// explicit clock rather than a real one — see its own doc comment for
     /// why a real-time version of this test would prove nothing reliably.
-    #[test]
-    fn a_second_announcement_inside_the_floor_is_throttled() {
-        let database = postio_storage::test_support::memory();
-        let (parts, events, _directory) = parts_over(database);
+    #[tokio::test]
+    async fn a_second_announcement_inside_the_floor_is_throttled() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database).await;
         let mut state = empty_state();
         let t0 = Instant::now();
 
@@ -3202,10 +3204,10 @@ mod tests {
     /// Issue #316, cause 3: an interactive open must never wait out a
     /// background pass's throttle window the way the test above shows a
     /// second ordinary announce does.
-    #[test]
-    fn announce_backfill_now_is_never_throttled() {
-        let database = postio_storage::test_support::memory();
-        let (parts, events, _directory) = parts_over(database);
+    #[tokio::test]
+    async fn announce_backfill_now_is_never_throttled() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database).await;
         let mut state = empty_state();
         let t0 = Instant::now();
 
@@ -3248,17 +3250,17 @@ mod tests {
     /// The whole point of #383: `BODYSTRUCTURE` arrives with the header sync,
     /// so the totals are free — and the reason it is worth saying is that
     /// "12,400 of 81,744" tells someone nothing about whether to wait.
-    #[test]
-    fn backfill_progress_carries_what_the_mail_weighs() {
-        let database = postio_storage::test_support::memory();
-        let (parts, events, _directory) = parts_over(database.clone());
+    #[tokio::test]
+    async fn backfill_progress_carries_what_the_mail_weighs() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database.clone()).await;
         let connection = database.connect().await.expect("checkout");
         let inbox =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts), "INBOX");
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX").await;
 
         let repository = MessageRepository::new(&connection);
         let mut message =
-            postio_model::Message::new(account_of(&parts).id, inbox.id, chrono::Utc::now());
+            postio_model::Message::new(account_of(&parts).await.id, inbox.id, chrono::Utc::now());
         message.size = 5_000;
         message.server.uid = Some(postio_model::Uid::new(1));
         message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
@@ -3267,7 +3269,7 @@ mod tests {
             "application/pdf",
             4_000,
         )];
-        repository.create(&mut message).expect("create");
+        repository.create(&mut message).await.expect("create");
         drop(connection);
 
         let mut state = empty_state();
@@ -3294,10 +3296,10 @@ mod tests {
     /// function reaches it — `emit_backfill_progress` is the one place both
     /// funnel through, and this is what stops a finished queue from sticking
     /// at `2000 of 2000` (the same trap `SyncProgress` avoids).
-    #[test]
-    fn a_drained_queue_resets_the_throttle_clock() {
-        let database = postio_storage::test_support::memory();
-        let (parts, events, _directory) = parts_over(database);
+    #[tokio::test]
+    async fn a_drained_queue_resets_the_throttle_clock() {
+        let database = postio_storage::test_support::memory().await;
+        let (parts, events, _directory) = parts_over(database).await;
         let mut state = empty_state();
         let t0 = Instant::now();
 

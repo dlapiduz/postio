@@ -19,8 +19,8 @@ use crate::Wiring;
 const EGRESS_ROWS: u32 = 50;
 
 /// Wire the settings panel's connection list to the store.
-pub fn install(window: &Window, wiring: &Wiring) {
-    refresh(window, &wiring.database);
+pub async fn install(window: &Window, wiring: &Wiring) {
+    refresh(window, &wiring.database).await;
     // `map` fires every time the panel comes on screen — `Ctrl+comma`, the
     // menu, wherever — which is exactly "the moment the person looks".
     // `CommandId::Settings` never reaches `connect_command`: the window
@@ -31,9 +31,12 @@ pub fn install(window: &Window, wiring: &Wiring) {
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &database);
-            }
+            crate::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &database).await;
+                }
+        
+            })
         }
     });
 }

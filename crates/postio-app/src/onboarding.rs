@@ -103,7 +103,7 @@ pub async fn needed(database: &Store) -> bool {
 /// had nowhere to go at all: onboarding only ran when the store held no
 /// account, so an account with a broken credential was permanent.
 #[allow(clippy::too_many_arguments)]
-pub fn install(
+pub async fn install(
     window: &Window,
     wiring: &Wiring,
     state: SharedState,
@@ -214,8 +214,11 @@ pub fn install(
         let wiring = wiring.clone();
         let previous = previous.clone();
         move || {
-            window.set_content(previous.as_ref());
-            crate::open_account(&window, &wiring, &state, &wired, &events, &notifier);
+            crate::blocking::now(async {
+                window.set_content(previous.as_ref());
+                crate::open_account(&window, &wiring, &state, &wired, &events, &notifier).await;
+        
+            })
         }
     };
     screen.connect_start_sync({

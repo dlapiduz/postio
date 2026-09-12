@@ -102,6 +102,12 @@ publish = false
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+# A future nobody awaits is a statement that silently does not run. Fifty-six
+# of them survived the move to an async storage layer into a *green build* --
+# indexing calls, a settings write, a sidebar refresh -- and every one
+# compiled, warned, and did nothing. Warning-grade is not enough for a failure
+# mode whose only symptom is the absence of one.
+unused_must_use = "deny"
 
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }

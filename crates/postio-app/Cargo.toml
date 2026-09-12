@@ -79,5 +79,11 @@ path = "tests/app_suite/main.rs"
 harness = false
 
 [lints.rust]
+# A future nobody awaits is a statement that silently does not run. Fifty-six
+# of them survived the move to an async storage layer into a *green build* --
+# indexing calls, a settings write, a sidebar refresh -- and every one
+# compiled, warned, and did nothing. Warning-grade is not enough for a failure
+# mode whose symptom is the absence of a symptom.
+unused_must_use = "deny"
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"

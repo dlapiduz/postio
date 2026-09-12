@@ -22,21 +22,24 @@ use crate::Wiring;
 
 /// Wire the privacy pane's unsubscribe-activation list and read-receipt
 /// count to the store.
-pub fn install(window: &Window, wiring: &Wiring) {
+pub async fn install(window: &Window, wiring: &Wiring) {
     // A no-op at startup, where the panel is not on screen -- see
     // [`refresh`]. Kept anyway, because `install` is also how a window that
     // *is* showing the panel gets its first read, and a call that costs a
     // visibility check is not worth reasoning about a second time.
-    refresh(window, &wiring.database);
+    refresh(window, &wiring.database).await;
     // Weak: the window owns the settings panel that owns this handler, so a
     // strong clone is a cycle and the window never frees (#1072).
     let weak = glib::object::ObjectExt::downgrade(window);
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &database);
-            }
+            crate::blocking::now(async {
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &database).await;
+                }
+        
+            })
         }
     });
 }

@@ -70,7 +70,7 @@ pub async fn execute(
     .await
     .map_err(|error| tracing::warn!(%error, "the search did not run"))
     .ok()?;
-    snippet_hits(connection, query, &mut results);
+    snippet_hits(connection, query, &mut results).await;
     Some(results)
 }
 

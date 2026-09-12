@@ -1446,7 +1446,7 @@ impl Actions {
     // ── Saying what happened ─────────────────────────────────────────────
 
     /// Emit what the panes repaint from, and record what `u` takes back.
-    async fn announce(&self, applied: Applied, events: &EventSink, recording: Recording) {
+    fn announce(&self, applied: Applied, events: &EventSink, recording: Recording) {
         let account = applied.account;
         for (mailbox, messages) in &applied.removed {
             events.emit(Event::MessagesRemoved {
