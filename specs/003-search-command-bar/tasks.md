@@ -52,7 +52,7 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 ### Tests for User Story 4 ⚠️ red first
 
 - [X] T003 [P] [US4] Unit tests for the mode table's invariants in `crates/postio-ui/src/finder_modes.rs` — prefixes unique, exactly one mode without a prefix, every mode carrying a non-empty name and purpose
-- [ ] T004 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_finder.rs` asserting the bar at rest indicates it does more than search mail, and that an open empty box lists every mode with its prefix and purpose (FR-028, FR-029)
+- [X] T004 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_finder.rs` asserting the bar at rest indicates it does more than search mail, and that an open empty box lists every mode with its prefix and purpose (FR-028, FR-029)
 - [ ] T005 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_finder.rs` asserting an active mode says which mode it is and how to leave it (FR-030)
 - [ ] T006 [P] [US4] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_cheatsheet.rs` asserting the `?` cheat sheet lists the bar's modes
 - [ ] T007 [P] [US4] A `core_suite` case in `crates/postio-core/tests/core_suite/keybindings_doc.rs` asserting `docs/keybindings.md` carries a modes section generated from the table, and fails when it drifts (FR-031, FR-032)
@@ -62,7 +62,7 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 
 - [X] T009 [US4] Create the mode table in `crates/postio-ui/src/finder.rs` — prefix, name, purpose per [contracts/mode-table.md](./contracts/mode-table.md) — and export it from `crates/postio-ui/src/lib.rs`
 - [X] T010 [US4] Re-export the table from `crates/postio-gtk/src/finder.rs` and delete the prefix and description strings it duplicates, so the table is the only place the set is written down
-- [ ] T011 [US4] Render the hint in `crates/postio-gtk/src/finder.rs` — visible at rest and in an open empty box, out of the way once a query is being typed (FR-035)
+- [X] T011 [US4] Render the hint in `crates/postio-gtk/src/finder.rs` — visible at rest and in an open empty box, out of the way once a query is being typed (FR-035)
 - [ ] T012 [US4] Show the active mode and how to leave it in `crates/postio-gtk/src/finder.rs`
 - [ ] T013 [US4] Suppress a mode that cannot act in the current context, in `crates/postio-gtk/src/finder.rs` (FR-033)
 - [ ] T014 [US4] Add the modes section to the generator in `crates/postio-core/tests/core_suite/keybindings_doc.rs` and regenerate `docs/keybindings.md`

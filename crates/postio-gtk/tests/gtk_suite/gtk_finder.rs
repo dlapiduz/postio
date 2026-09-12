@@ -67,9 +67,53 @@ pub fn one_box_searches_mail_runs_commands_and_jumps_to_folders() {
     assert!(finder.is_open(), "/ opens the box");
     assert_eq!(finder.mode(), Mode::Search);
     assert_eq!(finder.context(), Some(Context::Search));
+    // ── an empty box says what else it can be asked ──────────────────────
+    // Four of the five modes were reachable only by knowing the character
+    // already. An empty box has nothing to search for yet, so that is where
+    // there is room to say so -- and typing takes it away again, which is
+    // FR-035: the hint may not stand between a person and their query.
+    assert!(
+        finder.is_visible(),
+        "an empty box offers what else it can be asked"
+    );
+    assert_eq!(
+        finder.mode_hints(),
+        vec![
+            "Run a command, >".to_string(),
+            "Go to a folder, #".to_string(),
+            "Find a correspondent, @".to_string(),
+            "Add a label, +".to_string(),
+        ],
+        "every mode a prefix reaches, with the character that reaches it, and \
+         not search itself -- that is what the box is already doing"
+    );
+
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "from:ada@example.com report".into(),
+    });
+    pump();
+    assert!(
+        finder.mode_hints().is_empty(),
+        "the hint is gone the moment there is a query to get in the way of"
+    );
+
+    // The plate is still up here, and that is the chips' doing, not the
+    // hint's -- `from:ada@example.com` is drawn under the field as a reading
+    // of what was typed. With nothing for it to say, it goes.
+    finder.set_query(Query {
+        mode: Mode::Search,
+        text: "report".into(),
+    });
+    pump();
+    assert!(
+        finder.mode_hints().is_empty(),
+        "still no hint: there is a query"
+    );
     assert!(
         !finder.is_visible(),
-        "search answers in the message list, not on a plate"
+        "search answers in the message list, not on a plate: a query with no \
+         operators to draw leaves nothing under the field at all"
     );
 
     finder.set_query(Query {
