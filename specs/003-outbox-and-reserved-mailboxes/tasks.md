@@ -235,10 +235,10 @@ with an attention count of 2.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T081 Write the ADR — *a mailbox row is either a folder or a view, and a view is never a destination* — in `docs/decisions/`, **taking its number at merge time** by checking `main`'s highest immediately before landing
-- [ ] T082 [P] Correct ADR 0021's "What the user sees" table in `docs/decisions/0021-exactly-once-send.md`: `Queued` and `Sending` are reachable from the Outbox, not the Drafts list. Do not reopen the decision
-- [ ] T083 [P] Describe the Outbox in the sidebar section of `docs/PRODUCT.md` §9
-- [ ] T084 [P] Record the reserved-role guarantee and what a refused creation means in `docs/config.md` beside `[mailboxes]`
+- [X] T081 ADR **0036** — *a sidebar row is a folder or a view, and a view is never a destination* — `docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md`. Number checked against `origin/main` (highest was 0035) on the day it was written; **re-check before landing** if `main` moves
+- [X] T082 [P] Correct ADR 0021's "What the user sees" table in `docs/decisions/0021-exactly-once-send.md`: `Queued` and `Sending` are reachable from the Outbox, not the Drafts list. Do not reopen the decision
+- [X] T083 [P] Describe the Outbox in the sidebar section of `docs/PRODUCT.md` §9
+- [X] T084 [P] Record the reserved-role guarantee and what a refused creation means in `docs/config.md` beside `[mailboxes]`
 - [ ] T085 [P] Add a `docs/notes/` entry on the mirror row (#166) as the thing that made the Outbox cheap, listed in `docs/engineering-notes.md`
 - [ ] T086 Run every scenario in [quickstart.md](./quickstart.md) end to end
 - [ ] T087 Check `crates/postio-gtk/data/shell.css` brace balance and run `cargo nextest run -p postio-gtk` in full — CSS is the one file here nothing type-checks, and a break in it surfaces somewhere unrelated

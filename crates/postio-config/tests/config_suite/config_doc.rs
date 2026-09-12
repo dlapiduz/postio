@@ -339,7 +339,14 @@ fn render() -> String {
          \n\
          Nothing here moves mail. Re-pointing a role changes which folder wears\n\
          the label from that moment on; the messages already in the old folder\n\
-         stay where they are.\n",
+         stay where they are.\n\
+         \n\
+         **Every account ends up with a folder for all six roles.** When one\n\
+         resolves to nothing after all four tiers, Postio creates it on the\n\
+         server -- once, never for the Inbox, and named after the role. A\n\
+         server that refuses is not asked again: the role is shown as unmapped\n\
+         in Settings -> Accounts with the server's own words beside it, which\n\
+         is usually a permission and usually something you can fix.\n",
     );
 
     out
