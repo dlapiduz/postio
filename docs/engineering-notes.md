@@ -3205,6 +3205,15 @@ passed.** The symmetric `needs-macos-verify` direction is wired when `macos/`
 exists — the label is created, the code path is not, because untested code that
 guards something is worse than no guard.
 
+**A change to `crates/postio-ffi/src/` has a caller this machine cannot
+compile (2026-09-12).** Spec 003 altered three boundary fields; every Rust gate
+was green and `main`'s macOS job then went red three landings in a row, one
+Swift file at a time. Not a missing invariant — Swift's exhaustive `switch` is
+the same guard as `MailboxRole::kind()` and it worked — but there is no Swift
+toolchain here, so the guard fires thirteen minutes away. One grep of `macos/`
+for the types a diff changed would have found all three at once:
+[the FFI has a second caller you cannot compile](notes/2026-09-12-the-ffi-has-a-second-caller-you-cannot-compile.md).
+
 **sccache is wired in through `.cargo/config.toml`**
 (`build.rustc-wrapper = "scripts/rustc-wrapper.sh"`), not exported per shell.
 The wrapper execs plain rustc when sccache is missing, so it cannot cause the
