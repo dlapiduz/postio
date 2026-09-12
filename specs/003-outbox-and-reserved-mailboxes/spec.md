@@ -291,8 +291,12 @@ render that same answer.
   does not reorder the rows around it.
 - **FR-015**: Every row in the Outbox MUST state which state it is in, rather
   than being rendered identically to every other row.
-- **FR-016**: The Outbox MUST be reachable by keyboard and MUST have a command
-  registry entry, like every other navigable surface.
+- **FR-016**: The Outbox MUST be reachable by keyboard, through the sidebar
+  navigation commands every other folder is reached by — **not** a binding of
+  its own. No folder in the application has one, not even the Inbox: a folder
+  is a row, not a verb, and the verbs that reach rows (`FocusSidebar`,
+  `NextFolder`, `PrevFolder`, `Return`) are already in the registry. A
+  dedicated key would make the Outbox the only folder in the sidebar with one.
 - **FR-017**: The Outbox MUST be announced to assistive technology with what
   its count means, as the other counted rows are.
 - **FR-018**: Both frontends MUST receive the Outbox from the same shared
