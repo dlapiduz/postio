@@ -84,7 +84,160 @@ pub async fn discover(
     overrides: &RoleOverrides,
 ) -> Result<DiscoveryReport> {
     let listed = backend.list_mailboxes(&MailboxFilter::all()).await?;
-    Ok(reconcile(connection, account, &listed, overrides)?)
+    let mut report = reconcile(connection, account, &listed, overrides)?;
+
+    // Every reserved role must end this pass with a folder (spec 003, FR-026).
+    // Done after reconciling rather than from the listing, because whether a
+    // role resolves is the *settled* question -- account map, `[mailboxes]`,
+    // SPECIAL-USE, name guess -- and only the rows know the answer.
+    //
+    // Not on an empty listing, for the reason `retire_missing` is not either:
+    // nothing is not evidence of nothing. A server that answers `LIST` with
+    // nothing, or a listing that failed part way, would otherwise have five
+    // folders created on it -- on an account that may already have all five.
+    if !listed.is_empty() && create_missing_roles(connection, backend, account).await? {
+        // Re-listed rather than assumed: the server assigns the attributes and
+        // the path separator, and a folder Postio believes in but never saw
+        // listed is exactly the kind of row that later turns out not to exist.
+        let listed = backend.list_mailboxes(&MailboxFilter::all()).await?;
+        let second = reconcile(connection, account, &listed, overrides)?;
+
+        // Merged, not replaced, so the report describes the whole pass.
+        //
+        // The second reconcile sees every folder again, so its `updated` counts
+        // the ones the first pass had just added, and its `added` counts only
+        // what was created here. Left as-is, a first discovery of an account
+        // that needed two folders would report "added 2, updated 4" — which
+        // reads as though four folders were already known, on an account that
+        // had none a moment ago.
+        //
+        // `vanished` comes from the first pass alone: it is what the *server's
+        // own* listing no longer had, and the second listing is one this
+        // function has just changed.
+        report = DiscoveryReport {
+            added: report.added + second.added,
+            updated: second.updated.saturating_sub(report.added),
+            vanished: report.vanished,
+        };
+    }
+
+    Ok(report)
+}
+
+/// Creates a folder for every reserved role that resolves to nothing.
+///
+/// Returns whether anything was created, so the caller knows to re-list.
+///
+/// # What this will not do
+///
+/// **Never the Inbox** (FR-029). RFC 3501 names that folder and every server
+/// has one; a server that does not is broken in a way this does not paper
+/// over, and creating it would be Postio disagreeing with the protocol about
+/// where mail arrives.
+///
+/// **Never a role the server has already refused** (FR-031). A refusal is
+/// recorded and honoured, because a server that will never allow a folder must
+/// not be asked on every pass forever — which, against a real account, is the
+/// expensive version of this bug and a silent one.
+///
+/// **Never twice.** A role that resolves is not a role that is missing, so the
+/// second pass over the same account asks for nothing (SC-007).
+///
+/// # Why this is not an operation on the queue
+///
+/// Creating a role's folder is discovery reconciling an account against its
+/// server, not a user's mutating action needing an undo. A queue route would
+/// need a new `Operation`, an inverse nobody wants (deleting a folder), and a
+/// queue row that no keystroke asked for.
+async fn create_missing_roles(
+    connection: &Connection,
+    backend: &dyn MailBackend,
+    account: AccountId,
+) -> Result<bool> {
+    let known = MailboxRepository::new(connection).list_for_account(account)?;
+    let roles = MailboxRoleRepository::new(connection);
+    let refused: Vec<MailboxRole> = roles
+        .refusals(account)?
+        .into_iter()
+        .map(|(role, _)| role)
+        .collect();
+
+    let mut created = false;
+    for role in MailboxRole::RESERVED {
+        if role == MailboxRole::Inbox || refused.contains(&role) {
+            continue;
+        }
+        // The role's own name. Never a constant naming one provider, and never
+        // a branch on the host: providers are data (Principle VII), and a
+        // preset that carries a folder name is where a provider-specific
+        // answer belongs.
+        let path = default_path_for(role);
+
+        // Two ways a role is already answered, and both have to be checked.
+        //
+        // A folder wearing the role is the obvious one. The second is subtler:
+        // a folder the server has stopped listing is *unroled* to `Regular` and
+        // marked unselectable rather than deleted, because it may come back
+        // (`retire_missing`, and this module's own doc). So a retired Archive
+        // no longer *looks* like an archive, and asking only about roles would
+        // create a folder at the path that row already occupies — which the
+        // next listing would then resurrect, quietly undoing the retirement
+        // this module exists to do carefully.
+        if known
+            .iter()
+            .any(|mailbox| mailbox.role == role || mailbox.path == path)
+        {
+            continue;
+        }
+        match backend.create_mailbox(path).await {
+            Ok(()) => {
+                // Ids and outcomes only. The folder name is the role's, so it
+                // carries nothing of the user's, but the habit is the point.
+                tracing::info!(
+                    account = account.get(),
+                    role = role.as_str(),
+                    "created a folder for a reserved role"
+                );
+                created = true;
+            }
+            Err(error) => {
+                // Recorded, not fatal. The other roles still resolve and the
+                // account stays usable; the user is told in settings, where
+                // the server's own words are worth reading, rather than in a
+                // log where they would outlive the screen they belong on.
+                roles.refuse(account, role, &error.to_string())?;
+                tracing::warn!(
+                    account = account.get(),
+                    role = role.as_str(),
+                    "the server refused to create a folder for a reserved role"
+                );
+            }
+        }
+    }
+    Ok(created)
+}
+
+/// What to call a folder created for `role`, absent a preset saying otherwise.
+///
+/// The role's own name, capitalised the way every provider spells it. `Inbox`
+/// never reaches here — it is filtered out above — and the view roles cannot:
+/// [`MailboxRole::RESERVED`] holds folders only.
+fn default_path_for(role: MailboxRole) -> &'static str {
+    match role {
+        MailboxRole::Archive => "Archive",
+        MailboxRole::Sent => "Sent",
+        MailboxRole::Drafts => "Drafts",
+        MailboxRole::Trash => "Trash",
+        MailboxRole::Junk => "Junk",
+        // Unreachable by construction: `RESERVED` minus `Inbox` is the five
+        // above. Named rather than `unreachable!()` so a sixth reserved role
+        // gets a name instead of a panic on a user's first sync.
+        MailboxRole::Inbox
+        | MailboxRole::Flagged
+        | MailboxRole::Snoozed
+        | MailboxRole::Outbox
+        | MailboxRole::Regular => "",
+    }
 }
 
 /// The local half of [`discover`], with the server's answer already in hand.

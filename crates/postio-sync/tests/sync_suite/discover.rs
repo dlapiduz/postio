@@ -59,12 +59,26 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
         .await
         .expect("discover");
 
-    assert_eq!(report.added, 4, "{report:?}");
+    // Six: the four the server lists and the two it does not have, all of
+    // them new to this account.
+    assert_eq!(report.added, 6, "{report:?}");
     assert_eq!(
         paths(&connection, &account),
-        vec!["Archive", "Deleted Messages", "INBOX", "Sent Messages"]
+        // The four the server lists, plus the two it does not have. Every
+        // account ends a pass with a folder for all six reserved roles, so a
+        // server with no Drafts and no Junk gets them created (spec 003
+        // FR-026). What this test is about is the four on the *left* being
+        // written at all, which is the step whose absence `postio-755` was.
+        vec![
+            "Archive",
+            "Deleted Messages",
+            "Drafts",
+            "INBOX",
+            "Junk",
+            "Sent Messages"
+        ]
     );
-    assert_eq!(report.known(), 4, "every folder just added is known now");
+    assert_eq!(report.known(), 6, "every folder just added is known now");
     assert!(report.changed(), "a first discovery is never a no-op");
 }
 
@@ -134,8 +148,11 @@ async fn discovering_twice_keeps_the_same_rows() {
     );
     assert_eq!(
         report.known(),
-        4,
-        "the account still has the same four folders the second time"
+        6,
+        "the account still has the same six folders the second time: the four \
+         `a_server()` lists plus the Drafts and Junk the first pass created \
+         because that server has neither (spec 003 FR-026). `added == 0` above \
+         is what says the second pass created nothing."
     );
 }
 
@@ -240,7 +257,13 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
         .await
         .expect("discover");
 
-    assert_eq!(report.vanished, 2, "{report:?}");
+    // Four, not the two the server dropped: the first pass created Drafts and
+    // Junk, which `a_server()` does not have, so the account had six folders
+    // and the smaller listing mentions two of them (spec 003 FR-026). The
+    // count is incidental to what this test is about -- the row surviving with
+    // its mail -- but it is asserted rather than loosened, because a number
+    // that drifts silently is how a retirement bug hides.
+    assert_eq!(report.vanished, 4, "{report:?}");
     let after = mailboxes
         .get(archive.id)
         .expect("get")
@@ -305,7 +328,12 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
         .expect("discover");
 
     assert_eq!(report.vanished, 0, "{report:?}");
-    assert_eq!(paths(&connection, &account).len(), 4);
+    // Six: the four `a_server()` lists, plus the Drafts and Junk the first
+    // pass created because that server has neither (spec 003 FR-026). The
+    // point of this test is the *empty* listing changing nothing, which is
+    // what `vanished` above asserts; this line says the sidebar still has
+    // everything it had.
+    assert_eq!(paths(&connection, &account).len(), 6);
 }
 
 #[tokio::test]
@@ -774,5 +802,128 @@ async fn a_map_changed_between_passes_takes_effect_on_the_next() {
         roles,
         vec!["Sent Messages".to_owned()],
         "and still one folder per role"
+    );
+}
+
+// ── Every account has every reserved role (spec 003, US3) ───────────────────
+
+/// A server with nothing but an inbox: five reserved roles resolve to nothing.
+async fn a_bare_server() -> MockBackend {
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .build();
+    backend.connect().await.expect("connect");
+    backend
+}
+
+/// Which reserved roles the account has a selectable folder for.
+fn roles_with_a_folder(connection: &Connection, account: &Account) -> Vec<MailboxRole> {
+    let mailboxes = MailboxRepository::new(connection);
+    MailboxRole::RESERVED
+        .into_iter()
+        .filter(|role| {
+            mailboxes
+                .by_role(account.id, *role)
+                .expect("by_role")
+                .is_some()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    assert_eq!(
+        roles_with_a_folder(&connection, &account),
+        MailboxRole::RESERVED.to_vec(),
+        "an account whose server lists only INBOX still has to have somewhere \
+         to archive, send, draft, delete and junk to"
+    );
+    // One create per missing role, and the Inbox is not among them: RFC 3501
+    // names that folder and every server has it (FR-029).
+    let mut created = backend.created();
+    created.sort();
+    assert_eq!(created, vec!["Archive", "Drafts", "Junk", "Sent", "Trash"]);
+}
+
+#[tokio::test]
+async fn a_second_pass_creates_nothing() {
+    // SC-007. The expensive version of this bug is silent: a create per role
+    // per pass, against the user's real server, forever.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = a_bare_server().await;
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("first pass");
+    let after_first = backend.created().len();
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("second pass");
+
+    assert_eq!(
+        backend.created().len(),
+        after_first,
+        "the second pass asked the server to create folders that already exist"
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_already_has_everything_is_never_asked_to_create() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("INBOX"))
+        .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
+        .mailbox(MockMailbox::new("Sent").attributes(["\\Sent"]))
+        .mailbox(MockMailbox::new("Drafts").attributes(["\\Drafts"]))
+        .mailbox(MockMailbox::new("Trash").attributes(["\\Trash"]))
+        .mailbox(MockMailbox::new("Junk").attributes(["\\Junk"]))
+        .build();
+    backend.connect().await.expect("connect");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    assert!(
+        backend.created().is_empty(),
+        "nothing was missing: {:?}",
+        backend.created()
+    );
+}
+
+#[tokio::test]
+async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
+    // FR-029. A server with no INBOX is broken in a way this does not paper
+    // over, and creating one would be Postio disagreeing with RFC 3501.
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = an_account(&connection);
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
+        .build();
+    backend.connect().await.expect("connect");
+
+    discover(&connection, &backend, account.id, &RoleOverrides::default())
+        .await
+        .expect("discover");
+
+    assert!(
+        !backend.created().contains(&"INBOX".to_owned()),
+        "the Inbox was created: {:?}",
+        backend.created()
     );
 }
