@@ -199,20 +199,33 @@ milliseconds.
 the refusal remembered in `mailbox_roles`. Lands before the Outbox because
 `list_row`'s early return is the hole underneath US1's offline story.
 
-**Build 2 — the Outbox and the Drafts split (US1, US2).** The migration, the
-denormalised send state, the two scope predicates, the counts, the row states,
-the navigation command, `DraftStateChanged`. The largest build, and the one the
-user actually asked for.
-
-**Build 3 — one definition of the rows (US4).** Move the view rows into
+**Build 2 — one definition of the rows (US4).** Move the view rows into
 `postio-ui::sidebar`, delete the sentinels from `postio-gtk::feed`, carry the
 counts across the FFI. Independently valuable on its own: it gives macOS the
 Flagged and Snoozed rows it has never had.
 
-Build 3 could precede Build 2, and doing so would stop the Outbox row being
-written twice. It is placed second-to-last anyway because Build 2 is the
-user-visible deliverable and Build 3 is a refactor. The cost is one file written
-twice, and it is accepted deliberately rather than discovered later.
+**Build 3 — the Outbox and the Drafts split (US1, US2).** The migration, the
+denormalised send state, the two scope predicates, the counts, the row states,
+the navigation command, `DraftStateChanged`. The largest build, and the one the
+user actually asked for.
+
+**Why the refactor comes before the feature, against the usual instinct.** The
+first draft of this plan had them the other way round, on the grounds that
+Build 3 is the user-visible deliverable and should not wait behind a refactor.
+That reasoning does not survive contact with how this work lands: **spec-driven
+work is one branch and one pull request**, so nothing is visible to anyone until
+all four builds merge together. "Ships sooner" buys nothing here.
+
+What is left once that argument goes is the concrete one: building the Outbox
+row while the sidebar's rows still live inside `postio-gtk::feed` means writing
+it as a third negative-id sentinel and then immediately moving it — and,
+worse, writing it *twice* in the only place a frontend could disagree with the
+shared model. Moving the rows first means the Outbox is defined once, in
+`postio-ui`, the first time it is written.
+
+The cost of this order is that US4 — the story with the least user value — is
+the second thing built. That is the right trade when the ordering is invisible
+to the user either way.
 
 ## Complexity Tracking
 
@@ -237,10 +250,10 @@ rows, the third by the crate-boundary check already in `scripts/check.sh`.
   query every folder in the application reads through. It is sequenced first
   within Build 2 and carries `counting` assertions before and after.
 - **`MailboxFfi` carries no flagged/snoozed counts** and there is no FFI
-  equivalent of `count_for`, so Build 3 is two fields and a shared count rule
+  equivalent of `count_for`, so Build 2 is two fields and a shared count rule
   wider than "move the row list".
 - **The macOS frontend is built and tested in CI** (`macOS build and Swift
-  tests`, ~13 min), so Build 3's FFI change is gated there and cannot be proven
+  tests`, ~13 min), so Build 2's FFI change is gated there and cannot be proven
   on Linux alone.
 - **#1491 stays open until this branch lands**, and is not an issue to claim
   alongside it — the spec is the queue.
