@@ -94,6 +94,22 @@ impl Toast {
         self.push(toast);
     }
 
+    /// A sentence, with nothing to press.
+    ///
+    /// For a gesture that could not run and has to say why rather than go
+    /// quiet — #1114's key pressed before the store is open, where there is
+    /// nothing to retry because the work is already in flight. No button, for
+    /// the same reason the plate that says the same sentence carries no key
+    /// hint.
+    pub fn show_notice(&self, sentence: &str) {
+        self.push(
+            adw::Toast::builder()
+                .title(sentence)
+                .timeout(TOAST_TIMEOUT)
+                .build(),
+        );
+    }
+
     /// *Account removed — Undo.* Same shape as
     /// [`Toast::show_action_completed`], but the button calls `on_undo`
     /// directly rather than the global `win.undo` action.

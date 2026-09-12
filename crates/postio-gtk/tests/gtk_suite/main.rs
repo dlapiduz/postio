@@ -147,6 +147,7 @@ mod gtk_sidebar_saved_searches;
 mod gtk_sidebar_sections;
 mod gtk_sidebar_tree;
 mod gtk_signature_placement;
+mod gtk_store_opening;
 mod gtk_style;
 mod gtk_toast;
 mod gtk_toggle_rail;
@@ -903,6 +904,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_window::the_application_hands_its_window_the_startup_timeline",
         gtk_window::the_application_hands_its_window_the_startup_timeline as fn(),
+    ),
+    (
+        "gtk_store_opening::an_ordinary_start_draws_nothing_that_is_then_removed",
+        gtk_store_opening::an_ordinary_start_draws_nothing_that_is_then_removed as fn(),
+    ),
+    (
+        "gtk_store_opening::a_start_past_its_budget_says_what_it_is_waiting_on",
+        gtk_store_opening::a_start_past_its_budget_says_what_it_is_waiting_on as fn(),
+    ),
+    (
+        "gtk_store_opening::a_key_for_mail_says_why_it_cannot_run_yet",
+        gtk_store_opening::a_key_for_mail_says_why_it_cannot_run_yet as fn(),
     ),
     (
         "gtk_window_run_search::run_search_opens_the_box_and_answers_immediately",

@@ -107,6 +107,103 @@ pub enum State {
         /// them — which is the order their hues are keyed to.
         accounts: Vec<String>,
     },
+    /// The window is up and the store is not open yet (#1114).
+    ///
+    /// Postio presents its window before it has opened anything, so this is
+    /// the only state in the family that is about the *application* rather
+    /// than about mail. It outranks every other: there is no connection
+    /// worth describing, no mailbox to be empty, and no query to have
+    /// matched nothing, because there is nothing behind the window yet.
+    ///
+    /// It is also the only one with a threshold — see [`derive_opening`].
+    /// An ordinary start never shows it.
+    Opening {
+        /// What is being waited on, because the four are different waits and
+        /// two of them can legitimately take tens of seconds.
+        waiting: Waiting,
+    },
+}
+
+/// What a start that has not finished is actually waiting on.
+///
+/// Four waits, named separately because "Updating your mailbox's storage" is
+/// a different promise from "Opening your mailbox" — and because the two that
+/// can legitimately take tens of seconds are the two a person most needs told
+/// about. Measured on the live install: a schema migration held a launch for
+/// 12.6 s with nothing on screen, and a keyring prompt held another for 28 s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Waiting {
+    /// The store key is being read out of the OS keyring.
+    ///
+    /// A D-Bus round trip against a service that may be showing a passphrase
+    /// prompt of its own, which is why this can be the longest of the four
+    /// and the one least under Postio's control.
+    Keyring,
+    /// The encrypted database is being opened.
+    Store,
+    /// Schema migrations are being applied.
+    Migrating,
+    /// The local search index is being built or rebuilt.
+    Indexing,
+}
+
+impl Waiting {
+    /// Every wait, in the order a start meets them.
+    pub const ALL: [Waiting; 4] = [
+        Waiting::Keyring,
+        Waiting::Store,
+        Waiting::Migrating,
+        Waiting::Indexing,
+    ];
+}
+
+/// How long a start may take before it is worth saying anything.
+///
+/// Twice `docs/PRODUCT.md` §18's 500 ms budget: by here the start has already
+/// failed its own budget, so there is no risk of speaking over an ordinary
+/// one. And far enough past the measured ~150 ms store phase that it cannot
+/// fire on a healthy launch at all — which matters more than the exact
+/// number, because a plate that appears and is gone inside 100 ms is the
+/// flicker §18 forbids rather than the reassurance it was meant to be.
+pub const OPENING_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// What the list pane shows while the store is still opening, if anything.
+///
+/// `None` below the threshold, and that is the whole of #1114's "normal case
+/// — nothing that will disappear": no spinner, no skeleton rows, no
+/// "Loading…", no progress of any kind. The ordinary start draws its first
+/// frame and then fills it, with nothing in between to be removed.
+pub fn derive_opening(waiting: Waiting, waited: std::time::Duration) -> Option<State> {
+    (waited >= OPENING_THRESHOLD).then_some(State::Opening { waiting })
+}
+
+/// The heading and the line under it for one wait.
+///
+/// Split out of [`describe`] so the copy can be asserted on without a
+/// display, the same reason [`derive`] is a pure function.
+pub fn describe_wait(waiting: Waiting) -> (&'static str, &'static str) {
+    match waiting {
+        // Named as the keyring rather than as Postio, because what to *do*
+        // about it is somewhere else entirely: an unlock prompt that is
+        // behind another window, or a keyring that is not running.
+        Waiting::Keyring => (
+            "Opening your mailbox",
+            "Waiting for the keyring to unlock the local store.",
+        ),
+        Waiting::Store => ("Opening your mailbox", "Reading the local store from disk."),
+        // A different promise, and deliberately so: this one changes the
+        // store rather than reading it, it is once per upgrade, and it is
+        // the wait that has actually taken tens of seconds on a real
+        // mailbox.
+        Waiting::Migrating => (
+            "Updating your mailbox\u{2019}s storage",
+            "This happens once after an update, and the mail is not touched.",
+        ),
+        Waiting::Indexing => (
+            "Rebuilding the search index",
+            "Your mail is all here; searching it will be ready in a moment.",
+        ),
+    }
 }
 
 /// How much of the pane a [`State`] takes.
@@ -130,6 +227,9 @@ impl State {
     /// to keep visible.
     pub fn placement(&self, item_count: u64) -> Placement {
         match self {
+            // Nothing has been read, so there is nothing underneath to
+            // protect: the plate is the pane.
+            State::Opening { .. } => Placement::Full,
             State::InboxZero { .. } | State::NoMatches { .. } => Placement::Full,
             State::Offline { .. } | State::Failing { .. } | State::Partial { .. } => {
                 if item_count == 0 {
@@ -377,6 +477,19 @@ fn describe(state: &State, now: Instant) -> Content {
             },
             hints: vec![("Back to the folder", "Esc")],
         },
+        // The one plate in the family that offers no verb, and that is
+        // correct rather than an omission: the work is in flight, so `R`
+        // would either do nothing or restart a read that is already running.
+        State::Opening { waiting } => {
+            let (title, detail) = describe_wait(*waiting);
+            Content {
+                icon: "content-loading-symbolic",
+                icon_class: "opening",
+                title,
+                detail: detail.to_string(),
+                hints: Vec::new(),
+            }
+        }
         State::Partial { accounts } => Content {
             icon: "network-offline-symbolic",
             icon_class: "offline",
@@ -427,7 +540,20 @@ mod imp {
         /// arrives from the sidebar's account list on a completely different
         /// occasion from the sync feed's status.
         pub accounts: RefCell<Option<Vec<(String, SyncStatus)>>>,
+        /// What the store is still doing, and since when (#1114).
+        ///
+        /// `None` once there is a store — and on every window nothing has
+        /// told otherwise, which is what keeps this out of the way of every
+        /// pane built for a test of one widget.
+        pub opening: RefCell<Option<(Waiting, Instant)>>,
         pub tick: RefCell<Option<glib::SourceId>>,
+        /// The one-shot that brings the opening plate up at the threshold.
+        ///
+        /// Its own timer rather than a second job for `tick`: that one is
+        /// re-armed by every render from the sync status's own cadence, and
+        /// this one has to fire exactly once, a fixed interval after the
+        /// wait began.
+        pub opening_tick: RefCell<Option<glib::SourceId>>,
     }
 
     impl Default for ListStateView {
@@ -439,7 +565,9 @@ mod imp {
                 hints: gtk::Box::new(gtk::Orientation::Horizontal, 16),
                 inputs: RefCell::new((SyncStatus::default(), 0, 0, 0, None)),
                 accounts: RefCell::new(None),
+                opening: RefCell::new(None),
                 tick: RefCell::new(None),
+                opening_tick: RefCell::new(None),
             }
         }
     }
@@ -459,6 +587,9 @@ mod imp {
 
         fn dispose(&self) {
             if let Some(tick) = self.tick.borrow_mut().take() {
+                tick.remove();
+            }
+            if let Some(tick) = self.opening_tick.borrow_mut().take() {
                 tick.remove();
             }
         }
@@ -564,6 +695,89 @@ impl ListStateView {
         self.render();
     }
 
+    /// Say that there is no store behind this window yet, and what it is
+    /// waiting on — or that there is one now (#1114).
+    ///
+    /// Its own setter for [`set_searching`](Self::set_searching)'s reason,
+    /// and a stronger version of it: this does not arrive from the sync feed
+    /// at all, because there is no sync feed until the thing it is waiting
+    /// for has finished.
+    ///
+    /// Nothing appears when this is set. The plate comes up one
+    /// [`OPENING_THRESHOLD`] later, on the timer armed here, and only if the
+    /// wait is still going — which is what makes an ordinary start draw
+    /// nothing that is then removed.
+    pub fn set_opening(&self, waiting: Option<Waiting>) {
+        let imp = self.imp();
+        if let Some(tick) = imp.opening_tick.borrow_mut().take() {
+            tick.remove();
+        }
+        let previous = imp.opening.borrow().map(|(waiting, _)| waiting);
+        if previous == waiting {
+            // The same wait, still going: re-arming would push the plate
+            // back by a threshold every time a caller repeated itself, which
+            // is how a plate that should appear never does.
+            if waiting.is_some() {
+                self.arm_opening_tick();
+            }
+            return;
+        }
+        // A *different* wait restarts the clock, and deliberately: reaching
+        // the migrations means the store opened, so the reader has not been
+        // looking at an unexplained window for a second yet. What it must
+        // not do is leave the old sentence up while the new wait runs.
+        *imp.opening.borrow_mut() = waiting.map(|waiting| (waiting, Instant::now()));
+        if waiting.is_some() {
+            self.arm_opening_tick();
+        }
+        self.render();
+    }
+
+    fn arm_opening_tick(&self) {
+        let source = glib::timeout_add_local_once(
+            OPENING_THRESHOLD,
+            glib::clone!(
+                #[weak(rename_to = view)]
+                self,
+                move || {
+                    view.imp().opening_tick.borrow_mut().take();
+                    view.render();
+                }
+            ),
+        );
+        *self.imp().opening_tick.borrow_mut() = Some(source);
+    }
+
+    /// What this pane is waiting for, if it is waiting for anything.
+    ///
+    /// Answers even below the threshold, when nothing is drawn: the wait is a
+    /// fact about the window, and [`state`](Self::state) is only what the
+    /// pane is currently *saying* about it. The keyboard's refusal reads this
+    /// one, so that a key pressed at 200 ms and a plate shown at 1 s give the
+    /// same sentence.
+    pub fn waiting(&self) -> Option<Waiting> {
+        self.imp().opening.borrow().map(|(waiting, _)| waiting)
+    }
+
+    /// Pretend the current wait started `by` earlier.
+    ///
+    /// The test seam for [`OPENING_THRESHOLD`], and the reason there is one:
+    /// a case that waits out a real second either costs a second or races a
+    /// loaded runner, and the alternative — making the threshold a tunable —
+    /// would put a number that is a product decision behind an environment
+    /// variable. Nothing in the application calls this.
+    pub fn wind_back(&self, by: std::time::Duration) {
+        {
+            let imp = self.imp();
+            let mut opening = imp.opening.borrow_mut();
+            let Some((_, since)) = opening.as_mut() else {
+                return;
+            };
+            *since = since.checked_sub(by).unwrap_or(*since);
+        }
+        self.render();
+    }
+
     /// The state currently on screen, if any.
     pub fn state(&self) -> Option<State> {
         self.derived()
@@ -581,6 +795,14 @@ impl ListStateView {
     /// widget that can be wrong in exactly the way nothing catches.
     fn derived(&self) -> Option<State> {
         let imp = self.imp();
+        // Before everything, and answering `None` below the threshold rather
+        // than falling through: with no store there is no connection worth
+        // describing, no mailbox to be empty and no query to have matched
+        // nothing. A window that said "Offline — reading local mail" here
+        // would be describing mail it has not opened.
+        if let Some((waiting, since)) = *imp.opening.borrow() {
+            return derive_opening(waiting, since.elapsed());
+        }
         let (status, item_count, stored, queued, searching) = imp.inputs.borrow().clone();
         let aggregate = imp.accounts.borrow().clone();
         match &aggregate {
@@ -603,7 +825,7 @@ impl ListStateView {
             let content = describe(state, now);
 
             imp.icon.set_icon_name(Some(content.icon));
-            for class in ["inbox-zero", "offline", "failing", "no-matches"] {
+            for class in ["inbox-zero", "offline", "failing", "no-matches", "opening"] {
                 imp.icon.remove_css_class(class);
             }
             imp.icon.add_css_class(content.icon_class);
@@ -772,6 +994,97 @@ mod tests {
             state,
             ..SyncStatus::default()
         }
+    }
+
+    #[test]
+    fn an_ordinary_start_says_nothing_at_all() {
+        // #1114's first acceptance line, and the whole reason the threshold
+        // exists: the measured store phase is tens of milliseconds, and
+        // anything drawn and removed inside that is flicker. `PRODUCT.md`
+        // §18 allows a transition of ≤100ms *or none*, and this path adds
+        // none.
+        for waited in [Duration::ZERO, Duration::from_millis(999)] {
+            assert_eq!(
+                derive_opening(Waiting::Store, waited),
+                None,
+                "a plate at {waited:?} would be on screen for less time than \
+                 it takes to read, and gone before anybody could"
+            );
+        }
+    }
+
+    #[test]
+    fn a_start_that_has_already_failed_its_budget_says_what_it_is_waiting_on() {
+        // Twice `PRODUCT.md` §18's 500ms budget, and far enough past the
+        // measured ~150ms that it can never fire on an ordinary start.
+        let plate = derive_opening(Waiting::Migrating, OPENING_THRESHOLD)
+            .expect("past the threshold, the wait is worth naming");
+        assert_eq!(
+            plate,
+            State::Opening {
+                waiting: Waiting::Migrating
+            }
+        );
+        assert_eq!(
+            plate.placement(0),
+            Placement::Full,
+            "there are no rows behind this one — there is no store to have \
+             read any — so there is nothing for a banner to protect"
+        );
+    }
+
+    #[test]
+    fn each_wait_is_named_as_itself() {
+        // #1114: "one line of specific copy naming what is being waited on
+        // — the keyring read and the database open are different waits and
+        // the line should say which." So it is the *line* that has to be
+        // unique. The heading is deliberately shared by the two ordinary
+        // waits, because both are the same promise to the reader: your
+        // mailbox is opening.
+        let details: Vec<&str> = Waiting::ALL.iter().map(|w| describe_wait(*w).1).collect();
+        let mut unique = details.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            details.len(),
+            "two waits say the same thing, so the line names a wait it is \
+             not: {details:?}"
+        );
+
+        assert_eq!(describe_wait(Waiting::Keyring).0, "Opening your mailbox");
+        assert_eq!(describe_wait(Waiting::Store).0, "Opening your mailbox");
+        // And the two that change the store rather than reading it promise
+        // something else, because they are something else: they are once per
+        // upgrade and they are the waits that have actually taken tens of
+        // seconds on a real mailbox.
+        for different in [Waiting::Migrating, Waiting::Indexing] {
+            assert_ne!(
+                describe_wait(different).0,
+                "Opening your mailbox",
+                "{different:?} is not the same promise as opening a mailbox"
+            );
+        }
+    }
+
+    #[test]
+    fn the_opening_plate_offers_no_verb() {
+        // The one plate in the family with no key hint and no retry, and
+        // that is correct rather than an omission: the work is in flight, so
+        // `R` would either do nothing or restart a read that is already
+        // running.
+        let content = describe(
+            &State::Opening {
+                waiting: Waiting::Keyring,
+            },
+            Instant::now(),
+        );
+        assert!(
+            content.hints.is_empty(),
+            "offering a verb here promises something to press, and there is \
+             nothing: {:?}",
+            content.hints
+        );
     }
 
     #[test]
