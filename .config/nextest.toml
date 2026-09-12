@@ -53,23 +53,72 @@ default-filter = 'not (binary(hmac_cost) + binary(cache_pressure) + binary(heade
 # on the second look (#70 twice). The narrow exception is below.
 retries = 0
 
-# The GUI suites, and only those.
+# Two WebKit processes starting at once is what breaks; more than two is what
+# a full run does (#957).
 #
-# #957 is a case that "consumes real time" failing under concurrent load and
-# passing in isolation -- `gtk_composer_toolbar` fails inside a full parallel
-# run and passes 6 times out of 6 alone. Process-per-test puts far more load
-# on the box than `cargo test` does, so it meets that failure mode more often.
+# Each of these binaries builds a `WebView` per case, and nextest gives every
+# case its own process, so eight cases in flight is eight web processes
+# starting within a second of one another. One of them dies, its JavaScript
+# callback never fires, and the case waits out `gtk_suite`'s 120s deadline.
+# Measured on an idle workstation, `postio-gtk`, `--retries 0`:
 #
-# Two retries rather than holding the case out: ignoring it would delete a
-# test that works to hide a load problem, and #957 is where the load problem
-# gets fixed. This is a mask with a pointer to what it masks, which is the
-# only kind worth having -- when #957 closes, this override should go with it.
+#     the 8 gtk_editor_* + gtk_composer_toolbar cases, 8 at a time   2 fail
+#     the same 8, one at a time                            8 pass, 10.2s
+#     the same 8, two/three/four at a time                 8 pass, 4-5s
+#     all 671, uncapped                                              2 fail
+#     all 671, these binaries capped to 4                            1 fail
+#     all 671, these binaries capped to 2                          671 pass
+#     all 671, these binaries capped to 1                671 pass, 349s
+#
+# So it is concurrency and not a slow box -- eight tests on an idle machine
+# reproduce it -- and the cap is the fix rather than a mask.
+#
+# **One, because two is not enough.** Two was nearly what landed here: green
+# on its first full run, and `gtk_editor_format` at 122s on its second. That
+# is the same failure at a lower rate, which is the kind of number that reads
+# as fixed until it lands on somebody else's branch. Four failed outright.
+# One matches the mechanism -- what breaks is two web processes starting at
+# once, so the cap that fixes it is the one that never has two.
+#
+# It costs about 143s -> 350s on `postio-gtk`. That is the price of a
+# deterministic suite, and not obviously worse than a masked one: the run
+# that failed during #1510's landing took 379s *with* the retries. #1521 is
+# where the time comes back -- fix the web-process death, or narrow this
+# group from whole binaries to the cases that actually build a `WebView`.
+#
+# The group is shared across the binaries deliberately: they contend for
+# whatever WebKit resource this is, so a budget each would add up to the
+# number that fails. #1521 is the fault underneath -- when it is fixed this
+# cap should be tried at `num-cpus` again and removed if it holds.
+[test-groups]
+webkit = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(gtk_suite) + binary(gtk_reader) + binary(gtk_composer) + binary(gtk_accessibility) + binary(drag_out) + binary(webkit_probe) + binary(app_suite)'
+test-group = 'webkit'
+
+# `app_suite` alone, for #1497, and nothing else.
+#
+# This was `package(postio-gtk) + package(postio-app)` with #957's name on it.
+# The cap above fixes the `postio-gtk` half outright -- 671/671 with retries
+# off, twice -- so the mask no longer has anything to do there and has been
+# taken off that package.
+#
+# What still needs it is one case:
+# `render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing`
+# fails **5 runs in 8 on its own**, in its own process, with nothing before
+# it (measured; recorded on #1497). That is not a load problem and this cap
+# cannot help it. Two retries keep it off the merge path while #1497 finds
+# out whether the second render is the harness or the flash #749 fixed.
+#
+# Still a mask with a pointer to what it masks, which is the only kind worth
+# having -- when #1497 closes, this override goes with it.
 #
 # Note what it does NOT cover: a case that fails alone still fails here, three
 # times, and nextest reports the retries. A test that only ever passes on
 # attempt three is a bug report, not a pass.
 [[profile.default.overrides]]
-filter = 'package(postio-gtk) + package(postio-app)'
+filter = 'package(postio-app)'
 retries = 2
 
 # CI wants the same thresholds but a machine-readable trail of what flaked.
