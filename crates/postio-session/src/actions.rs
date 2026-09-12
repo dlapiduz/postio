@@ -107,7 +107,7 @@ enum Recording {
 
 impl Recording {
     /// Whether this belongs on the undo stack and deserves a toast.
-    async fn records(self) -> bool {
+    fn records(self) -> bool {
         self == Recording::Record
     }
 }
@@ -206,7 +206,7 @@ pub struct Actions {
 
 impl Actions {
     /// Verbs over `database`, resolving their targets against `state`.
-    pub async fn new(database: Store, state: SharedState) -> Self {
+    pub fn new(database: Store, state: SharedState) -> Self {
         Actions {
             database,
             state,
@@ -1476,7 +1476,7 @@ impl Actions {
         if applied.mailboxes_changed {
             events.emit(Event::MailboxesChanged { account });
         }
-        if !recording.records().await {
+        if !recording.records() {
             return;
         }
         // A bulk unit knows its size and not its members, so it is recorded as

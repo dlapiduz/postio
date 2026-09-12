@@ -369,6 +369,18 @@ impl Store {
         })
     }
 
+    /// A connection and an interactive write permit, together.
+    ///
+    /// The pairing is the point: a write a person is waiting for has to take
+    /// the permit *before* it takes the engine's writer, and the two calls
+    /// being separate is what makes the wrong order possible. Every
+    /// local-first verb in the application goes through here.
+    pub async fn interactive_write(&self) -> Result<(Checkout, WritePermit)> {
+        let permit = self.gate.acquire(WritePriority::Interactive);
+        let connection = self.connect().await?;
+        Ok((connection, permit))
+    }
+
     /// Who gets the writer next, when two callers want it.
     ///
     /// Machine-wide for this store: one gate, cloned into every checkout.

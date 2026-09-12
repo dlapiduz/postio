@@ -510,7 +510,7 @@ impl Engine {
     /// Start the engine on a thread of its own.
     ///
     /// Returns as soon as the thread is running; nothing has been drained yet.
-    pub async fn spawn(parts: EngineParts) -> Result<Engine, EngineError> {
+    pub fn spawn(parts: EngineParts) -> Result<Engine, EngineError> {
         // Unbounded because the sender is the UI and it must never block on
         // the engine. What arrives is a handful of small jobs, not a stream.
         let (jobs, inbox) = async_channel::unbounded::<Job>();
@@ -1160,7 +1160,11 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
 ///
 /// What lets [`keep_watch`] end a held `IDLE` early without being dropped
 /// mid-command. Both halves only ever observe.
-async fn interruption(parts: &EngineParts, store: &Store, inbox: &async_channel::Receiver<Job>) {
+async fn interruption(
+    parts: &EngineParts,
+    store: &Store,
+    inbox: &async_channel::Receiver<Job>,
+) {
     tokio::select! {
         _ = wait_for_job(inbox) => {}
         // A local mutation is not a job — nobody tells this thread that a
@@ -1588,7 +1592,7 @@ struct Repaint {
 }
 
 impl Repaint {
-    async fn new(events: EventSink, account: AccountId, mailbox: MailboxId) -> Self {
+    fn new(events: EventSink, account: AccountId, mailbox: MailboxId) -> Self {
         Repaint {
             events,
             account,
@@ -1607,7 +1611,7 @@ impl Repaint {
     /// out of nothing, and the wrong one for a delivery. If an incremental
     /// path ever starts reporting progress, it must not come through here.
     async fn batch_committed(&mut self, now: Instant) {
-        if !self.due(now).await {
+        if !self.due(now) {
             return;
         }
         self.last = Some(now);
@@ -1617,7 +1621,7 @@ impl Repaint {
         });
     }
 
-    async fn due(&self, now: Instant) -> bool {
+    fn due(&self, now: Instant) -> bool {
         match self.last {
             None => true,
             Some(last) => now.saturating_duration_since(last) >= REPAINT_INTERVAL,
@@ -1796,7 +1800,7 @@ async fn pump_body(
 /// see engine.rs's own unit tests below, and issue #316's second cause,
 /// which a real-time integration test could reproduce only by accident of
 /// how fast the machine running it happened to be.
-async fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+fn announce_backfill(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
 
     let opening = state.backfill_announced.is_none();
@@ -1828,7 +1832,7 @@ const BACKFILL_ANNOUNCE_INTERVAL: std::time::Duration = std::time::Duration::fro
 /// puts it as "the interactive lane always wins"; the status line honours
 /// the same rule by never making a click wait out a background pass's
 /// throttle window.
-async fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
+fn announce_backfill_now(parts: &EngineParts, state: &mut State, now: std::time::Instant) {
     let (done, total, drained) = backfill_snapshot(state);
     emit_backfill_progress(parts, state, done, total, drained, now);
 }
@@ -2389,7 +2393,7 @@ async fn sync_pass(
     let mut committed = Committed {
         parts,
         status,
-        repaint: Repaint::new(parts.events.clone(), parts.account, mailbox).await,
+        repaint: Repaint::new(parts.events.clone(), parts.account, mailbox),
     };
     // Populated only by the incremental branch below: a first sync or a
     // rebuild can insert thousands of messages that are new to *this
@@ -2510,7 +2514,7 @@ async fn settle_pass(
     if let Err(PassFailure::Failed(SyncError::Backend(BackendError::Cancelled))) = &result {
         announce_status(
             parts,
-            &state.status.borrow_mut().on_sync_finished(mailbox, now).await,
+            &state.status.borrow_mut().on_sync_finished(mailbox, now),
         );
         return Err(EngineError::new("the sync pass was interrupted"));
     }
@@ -2519,7 +2523,7 @@ async fn settle_pass(
         Ok(summary) => {
             announce_status(
                 parts,
-                &state.status.borrow_mut().on_sync_finished(mailbox, now).await,
+                &state.status.borrow_mut().on_sync_finished(mailbox, now),
             );
             if summary.changed() {
                 // A sync is exactly when the set of messages missing a body
@@ -2578,7 +2582,7 @@ async fn settle_pass(
             }
             announce_status(
                 parts,
-                &state.status.borrow_mut().on_sync_finished(mailbox, now).await,
+                &state.status.borrow_mut().on_sync_finished(mailbox, now),
             );
             Err(EngineError::new(failure.to_string()))
         }

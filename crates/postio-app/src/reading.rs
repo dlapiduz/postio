@@ -48,7 +48,7 @@ use postio_model::address::EmailAddress;
 use postio_model::ids::{AttachmentId, BlobId};
 use postio_model::{Attachment, Message, MessageId};
 use postio_runtime::Engine;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::blob::BlobStore;
 use postio_storage::repository::MessageRepository;
 
@@ -84,12 +84,13 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 /// Empty when the store holds one account or none — which is what makes the
 /// account line invisible for everybody who has not configured a second one
 /// (#185). Not "hidden by a flag": there is nothing to say.
-fn accounts_to_name(database: &postio_storage::Database) -> Vec<(postio_model::AccountId, String)> {
-    let Ok(connection) = database.connection() else {
+async fn accounts_to_name(database: &postio_storage::Store) -> Vec<(postio_model::AccountId, String)> {
+    let Ok(connection) = database.connect().await else {
         return Vec::new();
     };
     let accounts = postio_storage::repository::AccountRepository::new(&connection)
         .list()
+        .await
         .unwrap_or_default();
     if accounts.len() < 2 {
         return Vec::new();
@@ -100,11 +101,11 @@ fn accounts_to_name(database: &postio_storage::Database) -> Vec<(postio_model::A
         .collect()
 }
 
-pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
+pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing) {
     // See `accounts_to_name`: empty in the single-account case, which is the
     // common one, and then this costs a length check per message.
     let named_accounts: Rc<Vec<(postio_model::AccountId, String)>> =
-        Rc::new(accounts_to_name(&wiring.database));
+        Rc::new(accounts_to_name(&wiring.database).await);
     // `showing` is what the pane is showing, or is waiting to show. Set the
     // instant the cursor reaches a row rather than when the body lands, so a
     // body that arrives late can tell it is late. `compose.rs` reads the
@@ -150,25 +151,31 @@ pub fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: Showing
         let runtime = wiring.runtime.clone();
         let showing = showing.clone();
         move |list_identifier| {
-            let Some(message) = showing.get() else {
-                return;
-            };
-            let list_identifier = list_identifier.to_owned();
-            let _ = crate::search::ask(&database, &runtime, move |connection| {
-                let account_id = MessageRepository::new(connection)
-                    .get(message)
-                    .ok()
-                    .flatten()?
-                    .account_id;
-                let mut activation = postio_model::UnsubscribeActivation::new(
-                    account_id,
-                    list_identifier,
-                    chrono::Utc::now(),
-                );
-                postio_storage::repository::UnsubscribeRepository::new(connection)
-                    .record(&mut activation)
-                    .ok()
-            });
+            crate::blocking::now(async {
+                let Some(message) = showing.get() else {
+                    return;
+                };
+                let list_identifier = list_identifier.to_owned();
+                let _ = crate::search::ask(&database, &runtime, move |connection| async move {
+                    let account_id = MessageRepository::new(&connection)
+                        .get(message)
+                        .await
+                        .ok()
+                        .flatten()?
+                        .account_id;
+                    let mut activation = postio_model::UnsubscribeActivation::new(
+                        account_id,
+                        list_identifier,
+                        chrono::Utc::now(),
+                    );
+                    postio_storage::repository::UnsubscribeRepository::new(&connection)
+                        .record(&mut activation)
+                        .await
+                        .ok()
+        
+                });
+        
+            })
         }
     });
 
@@ -614,7 +621,7 @@ fn is_offline(status: &SyncStatus) -> bool {
 /// Everything filling the reading pane needs, so the cursor and activation
 /// can share one implementation rather than two that drift.
 struct Fill {
-    database: Database,
+    database: Store,
     runtime: tokio::runtime::Handle,
     /// What the pane is showing, or is waiting to show.
     showing: Showing,
@@ -700,13 +707,15 @@ impl Fill {
     fn read(&self, message: MessageId) -> async_channel::Receiver<Option<Loaded>> {
         let offline = self.offline.get();
         crate::search::ask(&self.database, &self.runtime, {
-            move |connection| {
+            move |connection| async move {
                 // One crossing for all of it. The parts are metadata the sync
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
-                let body = crate::compose::load_body_or_reason(connection, message, offline);
-                let fetched = MessageRepository::new(connection)
+                let body =
+                    crate::compose::load_body_or_reason(&connection, message, offline).await;
+                let fetched = MessageRepository::new(&connection)
                     .get(message)
+                    .await
                     .ok()
                     .flatten();
                 let (content_type, parts) = fetched
@@ -717,8 +726,9 @@ impl Fill {
                     .as_ref()
                     .and_then(|message| message.from.first().map(|from| from.address.clone()));
                 let list_identifier = fetched.as_ref().and_then(list_identifier);
-                let send_state = MessageRepository::new(connection)
+                let send_state = MessageRepository::new(&connection)
                     .send_state(message)
+                    .await
                     .unwrap_or_default();
                 let envelope = fetched.map(Envelope::from);
                 Some(Loaded {
@@ -751,6 +761,8 @@ impl Fill {
         rows: Vec<postio_gtk::list::Row>,
     ) {
         for row in rows {
+            // Started before the spawn: `read` borrows `self`, and a
+            // `'static` task cannot carry that borrow.
             let answer = self.read(row.id);
             glib::spawn_future_local({
                 let pane = pane.clone();
@@ -1378,7 +1390,7 @@ enum PartSource {
 /// Returns `Err` rather than an empty file when the bytes cannot be had. A
 /// zero-byte attachment on disk looks like a saved file and is not one.
 pub(crate) async fn part_bytes(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     message: MessageId,
@@ -1392,10 +1404,10 @@ pub(crate) async fn part_bytes(
     // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
     // the id is turned into a path here, while it still means something, and
     // the path is what is used on the far side.
-    let part_id = part_path(database, message, attachment)?
+    let part_id = part_path(database, message, attachment).await?
         .ok_or("That part has no place in the message to read it from")?;
 
-    let source = match locate_part(database, message, &part_id)? {
+    let source = match locate_part(database, message, &part_id).await? {
         Some(source) => source,
         // Never downloaded. This is the one place in the reading pane allowed
         // to reach the network, and only because the user asked for these
@@ -1426,7 +1438,7 @@ pub(crate) async fn part_bytes(
                 // committed write that made the answer `false` is visible
                 // to this read, so no wait is needed -- absent here means
                 // absent, and the sentence below is then the truth.
-                locate_part(database, message, &part_id)?
+                locate_part(database, message, &part_id).await?
                     .ok_or("There is nothing to fetch for that part")?
             }
         }
@@ -1466,7 +1478,7 @@ fn write_part(file: &gio::File, bytes: &[u8]) -> Result<(), String> {
 /// actually varies between the two -- `always_ask` -- does not have to travel
 /// beside four things that never change per call.
 struct PartOpener {
-    database: Database,
+    database: Store,
     blobs: BlobStore,
     events: EventSink,
     runtime: tokio::runtime::Handle,
@@ -1534,7 +1546,7 @@ impl PartOpener {
 /// a part not yet downloaded waits on `tokio::time::sleep`, which panics off
 /// the runtime.
 pub(crate) async fn save_all_parts(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &std::path::Path,
@@ -1583,7 +1595,7 @@ fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
 /// The deadline is what turns a server that never answers into a sentence
 /// rather than a spinner that never stops.
 pub(crate) async fn wait_for_body(
-    database: &Database,
+    database: &Store,
     message: MessageId,
 ) -> Result<BlobId, String> {
     let deadline = std::time::Instant::now() + BODY_WAIT;
@@ -1591,7 +1603,7 @@ pub(crate) async fn wait_for_body(
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
-        match raw_blob(database, message) {
+        match raw_blob(database, message).await {
             Ok(Some(raw)) => return Ok(raw),
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
@@ -1614,7 +1626,7 @@ pub(crate) async fn wait_for_body(
 /// the whole-message fallback writes for a row whose section could not be
 /// named.
 async fn wait_for_part(
-    database: &Database,
+    database: &Store,
     message: MessageId,
     part_id: &str,
 ) -> Result<PartSource, String> {
@@ -1623,7 +1635,7 @@ async fn wait_for_part(
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
-        match locate_part(database, message, part_id) {
+        match locate_part(database, message, part_id).await {
             Ok(Some(source)) => return Ok(source),
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
@@ -1640,12 +1652,12 @@ async fn wait_for_part(
 
 /// The MIME path of one attachment row, while the row id still means
 /// something.
-fn part_path(
-    database: &Database,
+async fn part_path(
+    database: &Store,
     message: MessageId,
     attachment: AttachmentId,
 ) -> Result<Option<String>, String> {
-    Ok(read_message(database, message)?
+    Ok(read_message(database, message).await?
         .attachments
         .iter()
         .find(|part| part.id == attachment)
@@ -1656,12 +1668,12 @@ fn part_path(
 ///
 /// The part's own blob first: it is the exact bytes, and reading it costs a
 /// file open where the raw message costs a parse of the whole thing.
-fn locate_part(
-    database: &Database,
+async fn locate_part(
+    database: &Store,
     message: MessageId,
     part_id: &str,
 ) -> Result<Option<PartSource>, String> {
-    let row = read_message(database, message)?;
+    let row = read_message(database, message).await?;
     if let Some(blob) = row
         .attachments
         .iter()
@@ -1674,17 +1686,18 @@ fn locate_part(
 }
 
 /// Just the raw-message blob key. What the wait watches for.
-pub(crate) fn raw_blob(database: &Database, message: MessageId) -> Result<Option<BlobId>, String> {
-    Ok(read_message(database, message)?.raw_blob_id)
+pub(crate) async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<BlobId>, String> {
+    Ok(read_message(database, message).await?.raw_blob_id)
 }
 
-pub(crate) fn read_message(
-    database: &Database,
+pub(crate) async fn read_message(
+    database: &Store,
     message: MessageId,
 ) -> Result<postio_model::Message, String> {
-    let connection = database.connection().map_err(|error| error.to_string())?;
+    let connection = database.connect().await.map_err(|error| error.to_string())?;
     MessageRepository::new(&connection)
         .get(message)
+        .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "That message is no longer here".into())
 }
@@ -1712,7 +1725,7 @@ mod tests {
     use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
     use postio_storage::seed::seed_small;
     use postio_storage::test_support::TempDatabase;
-    use postio_storage::{BlobStore, Database, test_support};
+    use postio_storage::{BlobStore, Store, test_support};
 
     use super::*;
 
@@ -1833,7 +1846,7 @@ mod tests {
         // run against whichever half of it had committed so far, which is
         // exactly the kind of thing a UID reassignment cannot survive being
         // wrong about.
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         connection
             .execute(
                 "UPDATE messages SET uid = id + 1000, uid_validity = 1,
@@ -1891,9 +1904,9 @@ mod tests {
     /// The distinction is ADR 0017's payload axis: a row that has these takes
     /// one `BODY.PEEK[2]`, and a row that does not falls back to every byte,
     /// because a fetched section arrives encoded with nothing to say how.
-    fn a_part_fetchable_by_section(database: &Database, message: MessageId) -> AttachmentId {
+    fn a_part_fetchable_by_section(database: &Store, message: MessageId) -> AttachmentId {
         a_part_not_here(database, message);
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         let mut row = messages.get(message).expect("a read").expect("the message");
         row.attachments[0].part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
@@ -1917,8 +1930,8 @@ mod tests {
     /// The store's row and the server's message have to describe the same
     /// part, which the seed cannot arrange on its own: it fills a screenshot
     /// from the corpus and knows nothing about any server.
-    fn a_part_not_here(database: &Database, message: MessageId) -> AttachmentId {
-        let connection = database.connection().expect("a connection");
+    fn a_part_not_here(database: &Store, message: MessageId) -> AttachmentId {
+        let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
         let mut row = messages.get(message).expect("a read").expect("the message");
         assert!(
@@ -2118,7 +2131,7 @@ mod tests {
 
         assert_eq!(String::from_utf8_lossy(&bytes).trim(), ATTACHED);
 
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let row = MessageRepository::new(&connection)
             .get(message)
             .expect("a read")
@@ -2141,8 +2154,8 @@ mod tests {
     /// say — names a row that no longer exists. The MIME path is the name
     /// that survives, which is the same reason `part_bytes` converts to it
     /// first thing.
-    fn the_part_as_stored(database: &Database, message: MessageId, part_id: &str) -> AttachmentId {
-        let connection = database.connection().expect("a connection");
+    fn the_part_as_stored(database: &Store, message: MessageId, part_id: &str) -> AttachmentId {
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
             .expect("a read")

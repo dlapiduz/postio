@@ -74,7 +74,7 @@ pub struct SessionOptions {
     #[cfg(feature = "testing")]
     in_memory: bool,
     #[cfg(feature = "testing")]
-    seeded: Option<postio_storage::Database>,
+    seeded: Option<postio_storage::Store>,
     #[cfg(feature = "testing")]
     seeded_blobs: Option<(postio_storage::BlobStore, tempfile::TempDir)>,
     #[cfg(feature = "testing")]
@@ -157,7 +157,7 @@ impl SessionOptions {
     /// there is no way to reach in afterwards -- the wiring is private, which
     /// is the point of it.
     #[cfg(feature = "testing")]
-    pub fn in_memory_with(database: postio_storage::Database) -> Self {
+    pub fn in_memory_with(database: postio_storage::Store) -> Self {
         Self {
             seeded: Some(database),
             ..Self::in_memory()
@@ -566,7 +566,7 @@ impl Session {
     /// table against it and pages arrive behind, the same as for a folder.
     #[uniffi::method(name = "search")]
     pub fn search_ffi(&self, query: String) -> u64 {
-        self.search(&query)
+        blocking(self.search(&query))
     }
 
     /// Leave search and restore the scope that was open.
@@ -715,7 +715,7 @@ impl Session {
     /// and refuse navigations. It composes no reader HTML of its own.
     #[uniffi::method(name = "readerDocument")]
     pub fn reader_document_ffi(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
-        self.reader_document(message, remote)
+        blocking(self.reader_document(message, remote))
     }
 
     /// One inline part of `message`, by its `Content-ID`.
@@ -724,7 +724,7 @@ impl Session {
     /// broken image, deliberately — never a fetch.
     #[uniffi::method(name = "resolveCid")]
     pub fn resolve_cid_ffi(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
-        self.resolve_cid(message, content_id)
+        blocking(self.resolve_cid(message, content_id))
     }
 
     /// Tell the engine whether the machine currently has a connection.
@@ -749,19 +749,19 @@ impl Session {
     /// happens on the engine's own runtime.
     #[uniffi::method(name = "startSyncing")]
     pub fn start_syncing_ffi(&self) -> Result<u32, SessionError> {
-        self.start_syncing()
+        blocking(self.start_syncing())
     }
 
     /// How many accounts are configured and enabled.
     #[uniffi::method(name = "configuredAccounts")]
     pub fn configured_accounts_ffi(&self) -> u32 {
-        self.configured_accounts()
+        blocking(self.configured_accounts())
     }
 
     /// Every folder of every enabled account, for the sidebar.
     #[uniffi::method(name = "mailboxes")]
     pub fn mailboxes_ffi(&self) -> Vec<crate::MailboxFfi> {
-        self.mailboxes()
+        blocking(self.mailboxes())
     }
 
     /// The binding in force for a command, for drawing a native accelerator.
@@ -816,15 +816,16 @@ impl Session {
     /// Disabled ones included: a list that hid them would make "where did my
     /// account go" the next question. An empty answer means no store, which
     /// on a machine that has never signed in is exactly the claim.
-    pub fn accounts(&self) -> Vec<crate::AccountFfi> {
+    pub async fn accounts(&self) -> Vec<crate::AccountFfi> {
         let Some((database, _)) = self.store_and_blobs() else {
             return Vec::new();
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return Vec::new();
         };
         postio_storage::repository::AccountRepository::new(&connection)
             .list()
+            .await
             .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
             .unwrap_or_default()
     }
@@ -879,7 +880,7 @@ impl Session {
                     // no longer ships". No keyring is touched.
                     let key = postio_storage::key::StoreKey::generate()
                         .derive(postio_storage::key::Purpose::Database);
-                    postio_storage::Database::open_in_memory(&key).map_err(|error| {
+                    postio_storage::Store::open_in_memory(&key).map_err(|error| {
                         SessionError::StoreUnavailable {
                             message: error.to_string(),
                         }
@@ -962,7 +963,13 @@ impl Session {
         let path = options
             .store_path
             .unwrap_or_else(postio_session::paths::store_path);
-        let (database, blobs) = postio_session::open_store_at(path, &key)
+        // Blocked on `runtime`, which exists by now: opening the store is
+        // async, and this constructor's documented contract is that it
+        // blocks. That is what the sentence above about the keyring is
+        // already telling a Swift caller -- do not invoke this on the main
+        // actor -- and it covers the store open for exactly the same reason.
+        let (database, blobs) = runtime
+            .block_on(postio_session::open_store_at(path, &key))
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
         let config = load_config(&source);
@@ -1036,7 +1043,7 @@ impl Session {
         *self.hits.lock().expect("hits lock") = None;
         *self.resting.lock().expect("resting lock") = None;
         *self.account_scope.lock().expect("account scope lock") =
-            self.resolve_account_scope(listed);
+            blocking(self.resolve_account_scope(listed));
         self.list.lock().expect("list lock").reset(total)
     }
 
@@ -1252,7 +1259,7 @@ impl Session {
     /// resolve is `Unified`, which is the conservative answer: it withholds
     /// the commands that need a single account rather than offering one that
     /// would have nowhere to act.
-    fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
+    async fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
         use postio_runtime::store::ListScope;
         match scope {
             // The Outbox names its account as plainly as these two do: every
@@ -1265,11 +1272,12 @@ impl Session {
                 let Some((database, _)) = self.store_and_blobs() else {
                     return postio_core::Scope::Unified;
                 };
-                let Ok(connection) = database.connection() else {
+                let Ok(connection) = database.connect().await else {
                     return postio_core::Scope::Unified;
                 };
                 postio_storage::repository::MailboxRepository::new(&connection)
                     .get(mailbox)
+                    .await
                     .ok()
                     .flatten()
                     .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
@@ -1774,7 +1782,7 @@ impl Session {
     ///
     /// The scope being left is remembered, so clearing comes back to it
     /// rather than reloading the world.
-    pub fn search(&self, query: &str) -> u64 {
+    pub async fn search(&self, query: &str) -> u64 {
         let Some((_, runtime)) = self.reader() else {
             return 0;
         };
@@ -1800,7 +1808,7 @@ impl Session {
         // screen rather than only in a note.
         let started = std::time::Instant::now();
         let found = runtime.block_on(async {
-            let connection = database.connection().ok()?;
+            let connection = database.connect().await.ok()?;
             postio_session::search::execute(
                 &connection,
                 account,
@@ -1808,6 +1816,7 @@ impl Session {
                 postio_search::facets::Scope::AllMail,
                 postio_search::ResultOrder::Relevance,
             )
+            .await
         });
 
         let elapsed = started.elapsed();
@@ -1980,7 +1989,7 @@ impl Session {
     /// * `postio-font:` — the eight vendored faces, through
     ///   `postio_ui::reader::document::font_bytes`, which answers only for
     ///   names in its `FACES` table and `None` for everything else.
-    pub fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
+    pub async fn reader_document(&self, message: i64, remote: crate::RemoteImagesFfi) -> String {
         use postio_ui::reader::document::{
             Rendering, Sheet, absent_html, body_html, document_for, sheet_for, suits_reader_view,
             wrap_document,
@@ -1997,7 +2006,7 @@ impl Session {
                 Sheet::Theme,
             );
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return wrap_document(
                 &absent_html(postio_ui::reader::document::Absent::Missing),
                 postio_body::RemoteImages::Blocked,
@@ -2005,7 +2014,7 @@ impl Session {
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline) {
+        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline).await {
             // `encoding_problems` is bound and not used here, and that is a
             // gap rather than a decision: this frontend renders a document
             // and has no native strip to put a caveat in, the way the GTK
@@ -2062,9 +2071,10 @@ impl Session {
     /// parts. `None` when the bytes are not already here, which is the
     /// privacy commitment rather than a gap: fetching would be the tracking
     /// pixel arriving through the back door.
-    pub fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
+    pub async fn resolve_cid(&self, message: i64, content_id: String) -> Option<crate::InlinePart> {
         let (database, blobs) = self.store_and_blobs()?;
         postio_session::reading::resolve_cid(&database, &blobs, message.into(), &content_id)
+            .await
             .map(|(bytes, mime_type)| crate::InlinePart { bytes, mime_type })
     }
 
@@ -2073,16 +2083,16 @@ impl Session {
     /// Blocks on a local read, like `openScope` does and for the same reason:
     /// a sidebar is drawn before anything can be selected in it, and the read
     /// is a few milliseconds of SQLite rather than the network.
-    pub fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
+    pub async fn mailboxes(&self) -> Vec<crate::MailboxFfi> {
         let mut folders = Vec::new();
         let Some((database, _)) = self.store_and_blobs() else {
             return folders;
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return folders;
         };
         let Ok(accounts) =
-            postio_storage::repository::AccountRepository::new(&connection).list_enabled()
+            postio_storage::repository::AccountRepository::new(&connection).list_enabled().await
         else {
             return folders;
         };
@@ -2166,15 +2176,16 @@ impl Session {
     ///
     /// ADR 0005 Q3: the first account is not special, so this counts every
     /// enabled one rather than looking for a primary.
-    pub fn configured_accounts(&self) -> u32 {
+    pub async fn configured_accounts(&self) -> u32 {
         let Some((database, _)) = self.store_and_blobs() else {
             return 0;
         };
-        let Ok(connection) = database.connection() else {
+        let Ok(connection) = database.connect().await else {
             return 0;
         };
         postio_storage::repository::AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .map(|accounts| accounts.len() as u32)
             .unwrap_or(0)
     }
@@ -2203,7 +2214,7 @@ impl Session {
     /// Does not block: `engine::start_all` spawns onto the runtime the
     /// session already holds, and the connection attempt happens there. The
     /// UI never awaits the network.
-    pub fn start_syncing(&self) -> Result<u32, SessionError> {
+    pub async fn start_syncing(&self) -> Result<u32, SessionError> {
         // Idempotent. An application lifecycle calls this twice more often
         // than once — a window reopening, a wake from sleep — and a second
         // set of engines would double every connection to the server.
@@ -2220,13 +2231,14 @@ impl Session {
 
         let accounts =
             {
-                let connection = wiring.database.connection().map_err(|error| {
+                let connection = wiring.database.connect().await.map_err(|error| {
                     SessionError::StoreUnavailable {
                         message: error.to_string(),
                     }
                 })?;
                 postio_storage::repository::AccountRepository::new(&connection)
                     .list_enabled()
+                    .await
                     .map_err(|error| SessionError::StoreUnavailable {
                         message: error.to_string(),
                     })?
@@ -2246,6 +2258,7 @@ impl Session {
             wiring.watch,
             &wiring.egress,
         )
+        .await
         .map_err(|refusal| SessionError::StoreUnavailable {
             message: refusal.to_string(),
         })?;
@@ -2367,7 +2380,7 @@ impl Session {
     }
 
     /// The database and blob store, while the session is open.
-    fn store_and_blobs(&self) -> Option<(postio_storage::Database, postio_storage::BlobStore)> {
+    fn store_and_blobs(&self) -> Option<(postio_storage::Store, postio_storage::BlobStore)> {
         let guard = self.wiring.lock().expect("wiring lock");
         let wiring = guard.as_ref()?;
         Some((wiring.database.clone(), wiring.blobs.clone()))
@@ -2522,4 +2535,33 @@ impl Session {
             })
         })
     }
+}
+
+/// Run `future` to completion on this thread, blocking until it answers.
+///
+/// # Why the FFI blocks
+///
+/// The exported surface is synchronous, because that is what a Swift caller
+/// asked for: `session.search(query)` returns a count, not a task. The store
+/// underneath is async now, so something has to turn a future back into a
+/// value, and it is here rather than in every method.
+///
+/// These were blocking reads before as well -- the storage layer was
+/// synchronous and these methods called it directly. What changed is the
+/// spelling. The contract on the surface is unchanged and is documented on
+/// `Session::open`: a caller must not invoke these on the main actor.
+fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::cell::OnceCell;
+    thread_local! {
+        static BRIDGE: OnceCell<tokio::runtime::Runtime> = const { OnceCell::new() };
+    }
+    BRIDGE.with(|cell| {
+        cell.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a current-thread runtime for synchronous store reads")
+        })
+        .block_on(future)
+    })
 }

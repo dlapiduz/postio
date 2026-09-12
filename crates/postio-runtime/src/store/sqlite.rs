@@ -238,7 +238,7 @@ impl<C: Copy> Marks<C> {
     }
 
     /// Remember where the page after `offset` begins.
-    async fn remember(&mut self, offset: u32, cursor: C) {
+    fn remember(&mut self, offset: u32, cursor: C) {
         // Bounded: a folder read end to end at 50 a page leaves 2,000 marks
         // for 100,000 messages, and each is two integers. Worth the memory to
         // never walk the folder again.

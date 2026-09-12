@@ -48,7 +48,7 @@ use postio_gtk::window::Window;
 use postio_model::ids::AccountId;
 use postio_model::{MailboxId, MailboxRole, MessageId};
 use postio_runtime::store::MailStore;
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::repository::{AccountRepository, MailboxRepository};
 
 /// The action a click on a notification runs. Application-scoped because a
@@ -97,7 +97,7 @@ pub fn config_at(path: &std::path::Path) -> SyncConfig {
 /// Everything `notify` needs that does not change per call.
 #[derive(Clone)]
 pub struct Notifier {
-    database: Database,
+    database: Store,
     store: Arc<dyn MailStore>,
     runtime: tokio::runtime::Handle,
     config: SyncConfig,
@@ -107,7 +107,7 @@ impl Notifier {
     /// Builds a notifier over `wiring`'s store and `config`'s `[sync]`
     /// settings.
     pub fn new(
-        database: Database,
+        database: Store,
         store: Arc<dyn MailStore>,
         runtime: tokio::runtime::Handle,
         config: SyncConfig,
@@ -128,17 +128,19 @@ impl Notifier {
     /// goes through `store.message_rows` on `self.runtime` the way every
     /// other read from this crate does, because building a notification body
     /// is not on any interaction's budget and must never hold the main loop.
-    pub fn notify(&self, window: &Window, mailbox: MailboxId, messages: &[MessageId]) {
+    pub async fn notify(&self, window: &Window, mailbox: MailboxId, messages: &[MessageId]) {
         if messages.is_empty() {
             return;
         }
-        let Some((role, account)) = mailbox_info(&self.database, mailbox) else {
+        let Some((role, account)) = mailbox_info(&self.database, mailbox).await else {
             return;
         };
         if !role_may_notify(&self.config, role) {
             return;
         }
-        let account_name = account_label(&self.database, account);
+        // Read before the spawn, not inside it: the future borrows the
+        // store, and a `'static` task cannot carry that borrow.
+        let account_name = account_label(&self.database, account).await;
 
         let Some(application) = window.application() else {
             return;
@@ -180,13 +182,16 @@ fn role_may_notify(config: &SyncConfig, role: MailboxRole) -> bool {
 /// What one arrived mailbox's role and account are, or `None` for a store
 /// this read cannot reach — never a reason to fail the sync pass that
 /// called this.
-fn mailbox_info(database: &Database, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
+async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
-        .connection()
+        .connect()
+
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?;
     MailboxRepository::new(&connection)
         .get(mailbox)
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?
         .map(|mailbox| (mailbox.role, mailbox.account_id))
@@ -195,14 +200,17 @@ fn mailbox_info(database: &Database, mailbox: MailboxId) -> Option<(MailboxRole,
 /// The name to put on a notification for `account`, or `None` when only one
 /// account is enabled — naming the only account there is would be noise, not
 /// information (ADR 0005 Q13).
-fn account_label(database: &Database, account: AccountId) -> Option<String> {
+async fn account_label(database: &Store, account: AccountId) -> Option<String> {
     let connection = database
-        .connection()
+        .connect()
+
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;
     let repository = AccountRepository::new(&connection);
     let enabled = repository
         .list_enabled()
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;
     if enabled.len() < 2 {
@@ -210,6 +218,7 @@ fn account_label(database: &Database, account: AccountId) -> Option<String> {
     }
     repository
         .get(account)
+        .await
         .map_err(|error| tracing::warn!(%error, "could not read the account to notify about"))
         .ok()?
         .map(|account| account.display_name)
@@ -556,7 +565,7 @@ mod tests {
     fn account_label_is_none_with_exactly_one_enabled_account() {
         let database = postio_storage::test_support::memory();
         let account = {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             postio_storage::test_support::account(&connection)
         };
         assert_eq!(
@@ -570,7 +579,7 @@ mod tests {
     fn account_label_names_the_account_once_a_second_is_enabled() {
         let database = postio_storage::test_support::memory();
         let (first, second) = {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             let first = postio_storage::test_support::account(&connection);
             let mut second = postio_model::Account::new(
                 "Work",

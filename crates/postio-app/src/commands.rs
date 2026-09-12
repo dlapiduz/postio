@@ -106,7 +106,7 @@ pub fn install(
 /// the real sink — nothing downstream needs a second `ConnectionChanged` for
 /// news this call already delivered, the same reason `install`'s
 /// `aim::mirror` call discards its receiver.
-pub fn apply(
+pub async fn apply(
     window: &Window,
     feeds: &Feeds,
     event: &Event,
@@ -164,7 +164,7 @@ pub fn apply(
         Event::MessagesRemoved { .. } => window.list().clear_selection(),
         Event::NewMail {
             mailbox, messages, ..
-        } => notifier.notify(window, *mailbox, messages),
+        } => notifier.notify(window, *mailbox, messages).await,
         _ => {}
     }
 }

@@ -40,13 +40,6 @@ postio-sync.workspace = true
 # Throwaway stores: a bench that measured a database it had to keep would be
 # measuring the disk it was left on.
 tempfile = "3.27.0"
-# `sync_writes` drives the write path a transaction at a time, so it holds a
-# `rusqlite` connection itself. The feature string has to match every other
-# consumer's: one `links = "sqlite3"` crate in the graph, and ADR 0014 is why
-# it is the SQLCipher one.
-rusqlite = { version = "0.40.2", features = [
-    "bundled-sqlcipher-vendored-openssl",
-] }
 # `store_reads` builds a multi-thread runtime and `sync_lanes` a current-thread
 # one, both by hand: the store and the sync engine are async, and a bench has
 # to own the runtime it measures them on.

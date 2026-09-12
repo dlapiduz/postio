@@ -105,7 +105,7 @@ pub async fn start(
         network: NetworkSource::NetworkManager,
         mailbox_roles,
         clock: Arc::new(SystemClock),
-    }).await {
+    }) {
         Ok(engine) => Some(engine),
         Err(error) => {
             tracing::error!(%error, "the sync engine did not start: {error}");

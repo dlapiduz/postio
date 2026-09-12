@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use postio_model::MessageId;
 use postio_runtime::Engine;
-use postio_storage::{BlobStore, Database};
+use postio_storage::{BlobStore, Store};
 
 /// How long an exported filename may get before the extension.
 ///
@@ -124,7 +124,7 @@ pub fn unique_names<'a>(subjects: impl IntoIterator<Item = Option<&'a str>>) -> 
 /// user dragged these messages by name; fetching them is the thing they asked
 /// for. With no engine, that message is an error rather than an empty file.
 pub async fn export_messages(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &Path,
@@ -136,9 +136,13 @@ pub async fn export_messages(
     let subjects: Vec<Option<String>> = messages
         .iter()
         .map(|message| {
-            crate::reading::read_message(database, *message)
-                .map(|row| row.subject)
-                .unwrap_or_default()
+            crate::blocking::now(async {
+                crate::reading::read_message(database, *message)
+                    .await
+                    .map(|row| row.subject)
+                    .unwrap_or_default()
+        
+            })
         })
         .collect();
     let names = unique_names(subjects.iter().map(Option::as_deref));
@@ -147,7 +151,7 @@ pub async fn export_messages(
 
     let mut written = Vec::new();
     for (message, name) in messages.iter().zip(names) {
-        let raw = match crate::reading::raw_blob(database, *message)? {
+        let raw = match crate::reading::raw_blob(database, *message).await? {
             Some(raw) => raw,
             None => {
                 let engine = engine.clone().ok_or(
@@ -188,7 +192,7 @@ pub async fn export_messages(
 /// the same name. It already refuses to let a part called `../../.bashrc`
 /// steer where the file goes.
 pub async fn export_part(
-    database: &Database,
+    database: &Store,
     blobs: &BlobStore,
     engine: Option<Engine>,
     into: &Path,
@@ -261,7 +265,7 @@ mod tests {
 
     /// A store with an account and an inbox, and a blob directory beside it.
     struct World {
-        database: Database,
+        database: Store,
         blobs: BlobStore,
         account: postio_model::Account,
         inbox: postio_model::MailboxId,
@@ -271,7 +275,7 @@ mod tests {
     fn world() -> World {
         let database = test_support::memory();
         let (account, inbox) = {
-            let connection = database.connection().expect("a connection");
+            let connection = database.connect().await.expect("a connection");
             test_support::account_with_inbox(&connection)
         };
         let directory = tempfile::tempdir().expect("a blob directory");
@@ -289,7 +293,7 @@ mod tests {
     impl World {
         /// A message whose raw source is `raw`, or which has none at all.
         fn message(&self, subject: Option<&str>, raw: Option<&[u8]>) -> MessageId {
-            let connection = self.database.connection().expect("a connection");
+            let connection = self.database.connect().await.expect("a connection");
             let mut message = Message::new(self.account.id, self.inbox, Utc::now());
             message.subject = subject.map(str::to_string);
             message.raw_blob_id = raw.map(|bytes| self.blobs.put(bytes).expect("a blob"));
@@ -444,7 +448,7 @@ one,two\r\n\
         let world = world();
         let parsed = postio_model::mime::parse(WITH_ATTACHMENT);
         let message = {
-            let connection = world.database.connection().expect("a connection");
+            let connection = world.database.connect().await.expect("a connection");
             let mut message = Message::new(world.account.id, world.inbox, Utc::now());
             message.subject = Some("The plan".into());
             message.raw_blob_id = Some(world.blobs.put(WITH_ATTACHMENT).expect("a blob"));
