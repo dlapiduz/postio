@@ -89,6 +89,24 @@ pub enum Error {
         source: serde_json::Error,
     },
 
+    /// A column held something that is not the type the schema declares.
+    ///
+    /// Under `rusqlite` this was `FromSqlConversionFailure`, and it arrived
+    /// with the column's index and SQL type already attached. The engine's own
+    /// accessor is sealed and treats NULL as an error rather than as `None`,
+    /// so this crate reads columns through `sql::RowExt` and this is what that
+    /// returns when the value is not what was asked for.
+    ///
+    /// Always a bug in this crate or a store written by something else: the
+    /// schema is the only writer, and it declares every one of these types.
+    #[error("{column}: {reason}")]
+    ColumnType {
+        /// Which column, by index or by name.
+        column: String,
+        /// What was expected and what was there.
+        reason: String,
+    },
+
     /// Undo was asked for on an operation that has no inverse — an expunge, an
     /// append, a send. The caller should not have offered it; see
     /// [`Operation::inverse`](postio_model::Operation::inverse).

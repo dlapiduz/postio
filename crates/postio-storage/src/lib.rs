@@ -48,8 +48,12 @@
 pub mod error;
 pub mod key;
 mod perm;
+pub(crate) mod sql;
+pub mod repository;
 pub mod schema;
 pub mod store;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use error::{Error, Result};
 pub use store::{Connection, Store, WritePriority};
