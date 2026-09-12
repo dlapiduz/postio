@@ -30,7 +30,7 @@ use crate::error::{Error, Result};
 /// what the surrounding struct field wants, which is what makes a row mapper
 /// readable. The named accessors below are for the places where there is
 /// nothing to infer from.
-pub(crate) trait FromColumn: Sized {
+pub trait FromColumn: Sized {
     /// Read this type out of `value`, or say what was there instead.
     fn from_column(value: Value, index: usize) -> Result<Self>;
 }
@@ -123,7 +123,7 @@ macro_rules! integer_column {
 integer_column!(i64, i32, i16, i8, u64, u32, u16, u8, usize, isize);
 
 /// Typed column access, with NULL as `None` rather than as an error.
-pub(crate) trait RowExt {
+pub trait RowExt {
     /// A column, as whatever the caller needs it to be.
     ///
     /// The workhorse. `row.col(0)?` infers from context exactly the way
@@ -242,7 +242,7 @@ impl RowExt for Row {
 /// Collects before returning, so the `Rows` is dropped and the connection is
 /// free for whatever the caller does next. That is not an optimisation to
 /// undo: see the module documentation.
-pub(crate) async fn all<T, F>(
+pub async fn all<T, F>(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,
@@ -264,7 +264,7 @@ where
 ///
 /// A missing row is not an error — the repositories' `get` convention — so
 /// this returns `Option` rather than failing.
-pub(crate) async fn first<T, F>(
+pub async fn first<T, F>(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,
@@ -288,7 +288,7 @@ where
 /// SQL is built at runtime and prepared separately — a placeholder list whose
 /// length is the caller's, most often. Collects and drops for the same reason
 /// [`all`] does.
-pub(crate) async fn mapped<T, F>(
+pub async fn mapped<T, F>(
     statement: &mut turso::Statement,
     params: impl IntoParams,
     mut map: F,
@@ -311,7 +311,7 @@ where
 /// already established exists. [`Error::NotFound`] rather than a panic,
 /// because "must" here is the caller's belief and not something the type
 /// system checked.
-pub(crate) async fn one<T, F>(
+pub async fn one<T, F>(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,
@@ -332,7 +332,7 @@ where
 ///
 /// Returns `0` when the query produced no row at all, which `count(*)` never
 /// does and `max()` over an empty table does.
-pub(crate) async fn scalar(
+pub async fn scalar(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,
@@ -344,7 +344,7 @@ pub(crate) async fn scalar(
 }
 
 /// Whether the query matched anything.
-pub(crate) async fn exists(
+pub async fn exists(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,
@@ -391,16 +391,20 @@ const SAVEPOINT: &str = "postio_scope";
 ///
 /// A nested scope stays a plain `SAVEPOINT`: the transaction enclosing it has
 /// already answered the question, and asking again would be a second `BEGIN`.
-pub(crate) async fn in_scope<T, F, Fut>(connection: &Connection, work: F) -> Result<T>
+pub async fn in_scope<T, E, F, Fut>(
+    connection: &Connection,
+    work: F,
+) -> std::result::Result<T, E>
 where
+    E: From<Error>,
     F: FnOnce(Connection) -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
 {
     // `is_autocommit` is false exactly when a transaction is already open,
     // which is what "am I nested" means here — whether the enclosing
     // transaction came from another scope or from a caller's own `BEGIN`
     // makes no difference to what this one has to do.
-    let outermost = connection.is_autocommit()?;
+    let outermost = connection.is_autocommit().map_err(Error::from)?;
 
     connection
         .execute(
@@ -411,7 +415,8 @@ where
             },
             (),
         )
-        .await?;
+        .await
+        .map_err(Error::from)?;
 
     match work(connection.clone()).await {
         Ok(value) => {
@@ -424,7 +429,8 @@ where
                     },
                     (),
                 )
-                .await?;
+                .await
+                .map_err(Error::from)?;
             Ok(value)
         }
         Err(error) => {
@@ -457,7 +463,7 @@ where
 ///
 /// So this borrows, exactly the way `rusqlite::params!` did, and [`bind!`]
 /// produces the `[Value; N]` the engine wants.
-pub(crate) trait Bind {
+pub trait Bind {
     /// This value, as the engine's `Value`.
     fn bind(&self) -> Value;
 }
@@ -542,6 +548,7 @@ bind_integer!(i64, i32, i16, i8, u64, u32, u16, u8, usize, isize);
 ///
 /// `bind![a, b, c]` where `turso::params![a, b, c]` would have moved. See
 /// [`Bind`].
+#[macro_export]
 macro_rules! bind {
     () => { () };
     ($($value:expr),* $(,)?) => {
@@ -549,4 +556,4 @@ macro_rules! bind {
     };
 }
 
-pub(crate) use bind;
+pub use crate::bind;

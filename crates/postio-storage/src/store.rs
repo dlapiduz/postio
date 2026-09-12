@@ -29,6 +29,7 @@
 //! is gone, and with it the thread pool that shape needed.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use turso::Builder;
 
@@ -51,18 +52,186 @@ pub use turso::{Connection, Value};
 /// crate, rather than properties taken on trust.
 pub const CIPHER: &str = "aes256gcm";
 
-/// Which write a permit is for.
+/// Which kind of caller is asking — for SQLite's write lock ([`WriteGate`]),
+/// or for a connection out of the [`Pool`] itself (#672).
 ///
-/// The engine will happily interleave a background backfill and a keystroke.
-/// This says which one should be waiting when they collide, and it exists
-/// because "the UI never awaits the network" has a quieter cousin: the UI
-/// never queues behind a sync either.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// One enum for both: they are the same distinction — "is a person waiting
+/// on this, right now" — applied to two different contended resources, and a
+/// caller declares it once rather than choosing a name per resource. See
+/// [`WriteGate`] and [`Pool::get_interactive`] for why each has to exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePriority {
-    /// A person is waiting for this. Archiving, flagging, sending, deleting.
+    /// Work a person is waiting for: a flag, an archive, a draft autosave, a
+    /// reading-pane body.
+    ///
+    /// Always goes ahead of [`WritePriority::Background`], and waits only for
+    /// a background unit already in progress.
     Interactive,
-    /// Nobody is waiting for this. Sync, backfill, indexing, eviction.
+    /// Bulk work nobody is watching: a sync pass writing a batch of headers,
+    /// or reading one to sync it.
+    ///
+    /// Yields to any interactive caller that is waiting, *before* taking the
+    /// lock or the connection rather than after — which is the whole point.
     Background,
+}
+
+/// Decides who gets SQLite's single write lock next.
+///
+/// # The problem this exists for (#425)
+///
+/// SQLite has one writer at a time, even under WAL, and its own way of
+/// resolving a collision is [`PRAGMAS`]' `busy_timeout`: the loser sleeps and
+/// retries, backing off up to a hundred milliseconds at a time. That is a
+/// *timeout*, not a queue — there is no fairness in it and no ordering, and
+/// the retrying writer simply races everyone else each time it wakes.
+///
+/// A first sync is the case where that falls apart. Two sync lanes take turns
+/// writing batches back to back, with essentially no gap between one `COMMIT`
+/// and the next `BEGIN IMMEDIATE`, so a keystroke's write wakes up, finds the
+/// lock taken *again*, and sleeps longer. Measured on the reproduction in
+/// `postio-session/tests/interactive_write.rs`: an archive keystroke took
+/// **1.8 seconds** to write one row while a backfill ran, with the connection
+/// pool almost idle (`Pool::get` returned in two microseconds) — so it was
+/// never pool exhaustion, and never the network. Shortening the background
+/// transactions does not fix it either: cut to an eighth of their size, the
+/// same keystroke still took half a second, because the number of races it
+/// had to lose went *up* as each one got shorter.
+///
+/// So the fix cannot be a bigger pool or a shorter transaction. It has to be
+/// an actual queue with a priority in it, which is this.
+///
+/// # What it guarantees
+///
+/// A background writer never *begins* a write while an interactive writer is
+/// waiting. So an interactive write waits at most for the one background unit
+/// already in progress, however long the backfill as a whole runs — which is
+/// what turns "wait for the download to finish" into "wait for one batch".
+/// Bounding that unit is the other half of the fix, and lives with the sync
+/// batch itself.
+///
+/// # Two rules for callers
+///
+/// * **Take the pooled connection first, then the permit.** Never the other
+///   way round: a thread holding a permit and waiting on [`Pool::get`] can be
+///   waiting for a connection held by a thread that is waiting for the permit.
+///   Every caller in this workspace acquires in that order.
+/// * **One permit at a time per thread.** The gate is not re-entrant, so a
+///   permit taken while holding another deadlocks against itself. A permit is
+///   meant to wrap one write unit, not to be threaded through a call graph.
+///
+/// Interactive writers are human-paced, so background work cannot be starved
+/// by them in any real workload; the gate deliberately does not try to be
+/// fair in that direction.
+#[derive(Debug, Clone)]
+pub struct WriteGate {
+    inner: Arc<GateInner>,
+}
+
+#[derive(Debug)]
+struct GateInner {
+    state: Mutex<GateState>,
+    free: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct GateState {
+    /// Whether a permit is outstanding.
+    held: bool,
+    /// Interactive writers blocked in [`WriteGate::acquire`] right now.
+    ///
+    /// Counted *before* waiting, which is what lets a background writer see
+    /// them and stand aside rather than taking the lock out from under them.
+    interactive_waiting: usize,
+}
+
+impl WriteGate {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(GateInner {
+                state: Mutex::new(GateState::default()),
+                free: Condvar::new(),
+            }),
+        }
+    }
+
+    /// Waits for the right to hold SQLite's write lock, and returns the permit
+    /// that carries it. Releasing is dropping the permit.
+    ///
+    /// Read [`WriteGate`]'s two rules for callers before adding a call site.
+    pub fn acquire(&self, priority: WritePriority) -> WritePermit {
+        let mut state = self.lock();
+        match priority {
+            WritePriority::Interactive => {
+                state.interactive_waiting += 1;
+                while state.held {
+                    state = self
+                        .inner
+                        .free
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+                state.interactive_waiting -= 1;
+            }
+            WritePriority::Background => {
+                while state.held || state.interactive_waiting > 0 {
+                    state = self
+                        .inner
+                        .free
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+            }
+        }
+        state.held = true;
+        WritePermit {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Whether an interactive writer is waiting for the lock right now.
+    ///
+    /// This is what makes the gate's ordering *observable*, and so testable
+    /// without a stopwatch: `postio-storage/tests/write_gate.rs` uses it to
+    /// establish that a writer has actually queued before asserting who is
+    /// served next. A background writer with a long unit to do could also
+    /// consult it to stop between chunks rather than only at its next
+    /// acquisition; none does today, because re-acquiring per write unit
+    /// already bounds the wait.
+    pub fn interactive_is_waiting(&self) -> bool {
+        self.lock().interactive_waiting > 0
+    }
+
+    fn lock(&self) -> MutexGuard<'_, GateState> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The right to hold SQLite's write lock, released when this is dropped.
+///
+/// Handed out by [`WriteGate::acquire`].
+#[derive(Debug)]
+pub struct WritePermit {
+    inner: Arc<GateInner>,
+}
+
+impl Drop for WritePermit {
+    fn drop(&mut self) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        state.held = false;
+        drop(state);
+        // `notify_all`, not `notify_one`: the waiters do not share a predicate
+        // — a background writer must also see `interactive_waiting == 0` — so
+        // waking a single arbitrary one can wake the only thread that still
+        // has to go back to sleep, and leave the lock idle with a queue on it.
+        self.inner.free.notify_all();
+    }
 }
 
 /// The store: a database handle and the path it came from.
@@ -73,6 +242,7 @@ pub enum WritePriority {
 pub struct Store {
     database: turso::Database,
     path: Option<PathBuf>,
+    gate: WriteGate,
 }
 
 impl std::fmt::Debug for Store {
@@ -102,6 +272,7 @@ impl Store {
         let store = Self {
             database,
             path: Some(path.to_path_buf()),
+            gate: WriteGate::new(),
         };
 
         if fresh {
@@ -180,10 +351,20 @@ impl Store {
     /// Paying an `async` on every checkout to make that impossible is the
     /// right trade. The alternative -- a `connect_raw` for callers who know
     /// better -- is an invitation to be wrong quietly.
-    pub async fn connect(&self) -> Result<Connection> {
+    pub async fn connect(&self) -> Result<Checkout> {
         let connection = self.database.connect()?;
         connection.execute("PRAGMA foreign_keys = ON", ()).await?;
-        Ok(connection)
+        Ok(Checkout {
+            connection,
+            gate: self.gate.clone(),
+        })
+    }
+
+    /// Who gets the writer next, when two callers want it.
+    ///
+    /// Machine-wide for this store: one gate, cloned into every checkout.
+    pub fn write_gate(&self) -> &WriteGate {
+        &self.gate
     }
 
     /// A connection with nothing configured on it.
@@ -199,6 +380,46 @@ impl Store {
     /// Where the store lives, or `None` for one that is not on disk.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+}
+
+/// A connection, and the gate that says who writes next.
+///
+/// # Why the gate travels with the connection
+///
+/// Because the alternative is remembering to fetch it. This is what
+/// `PooledConnection` was, minus the pooling the engine now does itself:
+/// [`Deref`] to the connection, so it is used exactly like one, with
+/// [`write_gate`](Self::write_gate) beside it for the callers that are about
+/// to write and have to say on whose behalf.
+///
+/// A background writer that forgets to take a permit does not fail -- it just
+/// makes a person wait, somewhere else, for a reason that never appears in a
+/// log. Carrying the gate is what keeps that from being a thing to remember.
+#[derive(Debug, Clone)]
+pub struct Checkout {
+    connection: Connection,
+    gate: WriteGate,
+}
+
+impl Checkout {
+    /// Who gets the writer next. See [`WriteGate`].
+    pub fn write_gate(&self) -> &WriteGate {
+        &self.gate
+    }
+
+    /// The connection itself, for a caller that wants to hold one past this
+    /// handle's lifetime.
+    pub fn into_connection(self) -> Connection {
+        self.connection
+    }
+}
+
+impl std::ops::Deref for Checkout {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        &self.connection
     }
 }
 

@@ -64,8 +64,8 @@ use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
-use postio_storage::{PooledConnection, WritePriority};
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use postio_storage::{Checkout, Connection, WritePriority};
+
 
 use crate::drain::SyncError;
 use postio_account::cancel::CancelToken;
@@ -157,7 +157,7 @@ pub struct Report {
 /// if its `UIDVALIDITY` just changed, after the caller has wiped its stale
 /// rows. This function does not check either.
 pub async fn sync_mailbox(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
@@ -180,7 +180,7 @@ pub async fn sync_mailbox(
 /// messages rather than needing hundreds of fixtures to see more than one.
 /// `batch_size` is clamped to at least one.
 pub async fn sync_mailbox_with_batch_size(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -218,7 +218,7 @@ pub(crate) enum Coverage {
 
 /// The body of an enumeration pass. See [`sync_mailbox_with_batch_size`].
 pub(crate) async fn enumerate(
-    connection: &PooledConnection,
+    connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     batch_size: usize,
@@ -236,7 +236,7 @@ pub(crate) async fn enumerate(
     }
 
     let now = Utc::now();
-    SyncStateRepository::new(connection).observe(mailbox.id, &server_status, now)?;
+    SyncStateRepository::new(connection).observe(mailbox.id, &server_status, now).await?;
 
     // The UID ceiling: the highest UID this pass could reach, and the range
     // it enumerates. Not what progress is reported against — see
@@ -245,12 +245,12 @@ pub(crate) async fn enumerate(
     let mut report = Report::default();
 
     if highest_uid < 1 {
-        SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
+        SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now).await?;
         return Ok(report);
     }
 
     let known: BTreeSet<u32> = MessageRepository::new(connection)
-        .uids_in(mailbox.id, selected.generation)?
+        .uids_in(mailbox.id, selected.generation).await?
         .into_iter()
         .map(Uid::get)
         .collect();
@@ -259,7 +259,7 @@ pub(crate) async fn enumerate(
     // recorded against never changes mid-pass. `None` (an orphaned mailbox
     // row) just means no sightings are recorded, rather than failing sync
     // over a nicety.
-    let account = AccountRepository::new(connection).get(mailbox.account_id)?;
+    let account = AccountRepository::new(connection).get(mailbox.account_id).await?;
 
     // What the server actually holds, when it will say — otherwise every UID
     // below the ceiling, which is what this did for every backend before
@@ -351,7 +351,7 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages)?;
+        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages).await?;
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
@@ -377,7 +377,7 @@ pub(crate) async fn enumerate(
         });
     }
 
-    SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now)?;
+    SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now).await?;
     Ok(report)
 }
 
@@ -473,8 +473,8 @@ async fn existing_uids(
 /// COMMIT) but the UI thread, which writes local-first on every flag, archive
 /// and draft autosave through this same pool. Taking the write lock up front
 /// is what puts this back inside the five-second timeout.
-pub fn commit_batch(
-    connection: &PooledConnection,
+pub async fn commit_batch(
+    connection: &Checkout,
     mailbox: &Mailbox,
     account: Option<&Account>,
     known: &BTreeSet<u32>,
@@ -490,39 +490,51 @@ pub fn commit_batch(
         // most (#425).
         let permit = connection.write_gate().acquire(WritePriority::Background);
 
-        let unit = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-            .map_err(postio_storage::Error::from)?;
-        let connection: &Connection = &unit;
+        // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
+        // outermost level, and for the reason #79 records: the first
+        // statement inside is a read, and a deferred transaction that then
+        // has to promote its read lock to a write lock is refused outright
+        // rather than waiting.
+        let source: Vec<Message> = slice.to_vec();
+        let account_id = mailbox.account_id;
+        let known_uids = &known;
+        let (upsert, written) =
+            postio_storage::transaction(connection, move |connection| async move {
+                let mut written = source;
+                let upsert = MessageRepository::new(&connection)
+                    .upsert_batch(&mut written)
+                    .await?;
 
-        let mut written: Vec<Message> = slice.to_vec();
-        let upsert = MessageRepository::new(connection).upsert_batch(&mut written)?;
+                let threading = ThreadingRepository::new(&connection, account_id);
+                for message in &written {
+                    threading.thread(message).await?;
+                }
+
+                // Only messages that were not already known before this pass:
+                // a `Coverage::Everything` re-enumeration re-fetches messages
+                // already stored (that is its whole point, refreshing what an
+                // untrustworthy incremental pull may have missed), and
+                // recording those again would count the same correspondent
+                // twice for one message.
+                if let Some(account) = account {
+                    for message in &written {
+                        let is_new = message
+                            .server
+                            .uid
+                            .is_some_and(|uid| !known_uids.contains(&uid.get()));
+                        if is_new {
+                            crate::contacts::record(&connection, account, message).await?;
+                        }
+                    }
+                }
+
+                Ok::<_, SyncError>((upsert, written))
+            })
+            .await?;
+
         report.inserted += upsert.inserted;
         report.updated += upsert.updated;
-
-        let threading = ThreadingRepository::new(connection, mailbox.account_id);
-        for message in &written {
-            threading.thread(message)?;
-            report.threaded += 1;
-        }
-
-        // Only messages that were not already known before this pass: a
-        // `Coverage::Everything` re-enumeration re-fetches messages already
-        // stored (that is its whole point, refreshing what an untrustworthy
-        // incremental pull may have missed), and recording those again would
-        // count the same correspondent twice for one message.
-        if let Some(account) = account {
-            for message in &written {
-                let is_new = message
-                    .server
-                    .uid
-                    .is_some_and(|uid| !known.contains(&uid.get()));
-                if is_new {
-                    crate::contacts::record(connection, account, message)?;
-                }
-            }
-        }
-
-        unit.commit().map_err(postio_storage::Error::from)?;
+        report.threaded += written.len();
         // The ids `upsert_batch` assigned belong to the caller's messages, not
         // to this unit's copy of them.
         slice.clone_from_slice(&written);

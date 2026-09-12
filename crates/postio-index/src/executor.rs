@@ -26,13 +26,15 @@ use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use postio_model::{AccountScope, EmailAddress, MailboxId, MessageId, ThreadId};
-use rusqlite::types::Value;
-use rusqlite::{Connection, params_from_iter};
 
 use postio_search::facets::{Facets, Refinement, Scope, ScopeCount};
 use postio_search::query::{Filter, ParsedQuery, fts_literal};
 use postio_search::results::{SearchHit, SearchResults, TOTAL_HITS_CAP};
 
+
+use postio_storage::Connection;
+use postio_storage::sql::{self, RowExt as _, bind};
+use turso::Row;
 use crate::error::Result;
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
@@ -180,7 +182,7 @@ pub struct SearchRequest<'a> {
 /// `now` is the reference clock for the recency boost, taken as a parameter
 /// for the same reason [`postio_search::parse`] takes `today`: it keeps
 /// ranking a pure, reproducible function of its inputs.
-pub fn search(
+pub async fn search(
     connection: &Connection,
     request: &SearchRequest<'_>,
     now: DateTime<Utc>,
@@ -188,7 +190,7 @@ pub fn search(
     let start = Instant::now();
     let plan = Plan::build(request);
 
-    let total_hits = plan.count(connection)?;
+    let total_hits = plan.count(connection).await?;
     let total_hits_capped = total_hits >= TOTAL_HITS_CAP;
     // A term matched by most of a large mailbox has no cheap true top-K by
     // `bm25`: FTS5's incremental top-K scan only pays off when few enough
@@ -222,7 +224,7 @@ pub fn search(
             .saturating_mul(RECENCY_POOL_MULTIPLIER)
             .max(RECENCY_POOL_MIN)
     };
-    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits, now)?;
+    let mut candidates = plan.fetch(connection, pool_size, rank_by_relevance, total_hits, now).await?;
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
@@ -275,7 +277,7 @@ pub fn search(
         total_hits,
         total_hits_capped,
         elapsed,
-        corpus_complete: corpus_complete(connection, request)?,
+        corpus_complete: corpus_complete(connection, request).await?,
     })
 }
 
@@ -398,15 +400,15 @@ fn suggestion_for(
 /// that heals itself. Under-reporting the caveat for a few seconds after
 /// launch is the right way to be wrong here — the alternative is a caveat
 /// that costs the query its budget forever.
-fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
+async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Result<bool> {
     let mut conditions = vec![
         "m.deleted_locally = 0".to_string(),
         "m.body_state IN ('not_fetched', 'headers_only')".to_string(),
     ];
-    let mut params: Vec<Value> = Vec::new();
+    let mut params: Vec<turso::Value> = Vec::new();
     if let Some(id) = request.account.account() {
         conditions.push("m.account_id = ?".to_string());
-        params.push(Value::Integer(id.get()));
+        params.push(turso::Value::Integer(id.get()));
     }
     if let Some((sql, values)) = scope_condition(request.scope, request.account) {
         conditions.push(sql);
@@ -417,7 +419,13 @@ fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -> Resu
         "SELECT NOT EXISTS (SELECT 1 FROM messages m WHERE {})",
         conditions.join(" AND ")
     );
-    let complete = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
+    let complete = sql::one(
+        connection,
+        &sql,
+        params.clone(),
+        |row| row.col(0),
+    )
+    .await?;
     Ok(complete)
 }
 
@@ -467,7 +475,7 @@ const VOCABULARY_CAP: i64 = 4_096;
 /// Every count here is bounded the same way [`SearchResults::total_hits`] is
 /// — see [`TOTAL_HITS_CAP`] — so a query broad enough to match a whole
 /// mailbox costs the same as any other.
-pub fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
+pub async fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Facets> {
     // Scope counts hold the query and vary the scope: the column says what
     // *switching* would find, so it cannot be measured inside the scope the
     // user is already in.
@@ -476,15 +484,15 @@ pub fn facets(connection: &Connection, request: &SearchRequest<'_>) -> Result<Fa
         let plan = Plan::build(&SearchRequest { scope, ..*request });
         scopes.push(ScopeCount {
             scope,
-            hits: plan.count(connection)?,
+            hits: plan.count(connection).await?,
         });
     }
 
     // Refinements are the opposite: they narrow what is on screen, so they
     // are measured inside the current scope.
     let plan = Plan::build(request);
-    let mut refinements = plan.flag_refinements(connection)?;
-    refinements.extend(plan.folder_refinements(connection)?);
+    let mut refinements = plan.flag_refinements(connection).await?;
+    refinements.extend(plan.folder_refinements(connection).await?);
 
     Ok(Facets {
         scopes,
@@ -628,8 +636,7 @@ impl Candidate {
             thread_id: self.thread_id,
             mailbox_id: self.mailbox_id,
             subject: self.subject,
-            from: self
-                .from_address
+            from: self.from_address
                 .map(|address| EmailAddress::new(self.from_name, address)),
             received_at: self.received_at,
             snippet: self.snippet,
@@ -642,7 +649,7 @@ impl Candidate {
 /// state, compiled once and shared by the count query and the fetch query.
 struct Plan {
     conditions: Vec<String>,
-    params: Vec<Value>,
+    params: Vec<turso::Value>,
     /// Which accounts the request was about.
     ///
     /// Carried rather than recovered from `params`, which `hydrate` used to
@@ -665,7 +672,7 @@ struct Plan {
     /// `bm25`/`snippet` against what the user actually typed as text rather
     /// than, say, an unrelated `from:` value that happens to also be a valid
     /// (if redundant) constraint on the same rows.
-    match_param: Option<Value>,
+    match_param: Option<turso::Value>,
 }
 
 impl Plan {
@@ -675,11 +682,11 @@ impl Plan {
         // without `idx_messages_recency` the recency path has no index that
         // can supply its ordering once this conjunct is gone (ADR 0005 Q5a).
         let mut conditions = vec!["m.deleted_locally = 0".to_string()];
-        let mut params: Vec<Value> = Vec::new();
+        let mut params: Vec<turso::Value> = Vec::new();
         match request.account.account() {
             Some(id) => {
                 conditions.push("m.account_id = ?".to_string());
-                params.push(Value::Integer(id.get()));
+                params.push(turso::Value::Integer(id.get()));
             }
             // `Unified` is "every **enabled** account", not "every account",
             // and the difference only became observable when #961 gave the
@@ -721,7 +728,7 @@ impl Plan {
                                    WHERE message_bodies_fts MATCH ?)"
                     .to_string(),
             );
-            let literal = Value::Text(fts_literal(&term.value));
+            let literal = turso::Value::Text(fts_literal(&term.value));
             params.push(literal.clone());
             params.push(literal);
         }
@@ -744,7 +751,7 @@ impl Plan {
             // Nothing is pushed onto `params` here: the join's parameters sit
             // before every condition's in the statement text, and
             // `from_params` is what binds them.
-            match_param = Some(Value::Text(expr));
+            match_param = Some(turso::Value::Text(expr));
             has_match = true;
         }
 
@@ -798,7 +805,7 @@ impl Plan {
     /// field: a driven statement matches in its `FROM`, so its two
     /// expressions come first, and a probed one matches in its `WHERE`, so
     /// they come last.
-    fn params_for(&self, form: Form) -> Vec<Value> {
+    fn params_for(&self, form: Form) -> Vec<turso::Value> {
         match form {
             Form::Driven => {
                 let mut params = self.match_params();
@@ -830,7 +837,7 @@ impl Plan {
     /// list rather than pushed onto `params` in `build`, so that every caller
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
-    fn match_params(&self) -> Vec<Value> {
+    fn match_params(&self) -> Vec<turso::Value> {
         match &self.match_param {
             // Once for each index. The same expression: a term the user typed
             // is asked of the metadata and of the body, and either is a hit.
@@ -871,15 +878,21 @@ impl Plan {
     /// ask "how many". Wrapping the scan in its own `LIMIT` bounds that cost
     /// regardless of how broad the match is, at the price of an exact count
     /// past the cap. See [`SearchResults::total_hits_capped`].
-    fn count(&self, connection: &Connection) -> Result<u64> {
+    async fn count(&self, connection: &Connection) -> Result<u64> {
         let sql = format!(
             "SELECT count(*) FROM (SELECT DISTINCT m.id {} WHERE {} LIMIT ?)",
             self.source_sql(Form::Driven),
             self.where_sql(Form::Driven)
         );
         let mut params = self.params_for(Form::Driven);
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
-        let count: i64 = connection.query_row(&sql, params_from_iter(&params), |row| row.get(0))?;
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
+        let count: i64 = sql::one(
+            connection,
+            &sql,
+            params.clone(),
+            |row| row.col(0),
+        )
+        .await?;
         Ok(count as u64)
     }
 
@@ -896,7 +909,7 @@ impl Plan {
     /// [`SearchResults::total_hits`] is — and since [`Facets::suggested`]
     /// only ever compares them against that same capped total, a capped
     /// result set still ranks its refinements against each other correctly.
-    fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+    async fn flag_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
         let sql = format!(
             "SELECT
                  coalesce(sum(seen = 0), 0),
@@ -912,13 +925,19 @@ impl Plan {
         // The `size >= ?` bind sits before every condition's parameter,
         // because the aggregate is in the outer SELECT and the conditions are
         // in the subquery.
-        let mut params = vec![Value::Integer(LARGE_BYTES as i64)];
+        let mut params = vec![turso::Value::Integer(LARGE_BYTES as i64)];
         params.extend(self.params_for(Form::Driven));
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
 
-        let counts: [i64; 4] = connection.query_row(&sql, params_from_iter(&params), |row| {
-            Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
-        })?;
+        let counts: [i64; 4] = sql::one(
+            connection,
+            &sql,
+            params.clone(),
+            |row| {
+            Ok([row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?])
+        },
+        )
+        .await?;
 
         Ok(["is:unread", "is:flagged", "has:attach", LARGE_TOKEN]
             .into_iter()
@@ -936,7 +955,7 @@ impl Plan {
     /// because `list:` cannot yet be answered exactly — see [`Scope::Lists`]
     /// and `postio-0bz`. `in:` names the same folder and is exact today, and
     /// the chip is a token the user could have typed either way.
-    fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
+    async fn folder_refinements(&self, connection: &Connection) -> Result<Vec<Refinement>> {
         let sql = format!(
             "SELECT name, count(*) AS hits FROM (
                  SELECT DISTINCT m.id, mb.name AS name {from}
@@ -948,18 +967,23 @@ impl Plan {
         );
 
         let mut params = self.params_for(Form::Driven);
-        params.push(Value::Integer(TOTAL_HITS_CAP as i64));
-        params.push(Value::Integer(REFINE_FOLDERS as i64));
+        params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
+        params.push(turso::Value::Integer(REFINE_FOLDERS as i64));
 
-        let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(&params), |row| {
+        sql::all(
+            connection,
+            &sql,
+            params.clone(),
+            |row| {
             Ok(Refinement {
-                token: format!("in:{}", quote_value(&row.get::<_, String>(0)?)),
-                hits: row.get::<_, i64>(1)?.max(0) as u64,
+                token: format!("in:{}", quote_value(&row.col::<String>(0)?)),
+                hits: row.col::<i64>(1)?.max(0) as u64,
             })
-        })?;
-        rows.collect::<rusqlite::Result<_>>().map_err(Into::into)
-    }
+        },
+        )
+        .await
+    .map_err(Into::into)
+}
 
     /// Selects a candidate pool, then hydrates it into full [`Candidate`]s.
     ///
@@ -975,7 +999,7 @@ impl Plan {
     /// back to the same statement was enough to lose the plan again. Hydrating
     /// afterward, for only the (at most `pool_size`) ids that survive, keeps
     /// that cost paid once per candidate rather than once per match.
-    fn fetch(
+    async fn fetch(
         &self,
         connection: &Connection,
         pool_size: u32,
@@ -984,8 +1008,8 @@ impl Plan {
         now: DateTime<Utc>,
     ) -> Result<Vec<Candidate>> {
         let scored =
-            self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now)?;
-        self.hydrate(connection, &scored)
+            self.fetch_candidates(connection, pool_size, rank_by_relevance, total_hits, now).await?;
+        self.hydrate(connection, &scored).await
     }
 
     /// The candidate pool: an id and the combined `bm25` for each, in the
@@ -998,7 +1022,7 @@ impl Plan {
     /// budget, whether the second walk was a `GROUP BY` over the whole union
     /// or an `IN` list FTS5 declines to use as a docid constraint. The pool
     /// query has the scores in hand already; carrying them out costs nothing.
-    fn fetch_candidates(
+    async fn fetch_candidates(
         &self,
         connection: &Connection,
         pool_size: u32,
@@ -1042,7 +1066,7 @@ impl Plan {
             (true, Form::Driven) => "hits.meta, hits.body",
             _ => "NULL, NULL",
         };
-        let mut params: Vec<Value> = Vec::new();
+        let mut params: Vec<turso::Value> = Vec::new();
         let sql = format!(
             "SELECT m.id, {scores} {from} WHERE {where_sql} ORDER BY {order_by} LIMIT ?",
             from = self.source_sql(form),
@@ -1055,22 +1079,22 @@ impl Plan {
         // `WHERE`'s and the `LIMIT`'s -- and only when that ordering is the
         // one carrying the term, or the count would not match the statement.
         if rank_by_relevance {
-            params.push(Value::Integer(now.timestamp_millis()));
+            params.push(turso::Value::Integer(now.timestamp_millis()));
         }
         // Asked for more than the pool, because the union can hand back the
         // same message twice and the duplicates are folded below. Doubling is
         // the bound: a message appears at most once per index.
-        params.push(Value::Integer(i64::from(pool_size).saturating_mul(2)));
+        params.push(turso::Value::Integer(i64::from(pool_size).saturating_mul(2)));
 
-        let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(&params), |row| {
-            let meta: Option<f64> = row.get(1)?;
-            let body: Option<f64> = row.get(2)?;
+        let mut statement = connection.prepare(&sql).await?;
+        let rows = sql::mapped(&mut statement, params.clone(), |row| {
+            let meta: Option<f64> = row.col(1)?;
+            let body: Option<f64> = row.col(2)?;
             Ok((
-                row.get::<_, i64>(0)?,
+                row.col::<i64>(0)?,
                 meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
             ))
-        })?;
+        }).await?;
 
         // Folded here rather than with a `GROUP BY`, which would cost a sort
         // over the match set — the thing this whole shape exists to avoid.
@@ -1080,8 +1104,7 @@ impl Plan {
         let mut order: Vec<i64> = Vec::with_capacity(pool_size as usize);
         let mut scored: std::collections::HashMap<i64, f64> =
             std::collections::HashMap::with_capacity(pool_size as usize);
-        for row in rows {
-            let (id, score) = row?;
+        for (id, score) in rows {
             match scored.entry(id) {
                 std::collections::hash_map::Entry::Occupied(mut seen) => *seen.get_mut() += score,
                 std::collections::hash_map::Entry::Vacant(empty) => {
@@ -1165,7 +1188,7 @@ impl Plan {
         )
     }
 
-    fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
+    async fn hydrate(&self, connection: &Connection, scored: &[(i64, f64)]) -> Result<Vec<Candidate>> {
         if scored.is_empty() {
             return Ok(Vec::new());
         }
@@ -1187,25 +1210,24 @@ impl Plan {
         // subquery's own if it has one.
         let mut params = Vec::with_capacity(ids.len() + 1);
         if let Some(id) = self.account.account() {
-            params.push(Value::Integer(id.get()));
+            params.push(turso::Value::Integer(id.get()));
         }
-        params.extend(ids.iter().map(|id| Value::Integer(*id)));
+        params.extend(ids.iter().map(|id| turso::Value::Integer(*id)));
 
-        let mut statement = connection.prepare(&sql)?;
-        let by_id: std::collections::HashMap<i64, Candidate> = statement
-            .query_map(params_from_iter(&params), |row| {
-                let id: i64 = row.get(0)?;
+        let mut statement = connection.prepare(&sql).await?;
+        let by_id: std::collections::HashMap<i64, Candidate> = sql::mapped(&mut statement, params.clone(), |row| {
+                let id: i64 = row.col(0)?;
                 Ok((
                     id,
                     Candidate {
                         message_id: MessageId::new(id),
-                        thread_id: row.get::<_, Option<i64>>(1)?.map(ThreadId::new),
-                        mailbox_id: MailboxId::new(row.get(2)?),
-                        subject: row.get(3)?,
-                        received_at: from_millis(row.get(4)?),
-                        from_name: row.get(5)?,
-                        from_address: row.get(6)?,
-                        sender_times_seen: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                        thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
+                        mailbox_id: MailboxId::new(row.col(2)?),
+                        subject: row.col(3)?,
+                        received_at: from_millis(row.col(4)?),
+                        from_name: row.col(5)?,
+                        from_address: row.col(6)?,
+                        sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see
@@ -1214,8 +1236,9 @@ impl Plan {
                         score: 0.0,
                     },
                 ))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+            }).await?
+            .into_iter()
+            .collect();
 
         // `hydrate`'s own query has no `ORDER BY`; the caller's ordering (by
         // relevance or by recency) lives entirely in the pool's order.
@@ -1237,7 +1260,7 @@ impl Plan {
 /// Scoped by mailbox *role* rather than by id, because the scope has to mean
 /// the same thing on every account and before any folder has been chosen. See
 /// [`Scope::Lists`] for why "lists" is a role test and not a `List-Id` one.
-fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<Value>)> {
+fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<turso::Value>)> {
     let role = match scope {
         Scope::AllMail => return None,
         Scope::Inbox => "role = 'inbox'",
@@ -1250,7 +1273,7 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<V
     Some(match account.account() {
         Some(id) => (
             format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE account_id = ? AND {role})"),
-            vec![Value::Integer(id.get())],
+            vec![turso::Value::Integer(id.get())],
         ),
         None => (
             format!("m.mailbox_id IN (SELECT id FROM mailboxes WHERE {role})"),
@@ -1261,7 +1284,7 @@ fn scope_condition(scope: Scope, account: AccountScope) -> Option<(String, Vec<V
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
 /// bound parameters, in the order the `?` placeholders appear.
-fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
+fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
     match filter {
         Filter::From(value) => fts_column_condition("sender", value),
         Filter::To(value) => fts_column_condition("recipients", value),
@@ -1275,16 +1298,16 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
             "m.account_id IN (SELECT id FROM accounts \
              WHERE lower(display_name) = lower(?) OR lower(address) = lower(?))"
                 .to_string(),
-            vec![Value::Text(value.clone()), Value::Text(value.clone())],
+            vec![turso::Value::Text(value.clone()), turso::Value::Text(value.clone())],
         ),
         Filter::In(value) => (
             "m.mailbox_id IN (SELECT id FROM mailboxes \
              WHERE lower(name) = lower(?) OR lower(path) = lower(?) OR role = lower(?))"
                 .to_string(),
             vec![
-                Value::Text(value.clone()),
-                Value::Text(value.clone()),
-                Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
+                turso::Value::Text(value.clone()),
             ],
         ),
         // ADR 0007 Q3: "from or to any member", resolved against `recipients`
@@ -1303,7 +1326,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                  JOIN contact_groups g ON g.id = gm.group_id \
                  WHERE lower(g.name) = lower(?)))"
                 .to_string(),
-            vec![Value::Text(value.clone())],
+            vec![turso::Value::Text(value.clone())],
         ),
         // ADR 0025 Q2, and the one operator that is not an FTS `MATCH`. Header
         // values are short and structured -- `spf=pass`, `1.5.24`,
@@ -1322,7 +1345,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                 "EXISTS (SELECT 1 FROM message_headers h \
                   WHERE h.message_id = m.id AND h.name = ?)"
                     .to_string(),
-                vec![Value::Text(name.clone())],
+                vec![turso::Value::Text(name.clone())],
             ),
             // `LIKE` folds ASCII case on its own, which is what ADR 0025 Q6
             // asks for. It does not fold anything else, so a value that
@@ -1334,7 +1357,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
                   WHERE h.message_id = m.id AND h.name = ? \
                     AND h.value LIKE '%' || ? || '%' ESCAPE '\\')"
                     .to_string(),
-                vec![Value::Text(name.clone()), Value::Text(escape_like(value))],
+                vec![turso::Value::Text(name.clone()), turso::Value::Text(escape_like(value))],
             ),
         },
         Filter::Filename(value) => fts_column_condition("filenames", value),
@@ -1353,19 +1376,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
         }
         Filter::After(date) => (
             "m.received_at >= ?".to_string(),
-            vec![Value::Integer(day_start_millis(*date))],
+            vec![turso::Value::Integer(day_start_millis(*date))],
         ),
         Filter::Before(date) => (
             "m.received_at < ?".to_string(),
-            vec![Value::Integer(day_start_millis(*date))],
+            vec![turso::Value::Integer(day_start_millis(*date))],
         ),
         Filter::Larger(bytes) => (
             "m.size >= ?".to_string(),
-            vec![Value::Integer(*bytes as i64)],
+            vec![turso::Value::Integer(*bytes as i64)],
         ),
         Filter::Smaller(bytes) => (
             "m.size <= ?".to_string(),
-            vec![Value::Integer(*bytes as i64)],
+            vec![turso::Value::Integer(*bytes as i64)],
         ),
     }
 }
@@ -1385,10 +1408,10 @@ fn filter_condition(filter: &Filter) -> (String, Vec<Value>) {
 /// benchmark caught this). Querying the column FTS5 already indexes turns
 /// that into a single inverted-index lookup, the same cost class as free
 /// text.
-fn fts_column_condition(column: &str, value: &str) -> (String, Vec<Value>) {
+fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     (
         "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)".to_string(),
-        vec![Value::Text(format!("{column}:{}", fts_literal(value)))],
+        vec![turso::Value::Text(format!("{column}:{}", fts_literal(value)))],
     )
 }
 
@@ -1449,7 +1472,7 @@ mod tests {
             params: Vec::new(),
             account: AccountScope::Unified,
             has_match: true,
-            match_param: Some(Value::Text("invoice".to_owned())),
+            match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
     }
 
@@ -1580,12 +1603,10 @@ mod tests {
         let plan = Plan::build(&request);
 
         let sql = plan.hydrate_sql("?, ?, ?");
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .expect("prepare the hydrate statement");
-        let steps: Vec<String> = statement
-            .query_map(rusqlite::params![1i64, 10i64, 11i64, 12i64], |row| {
-                row.get(3)
+        let steps: Vec<String> = sql::mapped(&mut statement, rusqlite::bind![1i64, 10i64, 11i64, 12i64], |row| {
+                row.col(3)
             })
             .expect("explain")
             .flatten()

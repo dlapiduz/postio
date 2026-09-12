@@ -271,7 +271,7 @@ impl StatusTracker {
     /// A mailbox this tracker never saw start leaves the set alone, so a
     /// caller that reports a requeued or cancelled pass twice cannot empty it
     /// out from under the passes that really are running.
-    pub fn on_sync_finished(&mut self, mailbox: MailboxId, at: DateTime<Utc>) -> SyncStatus {
+    pub async fn on_sync_finished(&mut self, mailbox: MailboxId, at: DateTime<Utc>) -> SyncStatus {
         let was_foremost = self.foremost() == Some(mailbox);
         self.in_flight.retain(|&in_flight| in_flight != mailbox);
 

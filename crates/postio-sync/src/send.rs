@@ -88,7 +88,7 @@ use postio_storage::repository::{
     AccountRepository, DraftRepository, MailboxRepository, MessageRepository, StoredBody,
     ThreadingRepository,
 };
-use rusqlite::Connection;
+use postio_storage::Connection;
 use secrecy::SecretString;
 use std::collections::BTreeSet;
 
@@ -162,7 +162,7 @@ pub(crate) enum ResolvedSend {
 /// and identity, its attachments' bytes, and the message it replies to (if
 /// any), then builds the outgoing message. Nothing here is async — every
 /// input is a database row or a blob store read.
-pub(crate) fn resolve(
+pub(crate) async fn resolve(
     connection: &Connection,
     smtp: Option<&SmtpContext<'_>>,
     draft_id: DraftId,
@@ -173,7 +173,7 @@ pub(crate) fn resolve(
         ));
     };
 
-    let Some(draft) = DraftRepository::new(connection).get(draft_id)? else {
+    let Some(draft) = DraftRepository::new(connection).get(draft_id).await? else {
         return Ok(ResolvedSend::Obsolete(
             "the draft is no longer in the local store".to_owned(),
         ));
@@ -207,7 +207,7 @@ pub(crate) fn resolve(
         // `Unconfirmed` is the resting state for the same fact, and it is
         // what the user is shown (#674).
         if draft.state == DraftState::Sending {
-            DraftRepository::new(connection).set_state(draft.id, DraftState::Unconfirmed)?;
+            DraftRepository::new(connection).set_state(draft.id, DraftState::Unconfirmed).await?;
         }
         return Ok(ResolvedSend::Uncertain(INDETERMINATE.to_owned()));
     }
@@ -217,7 +217,7 @@ pub(crate) fn resolve(
         ));
     }
 
-    let Some(account) = AccountRepository::new(connection).get(draft.account_id)? else {
+    let Some(account) = AccountRepository::new(connection).get(draft.account_id).await? else {
         return Ok(ResolvedSend::Impossible(
             "the account is no longer in the local store".to_owned(),
         ));
@@ -253,13 +253,13 @@ pub(crate) fn resolve(
         .collect();
 
     let parent = match draft.in_reply_to {
-        Some(id) => MessageRepository::new(connection).get(id)?,
+        Some(id) => MessageRepository::new(connection).get(id).await?,
         None => None,
     };
 
     let built = outgoing::build(&draft, identity, &outgoing_attachments, parent.as_ref());
 
-    let Some(sent) = MailboxRepository::new(connection).by_role(account.id, MailboxRole::Sent)?
+    let Some(sent) = MailboxRepository::new(connection).by_role(account.id, MailboxRole::Sent).await?
     else {
         return Ok(ResolvedSend::Impossible(
             "this account has no Sent mailbox yet".to_owned(),
@@ -270,7 +270,7 @@ pub(crate) fn resolve(
     // transaction nothing may fail, so nothing may still need looking up.
     let drafts_copy = match crate::drafts::server_copy(&draft) {
         Some(copy) => MailboxRepository::new(connection)
-            .by_role(account.id, MailboxRole::Drafts)?
+            .by_role(account.id, MailboxRole::Drafts).await?
             .map(|mailbox| (mailbox.id, mailbox.path, copy)),
         None => None,
     };
@@ -324,13 +324,13 @@ pub(crate) async fn send(
     // Local-first, like every other mutating verb (#942). The row is in Sent
     // before the socket is opened, so the message is somewhere the user can
     // see it for the whole time it is on its way rather than only afterwards.
-    let filed = file_sent_locally(connection, smtp, job);
+    let filed = file_sent_locally(connection, smtp, job).await;
     let outcome = submit(connection, backend, smtp, resync, job, filed.clone()).await;
     // `Failed` is the one outcome ADR 0021 lets us say "nothing was delivered"
     // about. A `Retry` is still in progress and an `Uncertain` may have gone,
     // and a Sent row is the honest thing to show for both.
     if matches!(outcome, Outcome::Failed { .. }) {
-        unfile_sent_copy(connection, filed.as_ref());
+        unfile_sent_copy(connection, filed.as_ref()).await;
     }
     outcome
 }
@@ -385,7 +385,7 @@ async fn submit(
     // retryable and leave the draft `Queued`, while everything past this line
     // may put a payload on the wire. A process that dies from here on comes
     // back to `Sending`, which `resolve` refuses to submit again.
-    if let Err(error) = mark(connection, job, DraftState::Sending) {
+    if let Err(error) = mark(connection, job, DraftState::Sending).await {
         // Nothing has been submitted yet, so this is safe to retry — and it
         // must be a refusal rather than a shrug: sending without the mark is
         // sending with the crash window wide open again.
@@ -413,7 +413,7 @@ async fn submit(
             // not a reason to retry the *send* -- that is the one thing this
             // branch exists to prevent -- so it is recorded and the outcome
             // stands.
-            if let Err(error) = mark(connection, job, DraftState::Unconfirmed) {
+            if let Err(error) = mark(connection, job, DraftState::Unconfirmed).await {
                 tracing::error!(
                     %error,
                     "could not record that a send was left unconfirmed; the \
@@ -463,8 +463,14 @@ pub(crate) const INDETERMINATE: &str = "this send was interrupted while it was b
 /// Its own function because the calls in [`send`] are the whole of ADR 0021's
 /// second decision, and they are the only writes in this module whose
 /// *ordering* — not merely their success — is the guarantee.
-fn mark(connection: &Connection, job: &SendJob, state: DraftState) -> postio_storage::Result<()> {
-    DraftRepository::new(connection).set_state(job.draft, state)
+async fn mark(
+    connection: &Connection,
+    job: &SendJob,
+    state: DraftState,
+) -> postio_storage::Result<()> {
+    DraftRepository::new(connection)
+        .set_state(job.draft, state)
+        .await
 }
 
 /// Puts the draft back to `Queued` after a refusal the client witnessed.
@@ -473,8 +479,8 @@ fn mark(connection: &Connection, job: &SendJob, state: DraftState) -> postio_sto
 /// that fails leaves the draft `Sending`, which [`resolve`] refuses rather
 /// than resends. The cost of losing this write is a message that needs asking
 /// about, never one that goes twice.
-fn release(connection: &Connection, job: &SendJob) {
-    if let Err(error) = mark(connection, job, DraftState::Queued) {
+async fn release(connection: &Connection, job: &SendJob) {
+    if let Err(error) = mark(connection, job, DraftState::Queued).await {
         tracing::warn!(%error, "could not return an unsent draft to the queue");
     }
 }
@@ -505,7 +511,7 @@ fn release(connection: &Connection, job: &SendJob) {
 /// is not a reason to refuse to send. The send proceeds and
 /// [`confirm_sent_copy`] writes the row at the end, which is exactly the
 /// behaviour this replaced.
-fn file_sent_locally(
+async fn file_sent_locally(
     connection: &Connection,
     smtp: &SmtpContext<'_>,
     job: &SendJob,
@@ -520,7 +526,7 @@ fn file_sent_locally(
     message.raw_blob_id = smtp.blobs.put(&job.raw).ok();
 
     let messages = MessageRepository::new(connection);
-    if messages.create(&mut message).is_err() {
+    if messages.create(&mut message).await.is_err() {
         return None;
     }
     // The thread id comes back onto the struct, and that is the whole of
@@ -531,7 +537,7 @@ fn file_sent_locally(
     // silently undid the assignment -- so a sent reply was filed correctly,
     // threaded correctly, and then un-threaded by the confirmation, showing
     // up in Sent as a conversation of its own.
-    match ThreadingRepository::new(connection, job.account).thread(&message) {
+    match ThreadingRepository::new(connection, job.account).thread(&message).await {
         Ok(threaded) => message.thread_id = Some(threaded.thread_id),
         // Not fatal: an unthreaded Sent copy is worse than a threaded one and
         // better than no copy at all. Said out loud rather than swallowed,
@@ -568,11 +574,13 @@ fn file_sent_locally(
 /// something that did not happen. A `Retry` keeps the row, because the send
 /// has not finished; `Uncertain` keeps it precisely because it may have gone,
 /// which is the whole of #674.
-fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
+async fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
     let Some(message) = filed else {
         return;
     };
-    if let Err(error) = MessageRepository::new(connection).delete(&[message.id]) {
+    if let Err(error) = MessageRepository::new(connection).delete(&[message.id])
+        .await
+    {
         tracing::warn!(
             %error,
             "could not remove the Sent copy of a send that failed; it will \
@@ -619,7 +627,8 @@ async fn confirm_sent_copy(
                 message.server.uid = Some(mapping.destination);
                 message.server.uid_validity = Some(mapping.uid_validity);
                 message.server.remote_id = Some(mapping.destination_remote_id());
-                if let Err(error) = messages.update(&mut message) {
+                if let Err(error) = messages.update(&mut message).await
+    {
                     tracing::warn!(
                         %error,
                         "could not record where the Sent copy landed; a resync \
@@ -643,7 +652,7 @@ async fn confirm_sent_copy(
                 message.server.uid_validity = Some(mapping.uid_validity);
                 message.server.remote_id = Some(mapping.destination_remote_id());
             }
-            if messages.create(&mut message).is_err() {
+            if messages.create(&mut message).await.is_err() {
                 return;
             }
             let _ = ThreadingRepository::new(connection, job.account).thread(&message);
@@ -720,7 +729,7 @@ fn outcome_from_smtp_error(error: postio_smtp::error::SmtpError) -> Outcome {
 /// with no reserved id predates #461 and is left alone: without one there is
 /// nothing to recognise it by, and guessing from subject and recipients is
 /// how the wrong message gets called the sent one.
-pub fn confirm_unconfirmed(
+pub async fn confirm_unconfirmed(
     connection: &Connection,
     account: AccountId,
 ) -> Result<Vec<(DraftId, postio_model::ids::MessageId)>> {
@@ -728,7 +737,7 @@ pub fn confirm_unconfirmed(
     let messages = MessageRepository::new(connection);
     let mut resolved = Vec::new();
 
-    for draft in drafts.by_state(DraftState::Unconfirmed)? {
+    for draft in drafts.by_state(DraftState::Unconfirmed).await? {
         if draft.account_id != account {
             continue;
         }
@@ -739,14 +748,14 @@ pub fn confirm_unconfirmed(
         // in a *different* account is somebody else's copy of a conversation,
         // not evidence that this account's submission succeeded.
         let Some(message) = messages
-            .ids_by_rfc_message_id(account, reserved)?
+            .ids_by_rfc_message_id(account, reserved).await?
             .into_iter()
             .next()
         else {
             continue;
         };
-        drafts.set_state(draft.id, DraftState::Sent)?;
-        drafts.set_synced_message(draft.id, message)?;
+        drafts.set_state(draft.id, DraftState::Sent).await?;
+        drafts.set_synced_message(draft.id, message).await?;
         tracing::info!(
             draft = draft.id.get(),
             "an unconfirmed send turned up in a sync; it did arrive"

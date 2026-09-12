@@ -21,7 +21,7 @@
 
 use postio_model::{Account, EmailAddress, Message};
 use postio_storage::repository::ContactRepository;
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use crate::drain::Result;
 
@@ -33,7 +33,7 @@ use crate::drain::Result;
 /// the sender of everything filed in Sent. `record_message` has no way to
 /// know which address is "ours" — it only sees one message at a time — so
 /// the exclusion happens here, against every address `account` can send as.
-pub(crate) fn record(connection: &Connection, account: &Account, message: &Message) -> Result<()> {
+pub(crate) async fn record(connection: &Connection, account: &Account, message: &Message) -> Result<()> {
     let is_own = |address: &EmailAddress| {
         let normalized = address.normalized();
         account.address.normalized() == normalized
@@ -53,7 +53,7 @@ pub(crate) fn record(connection: &Connection, account: &Account, message: &Messa
     trimmed.cc.retain(|address| !is_own(address));
     trimmed.bcc.retain(|address| !is_own(address));
 
-    ContactRepository::new(connection).record_message(&trimmed)?;
+    ContactRepository::new(connection).record_message(&trimmed).await?;
     Ok(())
 }
 
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn every_real_correspondent_is_recorded() {
         let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
         let message = message(&connection, &account, mailbox);
 
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn the_accounts_own_address_is_never_recorded_as_a_correspondent() {
         let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (account, mailbox) = test_support::account_with_inbox(&connection);
         let message = message(&connection, &account, mailbox);
 
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn a_send_from_identity_is_also_excluded_as_a_correspondent() {
         let database = test_support::memory();
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let (mut account, mailbox) = test_support::account_with_inbox(&connection);
         account.identities.push(Identity::new(
             account.id,

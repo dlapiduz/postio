@@ -45,7 +45,7 @@ use postio_model::ids::DraftId;
 use postio_model::{Flag, FlagSet, MailboxId, OutgoingAttachment, RemoteId, outgoing};
 use postio_storage::BlobStore;
 use postio_storage::repository::{AccountRepository, DraftRepository, MailboxRepository};
-use rusqlite::Connection;
+use postio_storage::Connection;
 
 use crate::drain::{Outcome, Result};
 
@@ -88,24 +88,24 @@ pub(crate) enum ResolvedDraft {
 /// Resolves an `Operation::SaveDraft`: loads the draft, its identity and its
 /// attachments' bytes, and builds the message to upload. Nothing here is
 /// async — every input is a database row or a blob store read.
-pub(crate) fn resolve_save(
+pub(crate) async fn resolve_save(
     connection: &Connection,
     blobs: Option<&BlobStore>,
     draft_id: DraftId,
     mailbox: MailboxId,
 ) -> Result<ResolvedDraft> {
-    let Some(draft) = DraftRepository::new(connection).get(draft_id)? else {
+    let Some(draft) = DraftRepository::new(connection).get(draft_id).await? else {
         return Ok(ResolvedDraft::Obsolete(
             "the draft is no longer in the local store".to_owned(),
         ));
     };
-    let Some(folder) = MailboxRepository::new(connection).get(mailbox)? else {
+    let Some(folder) = MailboxRepository::new(connection).get(mailbox).await? else {
         return Ok(ResolvedDraft::Obsolete(
             "the Drafts mailbox is no longer in the local store".to_owned(),
         ));
     };
 
-    let Some(account) = AccountRepository::new(connection).get(draft.account_id)? else {
+    let Some(account) = AccountRepository::new(connection).get(draft.account_id).await? else {
         return Ok(ResolvedDraft::Impossible(
             "the account is no longer in the local store".to_owned(),
         ));
@@ -173,12 +173,12 @@ pub(crate) fn resolve_save(
 /// mailbox's live generation is the adapter's own check now (#543): a stale
 /// id comes back as the same resync answer a renumber discovered at SELECT
 /// gives, and [`run`] reads it as obsolete rather than retrying.
-pub(crate) fn resolve_discard(
+pub(crate) async fn resolve_discard(
     connection: &Connection,
     mailbox: MailboxId,
     copy: RemoteId,
 ) -> Result<ResolvedDraft> {
-    let Some(folder) = MailboxRepository::new(connection).get(mailbox)? else {
+    let Some(folder) = MailboxRepository::new(connection).get(mailbox).await? else {
         return Ok(ResolvedDraft::Obsolete(
             "the Drafts mailbox is no longer in the local store".to_owned(),
         ));
@@ -305,7 +305,9 @@ async fn save(
             None
         }
     };
-    if let Err(error) = DraftRepository::new(connection).set_server_copy(draft, location.as_ref()) {
+    if let Err(error) = DraftRepository::new(connection).set_server_copy(draft, location.as_ref())
+        .await
+    {
         // The draft was discarded while its own upload was in flight. The copy
         // just made is orphaned, so the folder is flagged rather than left
         // silently wrong.
