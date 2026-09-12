@@ -65,14 +65,19 @@ cargo nextest run -p postio-gtk --test gtk_suite gtk_finder         # 4 passed
 cargo nextest run -p postio-gtk --test gtk_suite gtk_cheatsheet     # 1 passed
 cargo nextest run -p postio-gtk --test gtk_suite gtk_go_to           # 1 passed
 cargo nextest run -p postio-gtk --test gtk_accessibility             # 1 passed
-cargo test -p postio-app --test app_suite                           # 89 passed, 1 failed -- see below
+cargo test -p postio-app --test app_suite                           # 90 passed, 1 failed -- see below
 ```
 
 **One failure in that third command is expected and is not yours.**
 `render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing`
 fails in a full run and passes alone: it is order-dependent, it predates this
 feature, and it is #1497. The baseline when this feature started was
-`89 passed; 1 failed`. If you see two failures, the second one is yours.
+`89 passed; 1 failed`; it is `90 passed; 1 failed` now, the extra pass being
+this feature's own case. If you see two failures, the second one is yours.
+
+The run takes about ten minutes on a loaded workstation and does not survive
+having its shell killed. `setsid nohup cargo test -p postio-app --test
+app_suite > some.log 2>&1 &` outlives the terminal it was started from.
 
 The third is the one that matters, and the reason is in
 [research.md](./research.md) R8: the GTK cases hand the finder a fixture and
