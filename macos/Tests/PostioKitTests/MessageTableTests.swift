@@ -63,7 +63,10 @@ private func makeRow(
         seen: seen,
         flagged: flagged,
         answered: false,
-        draft: false,
+        // `Option<String>` on the boundary, not a bool: "which state" rather
+        // than "is a draft", so macOS can draw what GTK draws (spec 003 US4).
+        // Nil here — these tests are about ordinary mail.
+        sendState: nil,
         hasAttachments: false,
         threadCount: threadCount
     )

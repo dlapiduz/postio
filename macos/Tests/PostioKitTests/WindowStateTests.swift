@@ -31,7 +31,14 @@ struct WindowStateTests {
             // Which sidebar section the boundary put it in (#1155). Not what
             // this file is about — `folderToOpen` picks by role and by
             // whether a folder still exists — but the type carries it now.
-            special: special
+            special: special,
+            // The two counts a view row's badge needs, which crossed the
+            // boundary with spec 003's US4: a Flagged row shows `flagged`
+            // rather than `unread`, and snoozed messages are counted as away
+            // rather than present. Zero here — this file is about which
+            // folder reopens, not what its badge says.
+            flagged: 0,
+            snoozed: 0
         )
     }
 
