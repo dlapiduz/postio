@@ -264,6 +264,21 @@ Three panes — sidebar, message list, reading pane — with the sidebar
 deliberately not consuming the screen. The list is windowed over paged SQLite
 and is never fully materialised (§18).
 
+**The sidebar draws two kinds of row and the difference is load-bearing.** A
+*folder* is one the server has: Inbox, Archive, Sent, Drafts, Trash, Junk, and
+whatever else the account holds. A *view* is a saved question about messages
+filed elsewhere — Flagged, Snoozed, and the **Outbox** — with a name, a place
+and a count, and nothing a message can be moved into. Every account has a real
+folder for all six roles, created on the server if it has none, so `!` and `a`
+and `d` always have somewhere to put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
+
+**The Outbox holds what is on its way**, and is not drawn when it holds
+nothing, which is its ordinary state. Pressing Send puts the message there
+immediately — offline included — and it leaves for Sent when the server
+accepts it. What it is *not* is a place things pile up: Drafts holds what you
+are writing and what has stopped, and its row says how many of those need you,
+separately from how many there are.
+
 The layout adapts rather than being fixed: three panes on a desktop monitor,
 two on a laptop, message-focused for reading and writing, and search-focused
 when results take over the workspace. The widths that divide those are in

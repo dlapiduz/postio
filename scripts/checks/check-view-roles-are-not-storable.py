@@ -126,7 +126,8 @@ def main() -> int:
         f"    {SCHEMA.relative_to(ROOT)}  — CHECK (role IN (...))\n\n"
         "Adding a role means deciding whether it names a folder or is a view,\n"
         "and saying so in both places. See\n"
-        "specs/003-outbox-and-reserved-mailboxes/contracts/mailbox-role.md.",
+        "specs/003-outbox-and-reserved-mailboxes/contracts/mailbox-role.md\n"
+        "and docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md.",
         file=sys.stderr,
     )
     return 1

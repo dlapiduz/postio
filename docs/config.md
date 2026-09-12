@@ -142,3 +142,10 @@ choose.
 Nothing here moves mail. Re-pointing a role changes which folder wears
 the label from that moment on; the messages already in the old folder
 stay where they are.
+
+**Every account ends up with a folder for all six roles.** When one
+resolves to nothing after all four tiers, Postio creates it on the
+server -- once, never for the Inbox, and named after the role. A
+server that refuses is not asked again: the role is shown as unmapped
+in Settings -> Accounts with the server's own words beside it, which
+is usually a permission and usually something you can fix.

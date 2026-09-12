@@ -230,17 +230,30 @@ standing, which is where Decision 3 puts it.
 ## What the user sees
 
 `DraftState` gains `Unconfirmed`, and the four states that exist stop being
-decorative. Every one of these is reachable from the Drafts list and from the
-composer; none of them is a toast alone, because a toast is not a place a
-message can be found again ten minutes later.
+decorative. Every one of these is reachable from a list and from the composer;
+none of them is a toast alone, because a toast is not a place a message can be
+found again ten minutes later.
 
-| State | Copy | What the user can do |
-|---|---|---|
-| `Queued` | "Sending when you're back online." — or nothing at all while a drain is due; a queued send that leaves within a second should not announce itself. | `u` cancels, within the undo-send window |
-| `Sending` | "Sending…" | Nothing. The cancel is refused, and says why. |
-| `Sent` | The ordinary "Sent" toast. The draft row is gone; the message is in Sent. | — |
-| `Failed` | The server's own reason, named: "The server rejected grace@example.net — 550 mailbox unavailable." Never "something went wrong". | `Enter` opens it, editable again; `ctrl+Return` sends again; `d` discards |
-| `Unconfirmed` | "Not confirmed — the connection dropped while this was being sent. It may have arrived. Checking your Sent folder." | `Enter` opens it; **Mark as sent**; `ctrl+Return` sends again, saying plainly that it may arrive twice; `d` discards |
+**Which list, amended.** This originally said "the Drafts list", and that was
+true when it was written: every state lived in Drafts, including the ones on
+their way. `specs/003-outbox-and-reserved-mailboxes` split them —
+`Queued` and `Sending` are in the **Outbox**, and Drafts holds what you are
+writing, what failed and what cannot be confirmed. The reason is the failure
+[#1491](https://github.com/dlapiduz/postio/issues/1491) reports: a message you
+have just sent sitting in the folder that means *unfinished*, in a row that
+said only "Draft" and so rendered all five states identically.
+
+Nothing else here changes. The state machine, the boundary Decision 3 draws,
+the copy and the verbs are all as decided; only the folder each state is
+found in has moved, and the "Where" column below says which.
+
+| State | Where | Copy | What the user can do |
+|---|---|---|---|
+| `Queued` | **Outbox** | "Sending when you're back online." — or nothing at all while a drain is due; a queued send that leaves within a second should not announce itself. | `u` cancels, within the undo-send window |
+| `Sending` | **Outbox** | "Sending…" | Nothing. The cancel is refused, and says why. |
+| `Sent` | Sent | The ordinary "Sent" toast. The draft row is gone; the message is in Sent. | — |
+| `Failed` | Drafts | The server's own reason, named: "The server rejected grace@example.net — 550 mailbox unavailable." Never "something went wrong". | `Enter` opens it, editable again; `ctrl+Return` sends again; `d` discards |
+| `Unconfirmed` | Drafts | "Not confirmed — the connection dropped while this was being sent. It may have arrived. Checking your Sent folder." | `Enter` opens it; **Mark as sent**; `ctrl+Return` sends again, saying plainly that it may arrive twice; `d` discards |
 
 `Failed` may say "nothing was delivered" and mean it, because every failure
 that reaches it — auth, sender or recipient rejection, message rejection,
