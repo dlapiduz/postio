@@ -19,8 +19,15 @@
 //! the nightly timer rather than the merge path. `.config/nextest.toml`'s
 //! `profile.default` filter is what holds it back; `--profile nightly` runs it.
 //!
-//! It seeds 400,000 messages and takes
-//! about three and a half minutes, which is a bench's cost and not a gate's.
+//! It seeds 400,000 messages and takes **about six and a half minutes**
+//! (393s measured on an idle workstation, 2026-09-12), which is a bench's
+//! cost and not a gate's.
+//!
+//! That number used to read "about three and a half minutes", which is where
+//! `.config/nextest.toml` got the idea that the default 240s backstop would
+//! hold it. It did not: the test was terminated at 240s on the nightly run
+//! and terminates at 240s here too. Nobody had measured it, because until
+//! acbd0943 it was `#[ignore]`d and had never run anywhere at all.
 //!
 //! ```text
 //! cargo nextest run --profile nightly -p postio-storage -E 'binary(cache_pressure)'

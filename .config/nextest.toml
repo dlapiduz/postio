@@ -80,5 +80,26 @@ fail-fast = false
 # and it is also how you run one measurement by hand: `all()` is a filter an
 # `-E` on the command line narrows rather than fights.
 [profile.nightly]
+# A bench's clock, not the merge path's.
+#
+# `profile.default`'s 240s (60s x 4) is a backstop for a case that *wedges* --
+# a WebKit process that never answers, a compositor that went away. The
+# measurement tier is the opposite: tests whose whole character is that they
+# take minutes, which is why they are held off the merge path at all. They
+# inherited the backstop when this profile was written and it killed one.
+#
+# `cache_pressure` seeds 400,000 messages and measures **393s** on this
+# workstation, idle. It was terminated at 240s on CI on 2026-09-12 and
+# terminates at 240s here too, so this is not a slow-runner story. Nothing had
+# ever measured it because before acbd0943 the test was `#[ignore]`d and had
+# never run anywhere -- the sizing came from its own doc comment, which said
+# "about three and a half minutes" and was wrong by most of two minutes. That
+# comment is corrected in the same change as this one.
+#
+# 720s is about 1.8x the measured cost, which leaves room for a CI runner
+# being slower than this box without leaving a genuine hang to run for ever.
+# The job has no `timeout-minutes`, so GitHub's 6h is the only other ceiling
+# and it is not a useful one.
+slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'all()'
 fail-fast = false
