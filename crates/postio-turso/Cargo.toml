@@ -1,0 +1,23 @@
+[package]
+name = "postio-turso"
+description = "A rusqlite-shaped API over Turso, so the storage layer can move engine without moving line by line."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+turso = "=0.8.0-pre.11"
+# A current-thread runtime per connection: Turso is async and every caller
+# in `postio-storage` is not. See the module docs for why this is a thread
+# and not a `block_on` against the ambient runtime.
+tokio = { version = "1.53.1", features = ["rt"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
