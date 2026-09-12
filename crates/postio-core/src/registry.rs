@@ -1100,7 +1100,9 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
-        requires: None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::GoToDrafts,
@@ -1119,7 +1121,9 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
-        requires: None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::GoToSent,
@@ -1138,7 +1142,9 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
-        requires: None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::GoToFlagged,
@@ -1157,7 +1163,9 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
-        requires: None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
     },
     CommandSpec {
         id: CommandId::CyclePane,

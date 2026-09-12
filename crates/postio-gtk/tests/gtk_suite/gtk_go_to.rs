@@ -28,6 +28,8 @@ fn only_an_inbox() -> Vec<Mailbox> {
         unread: 1,
         flagged: 0,
         snoozed: 0,
+        // A question about drafts waiting on a person, and this is an inbox.
+        attention: 0,
     };
     vec![inbox]
 }
