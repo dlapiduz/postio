@@ -1,7 +1,8 @@
 //! Mailboxes: the folder tree, its special-use roles, and the sidebar's counts.
 
 use postio_model::{
-    AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, SignatureId, Uid,
+    AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, RoleKind,
+    SignatureId, Uid,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -44,6 +45,24 @@ const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed
 /// snooze half of [`VISIBLE`], still gated on `deleted_locally` the same way.
 const SNOOZED: &str = "deleted_locally = 0 AND snoozed_until IS NOT NULL AND snoozed_until > (strftime('%s','now') * 1000)";
 
+/// Refuses a role that names no folder (spec 003, FR-041).
+///
+/// Both writing paths go through here rather than leaning on the schema's
+/// `CHECK`, for two reasons. A constraint violation says "constraint failed"
+/// and not which role was wrong, so a caller cannot act on it. And the `CHECK`
+/// enumerates spellings, so it silently stops enforcing anything the day a
+/// role is added to the enum and not to the SQL —
+/// `scripts/checks/check-view-roles-are-not-storable.py` is what notices, and
+/// this is what it is keeping honest.
+fn refuse_a_view(role: MailboxRole) -> Result<()> {
+    match role.kind() {
+        RoleKind::Folder => Ok(()),
+        RoleKind::View => Err(Error::RoleIsAView {
+            role: role.as_str(),
+        }),
+    }
+}
+
 impl<'a> MailboxRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
@@ -52,6 +71,7 @@ impl<'a> MailboxRepository<'a> {
 
     /// Inserts a mailbox and its sync-state row, assigning its id.
     pub fn create(&self, mailbox: &mut Mailbox) -> Result<MailboxId> {
+        refuse_a_view(mailbox.role)?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         let transaction = super::Scope::open(self.connection)?;
 
@@ -92,6 +112,7 @@ impl<'a> MailboxRepository<'a> {
 
     /// Writes a mailbox and its sync state back.
     pub fn update(&self, mailbox: &Mailbox) -> Result<()> {
+        refuse_a_view(mailbox.role)?;
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         let transaction = super::Scope::open(self.connection)?;

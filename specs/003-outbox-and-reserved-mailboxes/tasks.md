@@ -38,9 +38,9 @@ a unit-test binary kills the process). Integration suites run under
 
 **Purpose**: The few facts the rest of the work needs pinned down.
 
-- [ ] T001 Confirm the branch is rebased on `main` after #1496 and that `crates/postio-storage/src/migrations/0017_mailbox_roles.sql` is present
-- [ ] T002 Claim the next free migration number by listing `crates/postio-storage/src/migrations/` and use it for the `send_state` migration throughout (referred to below as `00NN`)
-- [ ] T003 [P] Note in `specs/003-outbox-and-reserved-mailboxes/plan.md` the ADR number is deliberately unassigned until merge — do **not** create `docs/decisions/00NN-*.md` yet
+- [X] T001 Confirm the branch is rebased on `main` after #1496 and that `crates/postio-storage/src/migrations/0017_mailbox_roles.sql` is present
+- [X] T002 Claimed: `0018_role_creation_refused.sql` (T028) and `0019_message_send_state.sql` (T059); highest on `main` is `0017_mailbox_roles.sql`
+- [X] T003 [P] Note in `specs/003-outbox-and-reserved-mailboxes/plan.md` the ADR number is deliberately unassigned until merge — do **not** create `docs/decisions/00NN-*.md` yet
 
 ---
 
@@ -55,19 +55,19 @@ a unit-test binary kills the process). Integration suites run under
 
 ### Tests
 
-- [ ] T004 [P] Unit test in `crates/postio-model/src/mailbox.rs`: every `MailboxRole` answers `Folder` or `View`, and `RESERVED` contains exactly the six reserved roles
-- [ ] T005 [P] Unit test in `crates/postio-model/src/mailbox.rs`: `Outbox`, `Flagged` and `Snoozed` are `View`; `Inbox`, `Archive`, `Sent`, `Drafts`, `Trash`, `Junk`, `Regular` are `Folder`
-- [ ] T006 [P] Test in `crates/postio-storage/tests/storage_suite/mailboxes.rs`: creating a mailbox with each `View` role is refused, and the error names the role
-- [ ] T007 [P] Unit test in `crates/postio-ui/src/sidebar.rs`: `role_order` places Outbox between Drafts and Sent
+- [X] T004 [P] Unit test in `crates/postio-model/src/mailbox.rs`: every `MailboxRole` answers `Folder` or `View`, and `RESERVED` contains exactly the six reserved roles
+- [X] T005 [P] Unit test in `crates/postio-model/src/mailbox.rs`: `Outbox` and `Snoozed` are `View`; the six reserved roles, `Regular` **and `Flagged`** are `Folder` — RFC 6154 defines `\Flagged`, so a server can really have that folder
+- [X] T006 [P] Test in `crates/postio-storage/tests/storage_suite/mailboxes.rs`: creating a mailbox with each `View` role is refused, and the error names the role
+- [X] T007 [P] Unit test in `crates/postio-ui/src/sidebar.rs`: `role_order` places Outbox between Drafts and Sent
 
 ### Implementation
 
-- [ ] T008 Add the `Outbox` variant and `RoleKind`/`kind()`/`RESERVED` to `crates/postio-model/src/mailbox.rs`
-- [ ] T009 Extend `MailboxRole::as_str`/`from_name` for `outbox` in `crates/postio-model/src/mailbox.rs`, keeping the stable lowercase spelling
-- [ ] T010 Refuse a `View` role in `MailboxRepository::create` and `update` in `crates/postio-storage/src/repository/mailboxes.rs`, with a typed error added to `crates/postio-storage/src/error.rs`
-- [ ] T011 [P] Add `Outbox` to `role_order` in `crates/postio-ui/src/sidebar.rs`
-- [ ] T012 [P] Add the `Outbox` variant to `MailboxRoleFfi` and its conversion in `crates/postio-ffi/src/mailbox.rs`
-- [ ] T013 Write `scripts/checks/check-view-roles-are-not-storable.py` comparing the SQL `CHECK` list in `crates/postio-storage/src/migrations/0001_initial_schema.sql` against the `Folder` set, and register it in `scripts/check.sh`
+- [X] T008 Add the `Outbox` variant and `RoleKind`/`kind()`/`RESERVED` to `crates/postio-model/src/mailbox.rs`
+- [X] T009 Extend `MailboxRole::as_str`/`from_name` for `outbox` in `crates/postio-model/src/mailbox.rs`, keeping the stable lowercase spelling
+- [X] T010 Refuse a `View` role in `MailboxRepository::create` and `update` in `crates/postio-storage/src/repository/mailboxes.rs`, with a typed error added to `crates/postio-storage/src/error.rs`
+- [X] T011 [P] Add `Outbox` to `role_order` in `crates/postio-ui/src/sidebar.rs`
+- [X] T012 [P] Add the `Outbox` variant to `MailboxRoleFfi` and its conversion in `crates/postio-ffi/src/mailbox.rs`
+- [X] T013 Write `scripts/checks/check-view-roles-are-not-storable.py` comparing the SQL `CHECK` list in `crates/postio-storage/src/migrations/0001_initial_schema.sql` against the `Folder` set, and register it in `scripts/check.sh`
 
 **Checkpoint**: `cargo test -p postio-model -p postio-ui --lib` and `scripts/check.sh` green. The vocabulary exists; nothing uses it yet.
 
@@ -108,7 +108,7 @@ once.
 - [ ] T025 [P] [US3] Implement it in `crates/postio-account/src/backend/mock.rs`, recording calls and allowing a scripted refusal
 - [ ] T026 [P] [US3] Return `Unsupported` in `crates/postio-gmail/src/backend.rs`
 - [ ] T027 [P] [US3] Return `Unsupported` in `crates/postio-jmap/src/backend.rs`
-- [ ] T028 [US3] Migration `crates/postio-storage/src/migrations/00NN_role_creation_refused.sql`: the refusal time and the server's reason on `mailbox_roles`, registered in `crates/postio-storage/src/migrations/mod.rs`
+- [ ] T028 [US3] Migration `crates/postio-storage/src/migrations/0018_role_creation_refused.sql`: the refusal time and the server's reason on `mailbox_roles`, registered in `crates/postio-storage/src/migrations/mod.rs`
 - [ ] T029 [US3] Read and write the refusal in `crates/postio-storage/src/repository/mailbox_roles.rs`, including clearing it
 - [ ] T030 [US3] In `crates/postio-sync/src/discover.rs`, create a reserved role's folder when every tier resolves to nothing — never for `Inbox`, never when a refusal is recorded, never twice
 - [ ] T031 [US3] Record a refusal rather than failing the pass in `crates/postio-sync/src/discover.rs`; the other roles still resolve and the account stays usable
@@ -185,7 +185,7 @@ Sent and the row disappears.
 
 ### Implementation
 
-- [ ] T059 [US1] Migration `crates/postio-storage/src/migrations/00NN_message_send_state.sql`: the nullable `send_state` column with its `CHECK`, the partial index, the count-trigger split, and a one-pass backfill from `drafts`; registered in `crates/postio-storage/src/migrations/mod.rs`
+- [ ] T059 [US1] Migration `crates/postio-storage/src/migrations/0019_message_send_state.sql`: the nullable `send_state` column with its `CHECK`, the partial index, the count-trigger split, and a one-pass backfill from `drafts`; registered in `crates/postio-storage/src/migrations/mod.rs`
 - [ ] T060 [US1] Write `send_state` beside `drafts.state` in `crates/postio-storage/src/repository/drafts.rs` — `save`, `set_state`, `queue_send`, `queue_send_at`, `cancel_send` — in the same transaction, and nowhere else
 - [ ] T061 [US1] Add `ListScope::Outbox(AccountId)` to `crates/postio-model/src/scope.rs` with its arms in `reaction`, `is_drawn_from` and `mailbox()`
 - [ ] T062 [US1] Add the Outbox predicate and the Drafts exclusion to `where_clause` and `scope_arguments` in `crates/postio-storage/src/repository/messages.rs` — **the riskiest change in the feature**, measured against T047

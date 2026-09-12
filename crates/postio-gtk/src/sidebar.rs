@@ -327,6 +327,9 @@ pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
         MailboxRole::Drafts => counts.total,
         MailboxRole::Flagged => counts.flagged,
         MailboxRole::Snoozed => counts.snoozed,
+        // How many are on their way. The row is hidden entirely when this is
+        // zero, which is its ordinary state -- see spec 003 FR-012.
+        MailboxRole::Outbox => counts.total,
         // Nothing arrives in these unread, so a count would only ever be
         // "how much have you kept", which is not a thing to nag about.
         MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
@@ -2196,6 +2199,7 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
         MailboxRole::Flagged => "Flagged".to_string(),
         MailboxRole::Snoozed => "Snoozed".to_string(),
         MailboxRole::Drafts => "Drafts".to_string(),
+        MailboxRole::Outbox => "Outbox".to_string(),
         MailboxRole::Sent => "Sent".to_string(),
         MailboxRole::Archive => "Archive".to_string(),
         MailboxRole::Junk => "Junk".to_string(),
