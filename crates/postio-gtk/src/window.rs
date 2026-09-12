@@ -112,6 +112,17 @@ mod imp {
 
     #[derive(Default)]
     pub struct Window {
+        /// Where this window's startup is being recorded, when anything is
+        /// recording it (#1479).
+        ///
+        /// `postio_gtk::app::build_with` sets it on the one window the
+        /// application opens; a window built for a test of one widget has
+        /// none, and marking a phase on it is then a no-op. It lives here
+        /// rather than being threaded through `install_feeds` because the
+        /// phases worth marking are in the *composition root* -- the panes
+        /// are pointed at the store by `postio_app::feed_the_window`, which
+        /// holds a `&Window` and nothing else that could carry a timeline.
+        pub timeline: RefCell<Option<crate::startup::Timeline>>,
         pub shell: OnceCell<Shell>,
         pub sidebar: OnceCell<Sidebar>,
         pub list_state: OnceCell<ListStateView>,
@@ -299,6 +310,27 @@ glib::wrapper! {
 }
 
 impl Window {
+    /// Record this window's startup into `timeline`.
+    ///
+    /// Called once, by [`crate::app::build_with`], on the window the
+    /// application actually opens. Everything else builds windows that are
+    /// not a startup and leaves this unset.
+    pub fn set_timeline(&self, timeline: crate::startup::Timeline) {
+        *self.imp().timeline.borrow_mut() = Some(timeline);
+    }
+
+    /// Note that this window's startup has reached `phase`.
+    ///
+    /// A no-op on a window nothing is measuring, so a caller in the
+    /// composition root marks unconditionally rather than asking first --
+    /// which is what keeps the marks on the ordinary path rather than
+    /// behind a branch that could be wrong.
+    pub fn mark_startup(&self, phase: crate::startup::Phase) {
+        if let Some(timeline) = self.imp().timeline.borrow().as_ref() {
+            timeline.mark(phase);
+        }
+    }
+
     /// A window belonging to `application`.
     pub fn new(application: &impl IsA<gtk::Application>) -> Self {
         glib::Object::builder()

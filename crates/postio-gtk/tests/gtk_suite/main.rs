@@ -901,6 +901,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_window::the_window_opens_and_wears_the_design as fn(),
     ),
     (
+        "gtk_window::the_application_hands_its_window_the_startup_timeline",
+        gtk_window::the_application_hands_its_window_the_startup_timeline as fn(),
+    ),
+    (
         "gtk_window_run_search::run_search_opens_the_box_and_answers_immediately",
         gtk_window_run_search::run_search_opens_the_box_and_answers_immediately as fn(),
     ),

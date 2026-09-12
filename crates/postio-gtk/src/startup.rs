@@ -57,18 +57,39 @@ pub enum Phase {
     Store,
     /// The window and its widget tree exist, but nothing is on screen yet.
     Window,
+    /// The keyring has answered and the window is about to be pointed at the
+    /// store: `postio_app::feed_the_window` has been entered.
+    ///
+    /// Everything between [`Window`](Phase::Window) and here is the crossing
+    /// `postio_app::open_or_onboard` describes — a D-Bus round trip to the
+    /// keyring, asked on the runtime and answered back on the main context.
+    /// It is the one part of this stretch that is *not* the main thread's
+    /// own work, and telling it apart from what follows is the whole reason
+    /// it is a phase.
+    Account,
+    /// The panes are pointed at the store and every gesture has a handler:
+    /// `postio_app::feed_the_window` has returned.
+    ///
+    /// Synchronous main-thread work, all of it, and therefore work the first
+    /// frame is waiting on. #1479 split this off because the trace could say
+    /// the first frame was 84% of a 1250 ms startup and not say what any of
+    /// it was — and the answer turned out to be a store read in here rather
+    /// than anything GTK was doing.
+    Feeds,
     /// The compositor has shown the first frame. This is "usable UI".
     FirstFrame,
 }
 
 impl Phase {
     /// Every phase, in the order they occur.
-    pub const ALL: [Phase; 6] = [
+    pub const ALL: [Phase; 8] = [
         Phase::Init,
         Phase::Fonts,
         Phase::Styles,
         Phase::Store,
         Phase::Window,
+        Phase::Account,
+        Phase::Feeds,
         Phase::FirstFrame,
     ];
 
@@ -80,6 +101,8 @@ impl Phase {
             Phase::Styles => "styles",
             Phase::Store => "store",
             Phase::Window => "window",
+            Phase::Account => "account",
+            Phase::Feeds => "feeds",
             Phase::FirstFrame => "first frame",
         }
     }
@@ -246,6 +269,26 @@ mod tests {
         assert_eq!(Phase::Store.label(), "store");
         assert!(
             Phase::ALL.contains(&Phase::Store),
+            "a phase nothing reports is a phase nothing measures"
+        );
+    }
+
+    #[test]
+    fn the_first_frame_gap_is_split_into_what_waits_and_what_works() {
+        // #1479: `first frame` measured 1044ms of a 1250ms startup on a real
+        // store, and the trace could say which phase and not what. Everything
+        // in that gap is local -- `start_syncing` runs *after* it -- so what
+        // it wanted was telling apart the three things it holds: a keyring
+        // round trip that is not this thread's work, the synchronous main
+        // thread work that points the panes at the store, and GTK's own
+        // paint. One phase could not, and three can.
+        assert!(Phase::Window < Phase::Account);
+        assert!(Phase::Account < Phase::Feeds);
+        assert!(Phase::Feeds < Phase::FirstFrame);
+        assert_eq!(Phase::Account.label(), "account");
+        assert_eq!(Phase::Feeds.label(), "feeds");
+        assert!(
+            Phase::ALL.contains(&Phase::Account) && Phase::ALL.contains(&Phase::Feeds),
             "a phase nothing reports is a phase nothing measures"
         );
     }

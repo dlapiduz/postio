@@ -90,6 +90,11 @@ pub fn build_with(timeline: Timeline) -> adw::Application {
         }
 
         let window = Window::new(app);
+        // Before anything else touches it: the phases between `Window` and
+        // `FirstFrame` are marked by whoever points the panes at the store,
+        // and that caller has only the window to reach a timeline through
+        // (#1479).
+        window.set_timeline(timeline.clone());
         crate::config::install(&window);
         // Installed here, unconditionally, rather than left to whoever wires
         // storage into it: the `win.compose` action and the `c` binding must
