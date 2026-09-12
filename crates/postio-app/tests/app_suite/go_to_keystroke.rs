@@ -125,4 +125,26 @@ pub fn pressing_g_i_shows_the_inbox() {
         "`g i` did not reach the inbox: the sidebar is still showing {:?}",
         window.sidebar().selected()
     );
+
+    // ── `g` is a letter to somebody who is writing ───────────────────────
+    // FR-042. `g` is one of the commonest letters in English prose, so a
+    // sequence that fires while a draft is being typed would make the
+    // composer unusable -- and it would do it by *navigating away*, which is
+    // the worst available outcome for unsaved words.
+    window.open_mailbox(archive);
+    assert!(settle_until(|| window.sidebar().selected() == Some(archive)));
+
+    press(&window, &["c"]);
+    assert!(
+        settle_until(|| window.composer().is_open()),
+        "`c` did not open the composer, so nothing here would be typing into it \
+         and a pass below would mean nothing"
+    );
+    press(&window, &["g", "i"]);
+
+    assert_eq!(
+        window.sidebar().selected(),
+        Some(archive),
+        "`g i` typed into the composer navigated away from the draft"
+    );
 }

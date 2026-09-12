@@ -81,9 +81,9 @@ One shared file needs care and is not a task: `docs/keybindings.md` is generated
 ### Tests for User Story 5 ⚠️ red first
 
 - [X] T016 [P] [US5] A `core_suite` case in `crates/postio-core/tests/core_suite/command_registry.rs` asserting the four destination ids exist with their titles, bindings and list-surface contexts per [contracts/command-ids.md](./contracts/command-ids.md)
-- [~] T017 [P] [US5] A unit test in `crates/postio-gtk/src/feed.rs` (or its module's tests) for role resolution: a role that exists returns its mailbox, a role that does not returns nothing
+- [X] T017 [P] [US5] A `gtk_suite` case in `crates/postio-gtk/tests/gtk_suite/gtk_sidebar.rs` for role resolution (the resolver moved to the sidebar, and a `Sidebar` needs a display, so it is a suite case rather than a unit test): a role that exists returns its mailbox, a role that does not returns nothing
 - [X] T018 [US5] **The acceptance test**: a new `app_suite` case in `crates/postio-app/tests/app_suite/` — a module plus its row in `CASES` in `crates/postio-app/tests/app_suite/main.rs` — that presses `g i` at the composition root and asserts on the folder then showing. Not that a handler fired: what a person would be looking at ([research.md](./research.md) R8)
-- [ ] T019 [P] [US5] An `app_suite` or `gtk_suite` case asserting `g` typed in the composer enters a letter and navigates nowhere (FR-042)
+- [X] T019 [P] [US5] An `app_suite` case asserting `g` typed in the composer enters a letter and navigates nowhere (FR-042)
 - [ ] T020 [P] [US5] A case asserting a destination absent from the current account is reported to the user rather than silently doing nothing (FR-041)
 
 ### Implementation for User Story 5
