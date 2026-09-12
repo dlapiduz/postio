@@ -63,6 +63,13 @@ use postio_search::ParsedQuery;
 use crate::palette::{Entry, entries, highlight, score};
 use crate::search::{Backspace, Chip, Live, backspace, chips};
 
+/// What the field shows as the way out of a mode: Backspace, which at the
+/// start of the text gives the mode back and keeps what was typed.
+///
+/// The glyph rather than the word, because it sits in the same `postio-key`
+/// chip the `/` does, and a chip is one key wide.
+const WAY_BACK: &str = "\u{232b}";
+
 /// Which question the box is asking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -759,6 +766,13 @@ impl Finder {
         self.imp().folders.borrow().clone()
     }
 
+    /// How to get out of the mode the box is in, or `None` in search --
+    /// which is not a mode anyone backed into.
+    pub fn way_back(&self) -> Option<String> {
+        let query = self.query();
+        (self.is_open() && query.mode != Mode::Search).then(|| WAY_BACK.to_string())
+    }
+
     /// What an empty box offers: every mode a prefix reaches, as the
     /// character and what it is for.
     ///
@@ -1281,8 +1295,13 @@ impl Finder {
             field
                 .text
                 .set_placeholder_text(Some(query.mode.placeholder()));
-            // The `/` cap invites you in; once you are in, it is noise.
-            field.hint.set_visible(!open);
+            // The `/` cap invites you in. Once you are in, it has a better
+            // job: a mode was easy to fall into and had nothing saying how to
+            // get out, so the same slot carries the way back while one is on.
+            // In search there is nothing to back out of, so it goes.
+            let way_back = (open && !searching).then_some(WAY_BACK);
+            field.hint.set_text(way_back.unwrap_or("/"));
+            field.hint.set_visible(!open || way_back.is_some());
         }
 
         // The operators, read back under the field rather than drawn inside
