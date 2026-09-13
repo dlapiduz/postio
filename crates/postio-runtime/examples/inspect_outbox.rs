@@ -57,16 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let key = StoreKey::from_hex(stored.expose())?.derive(Purpose::Database);
 
-    let connection = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
-    {
-        let hex = key.to_hex();
-        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
-    }
-    connection.execute_batch("PRAGMA query_only = ON;")?;
+    let connection = open_store(&path, &key)?;
 
     let now = chrono::Utc::now().timestamp();
     println!("now:   {now}\n");
@@ -214,4 +205,57 @@ fn dirs_store_path() -> std::path::PathBuf {
             let home = std::env::var("HOME").expect("HOME");
             std::path::Path::new(&home).join(".local/share/postio/postio.db")
         })
+}
+
+/// Open the store read-only under `mac`, or say it is not the one.
+///
+/// **The MAC has to be named.** `PRAGMA cipher_hmac_algorithm` decides how
+/// pages are authenticated and cannot be changed once one has been read, so a
+/// reader that leaves it alone gets SQLCipher's default — SHA-512 — and a
+/// store written under SHA-256 answers `hmac check failed for pgno=1` and
+/// `file is not a database`. That is what this example did until it was
+/// pointed at a real store: the key was right and the pages would not open.
+///
+/// `db.rs` calls the two `PageMac::Sha256` (what a new store gets) and
+/// `PageMac::Sha512` (what older ones carry, read but never written), and
+/// that type is `pub(crate)` — so the strings are spelled here and the caller
+/// tries both rather than guessing.
+fn open_under(
+    path: &std::path::Path,
+    key: &postio_storage::key::Subkey,
+    mac: &str,
+) -> Result<Connection, Box<dyn std::error::Error>> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
+    {
+        let hex = key.to_hex();
+        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
+    }
+    // After the key and before anything reads a page, which is what SQLCipher
+    // requires of this one.
+    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {mac};"))?;
+    connection.execute_batch("PRAGMA query_only = ON;")?;
+    // The probe: `sqlite_schema` is page 1, so this is the cheapest read that
+    // proves both the key and the MAC.
+    connection.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(connection)
+}
+
+/// The store, opened under whichever MAC it was written with.
+fn open_store(
+    path: &std::path::Path,
+    key: &postio_storage::key::Subkey,
+) -> Result<Connection, Box<dyn std::error::Error>> {
+    // Newest first: a store made by this build is SHA-256.
+    match open_under(path, key, "HMAC_SHA256") {
+        Ok(connection) => Ok(connection),
+        Err(_) => open_under(path, key, "HMAC_SHA512").map_err(|error| {
+            format!("the store opened under neither HMAC_SHA256 nor HMAC_SHA512: {error}").into()
+        }),
+    }
 }
