@@ -39,15 +39,40 @@ cargo nextest run -p postio-sync -p postio-session  # the write path
 cargo test -p postio-app --test app_suite           # the window, end to end
 ```
 
-Then, against a real account — on a **fresh store**, never the live one:
+Then, against a real account — on a **fresh store**, never the live one.
 
 ```sh
-POSTIO_STORE=/tmp/turso-trial/postio.db cargo run -p postio-app
+scripts/run-isolated.sh HEAD
 ```
 
-Add the account, let the first sync run, and check three things a test cannot:
-the list fills, a message opens and reads correctly, and archiving one feels
-immediate.
+`run-isolated.sh` is the safe way and the only one worth using here. It sets
+its own `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, so the store
+it writes is `~/scratch/postio-run/state/data/postio/postio.db` and nothing it
+does can reach the real mailbox, the real `config.toml`, or the
+remote-images allowlist that #215 was about. It builds `--release` from a
+pinned commit in a worktree of its own, so it is not whatever happened to be
+on disk.
+
+`POSTIO_LOG=debug scripts/run-isolated.sh` for a readable trace of the sync;
+`scripts/run-isolated.sh --clean` to throw the store away afterwards.
+
+**If you point it at the live store anyway, it refuses rather than damages
+it.** A store the old engine wrote cannot be read by this one, and
+`Store::open` says so in a sentence naming the remedy — sync again — and
+leaves the file byte for byte (`storage/tests/refuses_a_foreign_store.rs`
+proves both halves). That is worth knowing but is not a reason to try: the
+engine is pre-1.0 and its encryption is unaudited, which is why the store
+under test is a scratch one.
+
+Add the account, let the first sync run, and check the four things a test
+cannot:
+
+1. the list fills, and scrolling deep into it stays instant;
+2. a message opens and reads correctly — including one with accents, which is
+   what `postio_model::fold` now has to get right on both sides;
+3. searching for a word that is only in a body finds it, and the best match is
+   at the top rather than merely the newest;
+4. archiving one feels immediate.
 
 ## US3 — search that finds what it finds today
 
