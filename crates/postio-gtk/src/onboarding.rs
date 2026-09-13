@@ -1117,9 +1117,7 @@ impl Onboarding {
         self.set_valign(gtk::Align::Center);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Add account"));
-        kicker.add_css_class("postio-kicker");
-        kicker.set_xalign(0.0);
+        let kicker = crate::widgets::kicker("Add account");
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 

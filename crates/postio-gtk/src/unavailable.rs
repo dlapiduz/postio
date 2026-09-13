@@ -162,9 +162,7 @@ impl Unavailable {
         self.set_valign(gtk::Align::Center);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Cannot open"));
-        kicker.add_css_class("postio-kicker");
-        kicker.set_xalign(0.0);
+        let kicker = crate::widgets::kicker("Cannot open");
         kicker.set_hexpand(true);
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 

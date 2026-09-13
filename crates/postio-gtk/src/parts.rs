@@ -840,8 +840,7 @@ impl PartsPanel {
         self.set_visible(false);
         self.set_accessible_role(gtk::AccessibleRole::Group);
 
-        let kicker = gtk::Label::new(Some("Parts"));
-        kicker.add_css_class("postio-kicker");
+        let kicker = crate::widgets::kicker("Parts");
         kicker.set_accessible_role(gtk::AccessibleRole::Presentation);
 
         imp.summary.add_css_class("postio-parts-summary");

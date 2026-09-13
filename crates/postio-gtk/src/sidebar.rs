@@ -415,6 +415,8 @@ impl Sidebar {
         self.add_css_class("postio-sidebar");
         self.set_hexpand(false);
 
+        // A template child, so the class is adopted rather than the label
+        // built by `widgets::kicker` — the one place that shape allows.
         imp.account.add_css_class("postio-kicker");
         imp.account.set_xalign(0.0);
         imp.account.set_ellipsize(pango::EllipsizeMode::Middle);
@@ -439,9 +441,7 @@ impl Sidebar {
         folders.append(&imp.sections);
         folders.append(&folder_list(&imp.special));
 
-        let heading = gtk::Label::new(Some("Folders"));
-        heading.add_css_class("postio-kicker");
-        heading.set_xalign(0.0);
+        let heading = crate::widgets::kicker("Folders");
 
         let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         rule.add_css_class("postio-rule");
@@ -457,9 +457,7 @@ impl Sidebar {
 
         let saved_rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         saved_rule.add_css_class("postio-rule");
-        let saved_heading = gtk::Label::new(Some("Saved searches"));
-        saved_heading.add_css_class("postio-kicker");
-        saved_heading.set_xalign(0.0);
+        let saved_heading = crate::widgets::kicker("Saved searches");
 
         imp.saved_section
             .set_orientation(gtk::Orientation::Vertical);
