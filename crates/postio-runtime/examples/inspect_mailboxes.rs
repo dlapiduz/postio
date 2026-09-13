@@ -8,14 +8,13 @@
 //! messages sit in each — so the answer is a fact about the account rather
 //! than an inference from a screenshot.
 //!
-//! # Why this is safe to point at a personal store
+//! # Point it at a copy of a store you care about
 //!
-//! * The database is opened `SQLITE_OPEN_READ_ONLY` and then put in
-//!   `PRAGMA query_only`, so nothing here can write — not a checkpoint, not
-//!   a vacuum, not a schema migration. That matters beyond the obvious: the
-//!   WAL on the box this was written for is 676 MB (#1175), and an ordinary
-//!   read-write open would checkpoint it and destroy the evidence for that
-//!   issue while "fixing" it.
+//! * The engine has no read-only open — the `SQLITE_OPEN_READ_ONLY` flag and
+//!   `PRAGMA query_only` that used to belt-and-brace this have no
+//!   equivalent — so the safety is this instruction rather than a file mode.
+//!   Nothing below writes; what is left is the engine's own recovery on
+//!   open, which is exactly what a copy protects the live store from.
 //! * The keyring entry is **retrieved, never minted**. `postio_session`'s
 //!   `store_key` mints a fresh key when it finds none, which would replace
 //!   the key a populated store is encrypted under; this refuses instead.
@@ -32,7 +31,6 @@ use std::collections::BTreeMap;
 
 use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
 use postio_storage::key::{Purpose, STORE_KEY_ENTRY, StoreKey};
-use rusqlite::{Connection, OpenFlags};
 
 /// One mailbox competing for a role: its row id, its path, and how much mail
 /// is in it. The counts are the point — telling two look-alike folders apart
@@ -46,7 +44,8 @@ struct Claimant {
 /// Claimants keyed by the account and role they are competing for.
 type ByRole = BTreeMap<(i64, String), Vec<Claimant>>;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = dirs_store_path();
     println!("store: {}", path.display());
     if !path.exists() {
@@ -57,40 +56,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `postio_session::store_key` would mint one, which on a populated store
     // means a key that can never open it again.
     let secrets = KeyringSecretStore::default();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let stored = runtime.block_on(secrets.retrieve(&AccountKey::new(STORE_KEY_ENTRY)))?;
+    let stored = secrets.retrieve(&AccountKey::new(STORE_KEY_ENTRY)).await?;
     if stored.is_empty() {
         return Err("the store key entry is empty; refusing to mint one".into());
     }
     let key = StoreKey::from_hex(stored.expose())?.derive(Purpose::Database);
 
-    let connection = open_store(&path, &key)?;
-
-    let wal: i64 = connection
-        .query_row("PRAGMA wal_checkpoint", [], |row| row.get::<_, i64>(1))
-        .unwrap_or(-1);
-    println!("wal frames: {wal}   (-1 = could not ask read-only)\n");
+    // **Point this at a copy.** There is no read-only open in the engine's
+    // Rust API -- the `SQLITE_OPEN_READ_ONLY` flag and `PRAGMA query_only`
+    // that used to belt-and-brace this have no equivalent -- so the safety
+    // is now the instruction in the doc comment rather than the file mode.
+    // Nothing below writes; what is left is the engine's own recovery on
+    // open, which is exactly what a copy protects the live store from.
+    let store = postio_storage::Store::open(&path, &key).await?;
+    let connection = store.connect().await?;
+    let _ =
+        postio_storage::sql::scalar(&connection, "SELECT count(*) FROM sqlite_schema", ()).await?;
 
     // ── every mailbox row, with what is in it ────────────────────────────
-    let mut statement = connection.prepare(
+    let rows = postio_storage::sql::all(
+        &connection,
         "SELECT m.id, m.account_id, m.path, m.role, m.selectable, m.parent_id,
                 (SELECT count(*) FROM messages x WHERE x.mailbox_id = m.id)
            FROM mailboxes m
           ORDER BY m.account_id, m.path COLLATE NOCASE",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, Option<i64>>(5)?,
-            row.get::<_, i64>(6)?,
-        ))
-    })?;
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<i64>(1)?,
+                row.col::<String>(2)?,
+                row.col::<String>(3)?,
+                row.col::<i64>(4)?,
+                row.col::<Option<i64>>(5)?,
+                row.col::<i64>(6)?,
+            ))
+        },
+    )
+    .await?;
 
     println!(
         "{:>5}  {:>4}  {:<12} {:>4} {:>7} {:>9}  path",
@@ -99,8 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut by_role: ByRole = BTreeMap::new();
     // Kept for the timing pass below, which needs every mailbox again.
     let mut listed: Vec<(i64, String, i64)> = Vec::new();
-    for row in rows {
-        let (id, account, path, role, selectable, parent, messages) = row?;
+    for (id, account, path, role, selectable, parent, messages) in rows {
         listed.push((id, path.clone(), messages));
         println!(
             "{id:>5}  {account:>4}  {role:<12} {selectable:>4} {:>7} {messages:>9}  {path}",
@@ -140,21 +143,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── the same server folder stored twice ──────────────────────────────
     println!("\npaths that appear more than once in one account:");
-    let mut duplicates = connection.prepare(
+    let duplicates = postio_storage::sql::all(
+        &connection,
         "SELECT account_id, path COLLATE NOCASE, count(*)
            FROM mailboxes
           GROUP BY account_id, path COLLATE NOCASE
          HAVING count(*) > 1",
-    )?;
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<String>(1)?,
+                row.col::<i64>(2)?,
+            ))
+        },
+    )
+    .await?;
     let mut found = false;
-    for row in duplicates.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })? {
-        let (account, path, count) = row?;
+    for (account, path, count) in duplicates {
         found = true;
         println!("  account {account}  {count} rows  {path}");
     }
@@ -162,21 +169,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  (none -- every path is stored once)");
     }
 
-    // ── has anything ever finished a full pass ───────────────────────────
-    // The per-account role map (ADR 0035, migration 0017), which is what the
-    // sidebar resolves a reserved row through. It **overrides** the role a
-    // folder's own `SPECIAL-USE` attribute claims, so a row that opens the
-    // wrong folder shows up here rather than in the table above -- and an
-    // empty map is the ordinary state, meaning "believe the server".
-    // What opening each folder costs before a single row is drawn.
+    // ── what opening each folder costs before a single row is drawn ──────
     //
     // The threaded list asks `ThreadRepository::count_of` for the folder, and
     // the folder-scoped form is a correlated subquery: for every message in
     // the mailbox, does a newer message in the same thread live here too. The
     // probe is indexed (`idx_messages_thread_mailbox`), but it is one probe
-    // per message, and under SQLCipher every page that misses the 16 MB cache
-    // is an AES decrypt and an HMAC (#1237 is the same arithmetic from the
-    // snooze sweep).
+    // per message, and every page that misses the cache is a decrypt (#1237
+    // is the same arithmetic from the snooze sweep).
     //
     // Timed here rather than reasoned about, because the number is a property
     // of *this* store -- how big the folder is and how much of it fits.
@@ -186,7 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut timed: Vec<(u128, String, i64, i64)> = Vec::new();
     for (id, path, messages) in &listed {
         let started = std::time::Instant::now();
-        let threads: i64 = connection.query_row(
+        let threads = postio_storage::sql::scalar(
+            &connection,
             &format!(
                 "SELECT count(*) FROM messages rep
                   WHERE rep.mailbox_id = ?1 AND rep.{MEMBER}
@@ -198,9 +199,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                AND (newer.received_at, newer.id)
                                    > (rep.received_at, rep.id))"
             ),
-            [id],
-            |row| row.get(0),
-        )?;
+            [*id],
+        )
+        .await?;
         timed.push((
             started.elapsed().as_millis(),
             path.clone(),
@@ -218,25 +219,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {ms:>7} ms  {messages:>7} messages -> {threads:>7} rows  {path}{flag}");
     }
 
+    // ── the per-account role map (ADR 0035) ──────────────────────────────
+    // What the sidebar resolves a reserved row through. It **overrides** the
+    // role a folder's own `SPECIAL-USE` attribute claims, so a row that opens
+    // the wrong folder shows up here rather than in the table above -- and an
+    // empty map is the ordinary state, meaning "believe the server".
     println!("\nmailbox_roles (overrides what the server's attributes said):");
-    let mut mapped = connection
-        .prepare("SELECT account_id, role, path FROM mailbox_roles ORDER BY account_id, role")?;
+    let mapped = postio_storage::sql::all(
+        &connection,
+        "SELECT account_id, role, path FROM mailbox_roles ORDER BY account_id, role",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<String>(1)?,
+                row.col::<String>(2)?,
+            ))
+        },
+    )
+    .await?;
     let mut any_mapped = false;
-    let mut rows = mapped.query([])?;
-    while let Some(row) = rows.next()? {
+    for (account, role, path) in mapped {
         any_mapped = true;
-        let account: i64 = row.get(0)?;
-        let role: String = row.get(1)?;
-        let path: String = row.get(2)?;
         // Does the path it names actually exist, and hold anything?
-        let found: Option<(i64, i64)> = connection
-            .query_row(
-                "SELECT m.id, (SELECT count(*) FROM messages x WHERE x.mailbox_id = m.id)
-                   FROM mailboxes m WHERE m.account_id = ?1 AND m.path = ?2",
-                rusqlite::params![account, &path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
+        let found = postio_storage::sql::first(
+            &connection,
+            "SELECT m.id, (SELECT count(*) FROM messages x WHERE x.mailbox_id = m.id)
+               FROM mailboxes m WHERE m.account_id = ?1 AND m.path = ?2",
+            (account, path.clone()),
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                Ok((row.col::<i64>(0)?, row.col::<i64>(1)?))
+            },
+        )
+        .await?;
         match found {
             Some((id, messages)) => println!(
                 "  account {account}  {role:<8} -> {path:?}  (mailbox {id}, {messages} messages)"
@@ -251,22 +268,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nsync_state (the sidebar's 'never synced' comes from last_full_sync_at):");
-    let mut sync = connection.prepare(
+    let states = postio_storage::sql::all(
+        &connection,
         "SELECT s.mailbox_id, m.path, s.last_full_sync_at, s.highest_mod_seq, s.uid_next
            FROM sync_state s LEFT JOIN mailboxes m ON m.id = s.mailbox_id
           ORDER BY m.path COLLATE NOCASE",
-    )?;
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<Option<String>>(1)?,
+                row.col::<Option<i64>>(2)?,
+                row.col::<Option<i64>>(3)?,
+                row.col::<Option<i64>>(4)?,
+            ))
+        },
+    )
+    .await?;
     let mut rows = 0;
-    for row in sync.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, Option<i64>>(2)?,
-            row.get::<_, Option<i64>>(3)?,
-            row.get::<_, Option<i64>>(4)?,
-        ))
-    })? {
-        let (mailbox, path, full, mod_seq, uid_next) = row?;
+    for (mailbox, path, full, mod_seq, uid_next) in states {
         rows += 1;
         println!(
             "  mailbox {mailbox:>4}  full_sync {:<14} mod_seq {:<12} uid_next {:<8} {}",
@@ -294,57 +315,4 @@ fn dirs_store_path() -> std::path::PathBuf {
             let home = std::env::var("HOME").expect("HOME");
             std::path::Path::new(&home).join(".local/share/postio/postio.db")
         })
-}
-
-/// Open the store read-only under `mac`, or say it is not the one.
-///
-/// **The MAC has to be named.** `PRAGMA cipher_hmac_algorithm` decides how
-/// pages are authenticated and cannot be changed once one has been read, so a
-/// reader that leaves it alone gets SQLCipher's default — SHA-512 — and a
-/// store written under SHA-256 answers `hmac check failed for pgno=1` and
-/// `file is not a database`. That is what this example did until it was
-/// pointed at a real store: the key was right and the pages would not open.
-///
-/// `db.rs` calls the two `PageMac::Sha256` (what a new store gets) and
-/// `PageMac::Sha512` (what older ones carry, read but never written), and
-/// that type is `pub(crate)` — so the strings are spelled here and the caller
-/// tries both rather than guessing.
-fn open_under(
-    path: &std::path::Path,
-    key: &postio_storage::key::Subkey,
-    mac: &str,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
-    {
-        let hex = key.to_hex();
-        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
-    }
-    // After the key and before anything reads a page, which is what SQLCipher
-    // requires of this one.
-    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {mac};"))?;
-    connection.execute_batch("PRAGMA query_only = ON;")?;
-    // The probe: `sqlite_schema` is page 1, so this is the cheapest read that
-    // proves both the key and the MAC.
-    connection.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
-        row.get::<_, i64>(0)
-    })?;
-    Ok(connection)
-}
-
-/// The store, opened under whichever MAC it was written with.
-fn open_store(
-    path: &std::path::Path,
-    key: &postio_storage::key::Subkey,
-) -> Result<Connection, Box<dyn std::error::Error>> {
-    // Newest first: a store made by this build is SHA-256.
-    match open_under(path, key, "HMAC_SHA256") {
-        Ok(connection) => Ok(connection),
-        Err(_) => open_under(path, key, "HMAC_SHA512").map_err(|error| {
-            format!("the store opened under neither HMAC_SHA256 nor HMAC_SHA512: {error}").into()
-        }),
-    }
 }

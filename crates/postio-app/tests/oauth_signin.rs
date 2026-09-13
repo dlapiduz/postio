@@ -343,7 +343,8 @@ sources = ["own-client"]
         None,
         Arc::new(DeadTransport),
         Arc::new(browser.clone()),
-    ).await;
+    )
+    .await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -384,7 +385,8 @@ sources = ["own-client"]
     play_the_browser(&authorize_url, "the-code");
 
     assert!(
-        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the sign-in never settled: {:?}",
         screen.status()
     );
@@ -398,7 +400,8 @@ sources = ["own-client"]
     let connection = database.connect().await.expect("a connection");
     let account = AccountRepository::new(&connection)
         .list()
-        .await.expect("accounts")
+        .await
+        .expect("accounts")
         .into_iter()
         .find(|account| account.address.address == ADDRESS)
         .expect("the account row landed");
@@ -413,10 +416,7 @@ sources = ["own-client"]
         .expect("the refresh token is in the keyring");
     assert_eq!(refresh.expose(), REFRESH_TOKEN);
     assert!(
-        secrets
-            .retrieve(&AccountKey::new(ADDRESS))
-            .await
-            .is_err(),
+        secrets.retrieve(&AccountKey::new(ADDRESS)).await.is_err(),
         "no password entry exists: this account never had one"
     );
 

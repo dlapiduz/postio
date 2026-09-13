@@ -61,7 +61,9 @@ pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
             report.message_count > 0,
             "the fixture seeded no mail, so this test could not fail"
         );
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -88,7 +90,8 @@ pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
         // `search::install`. Two installs put two handlers on the box, and the
         // query answers into the one a test cannot see.
         let view = feed_the_window(&window, &wiring)
-            .await.expect("the store has an account")
+            .await
+            .expect("the store has an account")
             .search
             .expect("search installed");
 
@@ -138,7 +141,8 @@ pub fn typing_in_the_box_searches_the_store_and_fills_every_search_surface() {
         let rescoped = settle_until(async || {
             live.outcome()
                 .is_some_and(|later| later.hits != outcome.hits || panel.scope() == Scope::Inbox)
-        }).await;
+        })
+        .await;
         assert!(
             rescoped,
             "switching the scope column did not ask the question again. The scope \

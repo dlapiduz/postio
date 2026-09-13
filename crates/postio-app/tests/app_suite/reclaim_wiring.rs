@@ -109,7 +109,8 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
 
         // The same call `run` makes.
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         let _ = feeds;
 
@@ -220,7 +221,8 @@ pub fn opening_a_store_with_a_ceiling_evicts_down_to_it() {
 
         // The same call `run` makes.
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         let _ = feeds;
 

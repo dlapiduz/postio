@@ -78,6 +78,27 @@ use postio_session::Wiring;
 use postio_storage::repository::MailboxRepository;
 use postio_storage::seed::SeedReport;
 
+/// The runtime the store reads in this tool are driven on.
+///
+/// `main` returns `glib::ExitCode` and hands the thread to GTK, so it cannot
+/// be `async`. What needs a runtime is the setup: seeding a store and feeding
+/// the window. `block_on` polls the future on *this* thread, where GTK lives,
+/// and `multi_thread` because `postio_session::blocking::now` -- how a
+/// synchronous GTK callback reads the store -- reaches for `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the shot")
+        })
+        .block_on(future)
+}
+
 /// A seeded account, fed through the wiring the application uses.
 ///
 /// **`feed_the_window`, not a stand-in for it.** This is the same call `run`
@@ -103,32 +124,33 @@ use postio_storage::seed::SeedReport;
 /// everything else here — so a caller that also wants `search` can hand
 /// `wired.search` to [`show_search_panels`] instead of it calling
 /// `search::View::attach` a second time on the same shell (#831).
-fn populate(
+async fn populate(
     window: &Window,
     two_accounts: bool,
     backfill: bool,
     first_run: bool,
     outbox: bool,
 ) -> Option<&'static postio_app::Wired> {
-    let database = postio_storage::test_support::memory();
+    let database = postio_storage::test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory for the shot");
     let blobs = postio_storage::BlobStore::open(
         directory.keep(),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let report = postio_storage::seed::seed_small_with_bodies(&database, 11);
+    let report = postio_storage::seed::seed_small_with_bodies(&database, 11).await;
     let account = report.account.id;
-    stamp_as_just_synced(&database, &report);
+    stamp_as_just_synced(&database, &report).await;
     // Every shot is a first run otherwise -- the store is made here and
     // thrown away -- so the first-run orientation would sit across the top
     // of the compose shot, the settings shot and every other one. `demo
     // orientation` is how you ask to see it; the rest of the tool goes on
     // rendering the application as somebody uses it on any other day.
     if !first_run {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::SettingsRepository::new(&connection)
             .set("orientation_seen", "shot")
+            .await
             .expect("the orientation is not what this shot is about");
     }
     // A real second account, in the store, rather than a pair of names handed
@@ -137,8 +159,9 @@ fn populate(
     // could not fail when the wiring broke (#185).
     if two_accounts {
         let second =
-            postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12);
-        stamp_as_just_synced(&database, &second);
+            postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12)
+                .await;
+        stamp_as_just_synced(&database, &second).await;
     }
 
     // A message on its way out, for the one row that is absent unless
@@ -154,7 +177,7 @@ fn populate(
     // Nothing drains it: a shot renders a window rather than running a
     // client, so the message stays where the picture wants it.
     if outbox {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let drafts = postio_storage::repository::DraftRepository::new(&connection);
         let mut draft = postio_model::Draft::new(account);
         draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
@@ -163,9 +186,10 @@ fn populate(
             "lena@example.com",
         )];
         draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
-        drafts.save(&mut draft).expect("the draft saves");
+        drafts.save(&mut draft).await.expect("the draft saves");
         drafts
             .queue_send(&mut draft, chrono::Utc::now())
+            .await
             .expect("the send queues");
     }
 
@@ -179,7 +203,9 @@ fn populate(
     // a `Wiring` or a `Bridge` dropped here would stop answering before the
     // first page arrived.
     let wiring: &'static Wiring = Box::leak(Box::new(wiring));
-    let wired = feed_the_window(window, wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(window, wiring)
+        .await
+        .expect("the seeded store has an account");
 
     // A connection that is up and has just finished a sync, so the status
     // line reads `idle · imap` / `last sync 12s` as the canvas draws it.
@@ -220,14 +246,17 @@ fn populate(
 /// the empty state rather than of the folder list the canvas draws. The old
 /// hand-rolled source stamped this on the way past; now that the folders come
 /// out of the store, the store is where it has to be stamped.
-fn stamp_as_just_synced(database: &postio_storage::Store, report: &SeedReport) {
-    let connection = database.connection().expect("a checked-out connection");
+async fn stamp_as_just_synced(database: &postio_storage::Store, report: &SeedReport) {
+    let connection = database.connect().await.expect("a checked-out connection");
     let repository = MailboxRepository::new(&connection);
     let synced = chrono::Utc::now() - chrono::Duration::seconds(12);
     for mailbox in &report.mailboxes {
         let mut mailbox = mailbox.clone();
         mailbox.last_synced_at = Some(synced);
-        repository.update(&mailbox).expect("stamp a seeded folder");
+        repository
+            .update(&mailbox)
+            .await
+            .expect("stamp a seeded folder");
     }
 }
 
@@ -1002,13 +1031,13 @@ fn main() -> glib::ExitCode {
         // picture, it is a picture of the empty state over a store with mail
         // in it -- which used to be rendered, saved, and reported as a
         // success under a warning nobody was required to read (#809).
-        match populate(
+        match on_runtime(populate(
             &window,
             flag("accounts"),
             flag("backfill"),
             flag("orientation"),
             flag("outbox"),
-        ) {
+        )) {
             Some(wired) => Some(wired),
             None => {
                 eprintln!("shot: NO IMAGE WAS WRITTEN to {path}");

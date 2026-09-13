@@ -84,7 +84,8 @@ pub fn a_window_over_a_populated_store_lists_its_mail() {
 
         // ── the same call `run` makes ───────────────────────────────────────
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         let _ = feeds;
 

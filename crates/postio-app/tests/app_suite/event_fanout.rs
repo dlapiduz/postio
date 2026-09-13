@@ -55,7 +55,8 @@ async fn world() -> World {
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("a message")
+            .await
+            .expect("a message")
     };
     let actions = Actions::new(database.clone(), SharedState::default());
     World {
@@ -70,7 +71,8 @@ impl World {
         let connection = self.database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
-            .await.expect("a read")
+            .await
+            .expect("a read")
             .expect("the message is still there")
             .mailbox_id
     }
@@ -114,7 +116,11 @@ pub fn a_second_frontend_sees_everything_the_window_sees() {
         bridge.shutdown();
 
         // The verb really ran, so what follows is correlating something.
-        assert_ne!(world.mailbox_of(world.message).await, before, "nothing moved");
+        assert_ne!(
+            world.mailbox_of(world.message).await,
+            before,
+            "nothing moved"
+        );
 
         for (label, events) in [("window", &window), ("mcp", &mcp)] {
             let all = drain(events);

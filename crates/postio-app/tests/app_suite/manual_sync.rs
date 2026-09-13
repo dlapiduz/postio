@@ -78,7 +78,8 @@ pub fn the_status_lines_sync_button_asks_for_a_refresh() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         // `Refresh` has to be wired, or `commands::install`'s own filter drops it
         // before it can reach anything — which would make this test pass for the
@@ -103,7 +104,8 @@ pub fn the_status_lines_sync_button_asks_for_a_refresh() {
             settle_until(async || asked
                 .lock()
                 .expect("not poisoned")
-                .contains(&CommandId::Refresh)).await,
+                .contains(&CommandId::Refresh))
+            .await,
             "the sync button reported into nothing: it is drawn, it is clickable, \
              and no command reaches the bus — which is exactly what a control \
              wired to nobody looks like ({:?})",
@@ -119,7 +121,8 @@ pub fn the_status_lines_sync_button_asks_for_a_refresh() {
             settle_until(async || asked
                 .lock()
                 .expect("not poisoned")
-                .contains(&CommandId::Refresh)).await,
+                .contains(&CommandId::Refresh))
+            .await,
             "`F5` no longer reaches the same command the button does: {:?}",
             asked.lock().expect("not poisoned")
         );

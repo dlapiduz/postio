@@ -82,7 +82,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
             drafts.save(&mut draft).await.expect("save the draft");
             let queued = drafts
                 .queue_send(&mut draft, chrono::Utc::now())
-                .await.expect("queue the send");
+                .await
+                .expect("queue the send");
             assert_eq!(draft.state, DraftState::Queued);
             (draft.id, queued.id)
         };
@@ -109,7 +110,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
         compose::install(
@@ -125,7 +127,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
                 let feeds = feeds.clone();
                 std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
             },
-        ).await;
+        )
+        .await;
         window.composer().close();
         while glib::MainContext::default().iteration(false) {}
         assert!(
@@ -147,7 +150,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
             let connection = database.connect().await.expect("a connection");
             postio_storage::repository::MessageRepository::new(&connection)
                 .count(&postio_storage::repository::ListQuery::outbox(account))
-                .await.expect("a count")
+                .await
+                .expect("a count")
         };
         assert!(
             expected > 0,
@@ -167,7 +171,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
             let connection = database.connect().await.expect("a connection");
             DraftRepository::new(&connection)
                 .by_message(id)
-                .await.ok()
+                .await
+                .ok()
                 .flatten()
                 .is_some_and(|draft| draft.id == draft_id)
         };
@@ -210,7 +215,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         assert_eq!(
             DraftRepository::new(&connection)
                 .get(draft_id)
-                .await.expect("get")
+                .await
+                .expect("get")
                 .expect("still here")
                 .state,
             DraftState::Editing,
@@ -221,7 +227,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         assert!(
             OperationQueueRepository::new(&connection)
                 .get(queued_id)
-                .await.expect("get")
+                .await
+                .expect("get")
                 .is_none(),
             "the Send operation this draft was queued under must be gone, or a \
              second, different message could still go out behind the one the \
@@ -230,7 +237,8 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         assert!(
             !OperationQueueRepository::new(&connection)
                 .has_pending(OperationTarget::Draft(draft_id))
-                .await.expect("has_pending"),
+                .await
+                .expect("has_pending"),
             "nothing should still be queued against this draft"
         );
 
@@ -252,7 +260,11 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
         {
             let drafts = DraftRepository::new(&connection);
             let queue = OperationQueueRepository::new(&connection);
-            let mut draft = drafts.get(draft_id).await.expect("get").expect("still here");
+            let mut draft = drafts
+                .get(draft_id)
+                .await
+                .expect("get")
+                .expect("still here");
             let queued = queue
                 .enqueue(
                     account,
@@ -260,13 +272,16 @@ pub fn return_on_a_queued_draft_row_cancels_the_send_and_reopens_it_for_editing(
                     &postio_model::Operation::Send { draft: draft_id },
                     chrono::Utc::now(),
                 )
-                .await.expect("queue a second send");
+                .await
+                .expect("queue a second send");
             queue
                 .mark_failed(queued.id, chrono::Utc::now(), "550 mailbox unavailable")
-                .await.expect("the send gives up");
+                .await
+                .expect("the send gives up");
             drafts
                 .set_state(draft.id, DraftState::Failed)
-                .await.expect("the draft learns of it");
+                .await
+                .expect("the draft learns of it");
             draft.state = DraftState::Failed;
         }
 

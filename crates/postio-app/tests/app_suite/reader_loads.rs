@@ -123,7 +123,9 @@ pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes ────────────────────────────────────────
-        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(
@@ -223,7 +225,8 @@ async fn store_body(database: &Store, message: MessageId, text: &str) {
             },
             BodyState::Full,
         )
-        .await.expect("the body is stored");
+        .await
+        .expect("the body is stored");
 }
 
 /// Activate row `index`, the way Enter and a double click both arrive.

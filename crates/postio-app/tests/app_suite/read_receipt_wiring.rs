@@ -58,8 +58,11 @@ pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
             let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let repository = MessageRepository::new(&connection);
-            let mut asked =
-                postio_model::mime::parse(ASKED).into_message(account.id, inbox, chrono::Utc::now());
+            let mut asked = postio_model::mime::parse(ASKED).into_message(
+                account.id,
+                inbox,
+                chrono::Utc::now(),
+            );
             repository.create(&mut asked).await.expect("a message");
         }
 
@@ -76,7 +79,9 @@ pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
         let window = Window::default();
         window.present();
         settle();
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         settle();
 
         window.act(postio_core::Command::Settings);

@@ -78,7 +78,9 @@ pub fn the_detach_key_reaches_the_composer_in_a_wired_application() {
         settle();
 
         // ── the same call `run` makes: this is what mounts the composer ──────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         settle();
 
         let composer = window.composer();

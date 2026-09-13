@@ -55,9 +55,9 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::TransportSecurity;
 use postio_session::{Wiring, actions};
+use postio_storage::bind;
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, test_support};
-use postio_storage::bind;
 
 /// The local row for `rfc_message_id`, if the store has one.
 ///
@@ -68,11 +68,15 @@ async fn id_of(
     rfc_message_id: &str,
 ) -> Option<postio_model::MessageId> {
     let connection = database.connect().await.ok()?;
-    postio_storage::sql::one(&*connection, 
-            "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",bind![rfc_message_id],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
-        .ok()
-        .map(postio_model::MessageId::new)
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
+        bind![rfc_message_id],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .ok()
+    .map(postio_model::MessageId::new)
 }
 
 /// The corpus messages the server starts with, and the list must show.
@@ -142,7 +146,8 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         account.incoming.username = server.account().to_owned();
         AccountRepository::new(&connection)
             .update(&mut account)
-            .await.expect("the account row points at the test server");
+            .await
+            .expect("the account row points at the test server");
     }
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let key = AccountKey::new("test@example.com");
@@ -184,7 +189,8 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
-        .await.expect("the store has an account")
+        .await
+        .expect("the store has an account")
         .feeds;
     commands::install(
         &window,
@@ -225,9 +231,17 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     }
     if list.model().n_items() != SEEDED.len() as u32 {
         let connection = database.connect().await.expect("a connection");
-        let messages: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
+        let messages: i64 =
+            postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
-        let mailboxes: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM mailboxes",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
+        let mailboxes: i64 =
+            postio_storage::sql::one(&*connection, "SELECT count(*) FROM mailboxes", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
         panic!(
             "first sync never reached the list: server saw {} commands (first: {:?}), store holds {mailboxes} mailboxes / {messages} messages, list shows {} rows; sidebar default_mailbox={:?} selected={:?} list feed mailbox={:?}",
@@ -260,7 +274,8 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .get(focused)
-            .await.expect("a read")
+            .await
+            .expect("a read")
             .expect("the cursor row is in the store")
             .server
             .uid
@@ -360,7 +375,11 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     }
     if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
         let connection = database.connect().await.expect("a connection");
-        let local: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
+        let local: i64 =
+            postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages", (), |r| {
+                postio_storage::sql::RowExt::col(r, 0)
+            })
+            .await
             .unwrap_or(-1);
         let after: Vec<String> = server
             .commands()

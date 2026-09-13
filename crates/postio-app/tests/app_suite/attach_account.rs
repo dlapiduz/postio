@@ -145,7 +145,9 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
         let window = Window::default();
         window.present();
         settle();
-        feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         // The seeded account's own engine is deliberately never started: this
         // case is about the one that joins, and `start_syncing` would dial
@@ -159,14 +161,16 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
         // ── the account appears in the store, the way a submission writes it ─
         let joining = {
             let connection = database.connect().await.expect("a connection");
-            let mut account = Account::new("Grace", EmailAddress::new(None::<String>, JOINING_ADDRESS));
+            let mut account =
+                Account::new("Grace", EmailAddress::new(None::<String>, JOINING_ADDRESS));
             account.incoming.host = server.addr().ip().to_string();
             account.incoming.port = server.addr().port();
             account.incoming.security = TransportSecurity::None;
             account.incoming.username = server.account().to_owned();
             AccountRepository::new(&connection)
                 .create(&mut account)
-                .await.expect("the joining account's row");
+                .await
+                .expect("the joining account's row");
             account
         };
         secrets
@@ -178,7 +182,9 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
             .expect("the memory store accepts a password");
 
         // ── the whole of what "join a running application" means ─────────────
-        attach_account(&window, &wiring, &joining).await.expect("the pool can carry a second engine");
+        attach_account(&window, &wiring, &joining)
+            .await
+            .expect("the pool can carry a second engine");
 
         // 1. it syncs: the folders and the mail arrive over the wire.
         let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
@@ -188,7 +194,8 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
             let connection = database.connect().await.expect("a connection");
             synced = MailboxRepository::new(&connection)
                 .list_for_account(joining.id)
-                .await.expect("a read")
+                .await
+                .expect("a read")
                 .len();
             drop(connection);
             if synced > 0 {

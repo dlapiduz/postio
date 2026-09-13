@@ -23,7 +23,9 @@ async fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
         // The FTS tables are the index's, created on demand rather than by a
         // store migration -- the body index stores no content (#407) and lives
         // beside the store rather than in it.
-        postio_index::index::ensure_schema(&connection).await.expect("the index schema");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("the index schema");
         let repository = MessageRepository::new(&connection);
         for (subject, body) in [
             ("Quarterly figures", "the quarterly numbers we discussed"),
@@ -46,9 +48,11 @@ async fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
                     },
                     BodyState::Full,
                 )
-                .await.expect("a body");
+                .await
+                .expect("a body");
             postio_index::index::index_body(&connection, message.id.get(), Some(body))
-                .await.expect("an indexed body");
+                .await
+                .expect("an indexed body");
         }
         inbox
     };

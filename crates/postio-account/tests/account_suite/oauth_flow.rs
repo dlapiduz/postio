@@ -171,7 +171,7 @@ async fn the_full_flow_against_a_mock_authorization_server_yields_tokens() {
 
     let flow = tokio::spawn(async move { authorize(req, &opener, &cancel).await });
 
-    let authorize_url = opened.expect("the flow opens a browser URL");
+    let authorize_url = opened.await.expect("the flow opens a browser URL");
     play_the_browser(&authorize_url, "the-auth-code").await;
 
     let response = flow
@@ -203,7 +203,7 @@ async fn cancelling_before_the_redirect_arrives_never_starts_a_token_exchange() 
 
     // Wait for the flow to actually be listening before cancelling it, so
     // this test cannot pass by accident on a task that never started.
-    opened.expect("the flow opens a browser URL");
+    opened.await.expect("the flow opens a browser URL");
     cancel.cancel();
 
     let err = flow
@@ -227,7 +227,7 @@ async fn a_mismatched_state_is_dropped_and_the_real_redirect_still_completes_the
 
     let flow = tokio::spawn(async move { authorize(req, &opener, &cancel).await });
 
-    let authorize_url = opened.expect("the flow opens a browser URL");
+    let authorize_url = opened.await.expect("the flow opens a browser URL");
 
     // A stray connection with the wrong state must not end the attempt or
     // trigger a token exchange...

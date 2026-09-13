@@ -85,7 +85,8 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
             account.incoming.username = server.account().to_owned();
             let account_id = AccountRepository::new(&connection)
                 .create(&mut account)
-                .await.expect("the account row");
+                .await
+                .expect("the account row");
 
             let mailbox = test_support::mailbox(&connection, &account, "INBOX").await;
 
@@ -95,14 +96,16 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
             let mut message = Message::new(account_id, mailbox.id, chrono::Utc::now());
             let message_id = MessageRepository::new(&connection)
                 .create(&mut message)
-                .await.expect("insert a message");
+                .await
+                .expect("insert a message");
             (account_id, mailbox.id, message_id)
         };
 
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        secrets.store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD))
-.await
-.expect("the memory store accepts a password");
+        secrets
+            .store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD))
+            .await
+            .expect("the memory store accepts a password");
 
         // The real bus, over the real store -- the same composition `run()` uses,
         // so a doubled `connect_action` is the same bug it would be in the app.
@@ -162,7 +165,8 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
                 Rc::clone(&events),
                 notifier.clone(),
                 Rc::clone(&fed),
-            ).await;
+            )
+            .await;
         }
 
         assert!(
@@ -186,7 +190,8 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
             let connection = database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .get(message_id)
-                .await.expect("a read")
+                .await
+                .expect("a read")
                 .expect("still there")
                 .flags
                 .contains(&Flag::Flagged)

@@ -90,7 +90,8 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
         settle();
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
 
         let list = window.list();
@@ -125,7 +126,10 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
             2,
             "the banner names accounts from the sidebar's list, and it is empty"
         );
-        let fresh = settle_until(async || matches!(window.list_state().state(), Some(State::Partial { .. }))).await;
+        let fresh = settle_until(async || {
+            matches!(window.list_state().state(), Some(State::Partial { .. }))
+        })
+        .await;
         assert!(
             fresh,
             "nothing has reported yet, so every account is offline and the \
@@ -170,9 +174,9 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
         // than in what the feed knows, and these two assertions fail apart.
         let seen = feeds.folders.statuses();
         assert!(
-            seen.iter().any(
-                |(id, status)| *id == second.account.id && status.state == ConnectionState::Offline
-            ),
+            seen.iter()
+                .any(|(id, status)| *id == second.account.id
+                    && status.state == ConnectionState::Offline),
             "the feed did not record the second account as offline: {seen:?}"
         );
         assert_eq!(
@@ -187,7 +191,8 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
                 window.list_state().state(),
                 Some(State::Partial { ref accounts }) if accounts == &vec!["Second".to_owned()]
             )
-        }).await;
+        })
+        .await;
         assert!(
             named,
             "an account went offline under a unified view and the pane says {:?}. \
@@ -214,8 +219,10 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
         });
         settle();
 
-        let cleared =
-            settle_until(async || !matches!(window.list_state().state(), Some(State::Partial { .. }))).await;
+        let cleared = settle_until(async || {
+            !matches!(window.list_state().state(), Some(State::Partial { .. }))
+        })
+        .await;
         assert!(
             cleared,
             "the account recovered and the pane still says {:?}; a disclosure \

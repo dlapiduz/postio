@@ -1723,12 +1723,13 @@ mod tests {
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .await
             .expect("prepare the hydrate statement");
-        let steps: Vec<String> =
-            sql::mapped(&mut statement, bind![1i64, 10i64, 11i64, 12i64], |row| {
-                row.col(3)
-            })
-            .await
-            .expect("explain");
+        let steps: Vec<String> = sql::mapped(
+            &mut statement,
+            postio_storage::bind![1i64, 10i64, 11i64, 12i64],
+            |row| row.col(3),
+        )
+        .await
+        .expect("explain");
 
         // Either the scoped index or the shared one, and either the
         // constraint's own index or its read companion: the claim is that the

@@ -82,10 +82,12 @@ async fn threaded_message(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("create the threaded message");
+        .await
+        .expect("create the threaded message");
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .await.expect("join the message to the thread");
+        .await
+        .expect("join the message to the thread");
     id
 }
 
@@ -114,7 +116,8 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
             let mut thread = Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let oldest = threaded_message(
             &database,
@@ -123,9 +126,11 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
             thread,
             0,
             "the opening message",
-        ).await;
+        )
+        .await;
         let middle = threaded_message(&database, account.id, inbox, thread, 1, "a reply").await;
-        let newest = threaded_message(&database, account.id, inbox, thread, 2, "the last word").await;
+        let newest =
+            threaded_message(&database, account.id, inbox, thread, 2, "the last word").await;
 
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = postio_storage::BlobStore::open(
@@ -150,7 +155,9 @@ pub fn the_conversations_verbs_answer_the_message_they_name() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let list = window.list();
         assert!(
             settle_until(async || list.model().n_items() >= 1).await,

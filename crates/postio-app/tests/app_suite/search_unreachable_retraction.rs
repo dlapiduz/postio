@@ -88,7 +88,9 @@ pub fn an_account_going_away_and_coming_back_updates_the_caveat_without_asking_a
         let database = test_support::memory().await;
         let first = seed_small(&database, 11).await;
         let second = seed_extra_account(&database, "Second", "grace@example.org", 12).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -123,7 +125,8 @@ pub fn an_account_going_away_and_coming_back_updates_the_caveat_without_asking_a
         settle();
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(
             &window,
@@ -210,7 +213,8 @@ pub fn an_account_going_away_and_coming_back_updates_the_caveat_without_asking_a
         });
         let attached = settle_until(async || {
             outcome(&window).is_some_and(|outcome| outcome.unreachable == vec!["Second".to_owned()])
-        }).await;
+        })
+        .await;
         assert!(
             attached,
             "an account went offline while the result sat on screen and the \
@@ -233,8 +237,10 @@ pub fn an_account_going_away_and_coming_back_updates_the_caveat_without_asking_a
             account: second.account.id,
             state: ConnectionState::Online,
         });
-        let retracted =
-            settle_until(async || outcome(&window).is_some_and(|outcome| outcome.unreachable.is_empty())).await;
+        let retracted = settle_until(async || {
+            outcome(&window).is_some_and(|outcome| outcome.unreachable.is_empty())
+        })
+        .await;
         assert!(
             retracted,
             "the account came back and the readout still names it: {:?}",

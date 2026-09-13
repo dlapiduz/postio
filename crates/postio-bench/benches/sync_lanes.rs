@@ -112,7 +112,7 @@ use futures_util::stream::FuturesUnordered;
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{Account, Mailbox};
-use postio_storage::{Store, Checkout, test_support};
+use postio_storage::{Checkout, Store, test_support};
 use postio_sync::sync_mailbox;
 
 /// The runtime every async call in this bench is driven on.
@@ -134,7 +134,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         })
         .block_on(future)
 }
-
 
 /// Total messages synced per run, however many lanes share them.
 ///

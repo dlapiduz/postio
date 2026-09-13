@@ -59,10 +59,12 @@ async fn still_outside(database: &Store, account: AccountId, archive: MailboxId)
             accounts: vec![account],
             except: Vec::new(),
         })
-        .await.expect("a count");
+        .await
+        .expect("a count");
     let filed = repository
         .count_set(&MessageSet::in_mailbox(archive))
-        .await.expect("a count");
+        .await
+        .expect("a count");
     all - filed
 }
 
@@ -128,7 +130,8 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
         settle();
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
@@ -166,8 +169,10 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
         assert!(
             settle_until(async || {
                 let reach = list.reach();
-                reach.accounts == vec![here.account.id] && reach.omitted == vec!["Second".to_owned()]
-            }).await,
+                reach.accounts == vec![here.account.id]
+                    && reach.omitted == vec!["Second".to_owned()]
+            })
+            .await,
             "the list never learned which accounts it could vouch for, so the \
              gesture below has nothing to freeze: {:?}",
             list.reach()
@@ -213,7 +218,10 @@ pub fn select_all_in_a_degraded_unified_view_archives_only_what_it_could_see() {
 
         // The bus runs on the runtime's threads, so the write lands a moment
         // after the key press.
-        let archived = settle_until(async || still_outside(&database, here.account.id, here_archive).await == 0).await;
+        let archived = settle_until(async || {
+            still_outside(&database, here.account.id, here_archive).await == 0
+        })
+        .await;
         assert!(
             archived,
             "`Ctrl+A` then `a` in the unified view archived nothing. Every layer \

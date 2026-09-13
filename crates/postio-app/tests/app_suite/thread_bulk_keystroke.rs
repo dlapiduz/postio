@@ -46,14 +46,16 @@ async fn thread_mailboxes(database: &Store, thread: ThreadId) -> Vec<(MessageId,
     let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id, mailbox_id FROM messages WHERE thread_id = ?1 ORDER BY id")
-        .await.expect("prepare");
+        .await
+        .expect("prepare");
     let rows = postio_storage::sql::mapped(&mut statement, [thread.get()], |row| {
         Ok((
             MessageId::new(postio_storage::sql::RowExt::col(row, 0)?),
             postio_storage::sql::RowExt::col::<i64>(row, 1)?,
         ))
     })
-    .await.expect("query");
+    .await
+    .expect("query");
     rows
 }
 
@@ -108,7 +110,8 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
@@ -137,8 +140,8 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
                 continue;
             }
             let matched = match row.thread {
-                Some(thread) => thread_mailboxes(&database, thread).await
-                    
+                Some(thread) => thread_mailboxes(&database, thread)
+                    .await
                     .iter()
                     .any(|(_, mailbox)| *mailbox != archive),
                 None => false,
@@ -189,8 +192,8 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
 
         let filed = settle_until(async || {
             for thread in &threads {
-                let all_archived = thread_mailboxes(&database, *thread).await
-                    
+                let all_archived = thread_mailboxes(&database, *thread)
+                    .await
                     .iter()
                     .all(|(_, mailbox)| *mailbox == archive);
                 if !all_archived {
@@ -198,13 +201,13 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
                 }
             }
             true
-        }).await
-        ;
+        })
+        .await;
 
         let mut archived: usize = 0;
         for thread in &threads {
-            archived += thread_mailboxes(&database, *thread).await
-                
+            archived += thread_mailboxes(&database, *thread)
+                .await
                 .iter()
                 .filter(|(_, mailbox)| *mailbox == archive)
                 .count();

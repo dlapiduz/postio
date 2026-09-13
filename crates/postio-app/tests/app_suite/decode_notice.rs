@@ -91,7 +91,8 @@ async fn store(
     };
     repository
         .set_body(id, &stored, BodyState::Full)
-        .await.expect("a body");
+        .await
+        .expect("a body");
     id
 }
 
@@ -131,7 +132,8 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
                 CLEAN,
                 "Winter plans",
                 chrono::Utc::now() - chrono::Duration::hours(1),
-            ).await;
+            )
+            .await;
             store(
                 &database,
                 account.id,
@@ -139,7 +141,8 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
                 LOSSY,
                 "Summer plans",
                 chrono::Utc::now(),
-            ).await;
+            )
+            .await;
         }
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -155,7 +158,9 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
         let window = Window::default();
         window.present();
         while glib::MainContext::default().iteration(false) {}
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(

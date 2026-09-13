@@ -64,7 +64,8 @@ async fn store_with_messages(
 
 pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
     crate::gtk_case(async {
-        let root = std::env::temp_dir().join(format!("postio-storage-ceiling-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("postio-storage-ceiling-{}", std::process::id()));
         let state_dir = root.join("state");
         std::fs::create_dir_all(&state_dir).unwrap();
         // SAFETY: first statement of a single-threaded test.
@@ -108,7 +109,9 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let feeds = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let _ = feeds;
 
         // ── the startup pass, with no ceiling set, evicted nothing ───────────
@@ -123,7 +126,8 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
         let budget = blobs.len_of(&written[2]).expect("len") + 16;
         std::fs::write(&path, format!("[storage]\nmax_bytes = {budget}\n")).unwrap();
         assert!(
-            settle_until(async || !blobs.contains(&written[0]) && !blobs.contains(&written[1])).await,
+            settle_until(async || !blobs.contains(&written[0]) && !blobs.contains(&written[1]))
+                .await,
             "editing config.toml's [storage] section never reached the running \
              store -- ConfigChanged::storage has a listener nothing acts on"
         );
@@ -137,8 +141,8 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
         //    lower-level proof that a generous budget takes nothing; this is
         //    only "the live raise reaches the pass and does not misbehave") ───
         std::fs::write(&path, "[storage]\nmax_bytes = 100000000\n").unwrap();
-        let deadline =
-            std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(2));
+        let deadline = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(2));
         while std::time::Instant::now() < deadline {
             while glib::MainContext::default().iteration(false) {}
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

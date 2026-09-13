@@ -69,7 +69,8 @@ async fn is_read(database: &Store, message: MessageId) -> bool {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .expect("the message is still there")
         .flags
         .contains(&Flag::Seen)
@@ -156,8 +157,9 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let Wired { feeds, .. } =
-            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let Wired { feeds, .. } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         // `feed_the_window` fills the panes; `commands::install` is what turns a
         // gesture into a command on the bus. `open_account` calls both, in this
         // order, and a test that called only the first would be asking whether a
@@ -268,7 +270,8 @@ async fn page(database: &Store, mailbox: postio_model::MailboxId) -> Vec<Message
             limit: 20,
             after: None,
         })
-        .await.expect("a page")
+        .await
+        .expect("a page")
         .into_iter()
         .map(|row| row.id)
         .collect()

@@ -64,7 +64,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// Stands in for cold start work until postio-91i wires the real message
 /// list up to the storage bridge.
 fn simulate_startup() -> u64 {

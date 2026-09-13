@@ -165,7 +165,10 @@ mod through_the_boundary {
             for _ in 0..2 {
                 let mut message = Message::new(account.id, inbox, Utc::now());
                 let id = messages.create(&mut message).await.expect("a message");
-                threads.add_message(thread.id, id).await.expect("membership");
+                threads
+                    .add_message(thread.id, id)
+                    .await
+                    .expect("membership");
                 members.push(id.get());
             }
             (inbox, members)
@@ -200,7 +203,8 @@ mod through_the_boundary {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))
-            .await.expect("a read")
+            .await
+            .expect("a read")
             .expect("the message is still there")
             .flags
             .contains(&Flag::Flagged)
@@ -268,10 +272,10 @@ mod through_the_boundary {
     }
 
     async fn settle_until<F, Fut>(done: F) -> bool
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
         let deadline = std::time::Instant::now()
             + postio_test_support::scaled(std::time::Duration::from_secs(5));
         while std::time::Instant::now() < deadline {

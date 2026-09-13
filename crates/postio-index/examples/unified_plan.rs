@@ -24,9 +24,9 @@
 
 use chrono::{TimeZone, Utc};
 use postio_model::{EmailAddress, Message};
+use postio_storage::Connection;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
-use rusqlite::Connection;
 use std::time::Instant;
 
 const ACCOUNTS: u64 = 4;
@@ -51,19 +51,22 @@ impl Xorshift64 {
     }
 }
 
-fn main() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+#[tokio::main]
+async fn main() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
     let mut rng = Xorshift64(0x5eed_1234_5678_9abc);
     let repository = MessageRepository::new(&connection);
 
     let mut account_ids = Vec::new();
-    connection.execute_batch("BEGIN").expect("begin");
+    connection.execute_batch("BEGIN").await.expect("begin");
     for a in 0..ACCOUNTS {
-        let (account, mailbox) = test_support::account_with_inbox(&connection);
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         account_ids.push(account.id.get());
         for i in 0..PER_ACCOUNT {
             let sender = rng.below(SENDER_COUNT);
@@ -77,18 +80,19 @@ fn main() {
             )];
             message.subject = Some(format!("Weekly update {i}"));
             message.size = 1024 + rng.below(4096);
-            repository.create(&mut message).expect("create");
+            repository.create(&mut message).await.expect("create");
 
             let mut body = format!("{COMMON_WORD} the status as of message {i}");
             if i % 100 == 0 {
                 body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
             }
             postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+                .await
                 .expect("index");
         }
     }
-    connection.execute_batch("COMMIT").expect("commit");
-    connection.execute_batch("ANALYZE").expect("analyze");
+    connection.execute_batch("COMMIT").await.expect("commit");
+    connection.execute_batch("ANALYZE").await.expect("analyze");
     println!(
         "corpus: {ACCOUNTS} accounts x {PER_ACCOUNT} = {} messages\n",
         ACCOUNTS * PER_ACCOUNT
@@ -110,8 +114,12 @@ fn main() {
             "A  account-scoped (today)",
             &connection,
             &a_sql,
-            &[&word, &account_ids[0]],
-        );
+            &[
+                turso::Value::Text(word.to_string()),
+                turso::Value::Integer(account_ids[0]),
+            ],
+        )
+        .await;
 
         // B — unified, no account predicate, no new index.
         let b_sql = format!(
@@ -119,7 +127,13 @@ fn main() {
               WHERE {correlated}
               ORDER BY m.received_at DESC, m.id DESC LIMIT {LIMIT}"
         );
-        report("B  unified, no index", &connection, &b_sql, &[&word]);
+        report(
+            "B  unified, no index",
+            &connection,
+            &b_sql,
+            &[turso::Value::Text(word.to_string())],
+        )
+        .await;
 
         // D — per-account UNION ALL, each on its own index, merged.
         let arms: Vec<String> = account_ids
@@ -137,7 +151,13 @@ fn main() {
             "SELECT id FROM ({}) ORDER BY received_at DESC, id DESC LIMIT {LIMIT}",
             arms.join(" UNION ALL ")
         );
-        report("D  per-account UNION ALL", &connection, &d_sql, &[&word]);
+        report(
+            "D  per-account UNION ALL",
+            &connection,
+            &d_sql,
+            &[turso::Value::Text(word.to_string())],
+        )
+        .await;
     }
 
     // C — unified with the index option 1 proposes.
@@ -145,9 +165,10 @@ fn main() {
     let built = Instant::now();
     connection
         .execute_batch("CREATE INDEX idx_messages_recency ON messages (received_at DESC, id DESC)")
+        .await
         .expect("create index");
     println!("    built in {:?}", built.elapsed());
-    connection.execute_batch("ANALYZE").expect("analyze");
+    connection.execute_batch("ANALYZE").await.expect("analyze");
 
     for (label, word) in [("uncommon", UNCOMMON_WORD), ("common", COMMON_WORD)] {
         println!("=========== {label} word, with the new index ===========");
@@ -156,7 +177,13 @@ fn main() {
               WHERE {correlated}
               ORDER BY m.received_at DESC, m.id DESC LIMIT {LIMIT}"
         );
-        report("C  unified + recency index", &connection, &c_sql, &[&word]);
+        report(
+            "C  unified + recency index",
+            &connection,
+            &c_sql,
+            &[turso::Value::Text(word.to_string())],
+        )
+        .await;
 
         let a_sql = format!(
             "SELECT m.id FROM messages m
@@ -167,8 +194,12 @@ fn main() {
             "A' account-scoped, index present",
             &connection,
             &a_sql,
-            &[&word, &account_ids[0]],
-        );
+            &[
+                turso::Value::Text(word.to_string()),
+                turso::Value::Integer(account_ids[0]),
+            ],
+        )
+        .await;
     }
 
     // The other half of the executor: `Form::Driven`, which orders by bm25
@@ -192,8 +223,12 @@ fn main() {
             &format!("E  {label}: driven, account-scoped"),
             &connection,
             &scoped,
-            &[&word, &account_ids[0]],
-        );
+            &[
+                turso::Value::Text(word.to_string()),
+                turso::Value::Integer(account_ids[0]),
+            ],
+        )
+        .await;
         let unified = format!(
             "SELECT m.id {hits_join}
               GROUP BY m.id ORDER BY min(coalesce(hits.meta, hits.body)) LIMIT {LIMIT}"
@@ -202,8 +237,9 @@ fn main() {
             &format!("F  {label}: driven, unified"),
             &connection,
             &unified,
-            &[&word],
-        );
+            &[turso::Value::Text(word.to_string())],
+        )
+        .await;
     }
 
     // What the index costs on the write path, which is the objection to it.
@@ -211,59 +247,60 @@ fn main() {
     // cold page cache and the second does not -- taking one order alone had
     // the index looking *faster*, which it is not.
     println!("\n=========== write cost ===========");
-    measure_insert(&connection, "1st: with idx_messages_recency");
+    measure_insert(&connection, "1st: with idx_messages_recency").await;
     connection
         .execute_batch("DROP INDEX idx_messages_recency")
+        .await
         .expect("drop");
-    measure_insert(&connection, "2nd: without it");
+    measure_insert(&connection, "2nd: without it").await;
     connection
         .execute_batch("CREATE INDEX idx_messages_recency ON messages (received_at DESC, id DESC)")
+        .await
         .expect("recreate");
-    measure_insert(&connection, "3rd: with it again");
+    measure_insert(&connection, "3rd: with it again").await;
 
-    let pages: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM dbstat WHERE name = 'idx_messages_recency'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(-1);
-    let page_size: i64 = connection
-        .query_row("PRAGMA page_size", [], |r| r.get(0))
+    // What the index costs used to come from `dbstat`, per b-tree. This
+    // engine has none, so the only honest figure is the whole file -- which
+    // is still the number that reaches a disk.
+    let pages = postio_storage::sql::scalar(&connection, "PRAGMA page_count", ())
+        .await
+        .unwrap_or(0);
+    let page_size = postio_storage::sql::scalar(&connection, "PRAGMA page_size", ())
+        .await
         .unwrap_or(0);
     println!(
-        "idx_messages_recency: {pages} pages x {page_size} B = {} KiB for {} messages",
+        "the store: {} KiB for {} messages",
         pages * page_size / 1024,
         ACCOUNTS * PER_ACCOUNT
     );
 }
 
-fn report(label: &str, connection: &Connection, sql: &str, params: &[&dyn rusqlite::ToSql]) {
-    let plan: Vec<String> = {
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("prepare plan");
-        let rows = statement
-            .query_map(params, |row| row.get::<_, String>(3))
-            .expect("plan rows");
-        rows.filter_map(Result::ok).collect()
-    };
+async fn report(label: &str, connection: &Connection, sql: &str, params: &[turso::Value]) {
+    let plan: Vec<String> = postio_storage::sql::all(
+        connection,
+        &format!("EXPLAIN QUERY PLAN {sql}"),
+        params.to_vec(),
+        |row| postio_storage::sql::RowExt::col::<String>(row, 3),
+    )
+    .await
+    .expect("plan rows");
 
-    let mut statement = connection.prepare(sql).expect("prepare");
-    let run = |statement: &mut rusqlite::Statement<'_>| -> usize {
-        let rows = statement
-            .query_map(params, |row| row.get::<_, i64>(0))
-            .expect("run");
-        rows.filter_map(Result::ok).count()
+    let run = async |connection: &Connection| -> usize {
+        postio_storage::sql::all(connection, sql, params.to_vec(), |row| {
+            postio_storage::sql::RowExt::col::<i64>(row, 0)
+        })
+        .await
+        .expect("run")
+        .len()
     };
     // Warm, then take the best of five: the interesting quantity is the
     // plan's cost, not the page cache's mood.
-    let _ = run(&mut statement);
+    let _ = run(connection).await;
     let mut best = std::time::Duration::MAX;
     let mut rows = 0;
     for _ in 0..5 {
         let started = Instant::now();
-        rows = run(&mut statement);
+        rows = run(connection).await;
         best = best.min(started.elapsed());
     }
     println!("{label:34} {best:>12.2?}  ({rows} rows)");
@@ -272,33 +309,35 @@ fn report(label: &str, connection: &Connection, sql: &str, params: &[&dyn rusqli
     }
 }
 
-fn measure_insert(connection: &Connection, label: &str) {
+async fn measure_insert(connection: &Connection, label: &str) {
     let base = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
-    let account: i64 = connection
-        .query_row("SELECT id FROM accounts LIMIT 1", [], |r| r.get(0))
+    let account = postio_storage::sql::scalar(connection, "SELECT id FROM accounts LIMIT 1", ())
+        .await
         .expect("an account");
-    let mailbox: i64 = connection
-        .query_row("SELECT id FROM mailboxes LIMIT 1", [], |r| r.get(0))
+    let mailbox = postio_storage::sql::scalar(connection, "SELECT id FROM mailboxes LIMIT 1", ())
+        .await
         .expect("a mailbox");
 
     let started = Instant::now();
-    connection.execute_batch("BEGIN").expect("begin");
+    connection.execute_batch("BEGIN").await.expect("begin");
     for i in 0..20_000i64 {
         connection
             .execute(
                 "INSERT INTO messages (account_id, mailbox_id, received_at, size, body_state)
                  VALUES (?1, ?2, ?3, 1024, 'headers_only')",
-                rusqlite::params![
+                (
                     account,
                     mailbox,
-                    (base + chrono::Duration::minutes(i)).timestamp_millis()
-                ],
+                    (base + chrono::Duration::minutes(i)).timestamp_millis(),
+                ),
             )
+            .await
             .expect("insert");
     }
-    connection.execute_batch("COMMIT").expect("commit");
+    connection.execute_batch("COMMIT").await.expect("commit");
     println!("20,000 inserts {label:26} {:>12.2?}", started.elapsed());
     connection
         .execute_batch("DELETE FROM messages WHERE received_at >= 1893456000000")
+        .await
         .expect("cleanup");
 }

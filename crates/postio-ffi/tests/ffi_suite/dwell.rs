@@ -20,7 +20,8 @@ async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(postio_model::ids::MessageId::new(message))
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .is_some_and(|message| message.flags.contains(&Flag::Seen))
 }
 
@@ -65,7 +66,10 @@ async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dwell_marks_the_message_read() {
     let (session, database, message) = one_unread().await;
-    assert!(!is_read(&database, message).await, "the fixture starts unread");
+    assert!(
+        !is_read(&database, message).await,
+        "the fixture starts unread"
+    );
 
     session.mark_read_on_dwell(message);
     assert!(

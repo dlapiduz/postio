@@ -88,7 +88,9 @@ pub fn every_letter_can_be_typed_into_the_composer_body() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         settle();
 
         // ── `c` opens the composer, the way the canvas says ──────────────────

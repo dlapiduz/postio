@@ -197,17 +197,22 @@ pub fn switching_surfaces_stays_within_a_blink() {
             let started = Instant::now();
             let rows = MessageRepository::new(&connection)
                 .page(&query)
-                .await.expect("a page");
+                .await
+                .expect("a page");
             eprintln!(
                 "  [store] first page ({} rows)      {:>10.2?}",
                 rows.len(),
                 started.elapsed()
             );
             let started = Instant::now();
-            let total: i64 = postio_storage::sql::one(&*connection, 
-                    "SELECT total FROM mailboxes WHERE id = ?1",bind![mailbox.get()],
-                    |r| postio_storage::sql::RowExt::col(r, 0)).await
-                .unwrap_or(-1);
+            let total: i64 = postio_storage::sql::one(
+                &*connection,
+                "SELECT total FROM mailboxes WHERE id = ?1",
+                bind![mailbox.get()],
+                |r| postio_storage::sql::RowExt::col(r, 0),
+            )
+            .await
+            .unwrap_or(-1);
             eprintln!(
                 "  [store] cached total ({total})       {:>10.2?}",
                 started.elapsed()
@@ -224,7 +229,8 @@ pub fn switching_surfaces_stays_within_a_blink() {
                         limit: 50,
                         after: None,
                     })
-                    .await.expect("a thread page");
+                    .await
+                    .expect("a thread page");
                 eprintln!(
                     "  [store] THREAD page ({} rows)     {:>10.2?}",
                     threads.len(),
@@ -232,10 +238,14 @@ pub fn switching_surfaces_stays_within_a_blink() {
                 );
             }
             let started = Instant::now();
-            let counted: i64 = postio_storage::sql::one(&*connection, 
-                    "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",bind![mailbox.get()],
-                    |r| postio_storage::sql::RowExt::col(r, 0)).await
-                .expect("a count");
+            let counted: i64 = postio_storage::sql::one(
+                &*connection,
+                "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",
+                bind![mailbox.get()],
+                |r| postio_storage::sql::RowExt::col(r, 0),
+            )
+            .await
+            .expect("a count");
             eprintln!(
                 "  [store] count(*) ({counted})          {:>10.2?}",
                 started.elapsed()
@@ -254,11 +264,13 @@ pub fn switching_surfaces_stays_within_a_blink() {
             timed("switch folder", async || {
                 window.sidebar().select(folders[1]);
                 settle_until(async || window.sidebar().selected() == Some(folders[1])).await;
-            }).await;
+            })
+            .await;
             timed("switch back", async || {
                 window.sidebar().select(folders[0]);
                 settle_until(async || window.sidebar().selected() == Some(folders[0])).await;
-            }).await;
+            })
+            .await;
         }
 
         // ── the composer taking over the pane ───────────────────────────────
@@ -361,7 +373,8 @@ pub fn switching_surfaces_stays_within_a_blink() {
             timed(&format!("prev folder, round {round}"), async || {
                 window.act(postio_core::Command::PrevFolder);
                 settle_until(async || true).await;
-            }).await;
+            })
+            .await;
         }
     });
 }

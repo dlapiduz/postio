@@ -54,7 +54,8 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         let connection = database.connect().await.expect("a connection");
         let seeded_id = AccountRepository::new(&connection)
             .list()
-            .await.expect("list")
+            .await
+            .expect("list")
             .first()
             .expect("seed_small seeds one account")
             .id;
@@ -95,7 +96,9 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         // iterations on a runner slow to map a brand new window (matches
         // `settings_accounts_wiring.rs`'s own `window.present(); settle();`).
         pump();
-        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         // What `run` does on the line after this one: without it every gesture
         // the window produces resolves correctly and then reaches nothing, which
         // is precisely what the role-mapping half below is about.
@@ -136,7 +139,10 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         imap_host.emit_activate();
 
         assert!(
-            settle_until(async || read_imap_host(&database, seeded_id).await == "imap.new-host.example.com").await,
+            settle_until(
+                async || read_imap_host(&database, seeded_id).await == "imap.new-host.example.com"
+            )
+            .await,
             "editing the IMAP host should have reached the database"
         );
 
@@ -152,10 +158,12 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
             let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
             signatures
                 .create(seeded_id, &mut work)
-                .await.expect("a signature");
+                .await
+                .expect("a signature");
             signatures
                 .create(seeded_id, &mut brief)
-                .await.expect("a second signature");
+                .await
+                .expect("a second signature");
             (work.id, brief.id)
         };
 
@@ -163,7 +171,8 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         panel.set_accounts(
             AccountRepository::new(&database.connect().await.expect("a connection"))
                 .list()
-                .await.expect("list"),
+                .await
+                .expect("list"),
         );
         pump();
         panel.open_account_detail(seeded_id);
@@ -202,11 +211,19 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
         dropdown.set_selected(index as u32 + 1);
 
         assert!(
-            settle_until(async || mapped_archive(&database, seeded_id).await.as_deref() == Some(target.as_str())).await,
+            settle_until(
+                async || mapped_archive(&database, seeded_id).await.as_deref()
+                    == Some(target.as_str())
+            )
+            .await,
             "picking a folder for Archive should have reached the account's map"
         );
         assert!(
-            settle_until(async || archive_folder(&database, seeded_id).await.as_deref() == Some(target.as_str())).await,
+            settle_until(
+                async || archive_folder(&database, seeded_id).await.as_deref()
+                    == Some(target.as_str())
+            )
+            .await,
             "and the folder wearing the role should be the one that was picked"
         );
 
@@ -240,7 +257,8 @@ async fn read_default_signature(
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .default_signature_id
 }
@@ -250,20 +268,28 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-async fn read_display_name(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> String {
+async fn read_display_name(
+    database: &postio_storage::Store,
+    id: postio_model::ids::AccountId,
+) -> String {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .display_name
 }
 
-async fn read_imap_host(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> String {
+async fn read_imap_host(
+    database: &postio_storage::Store,
+    id: postio_model::ids::AccountId,
+) -> String {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .incoming
         .host
@@ -351,7 +377,8 @@ async fn folder_paths(
     let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .list_for_account(account)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .into_iter()
         .filter(|mailbox| mailbox.selectable)
         .map(|mailbox| mailbox.path)
@@ -365,7 +392,8 @@ async fn mapped_archive(
     let connection = database.connect().await.expect("a connection");
     MailboxRoleRepository::new(&connection)
         .for_account(account)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .into_iter()
         .find(|(role, _)| *role == MailboxRole::Archive)
         .map(|(_, path)| path)
@@ -378,7 +406,8 @@ async fn archive_folder(
     let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .by_role(account, MailboxRole::Archive)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .map(|mailbox| mailbox.path)
 }
 

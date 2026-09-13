@@ -70,7 +70,8 @@ pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window(
         identity.is_default = true;
         IdentityRepository::new(&connection)
             .create(&mut identity)
-            .await.expect("insert a sending identity");
+            .await
+            .expect("insert a sending identity");
         drop(connection);
 
         let directory = tempfile::tempdir().expect("a blob directory");
@@ -96,7 +97,9 @@ pub fn update_credential_opens_a_prefilled_dialog_without_disturbing_the_window(
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         assert!(
             settle_until(async || window.list().model().n_items() > 0).await,
             "the list should already have mail before this test asks anything of it"

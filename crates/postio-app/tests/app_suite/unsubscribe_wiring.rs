@@ -66,7 +66,8 @@ async fn store(
     };
     repository
         .set_body(id, &stored, BodyState::Full)
-        .await.expect("a body");
+        .await
+        .expect("a body");
     id
 }
 
@@ -114,7 +115,9 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
         let window = Window::default();
         window.present();
         while glib::MainContext::default().iteration(false) {}
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(
@@ -139,7 +142,8 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
             assert_eq!(
                 UnsubscribeRepository::new(&connection)
                     .for_account(account)
-                    .await.expect("list")
+                    .await
+                    .expect("list")
                     .len(),
                 0,
                 "nothing has been activated yet"
@@ -152,10 +156,12 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
             let connection = database.connect().await.expect("a connection");
             UnsubscribeRepository::new(&connection)
                 .for_account(account)
-                .await.expect("list")
+                .await
+                .expect("list")
                 .len()
                 == 1
-        }).await;
+        })
+        .await;
         assert!(
             landed,
             "the click never reached storage -- the reader only asks, and \
@@ -165,7 +171,8 @@ pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() 
             let connection = database.connect().await.expect("a connection");
             let logged = UnsubscribeRepository::new(&connection)
                 .for_account(account)
-                .await.expect("list");
+                .await
+                .expect("list");
             assert_eq!(logged[0].account_id, account);
             assert_eq!(
                 logged[0].list_identifier, "news.example.org",

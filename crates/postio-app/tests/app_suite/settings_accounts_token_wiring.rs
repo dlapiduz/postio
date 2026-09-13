@@ -74,13 +74,15 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
         });
         AccountRepository::new(&connection)
             .create(&mut second)
-            .await.expect("insert the OAuth account");
+            .await
+            .expect("insert the OAuth account");
         drop(connection);
 
         // What #870's own persistence actually writes, through its real public
         // seam rather than a hand-rolled stand-in for it -- `seed` is exactly
         // what a completed sign-in calls.
-        let secrets: Arc<dyn postio_account::secret::SecretStore> = Arc::new(MemorySecretStore::new());
+        let secrets: Arc<dyn postio_account::secret::SecretStore> =
+            Arc::new(MemorySecretStore::new());
         let source = OwnClientTokenSource::new(
             secrets.clone(),
             "https://example.com/token".parse().unwrap(),
@@ -117,7 +119,9 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
 
         let window = Window::default();
         window.present();
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let panel = window.settings();
 
         assert!(
@@ -151,11 +155,12 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
         };
 
         assert!(
-            settle_until(async || oauth_row(&panel).is_some_and(|row| validity_in(&row).is_some())).await,
+            settle_until(async || oauth_row(&panel).is_some_and(|row| validity_in(&row).is_some()))
+                .await,
             "the OAuth account's row never picked up a validity line"
         );
-        let validity =
-            validity_in(&oauth_row(&panel).expect("the row is still there")).expect("checked above");
+        let validity = validity_in(&oauth_row(&panel).expect("the row is still there"))
+            .expect("checked above");
         assert!(
             validity.starts_with("token valid 4") && validity.ends_with('d'),
             "expected roughly 41 days out, from the real value seed() persisted: {validity:?}"

@@ -114,7 +114,8 @@ pub fn a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate
         settle();
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(
             &window,
@@ -207,7 +208,8 @@ pub fn a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate
             settle_until(
                 async || state.read(|app_state| app_state.connection(second.account.id))
                     == ConnectionState::Offline
-            ).await,
+            )
+            .await,
             "AppState never heard the account went offline"
         );
         let from_state = state.read(|app_state| app_state.connection(second.account.id));

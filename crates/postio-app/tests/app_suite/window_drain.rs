@@ -83,7 +83,8 @@ pub fn an_event_from_a_producer_that_is_not_the_bus_reaches_the_panes() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         let notifier = notifications::Notifier::new(
             wiring.database.clone(),

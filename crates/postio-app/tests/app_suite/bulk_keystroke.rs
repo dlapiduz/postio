@@ -43,7 +43,8 @@ async fn unread_in(database: &Store, mailbox: MailboxId) -> u32 {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .count_set(&MessageSet::in_mailbox(mailbox).with_flag(ColumnFlag::Seen, false))
-        .await.expect("a count")
+        .await
+        .expect("a count")
 }
 
 pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
@@ -97,7 +98,8 @@ pub fn ctrl_a_then_shift_u_marks_the_whole_folder_read() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 

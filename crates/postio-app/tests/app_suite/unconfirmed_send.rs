@@ -76,7 +76,8 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
             let id = drafts.save(&mut draft).await.expect("save the draft");
             drafts
                 .set_state(id, DraftState::Unconfirmed)
-                .await.expect("the state the send path leaves");
+                .await
+                .expect("the state the send path leaves");
             id
         };
 
@@ -107,7 +108,8 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
@@ -141,8 +143,8 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
                 }
             }
             false
-        }).await
-        ;
+        })
+        .await;
         assert!(
             row,
             "the unconfirmed draft has no row, so there is nothing for a person \
@@ -161,9 +163,11 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
             let connection = database.connect().await.expect("a connection");
             DraftRepository::new(&connection)
                 .get(draft_id)
-                .await.expect("read")
+                .await
+                .expect("read")
                 .is_some_and(|draft| draft.state == DraftState::Sent)
-        }).await;
+        })
+        .await;
         assert!(
             settled,
             "the user said the message arrived and Postio did not record it -- \

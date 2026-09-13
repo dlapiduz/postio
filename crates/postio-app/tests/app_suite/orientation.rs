@@ -89,7 +89,8 @@ async fn launch(world: &World) -> (Window, postio_gtk::feed::Feeds, Bridge) {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
-        .await.expect("the seeded store has an account")
+        .await
+        .expect("the seeded store has an account")
         .feeds;
     (window, feeds, bridge)
 }
