@@ -9,7 +9,6 @@
 //! that minted a fresh key on the second open would look fine on first run
 //! and lose every mailbox on the second.
 
-use postio_storage::sql::bind;
 use std::sync::Arc;
 
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretError, SecretStore};

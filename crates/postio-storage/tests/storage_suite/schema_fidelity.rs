@@ -258,7 +258,7 @@ async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
         .await
         .expect("insert address");
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT id FROM addresses WHERE address_normalized = ?1",
         bind![address.normalized()],
         |row| postio_storage::sql::RowExt::col(row, 0),
@@ -312,7 +312,7 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
     insert_recipients(&connection, message_id, &message).await;
 
     let stored = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT subject, date, received_at, size, preview, flags, body_state,
                     remote_id, raw_blob_id
              FROM messages WHERE id = ?1",
@@ -489,7 +489,7 @@ async fn attachment_metadata_round_trips_without_the_bytes() {
         Option<String>,
         Option<String>,
     ) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",
         (),
         |row| {
@@ -751,7 +751,7 @@ async fn a_contact_accumulates_sightings() {
         .expect("insert contact");
 
     let (normalized, times_seen): (String, i64) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT address_normalized, times_seen FROM contacts",
         (),
         |row| {

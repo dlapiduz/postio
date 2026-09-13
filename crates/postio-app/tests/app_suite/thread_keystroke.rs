@@ -45,15 +45,15 @@ async fn thread_mailboxes(database: &Store, thread: ThreadId) -> Vec<(MessageId,
         .prepare("SELECT id, mailbox_id FROM messages WHERE thread_id = ?1 ORDER BY id")
         .await
         .expect("prepare");
-    let rows = postio_storage::sql::mapped(&mut statement, [thread.get()], |row| {
+
+    postio_storage::sql::mapped(&mut statement, [thread.get()], |row| {
         Ok((
             MessageId::new(postio_storage::sql::RowExt::col(row, 0)?),
             postio_storage::sql::RowExt::col::<i64>(row, 1)?,
         ))
     })
     .await
-    .expect("read the conversation");
-    rows
+    .expect("read the conversation")
 }
 
 pub fn pressing_a_on_a_thread_row_archives_the_whole_conversation() {

@@ -544,12 +544,6 @@ impl Checkout {
     pub fn write_gate(&self) -> &WriteGate {
         &self.gate
     }
-
-    /// The connection itself, for a caller that wants to hold one past this
-    /// handle's lifetime.
-    pub fn into_connection(self) -> Connection {
-        self.connection
-    }
 }
 
 impl std::ops::Deref for Checkout {

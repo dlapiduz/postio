@@ -322,6 +322,13 @@ pub async fn open_or_onboard(
             });
             match route {
                 Startup::Ready(_) => {
+                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                    // network work it reaches is spawned onto the runtime and answers over a
+                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                    // left is store reads, whose futures this engine makes self-contained.
+                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                    // store and reads it on this context with no runtime anywhere, and fails
+                    // loudly if that stops being true.
                     open_account(&window, &wiring, &state, &wired, &events, &notifier).await
                 }
                 // `postio-hiy`: nothing to feed yet, or nothing that can
@@ -346,6 +353,13 @@ pub async fn open_or_onboard(
                         ),
                         std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
                     )
+                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                    // network work it reaches is spawned onto the runtime and answers over a
+                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                    // left is store reads, whose futures this engine makes self-contained.
+                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                    // store and reads it on this context with no runtime anywhere, and fails
+                    // loudly if that stops being true.
                     .await
                 }
             }
@@ -1355,6 +1369,13 @@ pub fn open_the_store(
                         Some(reason)
                     }
                 };
+            // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+            // network work it reaches is spawned onto the runtime and answers over a
+            // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+            // left is store reads, whose futures this engine makes self-contained.
+            // Measured rather than assumed: `app_suite::glib_main_context` opens a
+            // store and reads it on this context with no runtime anywhere, and fails
+            // loudly if that stops being true.
             present(&window, &opened, &context, refused, &fed).await;
         }
     });
@@ -1447,20 +1468,33 @@ pub async fn present(
         // (#1114). Before this line the window offers the chrome and nothing
         // else, which is exactly what it can do.
         window.set_store_open(true);
-        let held = opened.borrow();
-        let ready = held.as_ref().expect("just checked");
-        let notifier = notifications::Notifier::new(
-            ready.wiring.database.clone(),
-            ready.wiring.store.clone(),
-            ready.wiring.runtime.clone(),
-            context.sync_config.clone(),
-        );
+        // Everything this needs is taken out of the cell and the borrow
+        // dropped, for the reason the comment above already gives -- and the
+        // await below makes it sharper, because a borrow held across a
+        // suspension lasts as long as the future rather than as long as the
+        // statement. All four are handles.
+        let (wiring, wired, events, notifier) = {
+            let held = opened.borrow();
+            let ready = held.as_ref().expect("just checked");
+            let notifier = notifications::Notifier::new(
+                ready.wiring.database.clone(),
+                ready.wiring.store.clone(),
+                ready.wiring.runtime.clone(),
+                context.sync_config.clone(),
+            );
+            (
+                ready.wiring.clone(),
+                ready.wired.clone(),
+                Rc::clone(&ready.events),
+                notifier,
+            )
+        };
         open_or_onboard(
             window,
-            &ready.wiring,
+            &wiring,
             context.state.clone(),
-            ready.wired.clone(),
-            Rc::clone(&ready.events),
+            wired,
+            events,
             notifier,
             Rc::clone(fed),
         )
@@ -1523,6 +1557,13 @@ pub async fn present(
                         Ok(ready) => {
                             tracing::info!("the store opened on a retry");
                             *opened.borrow_mut() = Some(ready);
+                            // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                            // network work it reaches is spawned onto the runtime and answers over a
+                            // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                            // left is store reads, whose futures this engine makes self-contained.
+                            // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                            // store and reads it on this context with no runtime anywhere, and fails
+                            // loudly if that stops being true.
                             present(&window, &opened, &context, None, &fed).await;
                         }
                         Err(reason) => {

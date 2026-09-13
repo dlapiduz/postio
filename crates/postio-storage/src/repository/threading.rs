@@ -208,11 +208,7 @@ impl<'a> ThreadingRepository<'a> {
             |row| row.col::<String>(0),
         )
         .await?;
-        Ok(rows
-            .into_iter()
-            .into_iter()
-            .map(RfcMessageId::new)
-            .collect())
+        Ok(rows.into_iter().map(RfcMessageId::new).collect())
     }
 
     /// The thread claiming `id`, if any.

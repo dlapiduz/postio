@@ -200,7 +200,7 @@ async fn no_message_may_contribute_more_than_the_two_caps_allow() {
         .expect("index");
 
     let (rows, longest): (i64, i64) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT count(*), coalesce(max(length(value)), 0) FROM message_headers
               WHERE message_id = ?1",
         bind![message.id.get()],

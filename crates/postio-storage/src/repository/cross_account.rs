@@ -184,7 +184,6 @@ impl<'a> CrossAccountMoveRepository<'a> {
             },
         )
         .await
-        .map_err(Into::into)
     }
     /// Every saga in one of `phases` whose *source* is among `sources`.
     ///

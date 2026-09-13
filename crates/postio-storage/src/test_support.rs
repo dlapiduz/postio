@@ -327,6 +327,64 @@ pub async fn account_with_inbox(connection: &Connection) -> (Account, MailboxId)
     (account, inbox.id)
 }
 
+/// The query plan for `sql`, as the lines `EXPLAIN QUERY PLAN` prints, joined
+/// by newlines.
+///
+/// The tests that use this are asserting that a read resolves through an index
+/// rather than a scan or a sort, and every one of them was writing the same
+/// six lines to get the text. The awkward part is the placeholders: a
+/// repository's SQL is parameterised, and the planner will not explain a
+/// statement it cannot bind, but it does not care what the values *are*. So
+/// this counts the `?N` placeholders and binds a `1` to each.
+///
+/// # Panics
+///
+/// If the statement will not prepare or the plan will not read, which for a
+/// query the caller just built means the SQL is wrong.
+pub async fn plan(connection: &Connection, sql: &str) -> String {
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+        .await
+        .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
+    let arguments = vec![1i64; placeholders(sql)];
+    crate::sql::mapped(&mut statement, arguments, |row| {
+        crate::sql::RowExt::col::<String>(row, 3)
+    })
+    .await
+    .unwrap_or_else(|error| panic!("explain {sql}: {error}"))
+    .join("\n")
+}
+
+/// How many distinct `?N` placeholders `sql` carries.
+///
+/// The highest index rather than the count, because `?1` may appear twice and
+/// still be one parameter — which is exactly what a query filtering two
+/// columns on the same account id looks like.
+fn placeholders(sql: &str) -> usize {
+    let mut highest = 0;
+    let mut rest = sql;
+    while let Some(at) = rest.find('?') {
+        rest = &rest[at + 1..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        highest = highest.max(digits.parse().unwrap_or(0));
+        rest = &rest[digits.len()..];
+    }
+    highest
+}
+
+/// Whether a query plan says the engine had to sort.
+///
+/// The spelling is the engine's and it changed: SQLite writes
+/// `USE TEMP B-TREE FOR ORDER BY`, this one writes `USE SORTER FOR ORDER BY`.
+/// Four suites were asserting `!plan.contains("TEMP B-TREE")`, which on this
+/// engine is an assertion that cannot fail — a sort went unnoticed in the
+/// thread list for exactly that reason. Both spellings live here so the next
+/// one is a single edit.
+pub fn sorts(plan: &str) -> bool {
+    let plan = plan.to_ascii_uppercase();
+    plan.contains("TEMP B-TREE") || plan.contains("USE SORTER")
+}
+
 #[cfg(test)]
 mod sweep_tests {
     use std::time::{Duration, SystemTime};
@@ -502,62 +560,4 @@ mod sweep_tests {
         let root = tempfile::tempdir().expect("tempdir");
         sweep_now(root.path());
     }
-}
-
-/// The query plan for `sql`, as the lines `EXPLAIN QUERY PLAN` prints, joined
-/// by newlines.
-///
-/// The tests that use this are asserting that a read resolves through an index
-/// rather than a scan or a sort, and every one of them was writing the same
-/// six lines to get the text. The awkward part is the placeholders: a
-/// repository's SQL is parameterised, and the planner will not explain a
-/// statement it cannot bind, but it does not care what the values *are*. So
-/// this counts the `?N` placeholders and binds a `1` to each.
-///
-/// # Panics
-///
-/// If the statement will not prepare or the plan will not read, which for a
-/// query the caller just built means the SQL is wrong.
-pub async fn plan(connection: &Connection, sql: &str) -> String {
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-        .await
-        .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
-    let arguments = vec![1i64; placeholders(sql)];
-    crate::sql::mapped(&mut statement, arguments, |row| {
-        crate::sql::RowExt::col::<String>(row, 3)
-    })
-    .await
-    .unwrap_or_else(|error| panic!("explain {sql}: {error}"))
-    .join("\n")
-}
-
-/// How many distinct `?N` placeholders `sql` carries.
-///
-/// The highest index rather than the count, because `?1` may appear twice and
-/// still be one parameter — which is exactly what a query filtering two
-/// columns on the same account id looks like.
-fn placeholders(sql: &str) -> usize {
-    let mut highest = 0;
-    let mut rest = sql;
-    while let Some(at) = rest.find('?') {
-        rest = &rest[at + 1..];
-        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        highest = highest.max(digits.parse().unwrap_or(0));
-        rest = &rest[digits.len()..];
-    }
-    highest
-}
-
-/// Whether a query plan says the engine had to sort.
-///
-/// The spelling is the engine's and it changed: SQLite writes
-/// `USE TEMP B-TREE FOR ORDER BY`, this one writes `USE SORTER FOR ORDER BY`.
-/// Four suites were asserting `!plan.contains("TEMP B-TREE")`, which on this
-/// engine is an assertion that cannot fail — a sort went unnoticed in the
-/// thread list for exactly that reason. Both spellings live here so the next
-/// one is a single edit.
-pub fn sorts(plan: &str) -> bool {
-    let plan = plan.to_ascii_uppercase();
-    plan.contains("TEMP B-TREE") || plan.contains("USE SORTER")
 }

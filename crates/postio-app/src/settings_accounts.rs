@@ -298,7 +298,7 @@ async fn existing_signature(
     account: postio_model::ids::AccountId,
     id: postio_model::ids::SignatureId,
 ) -> Option<postio_model::Signature> {
-    SignatureRepository::new(&connection)
+    SignatureRepository::new(connection)
         .list_for_account(account)
         .await
         .ok()?
@@ -625,7 +625,7 @@ async fn account_mailboxes(
     connection: &postio_storage::Checkout,
     account: postio_model::ids::AccountId,
 ) -> AccountMailboxes {
-    let mailboxes = MailboxRepository::new(&connection);
+    let mailboxes = MailboxRepository::new(connection);
     let folders = mailboxes
         .list_for_account(account)
         .await
@@ -634,7 +634,7 @@ async fn account_mailboxes(
         .filter(|mailbox| mailbox.selectable)
         .map(|mailbox| mailbox.path)
         .collect();
-    let chosen = MailboxRoleRepository::new(&connection)
+    let chosen = MailboxRoleRepository::new(connection)
         .for_account(account)
         .await
         .unwrap_or_default();
@@ -657,7 +657,7 @@ async fn account_mailboxes(
         })
     })
     .collect();
-    let refused = MailboxRoleRepository::new(&connection)
+    let refused = MailboxRoleRepository::new(connection)
         .refusals(account)
         .await
         .unwrap_or_default();

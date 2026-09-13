@@ -189,6 +189,13 @@ pub fn drain(
             let Some(window) = window.upgrade() else {
                 return;
             };
+            // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+            // network work it reaches is spawned onto the runtime and answers over a
+            // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+            // left is store reads, whose futures this engine makes self-contained.
+            // Measured rather than assumed: `app_suite::glib_main_context` opens a
+            // store and reads it on this context with no runtime anywhere, and fails
+            // loudly if that stops being true.
             apply(&window, &feeds, &event, &notifier, &state, &quiet).await;
         }
     });

@@ -103,11 +103,11 @@ async fn world() -> World {
     World {
         _database: database,
         connection,
-        work: work,
-        home: home,
-        work_inbox_message: work_inbox_message,
-        home_inbox_message: home_inbox_message,
-        work_archive_message: work_archive_message,
+        work,
+        home,
+        work_inbox_message,
+        home_inbox_message,
+        work_archive_message,
     }
 }
 

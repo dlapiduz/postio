@@ -130,7 +130,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
                 .await
                 .expect("the fixture writes");
             postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 (),
                 |row| postio_storage::sql::RowExt::col(row, 0),

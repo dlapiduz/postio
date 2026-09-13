@@ -225,7 +225,7 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
 
     let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) =
         postio_storage::sql::one(
-            &*connection,
+            &connection,
             "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",
             bind![id.get()],
             |row| {
@@ -1539,7 +1539,7 @@ async fn enqueue_and_move_locally(
 
 async fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",
         bind![mailbox.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0),

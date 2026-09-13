@@ -1233,7 +1233,7 @@ impl<'a> ThreadRepository<'a> {
                 // not have, and the unified list failed to page at all while every
                 // storage-level test passed. `thread_id` is the second column in
                 // both, which is what lets the reader be shared.
-                Ok((ThreadId::new(row.col(1)?), read_list_row(&row)?))
+                Ok((ThreadId::new(row.col(1)?), read_list_row(row)?))
             },
         )
         .await?;

@@ -46,7 +46,7 @@ async fn set_seen(connection: &Connection, message: MessageId) {
 
 async fn is_seen(connection: &Connection, message: MessageId) -> bool {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT seen FROM messages WHERE id = ?1",
         bind![message.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
@@ -58,7 +58,7 @@ async fn is_seen(connection: &Connection, message: MessageId) -> bool {
 
 async fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT has_pending_operations FROM messages WHERE id = ?1",
         bind![message.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0),

@@ -2844,20 +2844,6 @@ fn entropy() -> u64 {
         .unwrap_or(0)
 }
 
-/// Run `work` with a connection, turning a checkout failure into an error the
-/// user could read.
-async fn with_connection<T, F, Fut>(store: &Store, work: F) -> Result<T, EngineError>
-where
-    F: FnOnce(Checkout) -> Fut,
-    Fut: std::future::Future<Output = Result<T, EngineError>>,
-{
-    let connection = store
-        .connect()
-        .await
-        .map_err(|error| EngineError::new(error.to_string()))?;
-    work(connection).await
-}
-
 #[cfg(test)]
 mod tests {
     /// The warning for a thread that outstays the grace names what the
@@ -2937,7 +2923,7 @@ mod tests {
     /// directly, and the relationship this test guards is unchanged.
     #[tokio::test]
     async fn the_store_is_what_bounds_the_lanes_not_the_imap_ceiling() {
-        let database = postio_storage::test_support::memory().await;
+        let _database = postio_storage::test_support::memory().await;
         assert_eq!(
             sync_lanes(postio_storage::MAX_CONCURRENT_PASSES),
             postio_storage::MAX_CONCURRENT_PASSES - RESERVED_FOR_ELSEWHERE,

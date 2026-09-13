@@ -47,7 +47,7 @@ async fn fill(connection: &Connection, mailbox: MailboxId, count: usize) -> Vec<
 
 async fn mailbox_of(connection: &Connection, message: MessageId) -> MailboxId {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT mailbox_id FROM messages WHERE id = ?1",
         bind![message.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(MailboxId::new),
@@ -290,7 +290,7 @@ async fn a_bulk_move_clears_the_server_identity_the_way_a_single_one_does() {
 
     let (uid, validity, mod_seq): (Option<i64>, Option<i64>, Option<i64>) =
         postio_storage::sql::one(
-            &*connection,
+            &connection,
             "SELECT uid, uid_validity, mod_seq FROM messages WHERE id = ?1",
             bind![messages[0].get()],
             |row| {
@@ -579,7 +579,7 @@ async fn an_empty_run_names_nothing() {
 /// The `flags` text a row is holding, straight out of the column.
 async fn flag_text(connection: &Connection, message: MessageId) -> String {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT flags FROM messages WHERE id = ?1",
         bind![message.get()],
         |row| postio_storage::sql::RowExt::col(row, 0),
@@ -590,7 +590,7 @@ async fn flag_text(connection: &Connection, message: MessageId) -> String {
 
 async fn boolean(connection: &Connection, message: MessageId, column: &str) -> bool {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         &format!("SELECT {column} FROM messages WHERE id = ?1"),
         bind![message.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(|value| value != 0),

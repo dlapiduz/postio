@@ -1083,7 +1083,7 @@ async fn header_is_indexed(
     value: &str,
 ) -> bool {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT EXISTS (SELECT 1 FROM message_headers
                              WHERE message_id = ?1 AND name = ?2
                                AND value LIKE '%' || ?3 || '%')",

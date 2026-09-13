@@ -115,12 +115,12 @@ use postio_model::{Account, Mailbox};
 use postio_storage::{Checkout, Store, test_support};
 use postio_sync::sync_mailbox;
 
-/// The runtime every async call in this bench is driven on.
+/// The runtime this bench is driven on.
 ///
-/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
-/// where there is no ambient runtime -- so `block_on` here is the plain thing
-/// rather than the trap it is everywhere else in this workspace. Multi-threaded
-/// because a store read may reach `block_in_place`.
+/// Criterion's harness calls this on a thread with no ambient runtime, so
+/// `block_on` here is the plain thing rather than the trap it is elsewhere in
+/// this workspace. Multi-threaded because a store read may reach
+/// `block_in_place`.
 fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     use std::sync::OnceLock;
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -156,9 +156,6 @@ const LANES: &[usize] = &[1, 2, 3];
 /// hurt. 20 ms is about #78's measured p50 `fetch_ms` and 120 ms about its
 /// p90, so the crossover, wherever it is, should be bracketed by these.
 const LATENCIES_MS: &[u64] = &[0, 5, 20, 50, 120];
-
-/// Store connections available. Never the binding constraint here.
-const POOL: usize = 8;
 
 /// A server holding `TOTAL_MESSAGES` split evenly across `mailboxes` folders.
 fn server(mailboxes: usize, latency: Duration) -> MockBackend {

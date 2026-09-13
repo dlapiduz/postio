@@ -468,6 +468,13 @@ async fn install_run(
                     // this is what somebody staring at an empty list is
                     // waiting to be told.
                     view.set_suggestion(results.suggestion.as_ref());
+                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                    // network work it reaches is spawned onto the runtime and answers over a
+                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                    // left is store reads, whose futures this engine makes self-contained.
+                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                    // store and reads it on this context with no runtime anywhere, and fails
+                    // loudly if that stops being true.
                     focus(&view, &results, &database, &runtime).await;
                     held.replace(Some(results));
                     // Scoped, so the borrow is gone before `facets` runs:
@@ -479,6 +486,13 @@ async fn install_run(
                     }
                     facets(
                         &view, &live, sequence, account, &query, scope, &database, &runtime,
+                    // POSTIO-GLIB-SAFE: nothing under this await wants a reactor. The
+                    // network work it reaches is spawned onto the runtime and answers over a
+                    // channel -- `onboarding::probe_with_offer` is the shape -- and what is
+                    // left is store reads, whose futures this engine makes self-contained.
+                    // Measured rather than assumed: `app_suite::glib_main_context` opens a
+                    // store and reads it on this context with no runtime anywhere, and fails
+                    // loudly if that stops being true.
                     ).await;
                 }
             });
@@ -720,15 +734,22 @@ async fn install_results(
                 let Some(id) = list.cursor_id() else {
                     return;
                 };
-                let held = held.borrow();
-                let Some(hit) = held
-                    .as_ref()
-                    .and_then(|results| results.hits.iter().find(|hit| hit.message_id == id))
-                else {
+                // Cloned out and the borrow dropped before the await. A
+                // `RefCell` borrow held across a suspension is a borrow that
+                // lasts as long as the future does, and the next GTK callback
+                // to reach this cell -- another keystroke, another result set
+                // arriving -- panics on it. A `SearchHit` is small.
+                let hit = {
+                    let held = held.borrow();
+                    held.as_ref()
+                        .and_then(|results| results.hits.iter().find(|hit| hit.message_id == id))
+                        .cloned()
+                };
+                let Some(hit) = hit else {
                     return;
                 };
-                view.set_focused(Some(hit));
-                preview(&view, hit, &database, &runtime).await;
+                view.set_focused(Some(&hit));
+                preview(&view, &hit, &database, &runtime).await;
             })
         }
     });
@@ -1122,23 +1143,18 @@ mod interactive_read {
     //! the two waiters that then queue for the one connection that frees
     //! goes first.
 
-    use std::sync::mpsc;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use postio_account::backend::{MockBackend, MockMailbox, MockMessage};
     use postio_core::bridge::event_channel;
-    use postio_model::ids::MessageId;
+
     use postio_runtime::Engine;
     use postio_runtime::engine::{EngineParts, NetworkSource, SystemClock};
     use postio_storage::repository::{
         AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
     };
     use postio_storage::{BlobStore, Store, test_support};
-
-    /// Long enough that a thread which has announced it is about to block
-    /// really is blocked by the time the next step runs.
-    const ENOUGH_TO_BLOCK: Duration = Duration::from_millis(50);
 
     const BULK: &str = "Lists";
     const BULK_MESSAGES: u32 = 2_000;
@@ -1245,30 +1261,6 @@ mod interactive_read {
             })
             .await
             .unwrap_or(0)
-    }
-
-    /// The id of the first message under `path`, once there is one.
-    async fn first_message(database: &Store, path: &str) -> Option<MessageId> {
-        let connection = database.connect().await.ok()?;
-        let accounts = AccountRepository::new(&connection).list().await.ok()?;
-        let account = accounts.into_iter().next()?;
-        let mailbox = MailboxRepository::new(&connection)
-            .list_for_account(account.id)
-            .await
-            .ok()?
-            .into_iter()
-            .find(|mailbox| mailbox.path == path)?;
-        MessageRepository::new(&connection)
-            .page(&ListQuery {
-                scope: ListScope::Mailbox(mailbox.id),
-                limit: 1,
-                after: None,
-            })
-            .await
-            .ok()?
-            .into_iter()
-            .next()
-            .map(|row| row.id)
     }
 
     /// Waits for `condition`, or gives up and says what was true when it did.
