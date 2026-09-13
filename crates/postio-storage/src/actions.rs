@@ -97,15 +97,20 @@ pub async fn relocate(
                 to: destination,
             },
         };
-        // The queue row first, as `postio_session::actions` has always done
-        // it. The comment there says the move would otherwise null the
-        // coordinates the enqueue snapshots (#289); that is not quite what
-        // the code does today -- `enqueue_many` snapshots `remote_id`, and
-        // `move_to` nulls `uid`, `uid_validity` and `mod_seq` but not
-        // `remote_id` -- so the two orders currently produce identical rows,
-        // and no test here can tell them apart. The order is kept because
-        // this is a move and because it is the safe one if the snapshot ever
-        // widens to a column the move does clear. See #1125 for the check.
+        // The queue row first, and now it matters. `enqueue_many` snapshots
+        // `remote_id` and `move_to` clears it, so swapping these two lines
+        // enqueues an operation with no coordinate to address the server
+        // with -- which is what #289 said, and became true again the moment
+        // the move started clearing that column.
+        //
+        // It did not always. `move_to` used to null `uid`, `uid_validity` and
+        // `mod_seq` and leave `remote_id` behind, which made the two orders
+        // equivalent and this comment a caveat about a hazard that was not
+        // real yet. It also left an archived message carrying coordinates
+        // minted in the folder it came from, so the next command on it
+        // compared the source's generation against the destination's and
+        // reported a UIDVALIDITY change that never happened. Seen on a live
+        // account, on the first archive.
         queue.enqueue_many(account, ids, &operation, at).await?;
         messages.move_to(ids, destination).await?;
     }

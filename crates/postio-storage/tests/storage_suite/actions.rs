@@ -84,17 +84,19 @@ async fn two_relocations_share_one_caller_owned_transaction() {
 
 /// The queue row carries the message's server identity.
 ///
-/// Named for what it can actually prove. It was written as "the queue row is
-/// written before the rows move" and asserted on the operation's `from`,
-/// which is passed explicitly and reads the same either way -- it passed with
-/// the two statements deliberately swapped. Checking the snapshot instead
-/// does not rescue it: `enqueue_many` snapshots `remote_id` and `move_to`
-/// nulls `uid`, `uid_validity` and `mod_seq`, so the orders are equivalent
-/// for the data and nothing here can distinguish them.
+/// **And that it is written before the rows move.** That half was a claim this
+/// test could not make for most of its life: it asserted on the operation's
+/// `from`, which is passed explicitly and reads the same either way, and it
+/// passed with the two statements deliberately swapped. Checking the snapshot
+/// did not rescue it either, because `move_to` left `remote_id` alone -- so
+/// the orders produced identical rows and nothing here could tell them apart.
 ///
-/// What it does prove is that the enqueue happens at all and that the
-/// coordinate reaches the queue row, which is what the drain addresses the
-/// server with (#289).
+/// `move_to` clears `remote_id` now, which is what closes the gap: enqueue
+/// after the move and the snapshot below is `None`. Verified by swapping the
+/// two statements, which turns this red.
+///
+/// What the drain addresses the server with is that coordinate (#289), so a
+/// `None` here is a move that can never be pushed.
 #[tokio::test]
 async fn the_queue_row_carries_the_messages_server_identity() {
     let database = test_support::memory().await;

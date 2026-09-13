@@ -732,6 +732,15 @@ async fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
         "a UID belongs to the mailbox it was issued in"
     );
     assert_eq!(stored.server.uid_validity, None);
+    assert_eq!(
+        stored.server.remote_id, None,
+        "`remote_id` is \"<uid_validity>:<uid>\" -- the same coordinate as the \
+         two fields above, spelled as one string. Left behind, it reads as the \
+         row's identity in a mailbox it was never issued in, and the next \
+         command on that message compares the source folder's generation \
+         against the destination's and reports a UIDVALIDITY change that never \
+         happened."
+    );
     assert!(
         stored.sync.has_pending_operations,
         "the move still has to be pushed"
