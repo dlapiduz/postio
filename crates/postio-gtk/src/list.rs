@@ -800,6 +800,11 @@ impl MessageList {
     /// fresh request — deduplication against what is cached or already
     /// pending happens there, not here.
     fn request(&self, page: u32) {
+        // The one place a page is asked for, which is what makes it the
+        // honest place to count from (#1534). Here rather than in the source:
+        // a frontend that grew a second path to the store would have to avoid
+        // this function to avoid the counter.
+        postio_ui::reader::cost::note_page_requested();
         let source = self.imp().source.borrow().clone();
         if let Some(source) = source {
             source.request(page);

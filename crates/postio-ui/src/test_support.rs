@@ -45,3 +45,12 @@ pub fn surfaces_created() -> u64 {
 pub fn surfaces_held() -> i64 {
     cost::read(&cost::SURFACES_CREATED) as i64 - cost::read(&cost::SURFACES_RELEASED) as i64
 }
+
+/// How many list pages this process has asked the store for.
+///
+/// The bound on opening a folder: a screen's worth, whatever the folder
+/// holds. See [`crate::reader::cost::note_page_requested`] — and #1534, which
+/// is what a number that grows with the mailbox looks like from the outside.
+pub fn pages_requested() -> u64 {
+    cost::read(&cost::PAGES_REQUESTED)
+}
