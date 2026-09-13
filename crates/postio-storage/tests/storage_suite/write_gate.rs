@@ -171,3 +171,62 @@ async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
         "two writers held the gate at the same time"
     );
 }
+
+/// A writer that asks once is served, however busy its rivals are.
+///
+/// The gate wakes **every** waiter on release and lets them race for the
+/// mutex. That was harmless while the only background writers were the
+/// occasional ones — a resync, an egress flush, a housekeeping sweep — and
+/// stopped being harmless when the body backfill started taking a permit for
+/// every body and header it writes. A folder sync's single acquisition then
+/// has to win a race against a continuous stream of them, every time, for
+/// ever.
+///
+/// Observed on a live account: a `Drafts` sync of twenty-five messages
+/// started and had not finished seven minutes later, and because a wave does
+/// not return until all of its passes do, **no other folder was ever
+/// synced** — 59,000 messages of `Archive` stayed on the server.
+///
+/// The loop below is the backfill's shape: acquire, do a little work, release,
+/// immediately ask again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lone_writer_is_not_starved_by_a_busy_one() {
+    let gate = gate().await;
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let busy = tokio::spawn({
+        let gate = gate.clone();
+        let stop = Arc::clone(&stop);
+        async move {
+            let mut taken = 0u64;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let permit = gate.acquire(WritePriority::Background).await;
+                taken += 1;
+                tokio::task::yield_now().await;
+                drop(permit);
+            }
+            taken
+        }
+    });
+
+    // Let the busy writer get properly under way, so the lone one arrives
+    // into real contention rather than an idle gate.
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+
+    let lone = tokio::time::timeout(Duration::from_secs(10), async {
+        let _permit = gate.acquire(WritePriority::Background).await;
+    })
+    .await;
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let taken = busy.await.expect("the busy writer");
+
+    assert!(
+        lone.is_ok(),
+        "a writer that asked once never got the gate while a rival took it \
+         {taken} times. A folder sync starves behind the body backfill this \
+         way, and one starved pass stops every later sync wave."
+    );
+}
