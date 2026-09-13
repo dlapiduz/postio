@@ -160,8 +160,6 @@ pub fn slash_opens_the_box_and_escape_puts_it_away() {
 
     let window = Window::default();
     window.present();
-    settle_until(|| false_once());
-
     window.handle_key(
         gdk::Key::from_name("slash").unwrap(),
         gdk::ModifierType::empty(),
@@ -182,17 +180,6 @@ pub fn slash_opens_the_box_and_escape_puts_it_away() {
         "`Escape` means get me out of here, and a box that will not close \
          swallows every key pressed after it"
     );
-}
-
-/// Pumps a few frames without waiting for anything in particular.
-fn false_once() -> bool {
-    use std::cell::Cell;
-    thread_local! { static SEEN: Cell<u8> = const { Cell::new(0) }; }
-    SEEN.with(|seen| {
-        let n = seen.get().saturating_add(1);
-        seen.set(n);
-        n > 3
-    })
 }
 
 /// `Escape` out of the box puts the keyboard back on the row it left.
