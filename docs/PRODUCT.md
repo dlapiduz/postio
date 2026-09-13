@@ -150,13 +150,20 @@ autocomplete has to rank from somewhere ([ADR 0007](decisions/0007-address-book.
 **Secrets are not among them.** No password and no token is ever written to the
 database or to `config.toml`.
 
-Search is FTS5 over that database, in `postio-index`. Tantivy and hybrid
-lexical/vector retrieval were considered; the vector half is now
-[ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks FTS5 results rather
-than replacing them. **The index stores no second copy of a body**: SQLite holds
-the inverted index, the message row holds the text (compressed — ADR 0020),
-and result highlighting is generated from that. The blob store holds
-attachment payloads and raw `.eml`.
+Search is the database's own full-text index, in `postio-index`. Hybrid
+lexical/vector retrieval was considered; the vector half is now
+[ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks these results rather
+than replacing them. **The index stores no second copy of a body**: the engine
+holds the inverted index and the message row holds the text, and result
+highlighting is generated from that. The blob store holds attachment payloads
+and raw `.eml`.
+
+The text in that row is **plain**, not compressed. ADR 0020 compressed it
+against a trained dictionary, and that is not possible any more for a reason
+worth stating: this engine's full-text search is an *index over a column*
+rather than a table beside one, and an index cannot tokenise compressed bytes.
+The saving went; the column the index is built over is the text itself
+(`specs/004-turso-store`).
 
 **The store is a complete replica, and it has a budget.** Under §14's backfill
 every message's text ends up local, so the database and blob store together hold
@@ -588,7 +595,7 @@ drawing of it here would be a picture that is wrong.
 **In:** one IMAP + SMTP account with an app-specific password; inbox, folders,
 threads; read/unread, archive, delete, flag, move; HTML and plaintext reading
 with attachments and quoted-message folding; compose, reply, reply-all,
-forward, attachments, drafts; local FTS5 search with operators and an instant
+forward, attachments, drafts; local full-text search with operators and an instant
 search box; vim-style navigation, a command palette and configurable shortcuts;
 SQLite, background sync, offline reading, undo.
 
