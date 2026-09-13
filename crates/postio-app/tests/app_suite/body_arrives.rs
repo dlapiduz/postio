@@ -102,7 +102,7 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
     app::install_icons(&display);
 
     // ── a store holding two messages, neither with a body ────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -111,8 +111,8 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
     .expect("a blob store");
 
     let (account, shown, other) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
 
         // The older one, which the pane will never be showing.
@@ -268,7 +268,7 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
 
     // The payload axis' commit point, as `backfill::fetch_payloads` writes it.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let blob = blobs.put(b"one,two").expect("a blob");
         MessageRepository::new(&connection)
             .set_attachment_blob(shown, "2", &blob)
@@ -296,7 +296,7 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
 
 /// Write `text` as `message`'s body, as a completed fetch leaves it.
 fn store_body(database: &Database, message: MessageId, text: &str) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .set_body(
             message,

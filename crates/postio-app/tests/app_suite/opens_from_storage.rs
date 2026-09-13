@@ -52,7 +52,7 @@ pub fn the_list_fills_from_storage_without_a_server() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 11);
 
     let directory = tempfile::tempdir().expect("a blob directory");

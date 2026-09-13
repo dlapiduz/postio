@@ -94,7 +94,7 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("this test binary runs one test and owns the subscriber");
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -157,7 +157,7 @@ fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
     // Nothing was lost with the queue: whatever was still unfetched — the
     // interrupted body included — is re-derivable from `body_state`, so the
     // next session's seed offers it again.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mailboxes = MailboxRepository::new(&connection)
         .list_for_account(report.account.id)
         .expect("reading the account's folders");

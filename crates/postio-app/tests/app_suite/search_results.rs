@@ -80,7 +80,7 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     app::install_icons(&display);
 
     // ── a store the application has opened ──────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(
         report.message_count > 0,
@@ -221,7 +221,7 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
     // The scope column starts on All Mail — `search_wiring.rs` asserts that —
     // so this is the question the box actually asked.
     let view_scope = Scope::AllMail;
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let expected: Vec<MessageId> = search(
         &connection,
         &SearchRequest {

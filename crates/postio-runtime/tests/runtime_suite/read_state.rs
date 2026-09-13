@@ -75,11 +75,11 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
     }
     let backend = Arc::new(MockBackend::builder().mailbox(inbox_mock).build());
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, INBOX);
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, INBOX).await;
         (account, inbox)
     };
 
@@ -131,7 +131,7 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
     // The store heard, which is the part already covered elsewhere. Asserted
     // here so a failure below cannot be read as "the pass did nothing".
     let stored = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .page(&ListQuery::mailbox(inbox.id))
             .expect("list the mailbox")

@@ -70,7 +70,7 @@ fn store(
     subject: &str,
     received: chrono::DateTime<chrono::Utc>,
 ) -> postio_model::ids::MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
     let parsed = postio_model::mime::parse(raw);
 
@@ -109,7 +109,7 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -118,8 +118,8 @@ pub fn a_body_that_did_not_decode_cleanly_says_so_in_the_pane() {
     .expect("a blob store");
 
     {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         drop(connection);
         // Newest first, so the list opens on the lossy one and the control is
         // one `j` away.

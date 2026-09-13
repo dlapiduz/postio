@@ -47,7 +47,7 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
 
@@ -157,7 +157,7 @@ pub fn opening_a_store_with_a_ceiling_evicts_down_to_it() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let seeded = seed_small(&database, 11);
     let inbox = seeded
         .mailbox(postio_model::MailboxRole::Inbox)
@@ -174,7 +174,7 @@ pub fn opening_a_store_with_a_ceiling_evicts_down_to_it() {
     // Two messages, each holding its raw source. Different fill bytes because
     // the store is content-addressed: the same bytes twice would be one blob,
     // and a test about *which* one goes would be testing nothing.
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let messages = postio_storage::repository::MessageRepository::new(&connection);
     let mut written = Vec::new();
     for (index, second) in [1_000_i64, 9_000].into_iter().enumerate() {

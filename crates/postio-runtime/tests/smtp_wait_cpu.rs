@@ -186,7 +186,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
         .with_max_level(tracing::Level::DEBUG)
         .with_test_writer()
         .try_init();
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -200,7 +200,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
     // mid-run races the first sync, and what is under test is the waiting,
     // not the arrival.
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let mut account = postio_storage::repository::AccountRepository::new(&connection)
             .get(report.account.id)
             .expect("read the account")
@@ -244,7 +244,7 @@ fn measure_a_waiting_send(network: NetworkSource) {
     // scenario and measures nothing about waiting.
     let secrets = Arc::new(postio_account::secret::MemorySecretStore::default());
     {
-        let connection = database.connection().expect("checkout");
+        let connection = database.connect().await.expect("checkout");
         let account = postio_storage::repository::AccountRepository::new(&connection)
             .get(report.account.id)
             .expect("read the account")

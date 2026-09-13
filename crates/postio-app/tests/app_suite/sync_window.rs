@@ -118,7 +118,7 @@ pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() 
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),

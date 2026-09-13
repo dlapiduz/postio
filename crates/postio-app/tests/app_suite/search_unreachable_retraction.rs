@@ -80,7 +80,7 @@ pub fn an_account_going_away_and_coming_back_updates_the_caveat_without_asking_a
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
     ensure_search_index(&database).expect("the index is part of opening the store");

@@ -22,190 +22,195 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_storage::Connection;
 
-fn a_message(connection: &Connection, subject: &str) -> i64 {
-    let (account, mailbox) = test_support::account_with_inbox(connection);
+async fn a_message(connection: &Connection, subject: &str) -> i64 {
+    let (account, mailbox) = test_support::account_with_inbox(connection).await;
     let mut message = Message::new(account.id, mailbox, chrono::Utc::now());
     message.subject = Some(subject.to_owned());
     message.sync.body_state = BodyState::Full;
     MessageRepository::new(connection)
         .create(&mut message)
+        .await
         .expect("create");
     message.id.get()
 }
 
-fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
+async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
     let mut statement = connection
         .prepare(
             "SELECT rowid FROM message_bodies_fts
               WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
         )
+        .await
         .expect("prepare");
     postio_storage::sql::mapped(&mut statement, [query], |row| postio_storage::sql::RowExt::col(row, 0))
+        .await
         .expect("query")
-        .collect::<Result<_>>()
-        .expect("rows")
 }
 
-fn rows_in(connection: &Connection, table: &str) -> i64 {
-    connection
-        .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+async fn rows_in(connection: &Connection, table: &str) -> i64 {
+    postio_storage::sql::one(&*connection, &format!("SELECT count(*) FROM {table}"),(), |row| {
             postio_storage::sql::RowExt::col(row, 0)
-        })
+        }).await
         .expect("count")
 }
 
-#[test]
-fn a_body_is_searchable_in_a_table_of_its_own() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
+#[tokio::test]
+async fn a_body_is_searchable_in_a_table_of_its_own() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Quarterly report").await;
 
-    index_body(&connection, id, Some("the difference engine is finished")).expect("index");
+    index_body(&connection, id, Some("the difference engine is finished")).await.expect("index");
 
-    assert_eq!(body_hits(&connection, "difference"), vec![id]);
-    assert!(body_hits(&connection, "unrelated").is_empty());
+    assert_eq!(body_hits(&connection, "difference").await, vec![id]);
+    assert!(body_hits(&connection, "unrelated").await.is_empty());
 }
 
-#[test]
-fn re_indexing_replaces_the_body_rather_than_adding_a_second_row() {
+#[tokio::test]
+async fn re_indexing_replaces_the_body_rather_than_adding_a_second_row() {
     // A body is re-indexed whenever it is refetched, and a contentless table
     // has no `UPDATE`: a row is deleted and written again. Getting that wrong
     // leaves the old text matchable for ever, which reads as search returning
     // a message for words it no longer contains.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Quarterly report").await;
 
-    index_body(&connection, id, Some("the first draft")).expect("index");
-    index_body(&connection, id, Some("the second draft")).expect("re-index");
+    index_body(&connection, id, Some("the first draft")).await.expect("index");
+    index_body(&connection, id, Some("the second draft")).await.expect("re-index");
 
-    assert_eq!(body_hits(&connection, "second"), vec![id]);
+    assert_eq!(body_hits(&connection, "second").await, vec![id]);
     assert!(
-        body_hits(&connection, "first").is_empty(),
+        body_hits(&connection, "first").await.is_empty(),
         "the previous text is still matchable"
     );
-    assert_eq!(rows_in(&connection, "message_bodies_fts"), 1);
+    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 1);
 }
 
-#[test]
-fn clearing_a_body_removes_it_from_the_index() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
-    index_body(&connection, id, Some("something")).expect("index");
+#[tokio::test]
+async fn clearing_a_body_removes_it_from_the_index() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Quarterly report").await;
+    index_body(&connection, id, Some("something")).await.expect("index");
 
-    index_body(&connection, id, None).expect("clear");
+    index_body(&connection, id, None).await.expect("clear");
 
-    assert!(body_hits(&connection, "something").is_empty());
+    assert!(body_hits(&connection, "something").await.is_empty());
     // One row, matching nothing. This used to assert zero rows — "an empty
     // body is no row" — and that reading is what #500's infinite loop was
     // made of: with no row, the maintenance pass cannot tell "tried, empty"
     // from "never tried" and asks about the message on every pass for ever.
     // The row *is* the record that indexing happened.
-    assert_eq!(rows_in(&connection, "message_bodies_fts"), 1);
+    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 1);
 }
 
-#[test]
-fn deleting_a_message_takes_its_body_with_it() {
+#[tokio::test]
+async fn deleting_a_message_takes_its_body_with_it() {
     // `search_documents` cascades from `messages`, and its delete trigger
     // takes `messages_fts` with it. A contentless table has no content row to
     // cascade, so without a trigger of its own the text of every deleted
     // message stays in the index for ever — matchable, and growing exactly
     // the way this issue exists to stop.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
-    index_body(&connection, id, Some("the difference engine")).expect("index");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Quarterly report").await;
+    index_body(&connection, id, Some("the difference engine")).await.expect("index");
 
     MessageRepository::new(&connection)
         .delete(&[postio_model::MessageId::new(id)])
+        .await
         .expect("delete");
 
-    assert!(body_hits(&connection, "difference").is_empty());
-    assert_eq!(rows_in(&connection, "message_bodies_fts"), 0);
+    assert!(body_hits(&connection, "difference").await.is_empty());
+    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 0);
 }
 
-#[test]
-fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pass() {
+#[tokio::test]
+async fn a_body_indexed_before_this_table_existed_is_found_by_the_maintenance_pass() {
     // A message whose body is local and not in this index -- which is every
     // message in every store that indexed its bodies before this table
     // existed. The pass that catches one up is driven by
     // `messages_missing_body_text`, so it has to ask about *this* table;
     // asking the column that used to hold bodies would have answered
     // "nothing to do" for all of them and left the new index empty for ever.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Quarterly report");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Quarterly report").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).expect("candidates"),
+        messages_missing_body_text(&connection, 10).await.expect("candidates"),
         vec![id],
         "a body that is local and not indexed here is exactly the work"
     );
 
-    index_body(&connection, id, Some("already indexed")).expect("catch up");
+    index_body(&connection, id, Some("already indexed")).await.expect("catch up");
 
     assert!(
         messages_missing_body_text(&connection, 10)
+            .await
             .expect("candidates")
             .is_empty(),
         "and once it is here, the pass leaves it alone"
     );
 }
 
-#[test]
-fn a_message_whose_text_is_local_but_whose_payloads_are_not_is_still_indexed() {
+#[tokio::test]
+async fn a_message_whose_text_is_local_but_whose_payloads_are_not_is_still_indexed() {
     // ADR 0017 split `full` in two: `partial` means the words are here and
     // the attachments are not, and it is the settled state of every
     // text-backfilled message carrying one. Asking only for `full` skips all
     // of them -- which on the reference account is 15% of the mailbox, and
     // the search corpus is exactly what the text axis exists to complete.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Statement attached");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Statement attached").await;
     connection
         .execute(
             "UPDATE messages SET body_state = 'partial' WHERE id = ?1",
             [id],
         )
+        .await
         .expect("the fixture writes");
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).expect("candidates"),
+        messages_missing_body_text(&connection, 10).await.expect("candidates"),
         vec![id]
     );
 }
 
-#[test]
-fn a_message_whose_body_is_still_on_the_server_is_not_a_candidate() {
+#[tokio::test]
+async fn a_message_whose_body_is_still_on_the_server_is_not_a_candidate() {
     // The other side of it. Indexing a message whose text has not arrived
     // would make search answer for a corpus it does not have.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Not fetched yet");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Not fetched yet").await;
     connection
         .execute(
             "UPDATE messages SET body_state = 'headers_only' WHERE id = ?1",
             [id],
         )
+        .await
         .expect("the fixture writes");
 
     assert!(
         messages_missing_body_text(&connection, 10)
+            .await
             .expect("candidates")
             .is_empty()
     );
 }
 
-#[test]
-fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
+#[tokio::test]
+async fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
     // The infinite loop of #500. An attachment-only message — a DMARC
     // report, a calendar invite, an image with no words — has a local body
     // and no indexable text. Indexing it must still *record that it was
@@ -213,21 +218,22 @@ fn a_message_with_nothing_to_index_leaves_the_candidate_set() {
     // same message on every pass, and a store with more than one batch of
     // them turns the catch-up loop into a core-burning spin that never ends —
     // observed live, 35 minutes of CPU against a 912-body backlog.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let id = a_message(&connection, "Report attached");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let id = a_message(&connection, "Report attached").await;
 
     assert_eq!(
-        messages_missing_body_text(&connection, 10).expect("candidates"),
+        messages_missing_body_text(&connection, 10).await.expect("candidates"),
         vec![id],
         "local body, never indexed: exactly the work"
     );
 
-    index_body(&connection, id, None).expect("index nothing");
+    index_body(&connection, id, None).await.expect("index nothing");
 
     assert!(
         messages_missing_body_text(&connection, 10)
+            .await
             .expect("candidates")
             .is_empty(),
         "tried and found empty is not the same state as never tried, \

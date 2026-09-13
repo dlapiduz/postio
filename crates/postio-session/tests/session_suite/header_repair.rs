@@ -28,14 +28,14 @@ fn a_store_from_before() -> (
     BlobStore,
     postio_model::MessageId,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let blob = blobs.put(RAW).expect("put the raw source");
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
@@ -66,7 +66,7 @@ fn a_block_is_rebuilt_from_the_raw_source_already_on_disk() {
     let repaired = postio_session::repair_header_blocks(&database, &blobs).expect("the pass runs");
 
     assert_eq!(repaired, 1);
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let headers = MessageRepository::new(&connection)
         .headers(id)
         .expect("headers")
@@ -110,7 +110,7 @@ fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
     // make `header:` answer "no such header" for ever, with nothing left to
     // say otherwise.
     let (database, blobs, id) = a_store_from_before();
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let messages = MessageRepository::new(&connection);
     let blob = messages
         .get(id)
@@ -124,7 +124,7 @@ fn a_message_whose_raw_source_has_gone_is_left_for_the_fetch_lane() {
     let repaired = postio_session::repair_header_blocks(&database, &blobs).expect("the pass runs");
 
     assert_eq!(repaired, 0, "there was nothing it could repair");
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let stored = MessageRepository::new(&connection)
         .body(id)
         .expect("body")

@@ -130,10 +130,10 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     //
     // Nothing else is seeded. Every mailbox and message the window will show
     // has to arrive over the wire, which is the point.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        let mut account = test_support::account(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let mut account = test_support::account(&connection).await;
         account.incoming.host = server.addr().ip().to_string();
         account.incoming.port = server.addr().port();
         account.incoming.security = TransportSecurity::None;
@@ -221,7 +221,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         std::thread::sleep(Duration::from_millis(20));
     }
     if list.model().n_items() != SEEDED.len() as u32 {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let messages: i64 = connection
             .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
             .unwrap_or(-1);
@@ -256,7 +256,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         .cursor_id()
         .expect("`j` should put the cursor on a synced row");
     let uid = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .get(focused)
             .expect("a read")
@@ -284,7 +284,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         std::thread::sleep(Duration::from_millis(20));
     }
     if server.uids(ARCHIVE_PATH).is_empty() {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let states: String = connection
             .prepare("SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue")
             .and_then(|mut st| {
@@ -356,7 +356,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         std::thread::sleep(Duration::from_millis(20));
     }
     if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let local: i64 = connection
             .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
             .unwrap_or(-1);

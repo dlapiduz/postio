@@ -40,7 +40,7 @@ fn threaded_message(
     minute: i64,
     subject: &str,
 ) -> MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut message = Message::new(
         account,
         mailbox,
@@ -72,13 +72,13 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        test_support::account_with_inbox(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account_with_inbox(&connection).await
     };
     let thread = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut thread = Thread::new(account.id);
         ThreadRepository::new(&connection)
             .create(&mut thread)

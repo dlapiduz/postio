@@ -48,7 +48,7 @@ pub fn the_window_warms_its_editing_surface_without_being_asked() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");

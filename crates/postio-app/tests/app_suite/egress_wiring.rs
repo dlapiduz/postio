@@ -43,7 +43,7 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 47);
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -73,7 +73,7 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
 
     // ── 1. nothing left this machine ─────────────────────────────────────
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         assert_eq!(
             EgressLogRepository::new(&connection)
                 .count()
@@ -94,7 +94,7 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
         outcome: EgressOutcome::Connected,
     });
     let landed = settle_until(|| {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         EgressLogRepository::new(&connection)
             .count()
             .expect("count")
@@ -105,7 +105,7 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
         "the recorder's writer thread never persisted the event"
     );
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let rows = EgressLogRepository::new(&connection)
             .recent(10)
             .expect("recent");

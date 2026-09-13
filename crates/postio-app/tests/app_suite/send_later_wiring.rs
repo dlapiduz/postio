@@ -55,7 +55,7 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 29);
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -109,7 +109,7 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
     settle();
 
     // ── and now ask the store, not the widget ────────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let queue = OperationQueueRepository::new(&connection);
     let all_pending = queue
         .pending(account, send_at + Duration::minutes(1))

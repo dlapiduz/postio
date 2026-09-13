@@ -63,7 +63,7 @@ fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
     AccountRepository::new(connection)
         .create(&mut account)
         .expect("create account");
-    let drafts = test_support::mailbox(connection, &account, "Drafts");
+    let drafts = test_support::mailbox(connection, &account, "Drafts").await;
     (account, drafts.id)
 }
 
@@ -103,8 +103,8 @@ async fn exists(backend: &MockBackend, mailbox: &str) -> u32 {
 
 #[tokio::test]
 async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -132,8 +132,8 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
 
 #[tokio::test]
 async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -176,8 +176,8 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
     // The reason saves fold at all: a minute of typing leaves a queue full of
     // rows that all say the same thing, and the text is not read until the
     // step drains.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -206,8 +206,8 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
 
 #[tokio::test]
 async fn discarding_a_draft_takes_the_server_copy_with_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -231,8 +231,8 @@ async fn discarding_a_draft_takes_the_server_copy_with_it() {
 
 #[tokio::test]
 async fn a_draft_discarded_before_it_was_ever_uploaded_asks_the_server_for_nothing() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -257,8 +257,8 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
     // generation, the old number is somebody else's message. Since #543 the
     // check lives behind the seam — the adapter refuses the stale id — and
     // the drainer reads that refusal as obsolete, never as a retry.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     // The server has renumbered: its Drafts generation is 2, and the queued
@@ -296,8 +296,8 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
     // thread, so an autosave can reach the queue first. Uploading the draft
     // now would put a copy on the server that is quietly missing part of
     // itself.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -325,8 +325,8 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
     // there loses recipients they typed; carrying it in the *sent* bytes
     // would hand every other recipient the list. Both matter, and they are
     // different bytes.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, _) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = a_server("Drafts").await;
@@ -397,8 +397,8 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     //
     // The other message is another client's draft. It has no local draft row,
     // and it is the reason the folder is worth syncing at all.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, drafts_mailbox) = account_with_drafts(&connection);
     let blobs = TempBlobs::new();
     let backend = MockBackend::builder()

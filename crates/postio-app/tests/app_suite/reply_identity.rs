@@ -46,7 +46,7 @@ fn press(window: &Window, key: &str) {
 
 /// A configured, enabled account with one default identity at `address`.
 fn account_with_identity(database: &Database, display_name: &str, address: &str) -> Account {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut account = Account::new(display_name, EmailAddress::new(None::<String>, address));
     account.identities = vec![{
         let mut identity = Identity::new(
@@ -77,7 +77,7 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
 
     // Account A is created first, so `first_account` -- and therefore the
     // window's own default identity -- resolves to it, not to B.
@@ -89,11 +89,11 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
     );
 
     let inbox_b = {
-        let connection = database.connection().expect("a connection");
-        test_support::mailbox(&connection, &account_b, "INBOX")
+        let connection = database.connect().await.expect("a connection");
+        test_support::mailbox(&connection, &account_b, "INBOX").await
     };
     let message_b = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut message = Message::new(account_b.id, inbox_b.id, chrono::Utc::now());
         message.from = vec![EmailAddress::new(Some("Quinn Abara"), "quinn@example.com")];
         message.to = vec![EmailAddress::new(None::<String>, "grace@example.com")];

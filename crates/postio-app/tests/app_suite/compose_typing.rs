@@ -69,7 +69,7 @@ pub fn every_letter_can_be_typed_into_the_composer_body() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");

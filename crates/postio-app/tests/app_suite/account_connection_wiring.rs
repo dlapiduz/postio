@@ -72,7 +72,7 @@ pub fn a_connection_event_a_scope_cycle_and_the_trackers_all_agree_with_appstate
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
 

@@ -51,8 +51,8 @@ async fn server_with_messages(count: u32) -> MockBackend {
 }
 
 fn local(connection: &Connection) -> (AccountId, Mailbox) {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX);
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account.id, inbox)
 }
 
@@ -76,8 +76,8 @@ fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
 #[tokio::test]
 async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -96,8 +96,8 @@ async fn a_reconnect_with_no_server_changes_fetches_essentially_nothing() {
 #[tokio::test]
 async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -172,8 +172,8 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
 #[tokio::test]
 async fn a_flag_only_change_does_not_double_count_the_correspondent() {
     let backend = server_with_messages(3).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account_id, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
     assert_eq!(
@@ -206,8 +206,8 @@ async fn a_flag_only_change_does_not_double_count_the_correspondent() {
 #[tokio::test]
 async fn a_message_the_change_feed_never_mentions_still_arrives() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -251,8 +251,8 @@ async fn a_message_the_change_feed_never_mentions_still_arrives() {
 #[tokio::test]
 async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account_id, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
     assert_eq!(times_ada_was_seen(&connection, account_id), 2);
@@ -276,8 +276,8 @@ async fn an_arrival_during_resync_is_recorded_as_a_correspondent() {
 #[tokio::test]
 async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -307,8 +307,8 @@ async fn a_conforming_server_costs_no_extra_round_trip_for_arrivals() {
 #[tokio::test]
 async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
     let backend = server_with_messages(2).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -368,8 +368,8 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
 #[tokio::test]
 async fn a_transient_backend_failure_during_resync_is_not_treated_as_a_resync_result() {
     let backend = server_with_messages(1).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -416,8 +416,8 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
     // somebody flags it elsewhere: that bumps `MODSEQ`, the message comes back
     // in the `CHANGEDSINCE` batch carrying its whole flag set, and that set
     // does not contain the `\Seen` the server has not been told about.
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox) = local(&connection);
     let backend = server_with_messages(3).await;
     bootstrap(&connection, &backend, &inbox).await;
@@ -490,8 +490,8 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
         .build();
     backend.connect().await.expect("connect");
 
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
     bootstrap(&connection, &backend, &inbox).await;
 
@@ -572,8 +572,8 @@ async fn a_modseq_less_backend_resyncs_in_place_without_discarding_rows() {
 #[tokio::test]
 async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_stored() {
     let backend = server_with_messages(6).await;
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let (_account, inbox) = local(&connection);
 
     // A first pass, cut short after its first committed batch.

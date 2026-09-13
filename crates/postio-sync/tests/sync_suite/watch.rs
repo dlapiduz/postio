@@ -60,11 +60,11 @@ struct Local {
 }
 
 fn local() -> Local {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let account = test_support::account(&connection);
-    let inbox = test_support::mailbox(&connection, &account, INBOX);
-    let archive = test_support::mailbox(&connection, &account, ARCHIVE);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, INBOX).await;
+    let archive = test_support::mailbox(&connection, &account, ARCHIVE).await;
     Local {
         _database: database,
         connection,

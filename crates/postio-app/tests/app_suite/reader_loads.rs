@@ -73,7 +73,7 @@ pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
 
     // ── two messages, both with bodies, so every pane state is a rendered
     //    document rather than a plate ──────────────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -82,8 +82,8 @@ pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
     .expect("a blob store");
 
     let (account, newest, older) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
 
         let mut older = Message::new(
@@ -208,7 +208,7 @@ pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
 
 /// Write `text` as `message`'s body, as a completed fetch leaves it.
 fn store_body(database: &Database, message: MessageId, text: &str) {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .set_body(
             message,

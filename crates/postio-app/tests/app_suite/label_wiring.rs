@@ -42,7 +42,7 @@ use postio_storage::{BlobStore, Database, test_support};
 
 /// The labels on `message`, straight from the store.
 fn labels_of(database: &Database, message: MessageId) -> Vec<LabelId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     LabelRepository::new(&connection)
         .for_message(message)
         .expect("a read")
@@ -62,7 +62,7 @@ pub fn a_label_command_puts_a_label_on_the_message_it_names() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     assert!(report.message_count > 0, "the fixture seeded no mail");
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -74,7 +74,7 @@ pub fn a_label_command_puts_a_label_on_the_message_it_names() {
 
     // A label to reach for, and a message to put it on.
     let (work, first) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut work = Label::new(report.account.id, "Work");
         LabelRepository::new(&connection)
             .create(&mut work)

@@ -49,7 +49,7 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 9);
     let account = report.account.id;
     let drafts_folder = report
@@ -66,7 +66,7 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
     // Exactly what an interrupted submission leaves behind: the draft is
     // still here, it is not `Failed`, and nothing is going to retry it.
     let draft_id = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let drafts = DraftRepository::new(&connection);
         let mut draft = Draft::new(account);
         draft.subject = SUBJECT.to_owned();
@@ -148,7 +148,7 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
     });
 
     let settled = settle_until(|| {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         DraftRepository::new(&connection)
             .get(draft_id)
             .expect("read")

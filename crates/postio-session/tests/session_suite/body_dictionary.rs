@@ -35,8 +35,8 @@ fn a_body(seed: usize) -> String {
 
 /// Fills `database` with `count` messages that have bodies.
 fn corpus(database: &postio_storage::test_support::TempStore, count: usize) {
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     for seed in 0..count {
         let mut message = Message::new(
@@ -60,7 +60,7 @@ fn corpus(database: &postio_storage::test_support::TempStore, count: usize) {
 }
 
 fn dictionaries(database: &postio_storage::test_support::TempStore) -> i64 {
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     connection
         .query_row("SELECT count(*) FROM body_dictionaries", [], |row| {
             postio_storage::sql::RowExt::col(row, 0)
@@ -70,7 +70,7 @@ fn dictionaries(database: &postio_storage::test_support::TempStore) -> i64 {
 
 #[test]
 fn a_store_with_no_corpus_trains_nothing() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     corpus(&database, 3);
 
     assert!(
@@ -82,7 +82,7 @@ fn a_store_with_no_corpus_trains_nothing() {
 
 #[test]
 fn a_store_with_a_corpus_trains_once_and_then_leaves_it_alone() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     corpus(&database, CORPUS);
 
     assert!(
@@ -106,10 +106,10 @@ fn bodies_written_before_the_dictionary_still_read_after_it() {
     // The failure worth being afraid of: a zstd frame can only be read with
     // the dictionary it was written against, so training must not orphan the
     // mail that was already local.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     corpus(&database, CORPUS);
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let messages = MessageRepository::new(&connection);
     let before: Vec<(i64, String)> = connection
         .prepare("SELECT id FROM messages ORDER BY id")
@@ -131,7 +131,7 @@ fn bodies_written_before_the_dictionary_still_read_after_it() {
 
     assert!(postio_session::train_body_dictionary(&database).expect("the pass runs"));
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let messages = MessageRepository::new(&connection);
     for (id, text) in before {
         assert_eq!(
@@ -149,12 +149,12 @@ fn bodies_written_before_the_dictionary_still_read_after_it() {
 
 #[test]
 fn a_body_written_after_the_pass_uses_the_dictionary_and_reads_back() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     corpus(&database, CORPUS);
     assert!(postio_session::train_body_dictionary(&database).expect("the pass runs"));
 
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     let id = messages.create(&mut message).expect("create");

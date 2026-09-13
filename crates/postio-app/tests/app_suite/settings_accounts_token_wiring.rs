@@ -48,7 +48,7 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 41);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -60,7 +60,7 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
     // A second, OAuth account: `seed_small`'s own account is a password one,
     // and there is nothing to read a validity line off of it with.
     let address = "grace@example.com";
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut second =
         postio_model::Account::new("Grace", EmailAddress::new(None::<String>, address));
     second.auth = postio_model::account::AuthMethod::OAuth2;

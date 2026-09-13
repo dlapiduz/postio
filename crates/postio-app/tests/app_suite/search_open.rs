@@ -56,10 +56,10 @@ pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let subject_of = |message| {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)
             .expect("a read")

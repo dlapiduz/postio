@@ -66,7 +66,7 @@ pub fn the_unified_list_names_an_account_it_could_not_reach_and_then_forgets_it(
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
 

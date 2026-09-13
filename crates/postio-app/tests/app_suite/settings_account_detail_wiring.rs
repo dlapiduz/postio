@@ -41,7 +41,7 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 41);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -50,7 +50,7 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
     )
     .expect("a blob store");
 
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let seeded_id = AccountRepository::new(&connection)
         .list()
         .expect("list")
@@ -145,7 +145,7 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
     // one yet, which is why the picker hides without them and why this test
     // makes them through the repository.
     let (work, brief) = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let signatures = postio_storage::repository::SignatureRepository::new(&connection);
         let mut work = postio_model::Signature::new("Work", "-- \nAda, Analytical Engines");
         let mut brief = postio_model::Signature::new("Brief", "-- \nAda");
@@ -160,7 +160,7 @@ pub fn editing_the_detail_view_writes_straight_to_the_accounts_table() {
 
     // Reopened so the view is built from an account that now has them.
     panel.set_accounts(
-        AccountRepository::new(&database.connection().expect("a connection"))
+        AccountRepository::new(&database.connect().await.expect("a connection"))
             .list()
             .expect("list"),
     );
@@ -235,7 +235,7 @@ fn read_default_signature(
     database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> Option<postio_model::ids::SignatureId> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")
@@ -252,7 +252,7 @@ fn read_display_name(
     database: &postio_storage::Store,
     id: postio_model::ids::AccountId,
 ) -> String {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")
@@ -261,7 +261,7 @@ fn read_display_name(
 }
 
 fn read_imap_host(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> String {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
         .expect("get")
@@ -349,7 +349,7 @@ fn folder_paths(
     database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Vec<String> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .list_for_account(account)
         .expect("a read")
@@ -363,7 +363,7 @@ fn mapped_archive(
     database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Option<String> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MailboxRoleRepository::new(&connection)
         .for_account(account)
         .expect("a read")
@@ -376,7 +376,7 @@ fn archive_folder(
     database: &postio_storage::Store,
     account: postio_model::ids::AccountId,
 ) -> Option<String> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .by_role(account, MailboxRole::Archive)
         .expect("a read")

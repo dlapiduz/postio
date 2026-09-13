@@ -8,11 +8,11 @@ use postio_storage::test_support;
 
 /// A store with an inbox, an archive, and one unread message in the inbox.
 fn seeded() -> std::sync::Arc<Session> {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
-        test_support::mailbox(&connection, &account, "Archive");
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        test_support::mailbox(&connection, &account, "Archive").await;
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
@@ -109,10 +109,10 @@ fn the_sidebar_gets_the_inbox_first_and_one_row_per_role() {
     // Both are `postio_ui::sidebar`'s answers now rather than the frontend's,
     // which is what #501 already established on the GTK side. This asserts
     // they survive the crossing.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     {
-        let connection = database.connection().expect("a connection");
-        let (account, _) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, _) = test_support::account_with_inbox(&connection).await;
         for path in [
             "Archive",
             "Archives",
@@ -122,7 +122,7 @@ fn the_sidebar_gets_the_inbox_first_and_one_row_per_role() {
             "Deleted Messages",
             "Garagiste",
         ] {
-            test_support::mailbox(&connection, &account, path);
+            test_support::mailbox(&connection, &account, path).await;
         }
     }
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");

@@ -40,16 +40,16 @@ fn second_account(
     AccountRepository::new(connection)
         .create(&mut account)
         .expect("second account");
-    let mailbox = test_support::mailbox(connection, &account, "INBOX");
+    let mailbox = test_support::mailbox(connection, &account, "INBOX").await;
     (account, mailbox.id)
 }
 
 #[test]
 fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
@@ -107,7 +107,7 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
         "the last report says the rebuild actually finished"
     );
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(
         hits(&connection, account.id, "analytical"),
         1,
@@ -117,10 +117,10 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
 
 #[test]
 fn a_rebuild_touches_only_the_account_it_was_asked_for() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (first, first_inbox) = test_support::account_with_inbox(&connection);
+    let (first, first_inbox) = test_support::account_with_inbox(&connection).await;
     let (second, second_inbox) = second_account(&connection);
 
     let messages = MessageRepository::new(&connection);
@@ -159,7 +159,7 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
         postio_session::reindex_account(&database, first.id, |_, _| {}).expect("the rebuild runs");
     assert_eq!(reindexed, 1, "only the first account's one message");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(
         hits(&connection, first.id, "alpha"),
         1,
@@ -184,10 +184,10 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
 
 #[test]
 fn a_store_with_nothing_local_for_this_account_costs_one_query_and_no_writes() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, _inbox) = test_support::account_with_inbox(&connection);
+    let (account, _inbox) = test_support::account_with_inbox(&connection).await;
     drop(connection);
 
     let mut progress: Vec<(u32, u32)> = Vec::new();

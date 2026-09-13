@@ -108,10 +108,10 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// table-level locking is a different model from the WAL one Postio runs on
 /// and the one this file is about.
 fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, tempfile::TempDir) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let account = {
-        let connection = database.connection().expect("a connection");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account(&connection).await
     };
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -214,7 +214,7 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
     let inbox = mailbox_at(&database, "INBOX").expect("an INBOX");
     let archive = mailbox_at(&database, "Archive").expect("an Archive");
     let subject = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .page(&ListQuery {
                 scope: ListScope::Mailbox(inbox.id),
@@ -259,7 +259,7 @@ async fn an_archive_keystroke_does_not_wait_for_the_backfill() {
 
     // The write really happened, so none of the below is about a no-op.
     let landed = {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(subject.id)
             .expect("a read")

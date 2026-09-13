@@ -66,7 +66,7 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 13);
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -113,7 +113,7 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
     press(&window, "Return", gdk::ModifierType::CONTROL_MASK);
 
     // ── and now ask the store, not the widget ────────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let queued = OperationQueueRepository::new(&connection)
         .pending(account, chrono::Utc::now())
         .expect("read the queue");

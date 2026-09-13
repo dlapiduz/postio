@@ -17,7 +17,7 @@ use postio_storage::test_support;
 
 /// Whether the store says `message` carries `\Seen`.
 fn is_read(database: &postio_storage::Store, message: i64) -> bool {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(postio_model::ids::MessageId::new(message))
         .expect("a read")
@@ -26,10 +26,10 @@ fn is_read(database: &postio_storage::Store, message: i64) -> bool {
 
 /// A store with one unread message, and the session over it.
 fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (mailbox, message) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
         message.flags.remove(&Flag::Seen);

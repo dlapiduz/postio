@@ -292,7 +292,7 @@ sources = ["own-client"]
     .expect("the overlay row");
 
     // ── the app ─────────────────────────────────────────────────────────
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -384,7 +384,7 @@ sources = ["own-client"]
     );
 
     // ── what must be true afterwards ────────────────────────────────────
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let account = AccountRepository::new(&connection)
         .list()
         .expect("accounts")

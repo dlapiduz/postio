@@ -24,14 +24,14 @@ fn store_with_a_message() -> (
     BlobStore,
     postio_model::MessageId,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let blob = blobs
         .put(b"the raw source of a message somebody will delete")
@@ -83,7 +83,7 @@ fn a_deleted_message_s_raw_source_is_reclaimed_by_a_later_sweep() {
     // sweep. Nothing called the sweep, so deleting mail freed nothing, for
     // ever.
     let (database, blobs, id) = store_with_a_message();
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(blob_files(&blobs).len(), 1);
 
     MessageRepository::new(&connection)
@@ -123,7 +123,7 @@ fn a_blob_younger_than_the_grace_period_is_left_alone() {
     // yet committed to a row is indistinguishable from an orphan, so a sweep
     // with no grace period would delete the body of a message that was
     // mid-fetch. The default is an hour; production must not pass `ZERO`.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -146,7 +146,7 @@ fn debris_from_a_torn_off_fetch_is_purged() {
     // A cancelled fetch's writer removes its own temp file, so this is for the
     // case no destructor ran at all: a power cut or a kill -9 mid-fetch leaves
     // a `.part` file nothing will ever finish.
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
@@ -189,14 +189,14 @@ fn store_with_messages(
     BlobStore,
     Vec<postio_model::BlobId>,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut written = Vec::new();

@@ -40,8 +40,8 @@ fn store_with_messages(
     count: usize,
     size: usize,
 ) -> Vec<postio_model::ids::BlobId> {
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut written = Vec::new();
@@ -78,7 +78,7 @@ pub fn editing_the_ceiling_live_evicts_a_running_stores_oldest_blobs() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let blob_dir = root.join("blobs");
     std::fs::create_dir_all(&blob_dir).unwrap();
     let blobs = BlobStore::open(blob_dir, &postio_storage::test_support::blob_keys())

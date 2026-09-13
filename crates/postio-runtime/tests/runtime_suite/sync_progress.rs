@@ -78,11 +78,11 @@ fn drain(events: &EventStream) -> Vec<Event> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_long_sync_reports_progress_while_it_still_has_mail_to_fetch() {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let (account, inbox) = {
-        let connection = database.connection().expect("a connection");
-        let account = test_support::account(&connection);
-        let inbox = test_support::mailbox(&connection, &account, "INBOX");
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        let inbox = test_support::mailbox(&connection, &account, "INBOX").await;
         (account, inbox)
     };
 

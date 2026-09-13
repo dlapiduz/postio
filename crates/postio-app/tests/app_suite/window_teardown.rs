@@ -56,7 +56,7 @@ pub fn a_window_the_composition_root_wired_still_frees_when_destroyed() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 11);
     ensure_search_index(&database).expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");

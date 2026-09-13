@@ -111,7 +111,7 @@ fn running_application() -> (
     postio_core::bridge::Bridge,
     tempfile::TempDir,
 ) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     seed_small(&database, 51);
 
     let directory = tempfile::tempdir().expect("a blob directory");

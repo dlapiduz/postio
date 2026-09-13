@@ -158,7 +158,7 @@ fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 /// was reported as a stopped one. What proves it is alive is that it still
 /// *answers*.
 fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_large(&database, 11, messages);
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(

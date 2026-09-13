@@ -16,10 +16,10 @@ use postio_storage::test_support;
 
 /// A store with three messages whose bodies are indexed, and its inbox.
 fn searchable() -> (std::sync::Arc<Session>, ScopeFfi) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let mailbox = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         // The FTS tables are the index's, created on demand rather than by a
         // store migration -- the body index stores no content (#407) and lives
         // beside the store rather than in it.

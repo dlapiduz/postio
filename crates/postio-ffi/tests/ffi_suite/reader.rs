@@ -17,15 +17,15 @@ use postio_ui::reader::document as shared;
 
 /// A session over a store holding one message whose HTML body is `html`.
 fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
         postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
             .expect("a blob store");
 
     let id = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
         let id = repository.create(&mut message).expect("a message");
@@ -133,14 +133,14 @@ fn the_senders_markup_is_bounded_and_carries_no_script() {
 fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
     // #70 Cause A: four different "no body" situations all rendering as an
     // empty column. The boundary must carry the reason, not an empty string.
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
         postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
             .expect("a blob store");
     let id = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
@@ -167,15 +167,15 @@ fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
 /// Two rather than one, because the property worth asserting is not "a part
 /// resolves" but "a part resolves *only* for the message that declared it".
 fn two_messages_with_inline_parts() -> (std::sync::Arc<Session>, i64, i64) {
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
         postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
             .expect("a blob store");
 
     let (first, second) = {
-        let connection = database.connection().expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection);
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
 
         let make = |cid: &str, bytes: &[u8]| {

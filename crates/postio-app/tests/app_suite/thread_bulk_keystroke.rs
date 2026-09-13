@@ -43,7 +43,7 @@ use postio_storage::{BlobStore, Database, test_support};
 
 /// Every message of `thread`, and which mailbox each is in right now.
 fn thread_mailboxes(database: &Database, thread: ThreadId) -> Vec<(MessageId, i64)> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id, mailbox_id FROM messages WHERE thread_id = ?1 ORDER BY id")
         .expect("prepare");
@@ -68,7 +68,7 @@ pub fn marking_two_thread_rows_archives_both_conversations() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let archive = report
         .mailbox(MailboxRole::Archive)

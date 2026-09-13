@@ -37,6 +37,7 @@ use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 use postio_storage::Connection;
+use postio_storage::bind;
 
 /// Mail-shaped text: a few hundred words with the repetition real mail has —
 /// a quoted parent, a signature, the same handful of names.
@@ -59,28 +60,25 @@ fn a_body(n: usize) -> String {
     text
 }
 
-fn table_bytes(connection: &Connection, name: &str) -> i64 {
+async fn table_bytes(connection: &Connection, name: &str) -> i64 {
     // `dbstat` reports real page usage per b-tree, including the shadow
     // tables an FTS5 index is made of -- which is the only honest way to
     // compare a virtual table with an ordinary column.
-    connection
-        .query_row(
+    postio_storage::sql::one(&*connection, 
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
-              WHERE name = ?1 OR name LIKE ?1 || '\\_%' ESCAPE '\\'",
-            [name],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+              WHERE name = ?1 OR name LIKE ?1 async || '\\_%' ESCAPE '\\'",bind![name],
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("dbstat")
 }
 
-#[test]
-fn what_the_bodies_cost_in_each_place() {
+#[tokio::test]
+async fn what_the_bodies_cost_in_each_place() {
     const MESSAGES: usize = 5_000;
 
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
-    ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
+    ensure_schema(&connection).await.expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     let mut text: i64 = 0;
@@ -89,14 +87,14 @@ fn what_the_bodies_cost_in_each_place() {
         message.subject = Some(format!("Re: engine notes {n}"));
         message.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
         message.sync.body_state = BodyState::Full;
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
         let body = a_body(n);
         text += body.len() as i64;
-        index_body(&connection, message.id.get(), Some(&body)).expect("index");
+        index_body(&connection, message.id.get(), Some(&body)).await.expect("index");
     }
-    let documents = table_bytes(&connection, "search_documents");
-    let metadata_index = table_bytes(&connection, "messages_fts");
-    let body_index = table_bytes(&connection, "message_bodies_fts");
+    let documents = table_bytes(&connection, "search_documents").await;
+    let metadata_index = table_bytes(&connection, "messages_fts").await;
+    let body_index = table_bytes(&connection, "message_bodies_fts").await;
 
     let mb = |bytes: i64| bytes as f64 / (1024.0 * 1024.0);
     println!("\n{MESSAGES} messages, {:.1} MB of body text\n", mb(text));

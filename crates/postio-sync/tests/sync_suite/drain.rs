@@ -60,10 +60,10 @@ struct Local {
 }
 
 fn local(connection: &Connection) -> Local {
-    let account = test_support::account(connection);
-    let inbox = test_support::mailbox(connection, &account, INBOX).id;
-    let archive = test_support::mailbox(connection, &account, ARCHIVE).id;
-    let trash = test_support::mailbox(connection, &account, TRASH).id;
+    let account = test_support::account(connection).await;
+    let inbox = test_support::mailbox(connection, &account, INBOX).await.id;
+    let archive = test_support::mailbox(connection, &account, ARCHIVE).await.id;
+    let trash = test_support::mailbox(connection, &account, TRASH).await.id;
 
     let mut message = Message::new(account.id, inbox, at(8));
     message.server.uid = Some(Uid::new(1));
@@ -130,8 +130,8 @@ async fn count(backend: &MockBackend, mailbox: &str) -> usize {
 
 #[tokio::test]
 async fn an_empty_queue_is_an_idle_pass() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -146,8 +146,8 @@ async fn an_empty_queue_is_an_idle_pass() {
 
 #[tokio::test]
 async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -181,8 +181,8 @@ async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
 
 #[tokio::test]
 async fn a_queue_of_offline_actions_applies_in_order() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -234,8 +234,8 @@ async fn a_queue_of_offline_actions_applies_in_order() {
 
 #[tokio::test]
 async fn redundant_work_never_reaches_the_server() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -283,8 +283,8 @@ async fn redundant_work_never_reaches_the_server() {
 
 #[tokio::test]
 async fn a_delete_moves_the_message_to_the_trash() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -314,8 +314,8 @@ async fn a_delete_moves_the_message_to_the_trash() {
 
 #[tokio::test]
 async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -369,8 +369,8 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
 
 #[tokio::test]
 async fn a_message_moved_on_both_sides_does_not_move_twice() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -410,8 +410,8 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
 
 #[tokio::test]
 async fn a_renumbered_mailbox_fails_the_operation_rather_than_acting_on_the_wrong_message() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -447,8 +447,8 @@ async fn a_renumbered_mailbox_fails_the_operation_rather_than_acting_on_the_wron
 
 #[tokio::test]
 async fn a_message_that_was_never_uploaded_has_nothing_to_send() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -483,8 +483,8 @@ async fn a_message_that_was_never_uploaded_has_nothing_to_send() {
 
 #[tokio::test]
 async fn a_missing_destination_mailbox_is_a_permanent_failure() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -517,8 +517,8 @@ async fn a_missing_destination_mailbox_is_a_permanent_failure() {
 
 #[tokio::test]
 async fn a_transient_failure_comes_back_with_a_backoff() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -573,8 +573,8 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
 
 #[tokio::test]
 async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -606,8 +606,8 @@ async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
 
 #[tokio::test]
 async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -667,8 +667,8 @@ async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever
 
 #[tokio::test]
 async fn a_permanent_refusal_is_not_retried() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -694,8 +694,8 @@ async fn a_permanent_refusal_is_not_retried() {
 
 #[tokio::test]
 async fn a_folded_step_defers_every_row_behind_it_together() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 
@@ -747,8 +747,8 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
 
 #[tokio::test]
 async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
     let local = local(&connection);
     let backend = server().await;
 

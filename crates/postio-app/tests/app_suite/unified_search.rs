@@ -41,7 +41,7 @@ const ONLY_IN_THE_SECOND: &str = "photogrammetry";
 
 /// Put a message carrying [`ONLY_IN_THE_SECOND`] in `account`'s first mailbox.
 fn plant(database: &Database, account: postio_model::AccountId) -> postio_model::MessageId {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let mailbox: i64 = postio_storage::sql::one(
         &connection,
         "SELECT id FROM mailboxes WHERE account_id = ?1 ORDER BY id LIMIT 1",
@@ -100,7 +100,7 @@ pub fn a_unified_search_reaches_every_account() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let first = seed_small(&database, 11);
     let second = seed_extra_account(&database, "Second", "grace@example.org", 12);
     let planted = plant(&database, second.account.id);
@@ -176,7 +176,7 @@ pub fn a_unified_search_reaches_every_account() {
     );
 
     // Which message, not merely how many: a count of one could be any row.
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let subject = MessageRepository::new(&connection)
         .get(planted)
         .expect("a read")

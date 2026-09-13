@@ -51,10 +51,10 @@ fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) 
 
 #[test]
 fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for nth in 0..MESSAGES {
@@ -91,7 +91,7 @@ fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
     let indexed = postio_session::index_local_headers(&database).expect("the pass runs");
     assert_eq!(indexed, MESSAGES, "every block was visited exactly once");
 
-    let connection = database.connection().expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     assert_eq!(
         hits(&connection, account.id, "header:x-mailer=mutt"),
         MESSAGES,
@@ -119,10 +119,10 @@ fn a_store_whose_blocks_were_never_written_gives_the_pass_nothing_to_do() {
     // ADR 0025 Q5's other two populations. `body_headers` NULL is
     // `repair_header_blocks`'s work or the backfill lane's, and offering it
     // here would be a batch this pass can make no progress on.
-    let database = test_support::temp();
-    let connection = database.connection().expect("checkout");
+    let database = test_support::temp().await;
+    let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for nth in 0..8 {

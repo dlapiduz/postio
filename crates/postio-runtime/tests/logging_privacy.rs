@@ -74,7 +74,7 @@ fn content_of(
     database: &postio_storage::Store,
     account: postio_model::AccountId,
 ) -> Vec<String> {
-    let connection = database.connection().expect("a connection");
+    let connection = database.connect().await.expect("a connection");
     let rows = MessageRepository::new(&connection)
         .page(&ListQuery::account(account).limit(500))
         .expect("reading the seeded mail");
@@ -147,7 +147,7 @@ fn no_message_content_reaches_the_log_at_any_level() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("this test binary runs one test and owns the subscriber");
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let report = seed_small(&database, 11);
     let secrets = content_of(&database, report.account.id);
 

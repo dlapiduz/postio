@@ -103,10 +103,10 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
     use postio_storage::test_support;
     use postio_sync::discover::discover;
 
-    let database = test_support::memory();
+    let database = test_support::memory().await;
     let account = {
-        let connection = database.connection().expect("a connection");
-        test_support::account(&connection)
+        let connection = database.connect().await.expect("a connection");
+        test_support::account(&connection).await
     };
     // iCloud's shape: the provider's own Sent folder beside one another
     // client made, nothing declared, so the alphabet picks `Sent`.
@@ -117,7 +117,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
         .build();
     backend.connect().await.expect("connect");
     let sent_paths = |database: &postio_storage::Store| -> Vec<String> {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         MailboxRepository::new(&connection)
             .list_for_account(account.id)
             .expect("list")
@@ -128,7 +128,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
     };
 
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         discover(&connection, &backend, account.id, &RoleOverrides::default())
             .await
             .expect("first pass");
@@ -157,7 +157,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
     );
 
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         discover(&connection, &backend, account.id, &RoleOverrides::default())
             .await
             .expect("second pass");

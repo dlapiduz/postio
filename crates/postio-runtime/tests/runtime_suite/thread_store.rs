@@ -21,7 +21,7 @@ fn store(
     MailboxId,
     test_support::TempStore,
 ) {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let report = seed_large(&database, 7, messages);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     thread_seeded_messages(&database, report.account.id, per_thread);
@@ -163,9 +163,9 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
 /// catch it.
 #[tokio::test]
 async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
-    let database = test_support::temp();
-    postio_storage::seed::seed_small(&database, 3);
-    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4);
+    let database = test_support::temp().await;
+    postio_storage::seed::seed_small(&database, 3).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
     let store = SqliteStore::new(&database);
 
     let first = store

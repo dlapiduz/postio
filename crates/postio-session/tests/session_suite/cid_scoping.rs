@@ -52,14 +52,14 @@ fn message_with_part(
 
 #[test]
 fn a_content_id_from_another_message_does_not_resolve() {
-    let database = test_support::temp();
+    let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
         &postio_storage::test_support::blob_keys(),
     )
     .expect("a blob store");
-    let connection = database.connection().expect("checkout");
-    let (account, inbox) = test_support::account_with_inbox(&connection);
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mine = message_with_part(
         &connection,
