@@ -31,18 +31,23 @@ use turso::Row;
 /// ```no_run
 /// # use postio_model::{Generation, MailboxStatus, MailboxId};
 /// # use postio_storage::repository::SyncStateRepository;
-/// # fn main() -> Result<(), postio_storage::Error> {
+/// # async fn demo() -> Result<(), postio_storage::Error> {
 /// # use postio_storage::key::{Purpose, StoreKey};
 /// # let key = StoreKey::generate().derive(Purpose::Database);
-/// # let database = postio_storage::Database::open("postio.db", &key)?;
-/// # let mut connection = database.connection()?;
+/// # let database = postio_storage::Store::open("postio.db", &key).await?;
+/// # let connection = database.connect().await?;
 /// # let mailbox = MailboxId::new(1);
 /// # let status = MailboxStatus::new(Generation::new(1));
-/// let transaction = connection.transaction()?;
-/// // ... write the fetched messages ...
-/// SyncStateRepository::new(&transaction).observe(mailbox, &status, chrono::Utc::now())?;
-/// SyncStateRepository::new(&transaction).complete_full_sync(mailbox, chrono::Utc::now())?;
-/// transaction.commit()?;
+/// postio_storage::transaction(&connection, |transaction| async move {
+///     // ... write the fetched messages ...
+///     let state = SyncStateRepository::new(&transaction);
+///     state.observe(mailbox, &status, chrono::Utc::now()).await?;
+///     state
+///         .complete_full_sync(mailbox, chrono::Utc::now())
+///         .await?;
+///     Ok::<_, postio_storage::Error>(())
+/// })
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```

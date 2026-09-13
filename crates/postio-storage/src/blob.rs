@@ -46,22 +46,24 @@
 //! than [`GarbageCollection::min_age`].
 //!
 //! ```no_run
-//! # fn main() -> Result<(), postio_storage::Error> {
+//! # async fn demo() -> Result<(), postio_storage::Error> {
 //! use postio_storage::blob::{BlobStore, GarbageCollection};
 //! use postio_storage::key::{BlobKeys, Purpose, StoreKey};
 //!
 //! # let store_key = StoreKey::generate();
-//! let store = BlobStore::open(
+//! let blobs = BlobStore::open(
 //!     "~/.local/share/postio/blobs",
 //!     &BlobKeys::derive(&store_key),
 //! )?;
-//! let id = store.put(b"raw message bytes")?;
-//! assert_eq!(store.get(&id)?, b"raw message bytes");
+//! let id = blobs.put(b"raw message bytes")?;
+//! assert_eq!(blobs.get(&id)?, b"raw message bytes");
 //!
 //! # let key = store_key.derive(Purpose::Database);
 //! let store = postio_storage::Store::open("postio.db", &key).await?;
-//! let connection = database.connection()?;
-//! let report = store.collect_garbage(&connection, GarbageCollection::default())?;
+//! let connection = store.connect().await?;
+//! let report = blobs
+//!     .collect_garbage(&connection, GarbageCollection::default())
+//!     .await?;
 //! eprintln!("reclaimed {} bytes", report.bytes_reclaimed);
 //! # Ok(())
 //! # }
