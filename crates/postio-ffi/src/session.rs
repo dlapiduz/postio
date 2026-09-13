@@ -623,6 +623,16 @@ impl Session {
         self.cheat_sheet(context)
     }
 
+    /// The `?` sheet, grouped the way the product groups it.
+    /// See [`Session::cheat_sheet_sections`].
+    #[uniffi::method(name = "cheatSheetSections")]
+    pub fn cheat_sheet_sections_ffi(
+        &self,
+        context: crate::UiContext,
+    ) -> Vec<crate::CheatSectionFfi> {
+        self.cheat_sheet_sections(context)
+    }
+
     /// Whether `message` is marked, for a row deciding how to draw itself.
     ///
     /// The *selection*, not the cursor. A table drawing its own selection
@@ -1382,8 +1392,29 @@ impl Session {
     /// same list read two ways"* (#658). Building them separately would mean
     /// two places deciding what "available here" means, and they would
     /// disagree.
+    ///
+    /// The flat form. [`Session::cheat_sheet_sections`] is what a `?` overlay
+    /// should draw: the same rows, grouped the way the product groups them.
     pub fn cheat_sheet(&self, context: crate::UiContext) -> Vec<crate::PaletteEntryFfi> {
         self.palette_entries("", context)
+    }
+
+    /// The `?` sheet, grouped: Everywhere, the box's prefixes, the reader's
+    /// own surface, then one section per extension namespace.
+    ///
+    /// The grouping is [`postio_ui::cheatsheet::sections`]'s — the same
+    /// function the GTK overlay draws from, so the two frontends teach the
+    /// same sheet. The flat [`Session::cheat_sheet`] predates it and is what
+    /// an ungrouped list should keep using.
+    pub fn cheat_sheet_sections(&self, context: crate::UiContext) -> Vec<crate::CheatSectionFfi> {
+        postio_ui::cheatsheet::sections(
+            &self.keymap(),
+            postio_core::Context::from(context),
+            self.availability(),
+        )
+        .into_iter()
+        .map(crate::CheatSectionFfi::from)
+        .collect()
     }
 
     /// The bindings in force, resolved for this platform.
