@@ -289,11 +289,10 @@ async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
         "and the message is offered to the pass again, which is the refill"
     );
 
-    let bodies: i64 = postio_storage::sql::one(
+    let bodies = postio_storage::sql::scalar(
         &connection,
-        "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
+        "SELECT count(*) FROM messages WHERE id = ?1 AND body_search IS NOT NULL",
         [message.id.get()],
-        |row| postio_storage::sql::RowExt::col(row, 0),
     )
     .await
     .expect("count");
