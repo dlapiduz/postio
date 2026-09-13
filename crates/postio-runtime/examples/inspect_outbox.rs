@@ -57,16 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let key = StoreKey::from_hex(stored.expose())?.derive(Purpose::Database);
 
-    let connection = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
-    {
-        let hex = key.to_hex();
-        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
-    }
-    connection.execute_batch("PRAGMA query_only = ON;")?;
+    let connection = open_store(&path, &key)?;
 
     let now = chrono::Utc::now().timestamp();
     println!("now:   {now}\n");
@@ -105,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
            LEFT JOIN messages m ON m.id = d.message_id
            LEFT JOIN operation_queue q
                   ON q.target_kind = 'draft' AND q.target_id = d.id
-                 AND q.op_type = 'send' AND q.state IN ('pending', 'in_flight')
+                 AND q.op_type = 'send'
           WHERE d.state <> 'editing'
           ORDER BY d.account_id, d.id",
     )?;
@@ -162,6 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(at) => println!("  send_at         {at}  due {}s ago", now - at),
             None => println!("  send_at         none (send as soon as possible)"),
         }
+        let live = matches!(op_state.as_deref(), Some("pending") | Some("in_flight"));
         match op {
             Some(op) => {
                 let due = match next {
@@ -170,8 +162,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None => "due now".to_owned(),
                 };
                 println!(
-                    "  operation       {op} {}, attempts {}, {due}{}",
-                    op_state.unwrap_or_default(),
+                    "  operation       {op} {}{}, attempts {}, {due}{}",
+                    op_state.clone().unwrap_or_default(),
+                    if live { "" } else { "  <-- not live" },
                     attempts.unwrap_or(0),
                     match error_len {
                         Some(n) => format!(", last_error {n} chars (not printed)"),
@@ -181,12 +174,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             None => println!("  operation       NONE  <-- nothing will ever pick this up"),
         }
-        println!("  updated_at      {updated} ({}s ago)", now - updated);
+        // Milliseconds, not seconds: `DraftRepository` writes these through
+        // `to_millis`. Comparing them to a seconds clock printed "-1787389526040s
+        // ago", which is the sort of number that gets read as corruption.
+        let updated_secs = updated / 1000;
+        println!(
+            "  updated_at      {updated} ({} ago)",
+            humanise(now - updated_secs)
+        );
 
         // The verdict, said plainly, because the columns above are the
         // evidence for it rather than the answer.
-        let verdict = match (state.as_str(), op.is_some(), send_at) {
-            (_, false, _) => "STUCK: queued with no operation. Open it in Drafts and send again.",
+        let verdict = match (state.as_str(), live, send_at) {
+            (_, false, _) if op.is_some() => {
+                "STUCK: the operation behind this finished and the draft was left \
+                 queued. Nothing will retry it. Send it again."
+            }
+            (_, false, _) => "STUCK: queued with no operation at all. Send it again.",
             ("queued", true, Some(at)) if at > now => "waiting for its scheduled time",
             ("sending", true, _) => {
                 "a submission was interrupted; it resolves to \
@@ -214,4 +218,68 @@ fn dirs_store_path() -> std::path::PathBuf {
             let home = std::env::var("HOME").expect("HOME");
             std::path::Path::new(&home).join(".local/share/postio/postio.db")
         })
+}
+
+/// Open the store read-only under `mac`, or say it is not the one.
+///
+/// **The MAC has to be named.** `PRAGMA cipher_hmac_algorithm` decides how
+/// pages are authenticated and cannot be changed once one has been read, so a
+/// reader that leaves it alone gets SQLCipher's default — SHA-512 — and a
+/// store written under SHA-256 answers `hmac check failed for pgno=1` and
+/// `file is not a database`. That is what this example did until it was
+/// pointed at a real store: the key was right and the pages would not open.
+///
+/// `db.rs` calls the two `PageMac::Sha256` (what a new store gets) and
+/// `PageMac::Sha512` (what older ones carry, read but never written), and
+/// that type is `pub(crate)` — so the strings are spelled here and the caller
+/// tries both rather than guessing.
+fn open_under(
+    path: &std::path::Path,
+    key: &postio_storage::key::Subkey,
+    mac: &str,
+) -> Result<Connection, Box<dyn std::error::Error>> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.execute_batch("PRAGMA cipher_memory_security = OFF;")?;
+    {
+        let hex = key.to_hex();
+        connection.execute_batch(&format!("PRAGMA key = \"x'{}'\";", *hex))?;
+    }
+    // After the key and before anything reads a page, which is what SQLCipher
+    // requires of this one.
+    connection.execute_batch(&format!("PRAGMA cipher_hmac_algorithm = {mac};"))?;
+    connection.execute_batch("PRAGMA query_only = ON;")?;
+    // The probe: `sqlite_schema` is page 1, so this is the cheapest read that
+    // proves both the key and the MAC.
+    connection.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    Ok(connection)
+}
+
+/// The store, opened under whichever MAC it was written with.
+fn open_store(
+    path: &std::path::Path,
+    key: &postio_storage::key::Subkey,
+) -> Result<Connection, Box<dyn std::error::Error>> {
+    // Newest first: a store made by this build is SHA-256.
+    match open_under(path, key, "HMAC_SHA256") {
+        Ok(connection) => Ok(connection),
+        Err(_) => open_under(path, key, "HMAC_SHA512").map_err(|error| {
+            format!("the store opened under neither HMAC_SHA256 nor HMAC_SHA512: {error}").into()
+        }),
+    }
+}
+
+/// A duration in seconds, said the way a person reads one.
+fn humanise(seconds: i64) -> String {
+    match seconds {
+        s if s < 0 => format!("{}s in the future", -s),
+        s if s < 90 => format!("{s}s ago"),
+        s if s < 5400 => format!("{} minutes ago", s / 60),
+        s if s < 172_800 => format!("{} hours ago", s / 3600),
+        s => format!("{} days ago", s / 86_400),
+    }
 }

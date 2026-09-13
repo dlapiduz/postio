@@ -377,12 +377,25 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
         "and which recipient it was about: {reason}"
     );
 
-    assert!(
-        DraftRepository::new(&connection)
-            .get(draft_id)
-            .expect("get")
-            .is_some(),
-        "a message never delivered keeps its draft"
+    let kept = DraftRepository::new(&connection)
+        .get(draft_id)
+        .expect("get")
+        .expect("a message never delivered keeps its draft");
+    // **And it stops claiming to be on its way.** The operation is `failed`
+    // and nothing will retry it, so a draft left `Queued` sits in the Outbox
+    // for ever under a row that says it is being sent -- and once
+    // `prune_settled` removes the settled operation, even the evidence of
+    // why is gone. That is the state a real store was found in, 25 hours
+    // after the send: `queued`, no operation, nothing coming.
+    //
+    // `Failed` is where it belongs: out of the Outbox, in Drafts marked
+    // "Not sent", and counted in the number that says something needs a
+    // person (spec 003 FR-024).
+    assert_eq!(
+        kept.state,
+        postio_model::DraftState::Failed,
+        "a send the server refused outright left the draft claiming to be on \
+         its way, with nothing left to carry it"
     );
     let status = backend.status("Sent").await.expect("status");
     assert_eq!(status.exists, 0, "nothing was ever appended");

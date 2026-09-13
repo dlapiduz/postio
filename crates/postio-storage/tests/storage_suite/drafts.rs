@@ -1916,3 +1916,79 @@ fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
         "a send in flight has no future time to show"
     );
 }
+
+#[test]
+fn a_send_whose_operation_is_gone_stops_claiming_to_be_on_its_way() {
+    // The state a real store was found in: `queued`, no operation, 25 hours
+    // after the send. Nothing retries it, the Outbox lists it for ever, and
+    // once `prune_settled` has removed the settled operation there is not
+    // even a reason left to show.
+    //
+    // The cause is fixed where it happens -- a send that gives up now marks
+    // its draft -- but that does nothing for the drafts already in this
+    // state, and they cannot get out of it by themselves.
+    use postio_storage::repository::OperationQueueRepository;
+
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let account = test_support::account(&connection);
+    test_support::mailbox(&connection, &account, "Drafts");
+    let drafts = DraftRepository::new(&connection);
+
+    // One orphan, one healthy send, one draft still being written.
+    let orphan = {
+        let mut draft = a_draft(account.id);
+        drafts.save(&mut draft).expect("save");
+        drafts.queue_send(&mut draft, Utc::now()).expect("queue");
+        // What the drainer's failure path used to leave behind, and what
+        // `prune_settled` then finishes.
+        let queued = OperationQueueRepository::new(&connection)
+            .pending(account.id, Utc::now())
+            .expect("the queue")
+            .into_iter()
+            .find(|op| op.target == postio_model::OperationTarget::Draft(draft.id))
+            .expect("the send is queued");
+        OperationQueueRepository::new(&connection)
+            .delete(queued.id)
+            .expect("delete the operation");
+        draft.id
+    };
+    let healthy = {
+        let mut draft = a_draft(account.id);
+        drafts.save(&mut draft).expect("save");
+        drafts.queue_send(&mut draft, Utc::now()).expect("queue");
+        draft.id
+    };
+    let editing = {
+        let mut draft = a_draft(account.id);
+        drafts.save(&mut draft).expect("save")
+    };
+
+    let healed = drafts
+        .fail_orphaned_sends(account.id)
+        .expect("reconcile the orphans");
+    assert_eq!(healed, 1, "exactly the one with nothing behind it");
+
+    assert_eq!(
+        drafts.get(orphan).expect("get").expect("still here").state,
+        DraftState::Failed,
+        "the orphan still claims to be on its way"
+    );
+    assert_eq!(
+        drafts.get(healthy).expect("get").expect("still here").state,
+        DraftState::Queued,
+        "a send with an operation behind it was disturbed"
+    );
+    assert_eq!(
+        drafts.get(editing).expect("get").expect("still here").state,
+        DraftState::Editing,
+        "a draft being written is not a send at all"
+    );
+
+    // And it is idempotent, because it runs on every drain pass.
+    assert_eq!(
+        drafts.fail_orphaned_sends(account.id).expect("again"),
+        0,
+        "a second pass found something to do, so it would churn for ever"
+    );
+}

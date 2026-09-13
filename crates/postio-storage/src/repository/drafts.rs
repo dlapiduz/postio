@@ -309,6 +309,80 @@ impl<'a> DraftRepository<'a> {
         Ok(queued)
     }
 
+    /// Mark every send that has nothing left to carry it as `Failed`.
+    ///
+    /// A draft is `Queued` because `queue_send` wrote the state and the
+    /// `Send` operation in one transaction, so the two cannot come apart at
+    /// the moment of queueing. They come apart afterwards: an operation that
+    /// gives up is marked `failed`, and `prune_settled` removes settled rows
+    /// in time. A draft left `Queued` behind that is in the Outbox for ever,
+    /// under a row that says it is on its way, with nothing coming.
+    ///
+    /// **`Queued` only, and that is the safety argument.** The drainer commits
+    /// `Sending` before it hands anything to SMTP (ADR 0021), so a draft still
+    /// at `Queued` was never submitted and "it did not go" is a fact rather
+    /// than a guess. A `Sending` draft with no operation is the *uncertain*
+    /// case -- nobody can say whether the server took it -- and
+    /// `postio_sync::send::resolve` promotes that one to `Unconfirmed`. This
+    /// must never touch it, or it would tell a user a message failed that may
+    /// be in somebody's inbox.
+    ///
+    /// Returns how many were healed. Idempotent, because it runs on every
+    /// drain pass.
+    pub fn fail_orphaned_sends(&self, account: AccountId) -> Result<usize> {
+        // Read first, and write only when there is something to write. This
+        // runs on every drain pass, and the answer is almost always zero: an
+        // `UPDATE` issued regardless would take the write lock each time to
+        // decide it had nothing to do, which is what made a pragma in
+        // `db.rs`'s open path block every reader during a write transaction.
+        let orphans: i64 = self.connection.query_row(
+            "SELECT count(*) FROM drafts
+              WHERE account_id = ?1
+                AND state = 'queued'
+                AND NOT EXISTS (
+                      SELECT 1 FROM operation_queue q
+                       WHERE q.target_kind = 'draft'
+                         AND q.target_id = drafts.id
+                         AND q.op_type = 'send'
+                         AND q.state IN ('pending', 'in_flight'))",
+            [account.get()],
+            |row| row.get(0),
+        )?;
+        if orphans == 0 {
+            return Ok(0);
+        }
+
+        let scope = super::Scope::open(self.connection)?;
+        let healed = scope.execute(
+            "UPDATE drafts
+                SET state = 'failed'
+              WHERE account_id = ?1
+                AND state = 'queued'
+                AND NOT EXISTS (
+                      SELECT 1 FROM operation_queue q
+                       WHERE q.target_kind = 'draft'
+                         AND q.target_id = drafts.id
+                         AND q.op_type = 'send'
+                         AND q.state IN ('pending', 'in_flight'))",
+            [account.get()],
+        )?;
+        // The mirror row #166 keeps in Drafts carries the same state, and the
+        // lists read *it* rather than the draft -- so a heal that stopped at
+        // the `drafts` table would leave the Outbox still drawing the row.
+        scope.execute(
+            "UPDATE messages
+                SET send_state = 'failed'
+              WHERE account_id = ?1
+                AND send_state = 'queued'
+                AND id IN (SELECT message_id FROM drafts
+                            WHERE drafts.state = 'failed'
+                              AND drafts.message_id IS NOT NULL)",
+            [account.get()],
+        )?;
+        scope.commit()?;
+        Ok(healed)
+    }
+
     /// Cancels a draft's pending send and hands it back for editing (#433).
     ///
     /// A queued draft's row stayed in the Drafts folder the whole time it sat

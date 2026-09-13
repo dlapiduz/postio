@@ -219,6 +219,22 @@ impl<'a> Drainer<'a> {
         account: AccountId,
         now: DateTime<Utc>,
     ) -> Result<DrainReport> {
+        // Before the early return below, not after it: a send whose operation
+        // is gone has nothing pending by definition, so an account holding
+        // only one of those would take that return on every pass and never
+        // heal. It reads before it writes and is a no-op in the ordinary case.
+        match postio_storage::repository::DraftRepository::new(connection)
+            .fail_orphaned_sends(account)
+        {
+            Ok(0) => {}
+            Ok(healed) => tracing::warn!(
+                healed,
+                "sends were queued with nothing left to carry them, and are \
+                 now marked as not sent"
+            ),
+            Err(error) => tracing::warn!(%error, "could not reconcile orphaned sends"),
+        }
+
         let queue = OperationQueueRepository::new(connection);
         let batch = queue.pending(account, now)?;
         if batch.is_empty() {
@@ -660,7 +676,7 @@ impl<'a> Drainer<'a> {
                 let attempts = self.attempts(connection, step)? + 1;
                 if self.policy.is_exhausted(attempts) {
                     let reason = format!("{reason} (gave up after {attempts} attempts)");
-                    self.fail(&queue, step, &reason, now, report)?;
+                    self.fail(connection, &queue, step, &reason, now, report)?;
                 } else {
                     let retry_at = self.policy.next_attempt_at(now, attempts, after);
                     for id in &step.rows {
@@ -670,7 +686,7 @@ impl<'a> Drainer<'a> {
                 }
             }
             Outcome::Failed { reason } => {
-                self.fail(&queue, step, &reason, now, report)?;
+                self.fail(connection, &queue, step, &reason, now, report)?;
             }
             Outcome::Uncertain { reason } => {
                 // Settled, and deliberately not retried: the payload may
@@ -695,6 +711,7 @@ impl<'a> Drainer<'a> {
 
     fn fail(
         &self,
+        connection: &Connection,
         queue: &OperationQueueRepository<'_>,
         step: &Step,
         reason: &str,
@@ -703,6 +720,32 @@ impl<'a> Drainer<'a> {
     ) -> Result<()> {
         for id in &step.rows {
             queue.mark_failed(*id, now, reason)?;
+        }
+        // A send that has given up has to say so on the draft as well.
+        //
+        // The operation is `failed` and nothing will retry it, so a draft
+        // left `Queued` sits in the Outbox for ever under a row claiming it
+        // is on its way -- and `prune_settled` later removes the settled
+        // operation, taking the last evidence of why with it. A real store
+        // was found in exactly that state: queued, no operation, 25 hours
+        // after the send.
+        //
+        // `Failed` is what the rest of the application already understands:
+        // out of the Outbox, listed in Drafts marked "Not sent", counted in
+        // the number that says something needs a person (spec 003 FR-024),
+        // and offered `RetrySend`.
+        //
+        // Best-effort, and in the one safe direction. This runs only where
+        // the client witnessed a refusal -- `Outcome::Uncertain` goes to
+        // `report.uncertain` and never here -- so it cannot mark a message
+        // as unsent that may have gone. A write that fails leaves the draft
+        // where it was, which is the state this is fixing rather than a new
+        // one.
+        if let postio_model::Operation::Send { draft } = step.operation
+            && let Err(error) = postio_storage::repository::DraftRepository::new(connection)
+                .set_state(draft, postio_model::DraftState::Failed)
+        {
+            tracing::warn!(%error, "a send gave up but the draft could not be marked");
         }
         report.failed.push(FailedOperation {
             rows: step.rows.clone(),
