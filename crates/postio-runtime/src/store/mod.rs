@@ -299,3 +299,7 @@ pub trait MailStore: Send + Sync {
 
 mod sqlite;
 pub use sqlite::SqliteStore;
+/// How many threaded-folder counts this process has issued. For tests — see
+/// the counter's own documentation in `sqlite`.
+#[doc(hidden)]
+pub use sqlite::folders_counted;

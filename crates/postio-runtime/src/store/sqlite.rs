@@ -5,9 +5,10 @@
 //! anywhere in its dependency graph; whatever assembles the running
 //! application turns the feature on, and the view layer never does.
 
-use postio_model::ids::{AccountId, MessageId};
+use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::mailbox::Mailbox;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use postio_storage::repository::{
@@ -45,6 +46,95 @@ pub struct SqliteStore {
     /// any one account's, and two windows sharing marks would each clear the
     /// other's -- or, where their totals happened to match, seek with one.
     unified_marks: Arc<Mutex<Marks<ThreadCursor>>>,
+    /// The last threaded count of a folder, and the cheap number it was taken
+    /// against. See [`CountedFolder`].
+    folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
+}
+
+/// A folder's thread count, and how to tell whether it still holds.
+///
+/// The count itself is expensive — a correlated subquery, one indexed probe
+/// per message, 786 ms on a real 60,907-message Archive. `witness` is the
+/// trigger-maintained `mailboxes.total_count` for the same folder: a column
+/// lookup, and the number the expensive one follows. When the cheap number is
+/// unchanged the expensive one is reused.
+///
+/// **What this trades, stated plainly.** Messages arriving and being removed
+/// between two reads can leave `total_count` equal while the thread count has
+/// moved — the same window [`Marks`] already documents itself as having, for
+/// the same reason, and with a smaller consequence: a row count briefly off
+/// by one, corrected by the next change to the folder. Against that: without
+/// it, every page of a large folder pays the full count, which is what made
+/// such a folder impossible to open at all (#1534).
+#[derive(Debug, Clone, Copy)]
+struct CountedFolder {
+    /// `mailboxes.total_count` when the count was taken.
+    witness: u32,
+    /// What counting the threads answered then.
+    threads: u32,
+}
+
+/// How many times this process has counted a threaded folder.
+///
+/// A folder's thread count is not a column lookup — it is a correlated
+/// subquery, one indexed probe per message — and on a real 60,907-message
+/// Archive it measured **786 ms** against a 100 ms interaction budget. What
+/// made that fatal rather than merely slow was paying it on *every page*, so
+/// the number that matters is not how long a count takes but how many are
+/// issued for one folder (#1534).
+///
+/// An atomic rather than the thread-local `postio_storage` counting uses:
+/// these reads happen on the blocking pool, so a thread-local incremented
+/// there and read from a test would answer zero.
+static FOLDERS_COUNTED: AtomicU64 = AtomicU64::new(0);
+
+/// How many threaded-folder counts this process has issued. For tests.
+///
+/// See [`FOLDERS_COUNTED`]. Opening and paging one folder should add one.
+#[doc(hidden)]
+pub fn folders_counted() -> u64 {
+    FOLDERS_COUNTED.load(Ordering::Relaxed)
+}
+
+/// A folder's thread count, from the cache when the folder has not moved.
+///
+/// Only for a folder scope. An account-wide or unified count has no single
+/// mailbox row to witness it, and is left to be counted as before — those
+/// windows are not the ones that cost 786 ms.
+fn counted_total(
+    connection: &postio_storage::PooledConnection,
+    cache: &Mutex<HashMap<MailboxId, CountedFolder>>,
+    scope: ListScope,
+    threads: &ThreadRepository<'_>,
+    query: &ThreadListQuery,
+) -> Result<u32, postio_storage::Error> {
+    let ListScope::Mailbox(mailbox) = scope else {
+        FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
+        return threads.count_of(query);
+    };
+    // The cheap number, read first: a column on one row.
+    let witness = MailboxRepository::new(connection)
+        .get(mailbox)?
+        .map(|found| found.counts.total);
+    if let Some(witness) = witness
+        && let Some(held) = cache.lock().expect("not poisoned").get(&mailbox).copied()
+        && held.witness == witness
+    {
+        return Ok(held.threads);
+    }
+
+    FOLDERS_COUNTED.fetch_add(1, Ordering::Relaxed);
+    let counted = threads.count_of(query)?;
+    if let Some(witness) = witness {
+        cache.lock().expect("not poisoned").insert(
+            mailbox,
+            CountedFolder {
+                witness,
+                threads: counted,
+            },
+        );
+    }
+    Ok(counted)
 }
 
 /// Remembered page boundaries for one scope.
@@ -127,6 +217,7 @@ impl SqliteStore {
             marks: Arc::new(Mutex::new(Marks::default())),
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
+            folder_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -227,10 +318,11 @@ impl SqliteStore {
             return self.read_unified_page(request).await;
         }
         let marks = self.thread_marks.clone();
+        let counts = self.folder_counts.clone();
         self.read(move |connection| {
             let query = thread_query(connection, request.scope, request.limit)?;
             let threads = ThreadRepository::new(connection);
-            let total = threads.count_of(&query)?;
+            let total = counted_total(connection, &counts, request.scope, &threads, &query)?;
 
             let start = {
                 let mut marks = marks.lock().expect("not poisoned");

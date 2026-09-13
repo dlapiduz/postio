@@ -213,3 +213,117 @@ async fn the_unified_scope_pages_every_account_without_repeating_a_row() {
          fixed number of threads, so the skip has to count rows"
     );
 }
+
+#[tokio::test]
+async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
+    // #1534. `read_thread_page` recomputes `count_of` on every page, and for
+    // a threaded folder that is not a column lookup — it is a correlated
+    // subquery, one indexed probe per message. Measured on a real account:
+    // 786 ms for a 60,907-message Archive, against a 100 ms interaction
+    // budget. Paid again for every page the list asks for, which is what made
+    // the folder impossible to open.
+    //
+    // `Marks`' own doc comment states the assumption this breaks: "The total
+    // is checked on every read — it is a column lookup now, not a count."
+    // True of the message window, whose total is the trigger-maintained
+    // column. Never true of this one.
+    //
+    // Counted, not timed: the count is a statement, and statements are what
+    // `postio_storage`'s trace hook sees. Six pages of the same folder should
+    // not cost six counts.
+    let database = test_support::temp();
+    let report = seed_large(&database, 7, 600);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    thread_seeded_messages(&database, report.account.id, 4);
+    let store = SqliteStore::new(&database);
+
+    // One page, to establish what a page costs including its first count.
+    let first = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("the first page");
+    assert!(first.total > 0, "the fixture has to have rows");
+
+    // Five more pages of the same folder, nothing changing underneath.
+    let before = postio_runtime::store::folders_counted();
+    for page in 1..6u32 {
+        store
+            .thread_page(request(ListScope::Mailbox(inbox), page * 50, 50))
+            .await
+            .expect("a later page");
+    }
+    let counted = postio_runtime::store::folders_counted() - before;
+
+    // Each page legitimately issues its own read. What it must not issue is
+    // its own count of the whole folder: the list has not changed, and the
+    // answer is the one already in hand.
+    //
+    // Two statements per page is the honest budget — the page, and whatever
+    // the scope resolution needs. Six counts on top of that is the defect.
+    assert_eq!(
+        counted, 0,
+        "five pages of an unchanged folder counted it {counted} more times. A \
+         folder is counted once, not once per page: on a real Archive that \
+         count is 786 ms, so five pages spend four seconds recomputing a \
+         number already in hand (#1534)."
+    );
+}
+
+#[tokio::test]
+async fn a_folder_that_gains_a_message_is_counted_again() {
+    // The other half of caching the count: it has to stop being used the
+    // moment it is wrong. A cached total that outlived its folder would make
+    // the list claim a row count it cannot fill, which is a worse bug than
+    // the one the cache fixes.
+    //
+    // The witness is `mailboxes.total_count`, maintained by the counting
+    // triggers -- so this asserts the trigger and the cache agree, not just
+    // that the cache has an invalidation path.
+    let database = test_support::temp();
+    let report = seed_large(&database, 7, 300);
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    thread_seeded_messages(&database, report.account.id, 4);
+    let store = SqliteStore::new(&database);
+
+    let first = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page");
+
+    // New mail, through the repository the sync uses, so the triggers run.
+    {
+        let connection = database.connection().expect("a connection");
+        let mut arrival = postio_model::Message::new(
+            report.account.id,
+            inbox,
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+        );
+        arrival.subject = Some("A message that arrived after the count".to_owned());
+        arrival.from = vec![postio_model::EmailAddress::new(
+            Some("Lena"),
+            "lena@example.com",
+        )];
+        postio_storage::repository::MessageRepository::new(&connection)
+            .create(&mut arrival)
+            .expect("the arrival");
+    }
+
+    let before = postio_runtime::store::folders_counted();
+    let after = store
+        .thread_page(request(ListScope::Mailbox(inbox), 0, 50))
+        .await
+        .expect("a page after the arrival");
+
+    assert_eq!(
+        postio_runtime::store::folders_counted() - before,
+        1,
+        "the folder changed and the count was served from the cache anyway"
+    );
+    assert_eq!(
+        after.total,
+        first.total + 1,
+        "the new message did not reach the row count: {} then {}",
+        first.total,
+        after.total
+    );
+}

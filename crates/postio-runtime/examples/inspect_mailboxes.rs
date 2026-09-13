@@ -208,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             threads,
         ));
     }
-    timed.sort_by(|a, b| b.0.cmp(&a.0));
+    timed.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     for (ms, path, messages, threads) in &timed {
         let flag = if *ms >= 1000 {
             "  <-- a person is waiting"
