@@ -214,10 +214,9 @@ pub async fn install(
         let wiring = wiring.clone();
         let previous = previous.clone();
         move || {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 window.set_content(previous.as_ref());
                 crate::open_account(&window, &wiring, &state, &wired, &events, &notifier).await;
-        
             })
         }
     };
@@ -864,7 +863,9 @@ async fn persist_oauth(
         endpoints,
         scopes,
         refresh_token_lifetime_days,
-    ).await {
+    )
+    .await
+    {
         // Roll the secrets back the same way `persist` does: nothing reads
         // a credential no account row names, but leaving one is untidy.
         let _ = secrets
@@ -889,7 +890,6 @@ async fn save_oauth(
     save(database, submission, postio_model::account::Backend::Imap).await?;
     let connection = database
         .connect()
-
         .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     let repository = AccountRepository::new(&connection);
@@ -989,7 +989,6 @@ async fn save(
 ) -> Result<(), String> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| format!("Postio could not open its local store: {error}"))?;
     let repository = AccountRepository::new(&connection);

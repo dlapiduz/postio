@@ -204,20 +204,18 @@ pub async fn load_body_or_reason(
 /// -- so a runtime of its own here is the same work through the async API,
 /// not new work on the frame path.
 ///
-/// `current_thread` deliberately: one part, one read, no worker to spin up.
+/// Through [`crate::blocking::now`], which is the part that is easy to get
+/// half right: a runtime built here and blocked on *panics* when this is
+/// called from a thread that is already a runtime worker, which the
+/// application never is and every test is.
 pub fn cid_source(
     showing: impl Fn() -> Option<MessageId> + 'static,
     database: Store,
     blobs: BlobStore,
 ) -> Rc<dyn BlobSource> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok();
     Rc::new(move |content_id: &str| {
-        let runtime = runtime.as_ref()?;
         let message = showing()?;
-        runtime.block_on(resolve_cid(&database, &blobs, message, content_id))
+        crate::blocking::now(resolve_cid(&database, &blobs, message, content_id))
     })
 }
 

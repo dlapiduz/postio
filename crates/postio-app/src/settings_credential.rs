@@ -104,10 +104,9 @@ pub async fn install(window: &Window, wiring: &Wiring, id: AccountId) {
             let wiring = wiring.clone();
             let dialog = dialog.clone();
             move || {
-                crate::blocking::now(async {
+                postio_session::blocking::now(async {
                     dialog.close();
                     crate::settings_accounts::refresh(&window, &wiring).await;
-            
                 })
             }
         };

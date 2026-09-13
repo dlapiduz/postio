@@ -116,10 +116,11 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
         .mailbox(MockMailbox::new("Sent Messages"))
         .build();
     backend.connect().await.expect("connect");
-    let sent_paths = |database: &postio_storage::Store| -> Vec<String> {
+    let sent_paths = async |database: &postio_storage::Store| -> Vec<String> {
         let connection = database.connect().await.expect("a connection");
         MailboxRepository::new(&connection)
             .list_for_account(account.id)
+            .await
             .expect("list")
             .into_iter()
             .filter(|mailbox| mailbox.role == MailboxRole::Sent && mailbox.selectable)
@@ -134,7 +135,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
             .expect("first pass");
     }
     assert_eq!(
-        sent_paths(&database),
+        sent_paths(&database).await,
         vec!["Sent".to_owned()],
         "the automatic answer"
     );
@@ -149,9 +150,10 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
             },
             &sink,
         )
+        .await
         .expect("the verb");
     assert_eq!(
-        sent_paths(&database),
+        sent_paths(&database).await,
         vec!["Sent Messages".to_owned()],
         "the verb re-roles the rows at once"
     );
@@ -163,7 +165,7 @@ async fn a_role_chosen_through_the_verb_is_what_the_next_discovery_pass_keeps() 
             .expect("second pass");
     }
     assert_eq!(
-        sent_paths(&database),
+        sent_paths(&database).await,
         vec!["Sent Messages".to_owned()],
         "and the next discovery pass reaches the same answer from the same map"
     );

@@ -248,10 +248,7 @@ fn pump() {
     while context.iteration(false) {}
 }
 
-fn read_display_name(
-    database: &postio_storage::Store,
-    id: postio_model::ids::AccountId,
-) -> String {
+fn read_display_name(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> String {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)

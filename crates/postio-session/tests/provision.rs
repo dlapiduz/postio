@@ -73,6 +73,7 @@ async fn a_fresh_store_gains_an_account_and_the_password_goes_to_the_keyring() {
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .expect("read the accounts");
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, id);
@@ -116,6 +117,7 @@ async fn a_keyring_that_refuses_leaves_no_account_behind() {
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection)
         .list_enabled()
+        .await
         .expect("read the accounts");
     assert!(
         accounts.is_empty(),
@@ -161,6 +163,7 @@ async fn provisioning_an_address_that_is_already_there_leaves_it_alone() {
     assert_eq!(
         AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .expect("read the accounts")
             .len(),
         1,

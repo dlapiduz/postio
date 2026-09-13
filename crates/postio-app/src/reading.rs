@@ -84,7 +84,9 @@ pub type Showing = Rc<Cell<Option<MessageId>>>;
 /// Empty when the store holds one account or none — which is what makes the
 /// account line invisible for everybody who has not configured a second one
 /// (#185). Not "hidden by a flag": there is nothing to say.
-async fn accounts_to_name(database: &postio_storage::Store) -> Vec<(postio_model::AccountId, String)> {
+async fn accounts_to_name(
+    database: &postio_storage::Store,
+) -> Vec<(postio_model::AccountId, String)> {
     let Ok(connection) = database.connect().await else {
         return Vec::new();
     };
@@ -151,7 +153,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
         let runtime = wiring.runtime.clone();
         let showing = showing.clone();
         move |list_identifier| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 let Some(message) = showing.get() else {
                     return;
                 };
@@ -172,9 +174,7 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds, showing: S
                         .record(&mut activation)
                         .await
                         .ok()
-        
                 });
-        
             })
         }
     });
@@ -1404,7 +1404,8 @@ pub(crate) async fn part_bytes(
     // it. The MIME path does: `2` is `2` in every parse of the same bytes. So
     // the id is turned into a path here, while it still means something, and
     // the path is what is used on the far side.
-    let part_id = part_path(database, message, attachment).await?
+    let part_id = part_path(database, message, attachment)
+        .await?
         .ok_or("That part has no place in the message to read it from")?;
 
     let source = match locate_part(database, message, &part_id).await? {
@@ -1438,7 +1439,8 @@ pub(crate) async fn part_bytes(
                 // committed write that made the answer `false` is visible
                 // to this read, so no wait is needed -- absent here means
                 // absent, and the sentence below is then the truth.
-                locate_part(database, message, &part_id).await?
+                locate_part(database, message, &part_id)
+                    .await?
                     .ok_or("There is nothing to fetch for that part")?
             }
         }
@@ -1594,10 +1596,7 @@ fn launch(window: &Window, path: &std::path::Path, always_ask: bool) {
 ///
 /// The deadline is what turns a server that never answers into a sentence
 /// rather than a spinner that never stops.
-pub(crate) async fn wait_for_body(
-    database: &Store,
-    message: MessageId,
-) -> Result<BlobId, String> {
+pub(crate) async fn wait_for_body(database: &Store, message: MessageId) -> Result<BlobId, String> {
     let deadline = std::time::Instant::now() + BODY_WAIT;
     loop {
         // A read that fails here is usually the writer we are waiting for
@@ -1657,7 +1656,8 @@ async fn part_path(
     message: MessageId,
     attachment: AttachmentId,
 ) -> Result<Option<String>, String> {
-    Ok(read_message(database, message).await?
+    Ok(read_message(database, message)
+        .await?
         .attachments
         .iter()
         .find(|part| part.id == attachment)
@@ -1686,7 +1686,10 @@ async fn locate_part(
 }
 
 /// Just the raw-message blob key. What the wait watches for.
-pub(crate) async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<BlobId>, String> {
+pub(crate) async fn raw_blob(
+    database: &Store,
+    message: MessageId,
+) -> Result<Option<BlobId>, String> {
     Ok(read_message(database, message).await?.raw_blob_id)
 }
 
@@ -1694,7 +1697,10 @@ pub(crate) async fn read_message(
     database: &Store,
     message: MessageId,
 ) -> Result<postio_model::Message, String> {
-    let connection = database.connect().await.map_err(|error| error.to_string())?;
+    let connection = database
+        .connect()
+        .await
+        .map_err(|error| error.to_string())?;
     MessageRepository::new(&connection)
         .get(message)
         .await
@@ -1779,13 +1785,7 @@ mod tests {
     /// test (`world` itself, and separately the read right after
     /// `part_bytes` returns). WAL is what production reads run under, so it
     /// is also the concurrency this test is supposed to be proving.
-    async fn world() -> (
-        TempStore,
-        BlobStore,
-        Engine,
-        MessageId,
-        tempfile::TempDir,
-    ) {
+    async fn world() -> (TempStore, BlobStore, Engine, MessageId, tempfile::TempDir) {
         let database = test_support::temp().await;
         let report = seed_small(&database, 11).await;
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox");
@@ -1911,7 +1911,11 @@ mod tests {
         a_part_not_here(database, message).await;
         let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).await.expect("a read").expect("the message");
+        let mut row = messages
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
         row.attachments[0].part_headers = Some("Content-Type: application/pdf\r\n".to_owned());
         // The row id changes under this: `update` replaces a message's
         // attachment rows rather than editing them, which is the very reason
@@ -1937,7 +1941,11 @@ mod tests {
     async fn a_part_not_here(database: &Store, message: MessageId) -> AttachmentId {
         let connection = database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
-        let mut row = messages.get(message).await.expect("a read").expect("the message");
+        let mut row = messages
+            .get(message)
+            .await
+            .expect("a read")
+            .expect("the message");
         assert!(
             row.raw_blob_id.is_none(),
             "the fixture already has this message's bytes, so this proves nothing"
@@ -2160,7 +2168,11 @@ mod tests {
     /// say — names a row that no longer exists. The MIME path is the name
     /// that survives, which is the same reason `part_bytes` converts to it
     /// first thing.
-    async fn the_part_as_stored(database: &Store, message: MessageId, part_id: &str) -> AttachmentId {
+    async fn the_part_as_stored(
+        database: &Store,
+        message: MessageId,
+        part_id: &str,
+    ) -> AttachmentId {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(message)

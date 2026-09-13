@@ -106,7 +106,11 @@ pub async fn install(
 /// The id is the blob digest at `postio.invalid` — unique by construction
 /// (same bytes, same blob, same reference) and on a reserved domain, so it
 /// can never collide with, or be mistaken for, anything real.
-async fn install_inline_image(composer: &Composer, blobs: BlobStore, runtime: tokio::runtime::Handle) {
+async fn install_inline_image(
+    composer: &Composer,
+    blobs: BlobStore,
+    runtime: tokio::runtime::Handle,
+) {
     composer.connect_inline_image(move |bytes, mime_type, then| {
         let blobs = blobs.clone();
         let (sender, receiver) = async_channel::bounded(1);
@@ -214,10 +218,9 @@ fn install_signature_default(
 ) {
     let sidebar = window.sidebar();
     composer.connect_signature_default(move || {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             let connection = database
                 .connect()
-
                 .await
                 .map_err(|error| tracing::warn!(%error, "could not resolve a default signature"))
                 .ok()?;
@@ -239,7 +242,6 @@ fn install_signature_default(
                 None => None,
             };
             signature_default::resolve(mailbox_signature, account_default)
-    
         })
     });
 }
@@ -281,13 +283,13 @@ fn install_resume(
     database: Store,
     last_id: Rc<Cell<Option<DraftId>>>,
 ) {
-                crate::blocking::now(async {
+    postio_session::blocking::now(async {
         // Weak: the window owns the list that owns this handler (#1072).
         let weak = glib::object::ObjectExt::downgrade(window);
         window.list().connect_activated({
             let composer = composer.clone();
             move |row| {
-                crate::blocking::now(async {
+                postio_session::blocking::now(async {
                     if row.send_state.is_none() {
                         return;
                     }
@@ -333,13 +335,11 @@ fn install_resume(
                     if let Some(reason) = failure {
                         composer.set_status(&format!("Not sent — {reason}"));
                     }
-        
                 })
             }
         });
-
-                })
-            }
+    })
+}
 
 /// Cancels a queued draft's pending send and returns it as it now stands, so
 /// the caller can resume the composer on live state rather than the stale
@@ -353,7 +353,6 @@ fn install_resume(
 async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to cancel a send"))
         .ok()?;
@@ -381,7 +380,6 @@ async fn cancel_queued_send(database: &Store, id: DraftId) -> Option<Draft> {
 async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to read a send failure"))
         .ok()?;
@@ -397,7 +395,6 @@ async fn why_the_send_failed(database: &Store, id: DraftId) -> Option<String> {
 async fn draft_behind(database: &Store, message: MessageId) -> Option<Draft> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| tracing::warn!(%error, "could not open the store to resume a draft"))
         .ok()?;
@@ -415,7 +412,7 @@ fn install_autosave(
     database: Store,
     account: AccountId,
 ) -> Rc<Cell<Option<DraftId>>> {
-    crate::blocking::now(async {
+    postio_session::blocking::now(async {
         // The id of whatever `connect_save`'s handler last persisted. Not read
         // from the composer's own draft afterward because `connect_closed` does
         // not carry the draft — only what became of it — so this is the one
@@ -426,7 +423,7 @@ fn install_autosave(
             let database = database.clone();
             let last_id = Rc::clone(&last_id);
             move |draft| {
-                crate::blocking::now(async {
+                postio_session::blocking::now(async {
                     match save_draft(&database, draft).await {
                         Ok(()) => last_id.set(Some(draft.id)),
                         Err(error) => {
@@ -441,7 +438,7 @@ fn install_autosave(
             let database = database.clone();
             let last_id = Rc::clone(&last_id);
             move |outcome| {
-                crate::blocking::now(async {
+                postio_session::blocking::now(async {
                     // Kept: Esc with something still in it. The row stays exactly as
                     // autosaved, ready to recover it right back.
                     if outcome != Closing::Drop {
@@ -453,7 +450,6 @@ fn install_autosave(
                     if let Err(error) = delete_draft(&database, id).await {
                         tracing::warn!(%error, "could not clear the finished draft");
                     }
-        
                 })
             }
         });
@@ -468,7 +464,6 @@ fn install_autosave(
             recover(composer, &database, account, &last_id).await;
         }
         last_id
-
     })
 }
 
@@ -485,14 +480,18 @@ fn install_autosave(
 /// bulk writes rather than queueing behind them (#425).
 async fn save_draft(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection).save_and_sync(draft, Utc::now()).await?;
+    DraftRepository::new(&connection)
+        .save_and_sync(draft, Utc::now())
+        .await?;
     Ok(())
 }
 
 /// Discard: the local row goes now, and the server copy is queued for removal.
 async fn delete_draft(database: &Store, id: DraftId) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection).discard(id, Utc::now()).await?;
+    DraftRepository::new(&connection)
+        .discard(id, Utc::now())
+        .await?;
     Ok(())
 }
 
@@ -533,7 +532,7 @@ fn install_send(
     announce: Announce,
 ) {
     composer.connect_send(move |draft| {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             // Cloned because the seam hands out `&Draft`: unlike a save, which
             // writes the assigned id back onto the composer's own draft, nothing
             // survives this — the composer is about to be refilled and closed.
@@ -566,7 +565,6 @@ fn install_send(
                     mailbox: drafts,
                 });
             }
-    
         })
     });
 }
@@ -591,7 +589,9 @@ async fn drafts_mailbox(database: &Store, account: AccountId) -> Option<MailboxI
 /// in one transaction — see `DraftRepository::queue_send`.
 async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection).queue_send(draft, Utc::now()).await?;
+    DraftRepository::new(&connection)
+        .queue_send(draft, Utc::now())
+        .await?;
     Ok(())
 }
 
@@ -605,13 +605,12 @@ async fn queue_send(database: &Store, draft: &mut Draft) -> postio_storage::Resu
 /// from by the time a queue error could be reported.
 fn install_send_later(composer: &Composer, database: Store, last_id: Rc<Cell<Option<DraftId>>>) {
     composer.connect_send_later(move |draft, send_at| {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             let mut draft = draft.clone();
             last_id.set(None);
             if let Err(error) = queue_send_at(&database, &mut draft, send_at).await {
                 tracing::error!(%error, "could not schedule the draft for sending: {error}");
             }
-    
         })
     });
 }
@@ -625,7 +624,9 @@ async fn queue_send_at(
     send_at: chrono::DateTime<Utc>,
 ) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
-    DraftRepository::new(&connection).queue_send_at(draft, Utc::now(), send_at).await?;
+    DraftRepository::new(&connection)
+        .queue_send_at(draft, Utc::now(), send_at)
+        .await?;
     Ok(())
 }
 
@@ -651,7 +652,10 @@ async fn recover(
     let Ok(connection) = database.connect().await else {
         return;
     };
-    let drafts = match DraftRepository::new(&connection).list_for_account(account).await {
+    let drafts = match DraftRepository::new(&connection)
+        .list_for_account(account)
+        .await
+    {
         Ok(drafts) => drafts,
         Err(error) => {
             tracing::error!(%error, "could not read drafts to recover: {error}");
@@ -685,7 +689,7 @@ async fn recover(
 /// group is a deliberate choice the user is more likely typing towards.
 async fn install_recipient_suggestions(composer: &Composer, database: Store, account: AccountId) {
     composer.connect_recipient_suggestions(move |prefix| {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             let connection = match database.connect().await {
                 Ok(connection) => connection,
                 Err(error) => {
@@ -721,7 +725,10 @@ async fn install_recipient_suggestions(composer: &Composer, database: Store, acc
                 Err(error) => tracing::warn!(%error, "could not search contact groups"),
             }
 
-            match ContactRepository::new(&connection).search(Some(account), prefix, SUGGESTION_LIMIT).await {
+            match ContactRepository::new(&connection)
+                .search(Some(account), prefix, SUGGESTION_LIMIT)
+                .await
+            {
                 Ok(contacts) => candidates.extend(
                     contacts
                         .iter()
@@ -733,7 +740,6 @@ async fn install_recipient_suggestions(composer: &Composer, database: Store, acc
 
             candidates.truncate(SUGGESTION_LIMIT as usize);
             candidates
-    
         })
     });
 }
@@ -760,9 +766,13 @@ fn resolved_address(contact: &postio_model::Contact) -> EmailAddress {
 /// message", updated by different signals, can only ever be one signal away
 /// from disagreeing; reading `showing` is the version of this that has no
 /// second copy to drift.
-async fn install_reply_source(composer: &Composer, database: Store, showing: crate::reading::Showing) {
+async fn install_reply_source(
+    composer: &Composer,
+    database: Store,
+    showing: crate::reading::Showing,
+) {
     composer.connect_reply_source(move || {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             // `None` is ordinary: `e` on a window nobody has read from yet is
             // nothing to reply to, not an error. It is logged all the same,
             // because the *other* way to reach here is a miswiring, and #325
@@ -773,11 +783,14 @@ async fn install_reply_source(composer: &Composer, database: Store, showing: cra
             };
             let connection = database
                 .connect()
-
                 .await
                 .map_err(|error| tracing::warn!(%error, "could not open a reply source"))
                 .ok()?;
-            let mut message = MessageRepository::new(&connection).get(id).await.ok().flatten()?;
+            let mut message = MessageRepository::new(&connection)
+                .get(id)
+                .await
+                .ok()
+                .flatten()?;
             message.body = load_body(&connection, id).await;
             let account = AccountRepository::new(&connection)
                 .get(message.account_id)
@@ -785,7 +798,6 @@ async fn install_reply_source(composer: &Composer, database: Store, showing: cra
                 .ok()
                 .flatten()?;
             Some((message, account))
-    
         })
     });
 }
@@ -1069,15 +1081,21 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account =
-            seed_account(&Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap()).await;
+        let account = seed_account(
+            &Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap(),
+        )
+        .await;
         // The ambient one: this test is a `#[tokio::test]`, and building a
         // second runtime inside one panics on drop.
         let runtime = tokio::runtime::Handle::current();
 
         // ── Run one: type, park the draft with Esc, exit cleanly ─────────
         {
-            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1094,7 +1112,8 @@ mod tests {
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            ).await;
+            )
+            .await;
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -1112,7 +1131,9 @@ mod tests {
 
         // ── Run two: the draft is parked, not in the way ─────────────────
         {
-            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1129,7 +1150,8 @@ mod tests {
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            ).await;
+            )
+            .await;
             settle();
 
             assert!(
@@ -1160,8 +1182,12 @@ mod tests {
 
         let db_path = state_dir.join("postio.db");
         let blobs_path = state_dir.join("blobs");
-        let account =
-            seed_account(&Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap()).await;
+        let account = seed_account(
+            &Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap(),
+        )
+        .await;
         // Only `install_attach` ever spawns onto this; nothing in this test
         // attaches a file, so it exists purely to give `install` a handle.
         // The ambient one: this test is a `#[tokio::test]`, and building a
@@ -1175,7 +1201,9 @@ mod tests {
         // block is the whole simulation: the transaction `save()` already
         // committed is what has to survive it, not an orderly exit.
         {
-            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1192,7 +1220,8 @@ mod tests {
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            ).await;
+            )
+            .await;
             let composer = window.composer();
             composer.open(Draft::new(account));
             settle();
@@ -1206,7 +1235,9 @@ mod tests {
 
         // ── Run two: a fresh window, a fresh database handle, same file ──
         {
-            let database = Store::open(&db_path, &postio_storage::test_support::key()).await.unwrap();
+            let database = Store::open(&db_path, &postio_storage::test_support::key())
+                .await
+                .unwrap();
             let blobs =
                 BlobStore::open(&blobs_path, &postio_storage::test_support::blob_keys()).unwrap();
             let window = Window::default();
@@ -1223,7 +1254,8 @@ mod tests {
                 // These tests are about the composer's own behaviour, not
                 // about what the list does afterwards; nobody is listening.
                 Rc::new(|_: &postio_core::Event| {}),
-            ).await;
+            )
+            .await;
             settle();
 
             let composer = window.composer();

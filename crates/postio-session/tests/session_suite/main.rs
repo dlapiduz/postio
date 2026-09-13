@@ -17,7 +17,6 @@
 //! it will change what its neighbours see.
 
 mod backfill_policy;
-mod body_dictionary;
 mod body_index_pass;
 mod cid_scoping;
 mod drag_reclaim;

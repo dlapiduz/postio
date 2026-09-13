@@ -1,11 +1,17 @@
-//! Answering a GTK callback that has to read the store, now.
+//! Answering a synchronous callback that has to read the store, now.
 //!
 //! # Why this exists
 //!
-//! GTK callbacks are synchronous. A widget asks "what is this recipient's
+//! Some callbacks cannot await. A GTK widget asks "what is this recipient's
 //! name", "which mailbox is this row in", "what is the default signature" —
-//! and needs the answer before it can lay out. There is nothing to hand a
-//! future to.
+//! and needs the answer before it can lay out. WebKit asks a `cid:` URI to
+//! resolve to bytes in the middle of laying out a document. There is nothing
+//! to hand a future to.
+//!
+//! It lives here rather than in `postio-app` because `postio-session` has the
+//! same problem in `reading::cid_source`, and two copies of the
+//! `Handle::try_current` dance is two chances to write only the second half of
+//! it — which is the bug this module is mostly about.
 //!
 //! # Why it is not a regression
 //!
@@ -40,7 +46,7 @@ thread_local! {
 /// If a runtime cannot be built at all, which means the process has run out
 /// of the file descriptors a reactor needs. Nothing this callback could
 /// return would be true in that case.
-pub(crate) fn now<T>(future: impl Future<Output = T>) -> T {
+pub fn now<T>(future: impl Future<Output = T>) -> T {
     // Already on a runtime thread -- which the application never is, because
     // GTK owns this thread, but the tests are: `#[tokio::test]` runs the test
     // body on a worker. Building a second runtime inside one panics, so hand

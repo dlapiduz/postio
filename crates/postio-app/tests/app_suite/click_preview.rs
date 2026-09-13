@@ -81,7 +81,8 @@ pub fn clicking_a_message_fills_the_reading_pane() {
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
                 (),
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         connection
             .query_row(

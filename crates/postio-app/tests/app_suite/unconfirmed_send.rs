@@ -127,7 +127,7 @@ pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
             list.model()
                 .peek(position)
                 .and_then(|id| {
-                    let connection = database.connection().ok()?;
+                    let connection = database.connect().await.ok()?;
                     DraftRepository::new(&connection).by_message(id).ok()?
                 })
                 .is_some_and(|draft| draft.id == draft_id)

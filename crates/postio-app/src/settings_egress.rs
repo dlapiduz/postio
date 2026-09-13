@@ -31,11 +31,10 @@ pub async fn install(window: &Window, wiring: &Wiring) {
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
                     refresh(&window, &database).await;
                 }
-        
             })
         }
     });
@@ -45,7 +44,10 @@ async fn refresh(window: &Window, database: &Store) {
     let Ok(connection) = database.connect().await else {
         return;
     };
-    match EgressLogRepository::new(&connection).recent(EGRESS_ROWS).await {
+    match EgressLogRepository::new(&connection)
+        .recent(EGRESS_ROWS)
+        .await
+    {
         Ok(entries) => window.settings().set_egress(entries),
         Err(error) => tracing::warn!(%error, "could not read the egress log"),
     }

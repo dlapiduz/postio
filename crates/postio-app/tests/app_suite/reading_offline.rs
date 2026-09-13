@@ -83,7 +83,8 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
                 (),
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         connection
             .query_row(

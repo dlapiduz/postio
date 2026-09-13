@@ -22,11 +22,13 @@ use postio_storage::test_support;
 /// come back for a second batch — the shape that used to loop for ever.
 const TEXTLESS: usize = 450;
 
-#[test]
-fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
+#[tokio::test]
+async fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Local body, no text: what an attachment-only message looks like to the
@@ -46,7 +48,7 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
         );
         message.subject = Some(format!("Report {i} attached"));
         message.sync.body_state = BodyState::Full;
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
     }
     connection
         .execute_batch("COMMIT")
@@ -54,18 +56,23 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
         .expect("commit fixture");
     drop(connection);
 
-    let indexed = postio_session::index_local_bodies(&database).expect("the pass runs");
+    let indexed = postio_session::index_local_bodies(&database)
+        .await
+        .expect("the pass runs");
     assert_eq!(indexed, TEXTLESS, "every message was visited exactly once");
 
     let connection = database.connect().await.expect("checkout");
     assert!(
         postio_index::index::messages_missing_body_text(&connection, 10)
+            .await
             .expect("candidates")
             .is_empty(),
         "a swept store leaves no candidates, or the next start sweeps it again"
     );
 
     drop(connection);
-    let second = postio_session::index_local_bodies(&database).expect("the second pass");
+    let second = postio_session::index_local_bodies(&database)
+        .await
+        .expect("the second pass");
     assert_eq!(second, 0, "a caught-up store costs one query and no writes");
 }

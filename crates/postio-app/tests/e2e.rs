@@ -66,7 +66,7 @@ fn id_of(
     database: &postio_storage::Store,
     rfc_message_id: &str,
 ) -> Option<postio_model::MessageId> {
-    let connection = database.connection().ok()?;
+    let connection = database.connect().await.ok()?;
     connection
         .query_row(
             "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
