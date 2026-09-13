@@ -736,13 +736,13 @@ impl Panel {
         imp.nothing.set_visible(false);
 
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        column.append(&kicker("Scope"));
+        column.append(&crate::widgets::kicker("Scope"));
         column.append(&imp.scopes);
 
         let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
         rule.add_css_class("postio-rule");
         column.append(&rule);
-        column.append(&kicker("Refine"));
+        column.append(&crate::widgets::kicker("Refine"));
         column.append(&imp.chips);
         column.append(&imp.nothing);
         imp.suggestion.set_visible(false);
@@ -848,14 +848,6 @@ fn set_scope_count(row: &gtk::ListBoxRow, scope: Scope, hits: u64) {
         1 => format!("{}, 1 match", scope.label()),
         hits => format!("{}, {hits} matches", scope.label()),
     })]);
-}
-
-/// A section heading, in the sidebar's own kicker type.
-fn kicker(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.add_css_class("postio-kicker");
-    label.set_xalign(0.0);
-    label
 }
 
 // ---------------------------------------------------------------------------

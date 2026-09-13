@@ -232,9 +232,7 @@ impl CheatSheet {
 fn section_widget(section: &Section) -> gtk::Box {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 4);
 
-    let heading = gtk::Label::new(Some(section.title));
-    heading.set_xalign(0.0);
-    heading.add_css_class("postio-kicker");
+    let heading = crate::widgets::kicker(section.title);
     group.append(&heading);
 
     let grid = gtk::Grid::new();
