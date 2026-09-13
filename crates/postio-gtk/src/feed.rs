@@ -171,6 +171,14 @@ type ErrorHandler = Box<dyn Fn(String)>;
 /// What to call when a result set takes the list, with how many hits it holds.
 type ResultHandler = Box<dyn Fn(u32)>;
 
+/// How many times one page may be re-asked for after a failed read.
+///
+/// Bounded because the repair has to be a repair and not a spin: a store that
+/// is failing every read would otherwise be asked again by every repaint, for
+/// ever. Three is enough for the case this exists for -- a write the page read
+/// collided with -- and stops well short of a loop.
+const FAILED_PAGE_ATTEMPTS: u8 = 3;
+
 struct Inner {
     /// Weak, because the list owns the [`PageSource`] that owns this.
     list: glib::WeakRef<MessageList>,
@@ -186,6 +194,11 @@ struct Inner {
     /// back — and the scroll offset the window restores would be measured
     /// against a scroller that had collapsed in between.
     mailbox_total: Cell<u32>,
+    /// Pages whose read failed, and how often they have been re-asked.
+    ///
+    /// Cleared whenever the scope changes: page 2 of the folder just left is
+    /// not page 2 of this one.
+    failed: RefCell<std::collections::HashMap<u32, u8>>,
     /// The hits in view, ranked, or `None` when a mailbox is in view.
     results: RefCell<Option<Rc<Vec<MessageId>>>>,
     /// Where a result set's rows come from. `None` in a window that has no
@@ -266,7 +279,7 @@ impl Inner {
             // must never be returned from it directly.
             match future.await {
                 Ok(answer) => self.deliver(generation, page, answer),
-                Err(message) => self.fail(generation, message),
+                Err(message) => self.fail(generation, page, message),
             }
         });
     }
@@ -299,7 +312,7 @@ impl Inner {
             // must never be returned from it directly.
             match future.await {
                 Ok(rows) => self.deliver_hits(generation, page, rows),
-                Err(message) => self.fail(generation, message),
+                Err(message) => self.fail(generation, page, message),
             }
         });
     }
@@ -330,13 +343,47 @@ impl Inner {
         list.deliver_page(generation, answer.total, page, answer.rows);
     }
 
-    fn fail(&self, generation: u64, message: String) {
+    /// A page that came back an error rather than rows.
+    ///
+    /// Two things have to happen and only one of them used to. The handlers
+    /// raise a banner, which tells a person; `abandon_page` lets the page be
+    /// asked for again, which is the only thing that can actually put the
+    /// rows back. `MessageList` asks once per page and never again until it
+    /// is answered or abandoned -- the rule that keeps a 100,000-message
+    /// folder cheap -- so a failure that answered neither left those fifty
+    /// rows as placeholders for the rest of the session.
+    ///
+    /// It does not retry here. The page becomes askable and the next repaint
+    /// that needs a row in it asks, which is the ordinary path and cannot
+    /// become a spin against a store that is failing every read.
+    fn fail(self: Rc<Self>, generation: u64, page: u32, message: String) {
         let Some(list) = self.list.upgrade() else {
             return;
         };
         if generation != list.generation() {
             return;
         }
+        // Ask again, up to a bound. Abandoning alone is not enough: the row
+        // objects already handed to the view for those positions are returned
+        // from `MessageList::row_at` without consulting the window, so nothing
+        // would ever ask a second time on its own. The page has to be pushed.
+        let attempts = {
+            let mut failed = self.failed.borrow_mut();
+            let attempts = failed.entry(page).or_insert(0);
+            *attempts += 1;
+            *attempts
+        };
+        if attempts <= FAILED_PAGE_ATTEMPTS {
+            list.abandon_page(generation, page);
+            Rc::clone(&self).request(page);
+            // Quiet while it is still trying. A read that collided with a
+            // write and succeeds on the next ask is not something to tell
+            // somebody about -- the retry is the answer, and a banner that
+            // appears and is immediately wrong is worse than none.
+            return;
+        }
+
+        // Out of attempts: now it is worth saying, and it is said once.
         for handler in self.errors.borrow().iter() {
             handler(message.clone());
         }
@@ -389,6 +436,7 @@ impl Feed {
             scope: Cell::new(None),
             total: Cell::new(0),
             mailbox_total: Cell::new(0),
+            failed: RefCell::new(std::collections::HashMap::new()),
             results: RefCell::new(None),
             hits: RefCell::new(None),
             errors: RefCell::new(Vec::new()),
@@ -408,6 +456,7 @@ impl Feed {
         inner.scope.set(Some(scope));
         inner.total.set(0);
         inner.mailbox_total.set(0);
+        inner.failed.borrow_mut().clear();
         // Opening a folder is leaving the results, if there were any: the
         // sidebar is a way out of a search as much as `Esc` is.
         *inner.results.borrow_mut() = None;
