@@ -627,7 +627,7 @@ async fn a_revoked_grant_reaches_attention_after_exactly_one_retry() {
     // And it comes back the moment the user has done something about it,
     // which is what makes blocking safe rather than terminal.
     assert!(matches!(
-        supervisor.retry_now(at(7_200)).await,
+        supervisor.retry_now(at(7_200)),
         Some(Link::Waiting { .. })
     ));
 }

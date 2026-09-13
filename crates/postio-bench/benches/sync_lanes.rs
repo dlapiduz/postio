@@ -112,7 +112,7 @@ use futures_util::stream::FuturesUnordered;
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{Account, Mailbox};
-use postio_storage::{Database, PooledConnection, test_support};
+use postio_storage::{Database, Checkout, test_support};
 use postio_sync::sync_mailbox;
 
 /// Total messages synced per run, however many lanes share them.
@@ -209,7 +209,7 @@ fn run(lanes: usize, latency: Duration) -> Duration {
         // blocks the OS thread when exhausted and the engine is single
         // threaded, so two passes both waiting would deadlock. Same shape
         // here, so the measurement is of the same arrangement.
-        let connections: Vec<PooledConnection> = (0..lanes)
+        let connections: Vec<Checkout> = (0..lanes)
             .map(|_| database.connection().expect("a connection"))
             .collect();
 

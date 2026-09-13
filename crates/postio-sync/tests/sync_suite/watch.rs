@@ -54,12 +54,12 @@ async fn server(count: u32) -> MockBackend {
 /// The local half: a database with an account, an INBOX and an Archive.
 struct Local {
     _database: postio_storage::Store,
-    connection: postio_storage::PooledConnection,
+    connection: postio_storage::Checkout,
     inbox: Mailbox,
     archive: Mailbox,
 }
 
-fn local() -> Local {
+async fn local() -> Local {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = test_support::account(&connection).await;
@@ -118,7 +118,7 @@ async fn settle(
 #[tokio::test]
 async fn mail_that_arrives_while_idling_reaches_the_local_store() {
     let backend = server(2).await;
-    let local = local();
+    let local = local().await;
     sync_mailbox(
         &local.connection,
         &backend,
@@ -178,7 +178,7 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
-            .expect("uids")
+            .await.expect("uids")
             .len(),
         3,
         "the message that arrived during IDLE must be local now, with nobody \
@@ -193,7 +193,7 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
 #[tokio::test]
 async fn idle_re_arms_well_inside_the_servers_timeout() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     // A server that drops an IDLE it has not heard from in this long. RFC 2177
@@ -240,7 +240,7 @@ async fn idle_re_arms_well_inside_the_servers_timeout() {
 #[tokio::test]
 async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     sync_mailbox(
         &local.connection,
         &backend,
@@ -302,7 +302,7 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
-            .expect("uids")
+            .await.expect("uids")
             .len(),
         2
     );
@@ -315,7 +315,7 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
 #[tokio::test]
 async fn suspending_stops_the_idle_in_flight_and_hands_out_no_second_one() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
     settle(&mut watcher, &backend, local.inbox.id, at(0)).await;
 
@@ -355,7 +355,7 @@ async fn suspending_stops_the_idle_in_flight_and_hands_out_no_second_one() {
 #[tokio::test]
 async fn resuming_re_arms_exactly_one_idle() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
     settle(&mut watcher, &backend, local.inbox.id, at(0)).await;
 
@@ -383,7 +383,7 @@ async fn resuming_re_arms_exactly_one_idle() {
 #[tokio::test]
 async fn an_unreported_step_is_never_handed_out_twice() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     assert!(matches!(watcher.next_push(at(0)), Watch::Poll { .. }));
@@ -405,7 +405,7 @@ async fn a_server_without_idle_is_polled_instead() {
         .mailbox(MockMailbox::new(INBOX))
         .build();
     backend.connect().await.expect("connect");
-    let local = local();
+    let local = local().await;
 
     let mut watcher = Watcher::new(policy(), &capabilities(&backend).await);
     watcher.watch(local.inbox.id, INBOX, Attention::Push);
@@ -425,7 +425,7 @@ async fn a_server_without_idle_is_polled_instead() {
 #[tokio::test]
 async fn idle_turned_off_in_configuration_is_honoured() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
 
     let mut watcher = Watcher::new(
         WatchPolicy {
@@ -450,7 +450,7 @@ async fn idle_turned_off_in_configuration_is_honoured() {
 #[tokio::test]
 async fn other_mailboxes_are_polled_on_the_interval_and_not_before() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     let Watch::Poll { mailbox, path } = watcher.next_poll(at(0)) else {
@@ -472,7 +472,7 @@ async fn other_mailboxes_are_polled_on_the_interval_and_not_before() {
 #[tokio::test]
 async fn a_poll_that_sees_nothing_new_asks_for_no_resync() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     watcher.next_poll(at(0));
@@ -498,7 +498,7 @@ async fn a_poll_that_sees_nothing_new_asks_for_no_resync() {
 #[tokio::test]
 async fn a_poll_that_sees_a_new_message_asks_for_a_resync() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     watcher.next_poll(at(0));
@@ -522,7 +522,7 @@ async fn a_poll_that_sees_a_new_message_asks_for_a_resync() {
 #[tokio::test]
 async fn the_pushed_mailbox_is_not_also_polled_on_the_shared_connection() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     let mut seen = Vec::new();
@@ -549,7 +549,7 @@ async fn the_pushed_mailbox_is_not_also_polled_on_the_shared_connection() {
 #[tokio::test]
 async fn a_failed_step_releases_the_mailbox_rather_than_wedging_it() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     watcher.next_push(at(0));
@@ -569,7 +569,7 @@ async fn a_failed_step_releases_the_mailbox_rather_than_wedging_it() {
 #[tokio::test]
 async fn a_vanished_message_reported_by_idle_is_a_change_like_any_other() {
     let backend = server(1).await;
-    let local = local();
+    let local = local().await;
     let mut watcher = watcher(&backend, &local).await;
 
     let wake = watcher.woke(local.inbox.id, &[MailboxEvent::Expunged { seq: 1 }], at(0));

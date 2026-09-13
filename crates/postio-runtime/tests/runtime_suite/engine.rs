@@ -827,7 +827,7 @@ async fn settle(
 fn with_store<T>(
     database: &postio_storage::Store,
     what: &str,
-    work: impl Fn(&postio_storage::PooledConnection) -> postio_storage::Result<T>,
+    work: impl Fn(&postio_storage::Checkout) -> postio_storage::Result<T>,
 ) -> T {
     for _ in 0..100 {
         let connection = database.connect().await.expect("a connection");
@@ -1847,7 +1847,7 @@ fn engine_over_a_real_sync(
 async fn until_some<T>(
     database: &postio_storage::Store,
     what: &str,
-    look: impl Fn(&postio_storage::PooledConnection) -> Option<T>,
+    look: impl Fn(&postio_storage::Checkout) -> Option<T>,
 ) -> T {
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {

@@ -120,7 +120,7 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
             .create(&mut message)
-            .expect("the fixture writes");
+            .await.expect("the fixture writes");
         (inbox, id)
     };
 
@@ -159,21 +159,22 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
     let commits = Arc::new(AtomicU64::new(0));
     // Every writer waits here until all of them — and the resync — are ready,
     // so a green run cannot mean "nothing was writing yet".
-    let ready = Arc::new(std::sync::Barrier::new(WRITERS + 1));
+    let ready = Arc::new(tokio::sync::Barrier::new(WRITERS + 1));
     let writers: Vec<_> = (0..WRITERS)
         .map(|_| {
             let database = database.clone();
             let stop = Arc::clone(&stop);
             let commits = Arc::clone(&commits);
             let ready = Arc::clone(&ready);
-            std::thread::spawn(move || -> Result<(), String> {
+            tokio::spawn(async move {
                 // Connection first and permit second, per `WriteGate`'s rules
                 // for callers. Held across the loop rather than re-checked
                 // out, because the timeout below is a property of the
                 // connection and the permit is what has to be re-taken.
-                let connection = database.connection().map_err(|e| e.to_string())?;
+                let connection = database.connect().await.map_err(|e| e.to_string())?;
                 connection
-                    .pragma_update(None, "busy_timeout", WRITER_BUSY_TIMEOUT)
+                    .execute(&format!("PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT}"), ())
+                    .await
                     .map_err(|e| e.to_string())?;
                 let messages = MessageRepository::new(&connection);
                 let mut flagged = false;
@@ -189,8 +190,8 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
                 // by the time the resync starts.
                 messages
                     .set_flags(scratch, &flags(false), FlagSource::Local)
-                    .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
-                ready.wait();
+                    .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                ready.wait().await;
                 while !stop.load(Ordering::Relaxed) {
                     std::thread::sleep(WRITER_PACE);
                     flagged = !flagged;
@@ -199,29 +200,27 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
                     // costs, and what a draft's autosave costs.
                     messages
                         .set_flags(scratch, &flags(flagged), FlagSource::Local)
-                        .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                        .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                     commits.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(())
+                Ok::<(), String>(())
             })
         })
         .collect();
 
     // ── the resync ───────────────────────────────────────────────────────
     let connection = database.connect().await.expect("checkout");
-    ready.wait();
+    ready.wait().await;
     let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {}).await;
 
     stop.store(true, Ordering::Relaxed);
-    let results: Vec<_> = writers
-        .into_iter()
-        .map(|writer| writer.join().expect("a writer thread panicked"))
-        .collect();
-
     // The writers first: a lost interactive write *is* the bug, and it is
     // what a person loses a draft to.
-    for result in results {
-        result.expect("an interactive write must not lose its place to a resync");
+    for writer in writers {
+        writer
+            .await
+            .expect("a writer task panicked")
+            .expect("an interactive write must not lose its place to a resync");
     }
     outcome.expect("the resync itself must still succeed");
 

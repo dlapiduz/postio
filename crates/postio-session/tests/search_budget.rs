@@ -77,7 +77,7 @@ fn cost_of_searching(
     let connection = database.connect().await.expect("a connection");
     let query = postio_search::parse(COMMON, Utc::now().date_naive());
 
-    let run = |connection: &postio_storage::PooledConnection| {
+    let run = |connection: &postio_storage::Checkout| {
         postio_session::search::execute(
             connection,
             postio_model::AccountScope::Account(*account),
