@@ -97,8 +97,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "id", "acct", "role", "sel", "parent", "messages"
     );
     let mut by_role: ByRole = BTreeMap::new();
+    // Kept for the timing pass below, which needs every mailbox again.
+    let mut listed: Vec<(i64, String, i64)> = Vec::new();
     for row in rows {
         let (id, account, path, role, selectable, parent, messages) = row?;
+        listed.push((id, path.clone(), messages));
         println!(
             "{id:>5}  {account:>4}  {role:<12} {selectable:>4} {:>7} {messages:>9}  {path}",
             parent.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
@@ -160,6 +163,93 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── has anything ever finished a full pass ───────────────────────────
+    // The per-account role map (ADR 0035, migration 0017), which is what the
+    // sidebar resolves a reserved row through. It **overrides** the role a
+    // folder's own `SPECIAL-USE` attribute claims, so a row that opens the
+    // wrong folder shows up here rather than in the table above -- and an
+    // empty map is the ordinary state, meaning "believe the server".
+    // What opening each folder costs before a single row is drawn.
+    //
+    // The threaded list asks `ThreadRepository::count_of` for the folder, and
+    // the folder-scoped form is a correlated subquery: for every message in
+    // the mailbox, does a newer message in the same thread live here too. The
+    // probe is indexed (`idx_messages_thread_mailbox`), but it is one probe
+    // per message, and under SQLCipher every page that misses the 16 MB cache
+    // is an AES decrypt and an HMAC (#1237 is the same arithmetic from the
+    // snooze sweep).
+    //
+    // Timed here rather than reasoned about, because the number is a property
+    // of *this* store -- how big the folder is and how much of it fits.
+    println!("\nwhat the threaded list costs to open (the count before any row):");
+    const MEMBER: &str = "deleted_locally = 0 AND (snoozed_until IS NULL \
+                          OR snoozed_until <= (strftime('%s','now') * 1000))";
+    let mut timed: Vec<(u128, String, i64, i64)> = Vec::new();
+    for (id, path, messages) in &listed {
+        let started = std::time::Instant::now();
+        let threads: i64 = connection.query_row(
+            &format!(
+                "SELECT count(*) FROM messages rep
+                  WHERE rep.mailbox_id = ?1 AND rep.{MEMBER}
+                    AND NOT EXISTS (
+                            SELECT 1 FROM messages newer
+                             WHERE newer.mailbox_id = ?1 AND newer.{MEMBER}
+                               AND newer.thread_id IS NOT NULL
+                               AND newer.thread_id = rep.thread_id
+                               AND (newer.received_at, newer.id)
+                                   > (rep.received_at, rep.id))"
+            ),
+            [id],
+            |row| row.get(0),
+        )?;
+        timed.push((
+            started.elapsed().as_millis(),
+            path.clone(),
+            *messages,
+            threads,
+        ));
+    }
+    timed.sort_by(|a, b| b.0.cmp(&a.0));
+    for (ms, path, messages, threads) in &timed {
+        let flag = if *ms >= 1000 {
+            "  <-- a person is waiting"
+        } else {
+            ""
+        };
+        println!("  {ms:>7} ms  {messages:>7} messages -> {threads:>7} rows  {path}{flag}");
+    }
+
+    println!("\nmailbox_roles (overrides what the server's attributes said):");
+    let mut mapped = connection
+        .prepare("SELECT account_id, role, path FROM mailbox_roles ORDER BY account_id, role")?;
+    let mut any_mapped = false;
+    let mut rows = mapped.query([])?;
+    while let Some(row) = rows.next()? {
+        any_mapped = true;
+        let account: i64 = row.get(0)?;
+        let role: String = row.get(1)?;
+        let path: String = row.get(2)?;
+        // Does the path it names actually exist, and hold anything?
+        let found: Option<(i64, i64)> = connection
+            .query_row(
+                "SELECT m.id, (SELECT count(*) FROM messages x WHERE x.mailbox_id = m.id)
+                   FROM mailboxes m WHERE m.account_id = ?1 AND m.path = ?2",
+                rusqlite::params![account, &path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        match found {
+            Some((id, messages)) => println!(
+                "  account {account}  {role:<8} -> {path:?}  (mailbox {id}, {messages} messages)"
+            ),
+            None => println!(
+                "  account {account}  {role:<8} -> {path:?}  <-- NO SUCH MAILBOX; the row opens nothing"
+            ),
+        }
+    }
+    if !any_mapped {
+        println!("  (none -- every reserved row follows the server's own attributes)");
+    }
+
     println!("\nsync_state (the sidebar's 'never synced' comes from last_full_sync_at):");
     let mut sync = connection.prepare(
         "SELECT s.mailbox_id, m.path, s.last_full_sync_at, s.highest_mod_seq, s.uid_next

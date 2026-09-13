@@ -61,6 +61,7 @@ thread_local! {
     pub(crate) static RENDERS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_CREATED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static PAGES_REQUESTED: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Add to a counter.
@@ -109,6 +110,23 @@ pub fn note_surface_created() {
 /// process behind it can go, not whether a Rust value went out of scope.
 pub fn note_surface_released() {
     bump(&SURFACES_RELEASED, 1);
+}
+
+/// A page of the message list was asked for.
+///
+/// Counted for the same reason renders are, and it is the counter #1534 was
+/// missing: a folder of 36,000 rows kept **49 distinct pages in 20 seconds**
+/// moving through a cache that holds eight, one request starting as the last
+/// was answered, and never settling. Every one of those is a windowed SQL read
+/// on an encrypted store, so the cost of opening a folder is roughly linear in
+/// this — and nothing anywhere could see it, because a page request is a
+/// perfectly ordinary query and the storage counters count queries.
+///
+/// What makes it a *bound* rather than a measurement: opening a folder should
+/// cost the pages a screen needs, whatever the folder holds. A number that
+/// grows with the size of the mailbox is the bug.
+pub fn note_page_requested() {
+    bump(&PAGES_REQUESTED, 1);
 }
 
 #[cfg(test)]

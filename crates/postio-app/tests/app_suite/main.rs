@@ -34,6 +34,7 @@ mod focus_on_launch;
 mod go_to_keystroke;
 mod keystroke;
 mod label_wiring;
+mod large_folder_open;
 mod list_contract;
 mod manual_sync;
 mod navigation_cost;
@@ -208,6 +209,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing",
         cursor_preview::the_pane_follows_the_cursor_and_says_why_a_body_is_missing as fn(),
+    ),
+    (
+        "large_folder_open::opening_a_large_folder_asks_for_a_bounded_number_of_pages",
+        large_folder_open::opening_a_large_folder_asks_for_a_bounded_number_of_pages as fn(),
     ),
     (
         "render_dedup::one_gesture_renders_once_and_reselecting_renders_nothing",
