@@ -84,7 +84,7 @@ async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
     let id = drafts.save(&mut draft).await.expect("save");
 
     let (text, html): (Option<String>, Option<String>) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT body_text, body_html FROM drafts WHERE id = ?1",
         bind![id.get()],
         |row| {
@@ -385,7 +385,7 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
         .expect("fail it");
 
     let (kind, state): (String, String) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT kind, state FROM drafts WHERE id = ?1",
         bind![id.get()],
         |row| {
@@ -1831,7 +1831,7 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
 /// What `messages.send_state` says for the row standing for `draft`.
 async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT messages.send_state
                FROM messages
                JOIN drafts ON drafts.message_id = messages.id
@@ -1936,7 +1936,7 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
     drafts.save(&mut draft).await.expect("save");
     // The mirror row #166 wrote, found the way the composer finds it.
     let mirror: MessageId = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT message_id FROM drafts WHERE id = ?1",
         bind![draft.id.get()],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
@@ -2022,7 +2022,7 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
 
     let due_at = async |draft: DraftId| -> Option<i64> {
         postio_storage::sql::one(
-            &*connection,
+            &connection,
             "SELECT messages.send_at FROM messages
                JOIN drafts ON drafts.message_id = messages.id
               WHERE drafts.id = ?1",

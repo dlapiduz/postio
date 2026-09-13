@@ -1299,13 +1299,13 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
         &database,
         "a message the mock actually holds",
         async |connection| {
-            Ok(postio_storage::sql::one(
-                &*connection,
+            postio_storage::sql::one(
+                &connection,
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
                 bind![inbox.id.get()],
                 |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
             )
-            .await?)
+            .await
         },
     )
     .await;
@@ -1394,13 +1394,13 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
         &database,
         "a message the mock actually holds",
         async |connection| {
-            Ok(postio_storage::sql::one(
-                &*connection,
+            postio_storage::sql::one(
+                &connection,
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
                 bind![inbox.id.get()],
                 |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
             )
-            .await?)
+            .await
         },
     )
     .await;
@@ -1563,13 +1563,13 @@ async fn headers_in(
 ) -> i64 {
     with_store(database, "counting headers", async |connection| {
         let connection = &connection;
-        Ok(postio_storage::sql::one(
-            &*connection,
+        postio_storage::sql::one(
+            connection,
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
             bind![mailbox.get()],
             |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
-        .await?)
+        .await
     })
     .await
 }
@@ -1581,13 +1581,13 @@ async fn bodies_local(
 ) -> i64 {
     with_store(database, "counting local bodies", async |connection| {
         let connection = &connection;
-        Ok(postio_storage::sql::one(
-            &*connection,
+        postio_storage::sql::one(
+            connection,
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND body_state = 'full'",
             bind![mailbox.get()],
             |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
-        .await?)
+        .await
     })
     .await
 }

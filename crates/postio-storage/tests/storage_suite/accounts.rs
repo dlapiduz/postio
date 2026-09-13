@@ -93,7 +93,7 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     accounts.create(&mut account).await.expect("create");
 
     let (incoming, outgoing, auth): (String, String, String) = postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT incoming_security, outgoing_security, auth_method FROM accounts",
         (),
         |row| {

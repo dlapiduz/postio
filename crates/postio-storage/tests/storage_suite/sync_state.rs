@@ -29,7 +29,7 @@ async fn insert_message(connection: &Connection, mailbox: MailboxId, uid: u32) {
 
 async fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
         bind![mailbox.get()],
         |row| postio_storage::sql::RowExt::col(row, 0),

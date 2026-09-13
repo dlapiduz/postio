@@ -803,7 +803,7 @@ fn declared() -> std::collections::BTreeSet<&'static str> {
                 .or_else(|| line.strip_prefix("CREATE INDEX "))
                 .or_else(|| line.strip_prefix("CREATE UNIQUE INDEX "))
                 .or_else(|| line.strip_prefix("CREATE TRIGGER "))?;
-            Some(rest.trim_matches('"').split([' ', '(', '"']).next()?)
+            rest.trim_matches('"').split([' ', '(', '"']).next()
         })
         .collect()
 }

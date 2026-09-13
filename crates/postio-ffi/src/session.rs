@@ -1043,7 +1043,7 @@ impl Session {
     /// conversion back would be a second mapping to keep in step with the
     /// first, for no caller that needs one.
     fn open_list_scope(&self, listed: postio_runtime::store::ListScope) -> u64 {
-        let Some((store, runtime)) = self.reader() else {
+        let Some((store, _runtime)) = self.reader() else {
             return 0;
         };
         let total = blocking(store.list_count(listed)).unwrap_or(0);
@@ -1801,7 +1801,7 @@ impl Session {
     /// The scope being left is remembered, so clearing comes back to it
     /// rather than reloading the world.
     pub async fn search(&self, query: &str) -> u64 {
-        let Some((_, runtime)) = self.reader() else {
+        let Some((_, _runtime)) = self.reader() else {
             return 0;
         };
         let Some((database, _)) = self.store_and_blobs() else {
@@ -2117,7 +2117,7 @@ impl Session {
         else {
             return folders;
         };
-        let Some((store, runtime)) = self.reader() else {
+        let Some((store, _runtime)) = self.reader() else {
             return folders;
         };
         for account in accounts {
@@ -2243,12 +2243,24 @@ impl Session {
             return Ok(self.engines.lock().expect("engines lock").len() as u32);
         }
 
-        let guard = self.wiring.lock().expect("wiring lock");
-        let Some(wiring) = guard.as_ref() else {
-            return Err(SessionError::StoreUnavailable {
-                message: "the session has been shut down".to_string(),
-            });
+        // Cloned out and the guard dropped, rather than held across the awaits
+        // below. A `std::sync::MutexGuard` across an `.await` is a lock held
+        // for as long as the future is suspended -- and this one is suspended
+        // on the network -- so a second caller reaching this method would
+        // block a runtime worker until a server answered. `Wiring` is handles
+        // over `Arc`s; cloning it copies no mail.
+        let wiring = {
+            let guard = self.wiring.lock().expect("wiring lock");
+            match guard.as_ref() {
+                Some(wiring) => wiring.clone(),
+                None => {
+                    return Err(SessionError::StoreUnavailable {
+                        message: "the session has been shut down".to_string(),
+                    });
+                }
+            }
         };
+        let wiring = &wiring;
 
         let accounts = {
             let connection = wiring.database.connect().await.map_err(|error| {
@@ -2511,7 +2523,7 @@ impl Session {
         let Some(scope) = *self.scope.lock().expect("scope lock") else {
             return;
         };
-        let Some((store, runtime)) = self.reader() else {
+        let Some((store, _runtime)) = self.reader() else {
             return;
         };
         let total = blocking(store.list_count(scope)).unwrap_or(0);

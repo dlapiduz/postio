@@ -80,7 +80,7 @@ pub fn one_gesture_renders_once_and_reselecting_renders_nothing() {
                 .await
                 .expect("the fixture writes");
             postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 (),
                 |row| postio_storage::sql::RowExt::col(row, 0),

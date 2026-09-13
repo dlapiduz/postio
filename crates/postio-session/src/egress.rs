@@ -64,7 +64,7 @@ impl EgressRecorder {
                 {
                     Ok(runtime) => runtime,
                     Err(error) => {
-                        tracing::error!(%error, "the egress log has no writer");
+                        tracing::error!(%error, "the egress log has no writer: {error}");
                         return;
                     }
                 };

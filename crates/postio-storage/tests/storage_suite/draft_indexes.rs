@@ -37,7 +37,7 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
 /// The `CREATE INDEX` statement the database is actually carrying.
 async fn definition(connection: &Connection, index: &str) -> String {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
         bind![index],
         |row| postio_storage::sql::RowExt::col::<String>(row, 0),

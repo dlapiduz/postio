@@ -105,7 +105,7 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
                 .await
                 .expect("the fixture writes");
             postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 (),
                 |row| postio_storage::sql::RowExt::col(row, 0),

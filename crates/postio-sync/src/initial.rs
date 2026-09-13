@@ -64,7 +64,7 @@ use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
-use postio_storage::{Checkout, Connection, WritePriority};
+use postio_storage::{Checkout, WritePriority};
 
 use crate::drain::SyncError;
 use postio_account::cancel::CancelToken;

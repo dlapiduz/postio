@@ -404,7 +404,7 @@ pub async fn thread_seeded_messages(
         .expect("read the seeded message list")
     };
 
-    let threads = sql::in_scope(&connection, |scope| async move {
+    sql::in_scope(&connection, |scope| async move {
         let mut threads = 0;
         for chunk in rows.chunks(per_thread) {
             // A real thread's subject is one of its own messages' (`recompute_in`
@@ -466,8 +466,7 @@ pub async fn thread_seeded_messages(
         Ok::<_, crate::Error>(threads)
     })
     .await
-    .expect("commit the threading batch");
-    threads
+    .expect("commit the threading batch")
 }
 
 /// Inserts `message`, files it into a thread, and remembers who wrote it.

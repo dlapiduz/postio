@@ -580,12 +580,12 @@ async fn count(
     query: &ListQuery,
 ) -> Result<u32, StoreError> {
     if let ListScope::Mailbox(mailbox) = scope
-        && let Some(counts) = MailboxRepository::new(&connection).counts(mailbox).await?
+        && let Some(counts) = MailboxRepository::new(connection).counts(mailbox).await?
         && counts.total > 0
     {
         return Ok(counts.total);
     }
-    Ok(MessageRepository::new(&connection).count(query).await?)
+    Ok(MessageRepository::new(connection).count(query).await?)
 }
 
 /// Add the thread count a row's badge needs.
@@ -611,7 +611,7 @@ async fn thread_query(
             // decoration: `threads.account_id` is the leading column of
             // `idx_threads_account_last_at`, so without it the window has no
             // index to seek and the whole flat-paging argument collapses.
-            let account = MailboxRepository::new(&connection)
+            let account = MailboxRepository::new(connection)
                 .get(mailbox)
                 .await?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?

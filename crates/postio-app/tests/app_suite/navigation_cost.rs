@@ -132,7 +132,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
         let window = Window::default();
         window.set_default_size(1280, 800);
         window.present();
-        let _ = feed_the_window(&window, &wiring);
+        let _ = feed_the_window(&window, &wiring).await;
         let list = window.list();
         assert!(
             settle_until(async || list.model().n_items() > 0).await,
@@ -206,7 +206,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
             );
             let started = Instant::now();
             let total: i64 = postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT total FROM mailboxes WHERE id = ?1",
                 bind![mailbox.get()],
                 |r| postio_storage::sql::RowExt::col(r, 0),
@@ -239,7 +239,7 @@ pub fn switching_surfaces_stays_within_a_blink() {
             }
             let started = Instant::now();
             let counted: i64 = postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",
                 bind![mailbox.get()],
                 |r| postio_storage::sql::RowExt::col(r, 0),

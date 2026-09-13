@@ -51,7 +51,7 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
 
 async fn definition(connection: &Connection, index: &str) -> String {
     postio_storage::sql::one(
-        &*connection,
+        connection,
         "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
         bind![index],
         |row| postio_storage::sql::RowExt::col::<String>(row, 0),
@@ -154,7 +154,7 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     assert_eq!(ids.len(), 20);
     let source_of = async |id: i64| -> String {
         postio_storage::sql::one(
-            &*connection,
+            &connection,
             "SELECT source FROM contacts WHERE id = ?1",
             bind![id],
             |row| postio_storage::sql::RowExt::col(row, 0),
@@ -164,7 +164,7 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     };
     let last_seen_of = async |id: i64| -> i64 {
         postio_storage::sql::one(
-            &*connection,
+            &connection,
             "SELECT last_seen_at FROM contacts WHERE id = ?1",
             bind![id],
             |row| postio_storage::sql::RowExt::col(row, 0),

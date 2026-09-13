@@ -88,7 +88,7 @@ pub fn the_pane_says_offline_and_updates_the_moment_the_connection_does() {
                 .await
                 .expect("the fixture writes");
             postio_storage::sql::one(
-                &*connection,
+                &connection,
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 (),
                 |row| postio_storage::sql::RowExt::col(row, 0),

@@ -2504,13 +2504,13 @@ pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) 
             bind![address.address, normalized],
         )
         .await?;
-    Ok(sql::one(
+    sql::one(
         connection,
         "SELECT id FROM addresses WHERE address_normalized = ?1",
         bind![normalized],
         |row| row.col(0),
     )
-    .await?)
+    .await
 }
 
 async fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
@@ -2635,7 +2635,7 @@ async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
     })
     .await?;
-    Ok::<_, Error>(rows.into_iter().collect()).map_err(Into::into)
+    Ok::<_, Error>(rows.into_iter().collect())
 }
 
 /// Rows this client wrote that the server has not named yet, by `Message-ID`.
@@ -2715,7 +2715,7 @@ async fn shadowed_by_pending_operation(
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
     })
     .await?;
-    Ok::<_, Error>(rows.into_iter().collect()).map_err(Into::into)
+    Ok::<_, Error>(rows.into_iter().collect())
 }
 
 /// The flag changes the queue is still holding for each message, in the order

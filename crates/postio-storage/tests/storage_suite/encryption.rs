@@ -99,19 +99,15 @@ async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
         .await
         .expect("reopen with the same key");
     let connection = database.connect().await.expect("checkout");
-    let (id, subject): (i64, Option<String>) = postio_storage::sql::one(
-        &*connection,
-        "SELECT id, subject FROM messages",
-        (),
-        |row| {
+    let (id, subject): (i64, Option<String>) =
+        postio_storage::sql::one(&connection, "SELECT id, subject FROM messages", (), |row| {
             Ok((
                 postio_storage::sql::RowExt::col(row, 0)?,
                 postio_storage::sql::RowExt::col(row, 1)?,
             ))
-        },
-    )
-    .await
-    .expect("the message written before the store was closed");
+        })
+        .await
+        .expect("the message written before the store was closed");
     assert_eq!(subject.as_deref(), Some(SECRET_SUBJECT));
     assert_eq!(
         MessageRepository::new(&connection)

@@ -69,7 +69,7 @@ async fn id_of(
 ) -> Option<postio_model::MessageId> {
     let connection = database.connect().await.ok()?;
     postio_storage::sql::one(
-        &*connection,
+        &connection,
         "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
         bind![rfc_message_id],
         |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
@@ -232,13 +232,13 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     if list.model().n_items() != SEEDED.len() as u32 {
         let connection = database.connect().await.expect("a connection");
         let messages: i64 =
-            postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages", (), |r| {
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |r| {
                 postio_storage::sql::RowExt::col(r, 0)
             })
             .await
             .unwrap_or(-1);
         let mailboxes: i64 =
-            postio_storage::sql::one(&*connection, "SELECT count(*) FROM mailboxes", (), |r| {
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM mailboxes", (), |r| {
                 postio_storage::sql::RowExt::col(r, 0)
             })
             .await
@@ -376,7 +376,7 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
         let connection = database.connect().await.expect("a connection");
         let local: i64 =
-            postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages", (), |r| {
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |r| {
                 postio_storage::sql::RowExt::col(r, 0)
             })
             .await

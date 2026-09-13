@@ -31,6 +31,7 @@ mod egress_wiring;
 mod escape_after_finder_closed;
 mod event_fanout;
 mod focus_on_launch;
+mod glib_main_context;
 mod go_to_keystroke;
 mod keystroke;
 mod label_wiring;
@@ -107,6 +108,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message",
         focus_on_launch::the_window_opens_with_the_keyboard_on_the_first_message as fn(),
+    ),
+    (
+        "glib_main_context::a_store_opens_and_reads_on_the_main_context_with_no_runtime",
+        glib_main_context::a_store_opens_and_reads_on_the_main_context_with_no_runtime as fn(),
     ),
     (
         "list_contract::the_list_output_stays_libtest_shaped",

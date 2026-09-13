@@ -64,7 +64,7 @@ async fn world() -> World {
     World {
         database,
         blobs,
-        seeded: seeded,
+        seeded,
         _directory: directory,
     }
 }
