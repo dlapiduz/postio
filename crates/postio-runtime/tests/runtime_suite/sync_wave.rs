@@ -407,3 +407,81 @@ async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
     }
     drop(engine);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
+    // The live incident in
+    // `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`:
+    // fifteen folders queued, two started, one finished. A Drafts pass that
+    // ran long shared the first wave with INBOX, and because a wave did not
+    // return until *both* its passes finished — and the outer loop starts no
+    // wave before the last one returns — fourteen folders never got a lane,
+    // though one was free the whole time.
+    //
+    // The shape below is that incident: a slow high-priority folder in the
+    // first wave, and regular folders queued behind it. Creates are refused
+    // so the engine does not add a folder per reserved role: those would
+    // outrank the regular folders and sync ahead of them through the one
+    // refilled lane, and the property here needs the first refilled fetch to
+    // land while the slow pass is still fetching — not after a chain of
+    // empty folders has been waited out. The assertion is
+    // causal, in the style of `a_job_is_served_without_waiting_out_the_wave`:
+    // when the last regular folder finishes its first sync, the slow pass
+    // must still be running — an engine that freed no lane can only finish
+    // them afterwards, on any machine at any load.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Drafts", &["\\Drafts"], 2_000))
+            .mailbox(folder("Lists/alpha", &[], 5))
+            .mailbox(folder("Lists/bravo", &[], 5))
+            .mailbox(folder("Lists/carol", &[], 5))
+            .mailbox(folder("Lists/dana", &[], 5))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    // Everything finishes either way — the question is in what order the
+    // server saw the requests, which no machine speed can forge: without a
+    // refill, a regular folder's first header fetch can only happen after
+    // the wave holding the slow pass returns, i.e. after the slow pass's
+    // *last* header fetch. Ten 200-message batches, each behind the injected
+    // latency, is the window a refilled lane's fetch must land inside.
+    until("every folder to finish its first sync", async || {
+        for (path, count) in [
+            ("Drafts", 2_000),
+            ("Lists/alpha", 5),
+            ("Lists/bravo", 5),
+            ("Lists/carol", 5),
+            ("Lists/dana", 5),
+        ] {
+            if stored(&database, path).await != Some(count) {
+                return false;
+            }
+        }
+        true
+    })
+    .await;
+
+    let order = backend.fetch_order();
+    let first_regular = order
+        .iter()
+        .position(|event| matches!(event, FetchEvent::Header(mailbox) if mailbox.starts_with("Lists/")))
+        .expect("the regular folders were fetched");
+    let last_drafts = order
+        .iter()
+        .rposition(|event| matches!(event, FetchEvent::Header(mailbox) if mailbox == "Drafts"))
+        .expect("the slow folder was fetched");
+    assert!(
+        first_regular < last_drafts,
+        "no regular folder was fetched until the slow pass had finished \
+         (first regular header at {first_regular}, last Drafts header at \
+         {last_drafts} of {} events), so the free lane was never refilled \
+         and the queue waited out the slowest pass",
+        order.len()
+    );
+    drop(engine);
+}

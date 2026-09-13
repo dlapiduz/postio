@@ -363,6 +363,19 @@ pub(crate) async fn enumerate(
         report.updated += batch.updated;
         report.threaded += batch.threaded;
 
+        // One real yield per batch, and it is load-bearing. The read-ahead
+        // above primes the next fetch *before* the commit, so by the time the
+        // commit finishes the fetch's timer may already have elapsed — its
+        // await then never returns `Pending`, and a pass whose commits run
+        // longer than its fetches walks every batch of the folder inside a
+        // single poll. The engine's whole interruption story assumes a pass
+        // yields: `sync_wave`'s cancel arm and refill both wait their turn at
+        // a `select!`, and a pass that never yields deafens the wave to the
+        // user for the length of the folder — which is what
+        // `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`
+        // measured live, with the engine's fts merges as the slow commits.
+        yield_once().await;
+
         // Where a first sync's wall clock actually goes, per batch: waiting on
         // the server, or writing to SQLite. `postio-0d9.7` asks for several
         // different optimisations — more connections, pipelined FETCH, bigger
@@ -573,6 +586,26 @@ enum ReadAhead<'a> {
 /// unsent when the write finished. Polling with the caller's own waker —
 /// rather than a throwaway one — means the later `await` picks it up exactly
 /// as if it had been awaited all along.
+/// Return `Pending` exactly once, waking immediately.
+///
+/// What `tokio::task::yield_now` is, without naming an executor — this crate
+/// runs under whichever runtime the caller picked. The single `Pending` is
+/// the entire point: it hands the enclosing `select!` one poll, which is the
+/// turn the engine's cancel arm and lane refill take theirs on.
+pub(crate) async fn yield_once() {
+    let mut yielded = false;
+    std::future::poll_fn(move |context| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            context.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await
+}
+
 async fn read_ahead<'a>(
     backend: &'a dyn MailBackend,
     mailbox: &'a str,
