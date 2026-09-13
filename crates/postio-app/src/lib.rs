@@ -1258,7 +1258,7 @@ pub struct Opened {
 enum Progress {
     /// What is being waited on now, for the window to say so if the wait
     /// outlasts the threshold.
-    Stage(postio_gtk::list_state::Waiting),
+    Stage(postio_ui::list_state::Waiting),
     /// The store, or the sentence explaining why there is not one.
     Done(Result<(Store, postio_storage::BlobStore), String>),
 }
@@ -1278,7 +1278,7 @@ enum Progress {
 fn open_the_store_on_a_thread(
     secrets: std::sync::Arc<dyn postio_account::secret::SecretStore>,
 ) -> async_channel::Receiver<Progress> {
-    use postio_gtk::list_state::Waiting;
+    use postio_ui::list_state::Waiting;
 
     // Unbounded, and it matters: a bounded sender would block this thread on
     // a main loop that is busy drawing, which is the one thing the whole

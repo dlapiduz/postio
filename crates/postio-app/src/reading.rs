@@ -711,8 +711,7 @@ impl Fill {
                 // One crossing for all of it. The parts are metadata the sync
                 // already stored -- `BODYSTRUCTURE`, not bytes -- so asking
                 // for them costs a row read and never a fetch.
-                let body =
-                    crate::compose::load_body_or_reason(&connection, message, offline).await;
+                let body = crate::compose::load_body_or_reason(&connection, message, offline).await;
                 let fetched = MessageRepository::new(&connection)
                     .get(message)
                     .await
