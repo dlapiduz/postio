@@ -61,13 +61,14 @@ pub const MAX_CONCURRENT_PASSES: usize = 4;
 /// crate, rather than properties taken on trust.
 pub const CIPHER: &str = "aes256gcm";
 
-/// Which kind of caller is asking — for SQLite's write lock ([`WriteGate`]),
-/// or for a connection out of the [`Pool`] itself (#672).
+/// Which kind of caller is asking — for the store's write lock
+/// ([`WriteGate`]), or, before the engine pooled its own connections, for a
+/// connection out of the pool (#672).
 ///
 /// One enum for both: they are the same distinction — "is a person waiting
 /// on this, right now" — applied to two different contended resources, and a
 /// caller declares it once rather than choosing a name per resource. See
-/// [`WriteGate`] and [`Pool::get_interactive`] for why each has to exist.
+/// [`WriteGate`] for why it has to exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePriority {
     /// Work a person is waiting for: a flag, an archive, a draft autosave, a
@@ -89,7 +90,7 @@ pub enum WritePriority {
 /// # The problem this exists for (#425)
 ///
 /// SQLite has one writer at a time, even under WAL, and its own way of
-/// resolving a collision is [`PRAGMAS`]' `busy_timeout`: the loser sleeps and
+/// resolving a collision is the per-connection `busy_timeout`: the loser sleeps and
 /// retries, backing off up to a hundred milliseconds at a time. That is a
 /// *timeout*, not a queue — there is no fairness in it and no ordering, and
 /// the retrying writer simply races everyone else each time it wakes.
@@ -120,8 +121,8 @@ pub enum WritePriority {
 ///
 /// # Two rules for callers
 ///
-/// * **Take the pooled connection first, then the permit.** Never the other
-///   way round: a thread holding a permit and waiting on [`Pool::get`] can be
+/// * **Take the connection first, then the permit.** Never the other
+///   way round: a thread holding a permit and waiting on the pool could be
 ///   waiting for a connection held by a thread that is waiting for the permit.
 ///   Every caller in this workspace acquires in that order.
 /// * **One permit at a time per thread.** The gate is not re-entrant, so a
@@ -658,7 +659,7 @@ impl Store {
 ///
 /// Because the alternative is remembering to fetch it. This is what
 /// `Checkout` was, minus the pooling the engine now does itself:
-/// [`Deref`] to the connection, so it is used exactly like one, with
+/// [`Deref`](std::ops::Deref) to the connection, so it is used exactly like one, with
 /// [`write_gate`](Self::write_gate) beside it for the callers that are about
 /// to write and have to say on whose behalf.
 ///

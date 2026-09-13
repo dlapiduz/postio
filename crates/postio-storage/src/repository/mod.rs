@@ -17,12 +17,13 @@
 //!   because "already gone" is the expected outcome of a retried operation.
 //! * **A write that spans tables runs in one transaction.** An account and its
 //!   identities, a mailbox and its sync state: never half of one. Repositories
-//!   open that transaction as a [`Scope`], which becomes a `SAVEPOINT` when it
-//!   is nested — so the same call also composes inside a transaction the
-//!   *caller* opened. The sync engine depends on that: the messages it fetched
-//!   and the sync state describing them have to commit together, and they are
-//!   written by two different repositories. An outermost `Scope` is a
-//!   `BEGIN IMMEDIATE` instead, which is not an optimisation — see [`Scope`].
+//!   open that transaction through [`crate::sql::in_scope`], which becomes a
+//!   `SAVEPOINT` when it is nested — so the same call also composes inside a
+//!   transaction the *caller* opened. The sync engine depends on that: the
+//!   messages it fetched and the sync state describing them have to commit
+//!   together, and they are written by two different repositories. An
+//!   outermost scope is a `BEGIN IMMEDIATE` instead, which is not an
+//!   optimisation — see [`crate::sql::in_scope`].
 //! * **Timestamps are integer milliseconds, UTC**, and enums are stored as the
 //!   `as_str` spelling the model documents, which the schema's `CHECK`
 //!   constraints then enforce.
