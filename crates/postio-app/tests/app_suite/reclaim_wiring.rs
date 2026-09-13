@@ -34,92 +34,94 @@ use postio_storage::{BlobStore, test_support};
 use postio_gtk::{app, fonts, style};
 
 pub fn opening_a_store_reclaims_what_nothing_references() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "the fixture seeded no mail");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "the fixture seeded no mail");
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // What a deleted message leaves behind: bytes on disk that no row names.
-    // Written directly rather than by deleting a seeded message, so the test
-    // states the condition it is about instead of depending on which columns
-    // the fixture happens to fill.
-    let orphan = blobs
-        .put(b"the body of a message that is no longer in the database")
-        .expect("put an orphan");
-    // And what a crash mid-fetch leaves: a part file nothing will ever finish.
-    let debris = blobs.temporary_directory().join("9999-0.part");
-    std::fs::write(&debris, b"half a message").expect("stage some debris");
+        // What a deleted message leaves behind: bytes on disk that no row names.
+        // Written directly rather than by deleting a seeded message, so the test
+        // states the condition it is about instead of depending on which columns
+        // the fixture happens to fill.
+        let orphan = blobs
+            .put(b"the body of a message that is no longer in the database")
+            .expect("put an orphan");
+        // And what a crash mid-fetch leaves: a part file nothing will ever finish.
+        let debris = blobs.temporary_directory().join("9999-0.part");
+        std::fs::write(&debris, b"half a message").expect("stage some debris");
 
-    assert!(blobs.contains(&orphan), "the orphan is there to begin with");
+        assert!(blobs.contains(&orphan), "the orphan is there to begin with");
 
-    // Backdated past `BLOB_GRACE_PERIOD`, rather than shortening the grace
-    // period for the test.
-    //
-    // The first version of this test wrote the orphan and expected it gone,
-    // and it failed -- because production sweeps with a one-hour grace period
-    // and the blob was seconds old. That failure is the grace period working:
-    // a blob is written before the row referencing it is committed, so inside
-    // that window a healthy blob is indistinguishable from an orphan.
-    //
-    // Injecting a shorter period would have made the test pass while testing
-    // a configuration that never ships. Ageing the file exercises the real
-    // constant, and the real case: a blob orphaned an hour ago.
-    let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
-    let path = blobs.path_of(&orphan).expect("the orphan's path");
-    std::fs::File::options()
-        .write(true)
-        .open(&path)
-        .expect("open the orphan")
-        .set_times(std::fs::FileTimes::new().set_modified(aged))
-        .expect("age the orphan");
+        // Backdated past `BLOB_GRACE_PERIOD`, rather than shortening the grace
+        // period for the test.
+        //
+        // The first version of this test wrote the orphan and expected it gone,
+        // and it failed -- because production sweeps with a one-hour grace period
+        // and the blob was seconds old. That failure is the grace period working:
+        // a blob is written before the row referencing it is committed, so inside
+        // that window a healthy blob is indistinguishable from an orphan.
+        //
+        // Injecting a shorter period would have made the test pass while testing
+        // a configuration that never ships. Ageing the file exercises the real
+        // constant, and the real case: a blob orphaned an hour ago.
+        let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
+        let path = blobs.path_of(&orphan).expect("the orphan's path");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open the orphan")
+            .set_times(std::fs::FileTimes::new().set_modified(aged))
+            .expect("age the orphan");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database,
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database,
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // The same call `run` makes.
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    let _ = feeds;
+        // The same call `run` makes.
+        let feeds = feed_the_window(&window, &wiring)
+            .await.expect("the seeded store has an account")
+            .feeds;
+        let _ = feeds;
 
-    assert!(
-        settle_until(|| !blobs.contains(&orphan)),
-        "opening the store left a blob nothing references on disk"
-    );
-    assert!(
-        settle_until(|| !debris.exists()),
-        "opening the store left debris from a fetch that never finished"
-    );
+        assert!(
+            settle_until(async || !blobs.contains(&orphan)).await,
+            "opening the store left a blob nothing references on disk"
+        );
+        assert!(
+            settle_until(async || !debris.exists()).await,
+            "opening the store left debris from a fetch that never finished"
+        );
+    });
 }
 
 /// The third sweep, and the one that carries a policy (#862).
@@ -144,89 +146,91 @@ pub fn opening_a_store_reclaims_what_nothing_references() {
 /// both, and both are seconds old, so the grace period would spare them even
 /// if they were orphans.
 pub fn opening_a_store_with_a_ceiling_evicts_down_to_it() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let seeded = seed_small(&database, 11);
-    let inbox = seeded
-        .mailbox(postio_model::MailboxRole::Inbox)
-        .expect("the seed makes an inbox")
-        .clone();
+        let database = test_support::memory().await;
+        let seeded = seed_small(&database, 11).await;
+        let inbox = seeded
+            .mailbox(postio_model::MailboxRole::Inbox)
+            .expect("the seed makes an inbox")
+            .clone();
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Two messages, each holding its raw source. Different fill bytes because
-    // the store is content-addressed: the same bytes twice would be one blob,
-    // and a test about *which* one goes would be testing nothing.
-    let connection = database.connect().await.expect("checkout");
-    let messages = postio_storage::repository::MessageRepository::new(&connection);
-    let mut written = Vec::new();
-    for (index, second) in [1_000_i64, 9_000].into_iter().enumerate() {
-        let blob = blobs
-            .put(&vec![b'a' + index as u8; 40_000])
-            .expect("put a raw source");
-        let received = chrono::TimeZone::timestamp_opt(&chrono::Utc, second, 0)
-            .single()
-            .expect("a timestamp");
-        let mut message = postio_model::Message::new(seeded.account.id, inbox.id, received);
-        message.server.uid = Some(postio_model::Uid::new(9_000 + index as u32));
-        message.server.uid_validity = Some(postio_model::UidValidity::new(1));
-        message.raw_blob_id = Some(blob.clone());
-        messages.create(&mut message).expect("create");
-        written.push(blob);
-    }
-    drop(connection);
+        // Two messages, each holding its raw source. Different fill bytes because
+        // the store is content-addressed: the same bytes twice would be one blob,
+        // and a test about *which* one goes would be testing nothing.
+        let connection = database.connect().await.expect("checkout");
+        let messages = postio_storage::repository::MessageRepository::new(&connection);
+        let mut written = Vec::new();
+        for (index, second) in [1_000_i64, 9_000].into_iter().enumerate() {
+            let blob = blobs
+                .put(&vec![b'a' + index as u8; 40_000])
+                .expect("put a raw source");
+            let received = chrono::TimeZone::timestamp_opt(&chrono::Utc, second, 0)
+                .single()
+                .expect("a timestamp");
+            let mut message = postio_model::Message::new(seeded.account.id, inbox.id, received);
+            message.server.uid = Some(postio_model::Uid::new(9_000 + index as u32));
+            message.server.uid_validity = Some(postio_model::UidValidity::new(1));
+            message.raw_blob_id = Some(blob.clone());
+            messages.create(&mut message).await.expect("create");
+            written.push(blob);
+        }
+        drop(connection);
 
-    let (old, new) = (written[0].clone(), written[1].clone());
-    assert!(blobs.contains(&old) && blobs.contains(&new));
+        let (old, new) = (written[0].clone(), written[1].clone());
+        assert!(blobs.contains(&old) && blobs.contains(&new));
 
-    // Room for the newer blob and nothing else.
-    let ceiling = blobs.len_of(&new).expect("len") + 16;
+        // Room for the newer blob and nothing else.
+        let ceiling = blobs.len_of(&new).expect("len") + 16;
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database,
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    )
-    // What `open_with` does with `[storage] max_bytes` out of config.toml.
-    .with_storage_ceiling(Some(ceiling));
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database,
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        )
+        // What `open_with` does with `[storage] max_bytes` out of config.toml.
+        .with_storage_ceiling(Some(ceiling));
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // The same call `run` makes.
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    let _ = feeds;
+        // The same call `run` makes.
+        let feeds = feed_the_window(&window, &wiring)
+            .await.expect("the seeded store has an account")
+            .feeds;
+        let _ = feeds;
 
-    assert!(
-        settle_until(|| !blobs.contains(&old)),
-        "opening the store left it over the ceiling its config asked for"
-    );
-    assert!(
-        blobs.contains(&new),
-        "eviction took more than the ceiling required: this week's mail stays"
-    );
+        assert!(
+            settle_until(async || !blobs.contains(&old)).await,
+            "opening the store left it over the ceiling its config asked for"
+        );
+        assert!(
+            blobs.contains(&new),
+            "eviction took more than the ceiling required: this week's mail stays"
+        );
+    });
 }

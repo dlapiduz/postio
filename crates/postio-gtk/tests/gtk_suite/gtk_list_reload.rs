@@ -208,10 +208,10 @@ fn pump_until(done: impl Fn() -> bool) {
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         pump();
-        if done() {
+        if done().await {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 
@@ -524,7 +524,7 @@ fn settle_for(how_long: std::time::Duration) {
     let deadline = std::time::Instant::now() + postio_test_support::scaled(how_long);
     while std::time::Instant::now() < deadline {
         pump();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 

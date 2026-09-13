@@ -90,7 +90,7 @@ fn settle(window: &Window, what: &str, done: impl Fn() -> bool) {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         crate::pump();
-        if done() {
+        if done().await {
             return;
         }
     }

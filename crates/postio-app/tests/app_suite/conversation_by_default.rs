@@ -28,12 +28,12 @@ use postio_model::ids::{MessageId, ThreadId};
 use postio_model::{EmailAddress, Message, Thread};
 use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
-use postio_storage::{Database, test_support};
+use postio_storage::{Store, test_support};
 
 /// A message in `mailbox`, joined to `thread` — through
 /// `ThreadRepository::add_message` so the aggregates agree with the rows.
-fn threaded_message(
-    database: &Database,
+async fn threaded_message(
+    database: &Store,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,
     thread: ThreadId,
@@ -51,135 +51,137 @@ fn threaded_message(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .expect("create the threaded message");
+        .await.expect("create the threaded message");
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .expect("join the message to the thread");
+        .await.expect("join the message to the thread");
     id
 }
 
 pub fn landing_on_a_thread_row_opens_the_conversation() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let (account, inbox) = {
-        let connection = database.connect().await.expect("a connection");
-        test_support::account_with_inbox(&connection).await
-    };
-    let thread = {
-        let connection = database.connect().await.expect("a connection");
-        let mut thread = Thread::new(account.id);
-        ThreadRepository::new(&connection)
-            .create(&mut thread)
-            .expect("create the thread")
-    };
-    let oldest = threaded_message(
-        &database,
-        account.id,
-        inbox,
-        thread,
-        0,
-        "the opening message",
-    );
-    let newest = threaded_message(&database, account.id, inbox, thread, 1, "the reply");
+        let database = test_support::memory().await;
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
+        let thread = {
+            let connection = database.connect().await.expect("a connection");
+            let mut thread = Thread::new(account.id);
+            ThreadRepository::new(&connection)
+                .create(&mut thread)
+                .await.expect("create the thread")
+        };
+        let oldest = threaded_message(
+            &database,
+            account.id,
+            inbox,
+            thread,
+            0,
+            "the opening message",
+        ).await;
+        let newest = threaded_message(&database, account.id, inbox, thread, 1, "the reply").await;
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = postio_storage::BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = postio_storage::BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() >= 1),
-        "the fixture's conversation never reached the list"
-    );
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() >= 1).await,
+            "the fixture's conversation never reached the list"
+        );
 
-    // ── the cursor lands on the thread row, and that is the whole gesture ─
-    // There is no second gesture to make: landing here opens the
-    // conversation, and since #1003 there is no drill-in key at all.
-    list.first_row();
-    let cursor = list.cursor_row().expect("a row to land on");
-    assert!(
-        cursor.is_thread(),
-        "the fixture is wrong if the folder row does not stand for the \
-         conversation"
-    );
+        // ── the cursor lands on the thread row, and that is the whole gesture ─
+        // There is no second gesture to make: landing here opens the
+        // conversation, and since #1003 there is no drill-in key at all.
+        list.first_row();
+        let cursor = list.cursor_row().expect("a row to land on");
+        assert!(
+            cursor.is_thread(),
+            "the fixture is wrong if the folder row does not stand for the \
+             conversation"
+        );
 
-    assert!(
-        settle_until(|| window.conversation().len() == 2),
-        "landing on the thread row never filled the reading pane with the \
-         whole conversation; it holds {} message(s)",
-        window.conversation().len()
-    );
-    assert!(
-        window.conversation().widget().is_visible(),
-        "the conversation pane filled but is not the surface on screen"
-    );
-    // Focus opens on the most recent message, whether or not earlier ones
-    // are unread — FR-015, which superseded ADR 0015's first-unread rule in
-    // #1385. This asserted `oldest`, and only CI caught it: `app_suite` is
-    // not in the sanity tier, so the local gate that passes says nothing
-    // about it.
-    assert_eq!(
-        window.conversation().focused(),
-        Some(newest),
-        "the conversation must open focused on its most recent message"
-    );
-    assert!(
-        window.conversation().is_expanded(newest),
-        "the focused message must open expanded, or focus points at a \
-         closed door"
-    );
-    assert!(
-        window.conversation().is_expanded(oldest),
-        "and the message before it is open too -- landing on the newest \
-         must not be a reason to close what came before (FR-013)"
-    );
+        assert!(
+            settle_until(async || window.conversation().len() == 2).await,
+            "landing on the thread row never filled the reading pane with the \
+             whole conversation; it holds {} message(s)",
+            window.conversation().len()
+        );
+        assert!(
+            window.conversation().widget().is_visible(),
+            "the conversation pane filled but is not the surface on screen"
+        );
+        // Focus opens on the most recent message, whether or not earlier ones
+        // are unread — FR-015, which superseded ADR 0015's first-unread rule in
+        // #1385. This asserted `oldest`, and only CI caught it: `app_suite` is
+        // not in the sanity tier, so the local gate that passes says nothing
+        // about it.
+        assert_eq!(
+            window.conversation().focused(),
+            Some(newest),
+            "the conversation must open focused on its most recent message"
+        );
+        assert!(
+            window.conversation().is_expanded(newest),
+            "the focused message must open expanded, or focus points at a \
+             closed door"
+        );
+        assert!(
+            window.conversation().is_expanded(oldest),
+            "and the message before it is open too -- landing on the newest \
+             must not be a reason to close what came before (FR-013)"
+        );
 
-    // ── `Enter` on the same row is the same answer, not a downgrade ──────
-    window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
-    settle();
-    assert_eq!(
-        window.conversation().len(),
-        2,
-        "activating the row must keep the conversation, not swap in a \
-         single message"
-    );
-    assert!(
-        window.conversation().widget().is_visible(),
-        "activating the row hid the conversation pane"
-    );
-    let _ = newest;
+        // ── `Enter` on the same row is the same answer, not a downgrade ──────
+        window.handle_key(gdk::Key::Return, gdk::ModifierType::empty());
+        settle();
+        assert_eq!(
+            window.conversation().len(),
+            2,
+            "activating the row must keep the conversation, not swap in a \
+             single message"
+        );
+        assert!(
+            window.conversation().widget().is_visible(),
+            "activating the row hid the conversation pane"
+        );
+        let _ = newest;
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

@@ -43,92 +43,94 @@ fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
 }
 
 pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 61);
-    let inbox = report.mailbox(MailboxRole::Inbox).expect("a seeded inbox");
-    let inbox_id = inbox.id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 61).await;
+        let inbox = report.mailbox(MailboxRole::Inbox).expect("a seeded inbox");
+        let inbox_id = inbox.id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let sidebar = window.sidebar();
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let sidebar = window.sidebar();
 
-    assert!(
-        settle_until(|| !sidebar.mailboxes().is_empty()),
-        "the seeded folders should have reached the sidebar"
-    );
-    assert!(
-        !read_excluded(&database, inbox_id),
-        "every selectable folder backfills by default (ADR 0016)"
-    );
+        assert!(
+            settle_until(async || !sidebar.mailboxes().is_empty()).await,
+            "the seeded folders should have reached the sidebar"
+        );
+        assert!(
+            !read_excluded(&database, inbox_id).await,
+            "every selectable folder backfills by default (ADR 0016)"
+        );
 
-    // ── the context menu on Inbox's own row toggles it ─────────────────
-    let inbox_row: gtk::ListBoxRow = find(sidebar.upcast_ref::<gtk::Widget>(), "postio-folder")
-        .and_then(|w| w.downcast().ok())
-        .expect("Inbox is the first special-use row");
-    sidebar.test_open_special_folder_menu(&inbox_row);
-    assert!(
-        sidebar
-            .activate_action("folder.toggle-backfill", None)
-            .is_ok(),
-        "the toggle entry should exist on Inbox's own context menu"
-    );
-    sidebar.test_close_folder_menu();
+        // ── the context menu on Inbox's own row toggles it ─────────────────
+        let inbox_row: gtk::ListBoxRow = find(sidebar.upcast_ref::<gtk::Widget>(), "postio-folder")
+            .and_then(|w| w.downcast().ok())
+            .expect("Inbox is the first special-use row");
+        sidebar.test_open_special_folder_menu(&inbox_row);
+        assert!(
+            sidebar
+                .activate_action("folder.toggle-backfill", None)
+                .is_ok(),
+            "the toggle entry should exist on Inbox's own context menu"
+        );
+        sidebar.test_close_folder_menu();
 
-    // ── persisted, and shown without any sync ever running ─────────────
-    assert!(
-        settle_until(|| read_excluded(&database, inbox_id)),
-        "the toggle should have reached the database"
-    );
-    assert!(
-        settle_until(|| sidebar
-            .mailboxes()
-            .iter()
-            .find(|m| m.id == inbox_id)
-            .is_some_and(|m| m.backfill_excluded)),
-        "the sidebar's own cached list should reflect the write immediately, \
-         not wait for Event::MailboxesChanged from a sync pass that never runs here"
-    );
+        // ── persisted, and shown without any sync ever running ─────────────
+        assert!(
+            settle_until(async || read_excluded(&database, inbox_id).await).await,
+            "the toggle should have reached the database"
+        );
+        assert!(
+            settle_until(async || sidebar
+                .mailboxes()
+                .iter()
+                .find(|m| m.id == inbox_id)
+                .is_some_and(|m| m.backfill_excluded)).await,
+            "the sidebar's own cached list should reflect the write immediately, \
+             not wait for Event::MailboxesChanged from a sync pass that never runs here"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
-fn read_excluded(database: &postio_storage::Store, id: postio_model::ids::MailboxId) -> bool {
+async fn read_excluded(database: &postio_storage::Store, id: postio_model::ids::MailboxId) -> bool {
     let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .backfill_excluded(id)
-        .expect("read")
+        .await.expect("read")
 }

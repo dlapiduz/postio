@@ -66,6 +66,7 @@ use postio_storage::seed::seed_large;
 use postio_storage::test_support;
 
 use crate::settle_until;
+use postio_storage::bind;
 
 /// Messages to seed. Large enough that a folder switch has to page rather
 /// than answer from a handful of rows.
@@ -79,9 +80,13 @@ const MESSAGES: usize = 20_000;
 /// finding; the assertion is the guard.
 const OUTER_BOUND: Duration = Duration::from_millis(5_000);
 
-fn timed(label: &str, mut body: impl FnMut()) -> Duration {
+async fn timed<F, Fut>(label: &str, body: F) -> Duration
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let started = Instant::now();
-    body();
+    body().await;
     let took = started.elapsed();
     eprintln!("  {label:<34} {took:>10.2?}");
     assert!(
@@ -93,274 +98,270 @@ fn timed(label: &str, mut body: impl FnMut()) -> Duration {
 }
 
 pub fn switching_surfaces_stays_within_a_blink() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    let database = test_support::memory().await;
-    let report = seed_large(&database, 11, MESSAGES);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        postio_core::bridge::event_channel().0,
-        bridge.commands(),
-    );
-    let window = Window::default();
-    window.set_default_size(1280, 800);
-    window.present();
-    let _ = feed_the_window(&window, &wiring);
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the seeded store should fill the list"
-    );
-
-    // The plumbing on its own: a trivial job through the same runtime and
-    // channel a page fetch uses, awaited on the main context the same way.
-    // If a round trip carrying nothing costs what a page costs, the store is
-    // not what a folder switch is waiting for.
-    for round in 1..=3 {
-        let (tx, rx) = async_channel::bounded::<u8>(1);
-        let started = Instant::now();
-        wiring.runtime.spawn(async move {
-            let _ = tx.send(1).await;
-        });
-        let done = std::rc::Rc::new(std::cell::Cell::new(false));
-        glib::spawn_future_local({
-            let done = done.clone();
-            async move {
-                let _ = rx.recv().await;
-                done.set(true);
-            }
-        });
-        settle_until(|| done.get());
-        eprintln!(
-            "  [plumbing] empty round trip {round}   {:>10.2?}",
-            started.elapsed()
-        );
-    }
-
-    // A settle that pumps without sleeping, to tell real waiting from this
-    // harness's own 10 ms polling granularity. If a folder switch shrinks by
-    // roughly ten times under it, the second it appeared to take was the
-    // measurement, not the app.
-    fn settle_tight(done: impl Fn() -> bool) -> bool {
-        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
-        while Instant::now() < deadline {
-            while gtk::glib::MainContext::default().iteration(false) {}
-            if done() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_micros(200));
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
         }
-        done()
-    }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    eprintln!("navigation over {} messages:", report.message_count);
+        let database = test_support::memory().await;
+        let report = seed_large(&database, 11, MESSAGES).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // The store side of a folder switch, timed directly, so the UI numbers
-    // below can be attributed rather than guessed at.
-    {
-        use postio_storage::repository::{ListQuery, MessageRepository};
-        let connection = database.connect().await.expect("a connection");
-        let mailbox = report
-            .mailboxes
-            .iter()
-            .find(|m| m.selectable)
-            .expect("a mailbox")
-            .id;
-        let query = ListQuery::mailbox(mailbox);
-        let started = Instant::now();
-        let rows = MessageRepository::new(&connection)
-            .page(&query)
-            .expect("a page");
-        eprintln!(
-            "  [store] first page ({} rows)      {:>10.2?}",
-            rows.len(),
-            started.elapsed()
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            postio_core::bridge::event_channel().0,
+            bridge.commands(),
         );
-        let started = Instant::now();
-        let total: i64 = connection
-            .query_row(
-                "SELECT total FROM mailboxes WHERE id = ?1",
-                [mailbox.get()],
-                |r| r.get(0),
-            )
-            .unwrap_or(-1);
-        eprintln!(
-            "  [store] cached total ({total})       {:>10.2?}",
-            started.elapsed()
+        let window = Window::default();
+        window.set_default_size(1280, 800);
+        window.present();
+        let _ = feed_the_window(&window, &wiring);
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the seeded store should fill the list"
         );
-        // The query a folder switch *actually* runs: folders thread, so the
-        // list is paged by conversation rather than by message (ADR 0015).
-        {
-            use postio_storage::repository::{ThreadListQuery, ThreadRepository};
+
+        // The plumbing on its own: a trivial job through the same runtime and
+        // channel a page fetch uses, awaited on the main context the same way.
+        // If a round trip carrying nothing costs what a page costs, the store is
+        // not what a folder switch is waiting for.
+        for round in 1..=3 {
+            let (tx, rx) = async_channel::bounded::<u8>(1);
             let started = Instant::now();
-            let threads = ThreadRepository::new(&connection)
-                .page(&ThreadListQuery {
-                    account_id: report.account.id,
-                    mailbox: Some(mailbox),
-                    limit: 50,
-                    after: None,
-                })
-                .expect("a thread page");
+            wiring.runtime.spawn(async move {
+                let _ = tx.send(1).await;
+            });
+            let done = std::rc::Rc::new(std::cell::Cell::new(false));
+            glib::spawn_future_local({
+                let done = done.clone();
+                async move {
+                    let _ = rx.recv().await;
+                    done.set(true);
+                }
+            });
+            settle_until(async || done.get()).await;
             eprintln!(
-                "  [store] THREAD page ({} rows)     {:>10.2?}",
-                threads.len(),
+                "  [plumbing] empty round trip {round}   {:>10.2?}",
                 started.elapsed()
             );
         }
-        let started = Instant::now();
-        let counted: i64 = connection
-            .query_row(
-                "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",
-                [mailbox.get()],
-                |r| r.get(0),
-            )
-            .expect("a count");
-        eprintln!(
-            "  [store] count(*) ({counted})          {:>10.2?}",
-            started.elapsed()
-        );
-    }
 
-    // ── switching folder, there and back ────────────────────────────────
-    let folders: Vec<_> = report
-        .mailboxes
-        .iter()
-        .filter(|mailbox| mailbox.selectable)
-        .take(2)
-        .map(|mailbox| mailbox.id)
-        .collect();
-    if folders.len() == 2 {
-        timed("switch folder", || {
-            window.sidebar().select(folders[1]);
-            settle_until(|| window.sidebar().selected() == Some(folders[1]));
-        });
-        timed("switch back", || {
-            window.sidebar().select(folders[0]);
-            settle_until(|| window.sidebar().selected() == Some(folders[0]));
-        });
-    }
-
-    // ── the composer taking over the pane ───────────────────────────────
-    // Repeated, because the first composition is the one a person notices and
-    // the ones after it are what it should cost. The editing surface is a
-    // `WebView` whose first load starts a web process, so before #1216's warm
-    // the first open was 34ms against 9ms for the rest.
-    for round in 1..=5 {
-        let widgets_before = postio_gtk::row::rows_built();
-        let started = Instant::now();
-        window.act(postio_core::Command::Compose { draft: None });
-        let acted = started.elapsed();
-        let started = Instant::now();
-        settle_until(|| window.composer().is_open());
-        let settled = started.elapsed();
-        eprintln!(
-            "  composer round {round}: act {acted:>10.2?}  settle {settled:>10.2?}  rows {}",
-            postio_gtk::row::rows_built() - widgets_before
-        );
-        window.composer().discard();
-        settle_until(|| !window.composer().is_open());
-    }
-    window.act(postio_core::Command::Compose { draft: None });
-    settle_until(|| window.composer().is_open());
-
-    // ── reordering the list ─────────────────────────────────────────────
-    // Repeated, because the first of anything pays for what the others find
-    // warm, and one reading cannot tell a slow transition from a cold one.
-    for round in 1..=4 {
-        // Split, because `Feed::open` spawns the page fetch rather than
-        // running it: if the cost is in `act` it is synchronous widget work,
-        // and if it is in the pump it is the store answering.
-        let widgets_before = postio_gtk::row::rows_built();
-        let fetches_before = postio_gtk::feed::fetches();
-        let emissions_before = postio_gtk::list::emissions();
-        let started = Instant::now();
-        window.act(postio_core::Command::NextFolder);
-        let acted = started.elapsed();
-        let started = Instant::now();
-        settle_tight(|| window.list().model().n_items() > 0);
-        let settled = started.elapsed();
-        eprintln!("  next folder, round {round}: act {acted:>10.2?}  settle {settled:>10.2?}");
-        eprintln!(
-            "      built {} row widgets, {} page fetches; window {}x{}, list {}x{}",
-            postio_gtk::row::rows_built() - widgets_before,
-            postio_gtk::feed::fetches() - fetches_before,
-            window.width(),
-            window.height(),
-            window.list().width(),
-            window.list().height()
-        );
-        eprintln!(
-            "      {} items_changed",
-            postio_gtk::list::emissions() - emissions_before
-        );
-        eprintln!(
-            "      landed on {:?}, list holds {}",
-            window.sidebar().selected(),
-            window.list().model().n_items()
-        );
-    }
-    // ── scrolling, which is the interaction that happens most ──────────
-    {
-        let list = window.list();
-        let rows = list.model().n_items();
-        let widgets_before = postio_gtk::row::rows_built();
-        let fetches_before = postio_gtk::feed::fetches();
-        let emissions_before = postio_gtk::list::emissions();
-        let started = Instant::now();
-        let mut steps = 0;
-        for page in 1..=20u32 {
-            list.set_scroll_offset(f64::from(page) * 700.0);
-            // Drain what this scroll asked for, or the loop measures widget
-            // recycling alone and never sees a delivery land. Bounded: a step
-            // that asks for nothing must not wait for one.
-            for _ in 0..40 {
+        // A settle that pumps without sleeping, to tell real waiting from this
+        // harness's own 10 ms polling granularity. If a folder switch shrinks by
+        // roughly ten times under it, the second it appeared to take was the
+        // measurement, not the app.
+        async fn settle_tight(done: impl Fn() -> bool) -> bool {
+            let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
+            while Instant::now() < deadline {
                 while gtk::glib::MainContext::default().iteration(false) {}
+                if done() {
+                    return true;
+                }
                 std::thread::sleep(Duration::from_micros(200));
             }
-            steps += 1;
+            done()
         }
-        // The duration includes this loop's own drain (40 pumps a step, so
-        // ~8ms of sleeping) and moves with how much of the folder happens to
-        // be resident already. The counts below are the part that means
-        // something: they are the same on every machine, and they are what
-        // a repaint costs (#1216).
-        eprintln!(
-            "  scroll {steps} pages over {rows} rows: {:>10.2?} incl. drain",
-            started.elapsed()
-        );
-        eprintln!(
-            "      built {} row widgets, {} page fetches, {} items_changed",
-            postio_gtk::row::rows_built() - widgets_before,
-            postio_gtk::feed::fetches() - fetches_before,
-            postio_gtk::list::emissions() - emissions_before
-        );
-    }
 
-    for round in 1..=3 {
-        timed(&format!("prev folder, round {round}"), || {
-            window.act(postio_core::Command::PrevFolder);
-            settle_until(|| true);
-        });
-    }
+        eprintln!("navigation over {} messages:", report.message_count);
+
+        // The store side of a folder switch, timed directly, so the UI numbers
+        // below can be attributed rather than guessed at.
+        {
+            use postio_storage::repository::{ListQuery, MessageRepository};
+            let connection = database.connect().await.expect("a connection");
+            let mailbox = report
+                .mailboxes
+                .iter()
+                .find(|m| m.selectable)
+                .expect("a mailbox")
+                .id;
+            let query = ListQuery::mailbox(mailbox);
+            let started = Instant::now();
+            let rows = MessageRepository::new(&connection)
+                .page(&query)
+                .await.expect("a page");
+            eprintln!(
+                "  [store] first page ({} rows)      {:>10.2?}",
+                rows.len(),
+                started.elapsed()
+            );
+            let started = Instant::now();
+            let total: i64 = postio_storage::sql::one(&*connection, 
+                    "SELECT total FROM mailboxes WHERE id = ?1",bind![mailbox.get()],
+                    |r| postio_storage::sql::RowExt::col(r, 0)).await
+                .unwrap_or(-1);
+            eprintln!(
+                "  [store] cached total ({total})       {:>10.2?}",
+                started.elapsed()
+            );
+            // The query a folder switch *actually* runs: folders thread, so the
+            // list is paged by conversation rather than by message (ADR 0015).
+            {
+                use postio_storage::repository::{ThreadListQuery, ThreadRepository};
+                let started = Instant::now();
+                let threads = ThreadRepository::new(&connection)
+                    .page(&ThreadListQuery {
+                        account_id: report.account.id,
+                        mailbox: Some(mailbox),
+                        limit: 50,
+                        after: None,
+                    })
+                    .await.expect("a thread page");
+                eprintln!(
+                    "  [store] THREAD page ({} rows)     {:>10.2?}",
+                    threads.len(),
+                    started.elapsed()
+                );
+            }
+            let started = Instant::now();
+            let counted: i64 = postio_storage::sql::one(&*connection, 
+                    "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",bind![mailbox.get()],
+                    |r| postio_storage::sql::RowExt::col(r, 0)).await
+                .expect("a count");
+            eprintln!(
+                "  [store] count(*) ({counted})          {:>10.2?}",
+                started.elapsed()
+            );
+        }
+
+        // ── switching folder, there and back ────────────────────────────────
+        let folders: Vec<_> = report
+            .mailboxes
+            .iter()
+            .filter(|mailbox| mailbox.selectable)
+            .take(2)
+            .map(|mailbox| mailbox.id)
+            .collect();
+        if folders.len() == 2 {
+            timed("switch folder", async || {
+                window.sidebar().select(folders[1]);
+                settle_until(async || window.sidebar().selected() == Some(folders[1])).await;
+            }).await;
+            timed("switch back", async || {
+                window.sidebar().select(folders[0]);
+                settle_until(async || window.sidebar().selected() == Some(folders[0])).await;
+            }).await;
+        }
+
+        // ── the composer taking over the pane ───────────────────────────────
+        // Repeated, because the first composition is the one a person notices and
+        // the ones after it are what it should cost. The editing surface is a
+        // `WebView` whose first load starts a web process, so before #1216's warm
+        // the first open was 34ms against 9ms for the rest.
+        for round in 1..=5 {
+            let widgets_before = postio_gtk::row::rows_built();
+            let started = Instant::now();
+            window.act(postio_core::Command::Compose { draft: None });
+            let acted = started.elapsed();
+            let started = Instant::now();
+            settle_until(async || window.composer().is_open()).await;
+            let settled = started.elapsed();
+            eprintln!(
+                "  composer round {round}: act {acted:>10.2?}  settle {settled:>10.2?}  rows {}",
+                postio_gtk::row::rows_built() - widgets_before
+            );
+            window.composer().discard();
+            settle_until(async || !window.composer().is_open()).await;
+        }
+        window.act(postio_core::Command::Compose { draft: None });
+        settle_until(async || window.composer().is_open()).await;
+
+        // ── reordering the list ─────────────────────────────────────────────
+        // Repeated, because the first of anything pays for what the others find
+        // warm, and one reading cannot tell a slow transition from a cold one.
+        for round in 1..=4 {
+            // Split, because `Feed::open` spawns the page fetch rather than
+            // running it: if the cost is in `act` it is synchronous widget work,
+            // and if it is in the pump it is the store answering.
+            let widgets_before = postio_gtk::row::rows_built();
+            let fetches_before = postio_gtk::feed::fetches();
+            let emissions_before = postio_gtk::list::emissions();
+            let started = Instant::now();
+            window.act(postio_core::Command::NextFolder);
+            let acted = started.elapsed();
+            let started = Instant::now();
+            settle_tight(|| window.list().model().n_items() > 0).await;
+            let settled = started.elapsed();
+            eprintln!("  next folder, round {round}: act {acted:>10.2?}  settle {settled:>10.2?}");
+            eprintln!(
+                "      built {} row widgets, {} page fetches; window {}x{}, list {}x{}",
+                postio_gtk::row::rows_built() - widgets_before,
+                postio_gtk::feed::fetches() - fetches_before,
+                window.width(),
+                window.height(),
+                window.list().width(),
+                window.list().height()
+            );
+            eprintln!(
+                "      {} items_changed",
+                postio_gtk::list::emissions() - emissions_before
+            );
+            eprintln!(
+                "      landed on {:?}, list holds {}",
+                window.sidebar().selected(),
+                window.list().model().n_items()
+            );
+        }
+        // ── scrolling, which is the interaction that happens most ──────────
+        {
+            let list = window.list();
+            let rows = list.model().n_items();
+            let widgets_before = postio_gtk::row::rows_built();
+            let fetches_before = postio_gtk::feed::fetches();
+            let emissions_before = postio_gtk::list::emissions();
+            let started = Instant::now();
+            let mut steps = 0;
+            for page in 1..=20u32 {
+                list.set_scroll_offset(f64::from(page) * 700.0);
+                // Drain what this scroll asked for, or the loop measures widget
+                // recycling alone and never sees a delivery land. Bounded: a step
+                // that asks for nothing must not wait for one.
+                for _ in 0..40 {
+                    while gtk::glib::MainContext::default().iteration(false) {}
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+                steps += 1;
+            }
+            // The duration includes this loop's own drain (40 pumps a step, so
+            // ~8ms of sleeping) and moves with how much of the folder happens to
+            // be resident already. The counts below are the part that means
+            // something: they are the same on every machine, and they are what
+            // a repaint costs (#1216).
+            eprintln!(
+                "  scroll {steps} pages over {rows} rows: {:>10.2?} incl. drain",
+                started.elapsed()
+            );
+            eprintln!(
+                "      built {} row widgets, {} page fetches, {} items_changed",
+                postio_gtk::row::rows_built() - widgets_before,
+                postio_gtk::feed::fetches() - fetches_before,
+                postio_gtk::list::emissions() - emissions_before
+            );
+        }
+
+        for round in 1..=3 {
+            timed(&format!("prev folder, round {round}"), async || {
+                window.act(postio_core::Command::PrevFolder);
+                settle_until(async || true).await;
+            }).await;
+        }
+    });
 }

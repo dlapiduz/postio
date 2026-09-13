@@ -48,12 +48,12 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
     let deadline = Instant::now() + limit;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    if done() {
+    if done().await {
         return;
     }
     let bridge = bridge_latency(composer);

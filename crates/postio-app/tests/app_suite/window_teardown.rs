@@ -43,57 +43,59 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn a_window_the_composition_root_wired_still_frees_when_destroyed() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    seed_small(&database, 11);
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
+        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let weak = {
-        let window = Window::default();
-        window.present();
-        while glib::MainContext::default().iteration(false) {}
+        let weak = {
+            let window = Window::default();
+            window.present();
+            while glib::MainContext::default().iteration(false) {}
 
-        // The wiring is the point: `search::install` is what registers the
-        // handlers on the finder, so a bare `Window` cannot show this.
-        feed_the_window(&window, &wiring).expect("the seeded store has an account");
+            // The wiring is the point: `search::install` is what registers the
+            // handlers on the finder, so a bare `Window` cannot show this.
+            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
 
-        let weak = window.downgrade();
-        window.destroy();
-        weak
-    };
-    settle();
+            let weak = window.downgrade();
+            window.destroy();
+            weak
+        };
+        settle();
 
-    assert!(
-        weak.upgrade().is_none(),
-        "a window that ran through `feed_the_window` outlived its own \
-         destruction. Something registered on a child widget is holding a \
-         strong reference back to it -- the cycle #794 catalogued, and the \
-         one `search.rs` states the rule against at `install_run`"
-    );
+        assert!(
+            weak.upgrade().is_none(),
+            "a window that ran through `feed_the_window` outlived its own \
+             destruction. Something registered on a child widget is holding a \
+             strong reference back to it -- the cycle #794 catalogued, and the \
+             one `search.rs` states the rule against at `install_run`"
+        );
 
-    bridge.shutdown();
-    drop(directory);
-    drop(state_dir);
+        bridge.shutdown();
+        drop(directory);
+        drop(state_dir);
+    });
 }

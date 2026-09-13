@@ -32,72 +32,74 @@ Content-Type: text/plain; charset=utf-8\r\n\
 Let us know you got this\r\n";
 
 pub fn opening_settings_shows_how_many_messages_asked_for_a_receipt() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    {
-        let connection = database.connect().await.expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection).await;
-        let repository = MessageRepository::new(&connection);
-        let mut asked =
-            postio_model::mime::parse(ASKED).into_message(account.id, inbox, chrono::Utc::now());
-        repository.create(&mut asked).expect("a message");
-    }
+        {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            let repository = MessageRepository::new(&connection);
+            let mut asked =
+                postio_model::mime::parse(ASKED).into_message(account.id, inbox, chrono::Utc::now());
+            repository.create(&mut asked).await.expect("a message");
+        }
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
-    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
+        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        settle();
 
-    window.act(postio_core::Command::Settings);
-    while glib::MainContext::default().iteration(false) {}
+        window.act(postio_core::Command::Settings);
+        while glib::MainContext::default().iteration(false) {}
 
-    // From the panel, not from the main window: settings is a window of its
-    // own since #1179, so its widgets are no longer descendants of this one.
-    let label = find_label(
-        &window.settings().upcast(),
-        "postio-settings-read-receipt-count",
-    )
-    .expect("the privacy pane always draws the read-receipt count line");
-    assert!(
-        label.contains('1'),
-        "one message asked for a receipt: {label}"
-    );
-    assert!(
-        label.contains("none have been sent"),
-        "the line states the fixed no-automatic-sending policy: {label}"
-    );
+        // From the panel, not from the main window: settings is a window of its
+        // own since #1179, so its widgets are no longer descendants of this one.
+        let label = find_label(
+            &window.settings().upcast(),
+            "postio-settings-read-receipt-count",
+        )
+        .expect("the privacy pane always draws the read-receipt count line");
+        assert!(
+            label.contains('1'),
+            "one message asked for a receipt: {label}"
+        );
+        assert!(
+            label.contains("none have been sent"),
+            "the line states the fixed no-automatic-sending policy: {label}"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 fn find_label(widget: &gtk::Widget, class: &str) -> Option<String> {

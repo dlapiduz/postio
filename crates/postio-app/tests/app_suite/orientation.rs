@@ -37,20 +37,20 @@ use postio_gtk::{app, fonts, style};
 use postio_model::ids::AccountId;
 use postio_session::Wiring;
 use postio_storage::seed::{SeedReport, seed_small};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// A store with mail in it, and the pieces every window here needs.
 struct World {
-    database: Database,
+    database: Store,
     blobs: BlobStore,
     seeded: SeedReport,
     /// Kept alive: dropping it removes the directory the blobs live in.
     _directory: tempfile::TempDir,
 }
 
-fn world() -> World {
+async fn world() -> World {
     let database = test_support::memory().await;
-    let seeded = seed_small(&database, 11);
+    let seeded = seed_small(&database, 11).await;
     assert!(
         seeded.message_count > 0,
         "the fixture seeded no mail, so nothing below could be navigated"
@@ -64,7 +64,7 @@ fn world() -> World {
     World {
         database,
         blobs,
-        seeded,
+        seeded: seeded,
         _directory: directory,
     }
 }
@@ -73,7 +73,7 @@ fn world() -> World {
 ///
 /// Returned rather than held: a second call is a second run of the same
 /// installation, which is how "never shown again" is asked.
-fn launch(world: &World) -> (Window, postio_gtk::feed::Feeds, Bridge) {
+async fn launch(world: &World) -> (Window, postio_gtk::feed::Feeds, Bridge) {
     let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
     let (sink, _events) = event_channel();
     let wiring = Wiring::new(
@@ -89,7 +89,7 @@ fn launch(world: &World) -> (Window, postio_gtk::feed::Feeds, Bridge) {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
+        .await.expect("the seeded store has an account")
         .feeds;
     (window, feeds, bridge)
 }
@@ -136,113 +136,117 @@ fn display() -> bool {
 }
 
 pub fn the_first_sync_shows_it_and_got_it_ends_it_for_every_later_run() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
-    if !display() {
-        return;
-    }
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if !display() {
+            return;
+        }
 
-    let world = world();
-    let account = world.seeded.account.id;
-    let (window, feeds, bridge) = launch(&world);
+        let world = world().await;
+        let account = world.seeded.account.id;
+        let (window, feeds, bridge) = launch(&world).await;
 
-    // ── before a sync there is nothing to navigate ──────────────────────
-    // ADR 0012 Q4: "press j and k to move between messages" refers to
-    // nothing until there is mail on screen, so the strip waits.
-    assert!(
-        settle_while(|| !window.orientation().is_visible()),
-        "the orientation appeared before any sync had finished"
-    );
+        // ── before a sync there is nothing to navigate ──────────────────────
+        // ADR 0012 Q4: "press j and k to move between messages" refers to
+        // nothing until there is mail on screen, so the strip waits.
+        assert!(
+            settle_while(async || !window.orientation().is_visible()).await,
+            "the orientation appeared before any sync had finished"
+        );
 
-    // ── the first pass finishes ─────────────────────────────────────────
-    feeds.apply(&sync_finished(account));
-    assert!(
-        settle_until(|| window.orientation().is_visible()),
-        "the first sync finished and the window never taught anybody the \
-         keyboard. The strip is built and it is mounted; nothing showed it."
-    );
+        // ── the first pass finishes ─────────────────────────────────────────
+        feeds.apply(&sync_finished(account));
+        assert!(
+            settle_until(async || window.orientation().is_visible()).await,
+            "the first sync finished and the window never taught anybody the \
+             keyboard. The strip is built and it is mounted; nothing showed it."
+        );
 
-    // ── and a person can put it away ────────────────────────────────────
-    let button = got_it(&window).expect("the strip offers a way out of itself");
-    assert!(
-        button.is_visible() && button.is_sensitive(),
-        "the dismissal is on screen but cannot be pressed"
-    );
-    button.emit_clicked();
-    assert!(
-        settle_until(|| !window.orientation().is_visible()),
-        "\"Got it\" reported into nothing: the button is drawn, it is \
-         clickable, and the strip is still there"
-    );
-    bridge.shutdown();
+        // ── and a person can put it away ────────────────────────────────────
+        let button = got_it(&window).expect("the strip offers a way out of itself");
+        assert!(
+            button.is_visible() && button.is_sensitive(),
+            "the dismissal is on screen but cannot be pressed"
+        );
+        button.emit_clicked();
+        assert!(
+            settle_until(async || !window.orientation().is_visible()).await,
+            "\"Got it\" reported into nothing: the button is drawn, it is \
+             clickable, and the strip is still there"
+        );
+        bridge.shutdown();
 
-    // ── the next run of the same installation ───────────────────────────
-    // The acceptance is "never again", which is a claim about runs and not
-    // about sessions -- so this is a second window over the same store,
-    // told the same thing by the same engine.
-    let (second, feeds, bridge) = launch(&world);
-    feeds.apply(&sync_finished(account));
-    assert!(
-        settle_while(|| !second.orientation().is_visible()),
-        "a dismissed orientation came back on the next run: whatever was \
-         remembered did not outlive the window that remembered it"
-    );
-    bridge.shutdown();
+        // ── the next run of the same installation ───────────────────────────
+        // The acceptance is "never again", which is a claim about runs and not
+        // about sessions -- so this is a second window over the same store,
+        // told the same thing by the same engine.
+        let (second, feeds, bridge) = launch(&world).await;
+        feeds.apply(&sync_finished(account));
+        assert!(
+            settle_while(async || !second.orientation().is_visible()).await,
+            "a dismissed orientation came back on the next run: whatever was \
+             remembered did not outlive the window that remembered it"
+        );
+        bridge.shutdown();
+    });
 }
 
 pub fn a_command_retires_it_even_when_it_was_never_on_screen() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
-    if !display() {
-        return;
-    }
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        if !display() {
+            return;
+        }
 
-    // ── the control ─────────────────────────────────────────────────────
-    // A store nobody has touched, taken to the same point: without this the
-    // assertions below would pass in an application that never shows the
-    // strip at all, which is the failure they exist to catch.
-    let untouched = world();
-    let (control, feeds, bridge) = launch(&untouched);
-    feeds.apply(&sync_finished(untouched.seeded.account.id));
-    assert!(
-        settle_until(|| control.orientation().is_visible()),
-        "a first sync on an untouched store does not show the orientation,          so nothing below can distinguish \"suppressed\" from \"never shown\""
-    );
-    bridge.shutdown();
+        // ── the control ─────────────────────────────────────────────────────
+        // A store nobody has touched, taken to the same point: without this the
+        // assertions below would pass in an application that never shows the
+        // strip at all, which is the failure they exist to catch.
+        let untouched = world().await;
+        let (control, feeds, bridge) = launch(&untouched).await;
+        feeds.apply(&sync_finished(untouched.seeded.account.id));
+        assert!(
+            settle_until(async || control.orientation().is_visible()).await,
+            "a first sync on an untouched store does not show the orientation,          so nothing below can distinguish \"suppressed\" from \"never shown\""
+        );
+        bridge.shutdown();
 
-    // ── and now the same thing, with a keystroke first ──────────────────
-    let world = world();
-    let account = world.seeded.account.id;
-    let (window, feeds, bridge) = launch(&world);
+        // ── and now the same thing, with a keystroke first ──────────────────
+        let world = world().await;
+        let account = world.seeded.account.id;
+        let (window, feeds, bridge) = launch(&world).await;
 
-    // Somebody who presses `j` before the first sync has already
-    // demonstrated the thing the strip exists to teach them (ADR 0012 Q6),
-    // so it must never appear -- not on this pass, and not on any later
-    // run. `j` rather than a synthetic dispatch, because the criterion is
-    // about a command the user actually ran.
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "no rows, so `j` would have nothing to move between"
-    );
-    window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
-    settle();
+        // Somebody who presses `j` before the first sync has already
+        // demonstrated the thing the strip exists to teach them (ADR 0012 Q6),
+        // so it must never appear -- not on this pass, and not on any later
+        // run. `j` rather than a synthetic dispatch, because the criterion is
+        // about a command the user actually ran.
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "no rows, so `j` would have nothing to move between"
+        );
+        window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
+        settle();
 
-    feeds.apply(&sync_finished(account));
-    assert!(
-        settle_while(|| !window.orientation().is_visible()),
-        "the user moved through their mail with the keyboard and Postio \
-         then offered to explain the keyboard"
-    );
-    bridge.shutdown();
+        feeds.apply(&sync_finished(account));
+        assert!(
+            settle_while(async || !window.orientation().is_visible()).await,
+            "the user moved through their mail with the keyboard and Postio \
+             then offered to explain the keyboard"
+        );
+        bridge.shutdown();
 
-    let (second, feeds, bridge) = launch(&world);
-    feeds.apply(&sync_finished(account));
-    assert!(
-        settle_while(|| !second.orientation().is_visible()),
-        "retiring it without showing it was not written down: it came back \
-         on the next run"
-    );
-    bridge.shutdown();
+        let (second, feeds, bridge) = launch(&world).await;
+        feeds.apply(&sync_finished(account));
+        assert!(
+            settle_while(async || !second.orientation().is_visible()).await,
+            "retiring it without showing it was not written down: it came back \
+             on the next run"
+        );
+        bridge.shutdown();
+    });
 }

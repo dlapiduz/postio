@@ -36,130 +36,141 @@ use postio_storage::{BlobStore, test_support};
 const SUBJECT: &str = "Tide gate interlock";
 
 pub fn an_unconfirmed_send_is_listed_and_can_be_marked_as_sent() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 9);
-    let account = report.account.id;
-    let drafts_folder = report
-        .mailbox(MailboxRole::Drafts)
-        .expect("the fixture has a Drafts folder")
-        .clone();
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 9).await;
+        let account = report.account.id;
+        let drafts_folder = report
+            .mailbox(MailboxRole::Drafts)
+            .expect("the fixture has a Drafts folder")
+            .clone();
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // Exactly what an interrupted submission leaves behind: the draft is
-    // still here, it is not `Failed`, and nothing is going to retry it.
-    let draft_id = {
-        let connection = database.connect().await.expect("a connection");
-        let drafts = DraftRepository::new(&connection);
-        let mut draft = Draft::new(account);
-        draft.subject = SUBJECT.to_owned();
-        draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
-        draft.body.text = Some("It may have gone.".to_owned());
-        let id = drafts.save(&mut draft).expect("save the draft");
-        drafts
-            .set_state(id, DraftState::Unconfirmed)
-            .expect("the state the send path leaves");
-        id
-    };
+        // Exactly what an interrupted submission leaves behind: the draft is
+        // still here, it is not `Failed`, and nothing is going to retry it.
+        let draft_id = {
+            let connection = database.connect().await.expect("a connection");
+            let drafts = DraftRepository::new(&connection);
+            let mut draft = Draft::new(account);
+            draft.subject = SUBJECT.to_owned();
+            draft.to = vec![EmailAddress::new(None::<String>, "quinn@example.net")];
+            draft.body.text = Some("It may have gone.".to_owned());
+            let id = drafts.save(&mut draft).await.expect("save the draft");
+            drafts
+                .set_state(id, DraftState::Unconfirmed)
+                .await.expect("the state the send path leaves");
+            id
+        };
 
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<CommandId> = bus.wired().collect();
-    assert!(
-        wired.contains(&CommandId::MarkSent),
-        "the verb has to be on the bus, or the invocation below proves \
-         nothing about the running application"
-    );
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<CommandId> = bus.wired().collect();
+        assert!(
+            wired.contains(&CommandId::MarkSent),
+            "the verb has to be on the bus, or the invocation below proves \
+             nothing about the running application"
+        );
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let feeds = feed_the_window(&window, &wiring)
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+        let feeds = feed_the_window(&window, &wiring)
+            .await.expect("the seeded store has an account")
+            .feeds;
+        commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
-    // ── it is in the Drafts folder, like any other draft ─────────────────
-    // The point of a durable state rather than a toast: the user comes back
-    // to this later and it is still there to be found.
-    feeds
-        .messages
-        .open(postio_model::ListScope::Mailbox(drafts_folder.id));
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "an unconfirmed send is drawn in Drafts like any other draft; this \
-         folder came up empty"
-    );
-    let row = settle_until(|| {
-        (0..list.model().n_items()).any(|position| {
-            list.model()
-                .peek(position)
-                .and_then(|id| {
-                    let connection = database.connect().await.ok()?;
-                    DraftRepository::new(&connection).by_message(id).ok()?
-                })
-                .is_some_and(|draft| draft.id == draft_id)
-        })
+        // ── it is in the Drafts folder, like any other draft ─────────────────
+        // The point of a durable state rather than a toast: the user comes back
+        // to this later and it is still there to be found.
+        feeds
+            .messages
+            .open(postio_model::ListScope::Mailbox(drafts_folder.id));
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "an unconfirmed send is drawn in Drafts like any other draft; this \
+             folder came up empty"
+        );
+        let row = settle_until(async || {
+            for position in 0..list.model().n_items() {
+                let Some(id) = list.model().peek(position) else {
+                    continue;
+                };
+                let Ok(connection) = database.connect().await else {
+                    continue;
+                };
+                let found = DraftRepository::new(&connection)
+                    .by_message(id)
+                    .await
+                    .ok()
+                    .flatten();
+                if found.is_some_and(|draft| draft.id == draft_id) {
+                    return true;
+                }
+            }
+            false
+        }).await
+        ;
+        assert!(
+            row,
+            "the unconfirmed draft has no row, so there is nothing for a person \
+             to find or act on"
+        );
+
+        // ── and `Mark as sent` settles it ────────────────────────────────────
+        // Through `Window::act`, which is what the palette calls: a test that
+        // called the handler directly would pass in a build where the command
+        // reached nothing, which is exactly the failure #767 was.
+        window.act(Command::MarkSent {
+            draft: Some(draft_id),
+        });
+
+        let settled = settle_until(async || {
+            let connection = database.connect().await.expect("a connection");
+            DraftRepository::new(&connection)
+                .get(draft_id)
+                .await.expect("read")
+                .is_some_and(|draft| draft.state == DraftState::Sent)
+        }).await;
+        assert!(
+            settled,
+            "the user said the message arrived and Postio did not record it -- \
+             which leaves them the two exits #674 exists to replace: discard it, \
+             or send it a second time"
+        );
+
+        bridge.shutdown();
     });
-    assert!(
-        row,
-        "the unconfirmed draft has no row, so there is nothing for a person \
-         to find or act on"
-    );
-
-    // ── and `Mark as sent` settles it ────────────────────────────────────
-    // Through `Window::act`, which is what the palette calls: a test that
-    // called the handler directly would pass in a build where the command
-    // reached nothing, which is exactly the failure #767 was.
-    window.act(Command::MarkSent {
-        draft: Some(draft_id),
-    });
-
-    let settled = settle_until(|| {
-        let connection = database.connect().await.expect("a connection");
-        DraftRepository::new(&connection)
-            .get(draft_id)
-            .expect("read")
-            .is_some_and(|draft| draft.state == DraftState::Sent)
-    });
-    assert!(
-        settled,
-        "the user said the message arrived and Postio did not record it -- \
-         which leaves them the two exits #674 exists to replace: discard it, \
-         or send it a second time"
-    );
-
-    bridge.shutdown();
 }

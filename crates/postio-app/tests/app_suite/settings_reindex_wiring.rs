@@ -28,116 +28,118 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 41);
-    let account = report.account.id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 41).await;
+        let account = report.account.id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // A message with a local, indexed body -- the state a rebuild has
-    // something real to clear and refill.
-    let connection = database.connect().await.expect("a connection");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let inbox = report
-        .mailboxes
-        .first()
-        .expect("seed_small seeds at least one mailbox")
-        .id;
-    let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
-    message.sync.body_state = BodyState::Full;
-    MessageRepository::new(&connection)
-        .create(&mut message)
-        .expect("create a message");
-    postio_index::index::index_body_of(
-        &connection,
-        message.id.get(),
-        &postio_model::MessageBody {
-            text: Some("the analytical engine".to_owned()),
-            html: None,
-        },
-    )
-    .expect("index its body the ordinary way");
-    assert!(
-        postio_index::index::messages_missing_body_text_for_account(&connection, account.get(), 10)
-            .expect("candidates")
-            .is_empty(),
-        "indexed once already, so nothing should be missing yet"
-    );
-    drop(connection);
+        // A message with a local, indexed body -- the state a rebuild has
+        // something real to clear and refill.
+        let connection = database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection).await.expect("schema");
+        let inbox = report
+            .mailboxes
+            .first()
+            .expect("seed_small seeds at least one mailbox")
+            .id;
+        let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
+        message.sync.body_state = BodyState::Full;
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await.expect("create a message");
+        postio_index::index::index_body_of(
+            &connection,
+            message.id.get(),
+            &postio_model::MessageBody {
+                text: Some("the analytical engine".to_owned()),
+                html: None,
+            },
+        )
+        .await.expect("index its body the ordinary way");
+        assert!(
+            postio_index::index::messages_missing_body_text_for_account(&connection, account.get(), 10)
+                .await.expect("candidates")
+                .is_empty(),
+            "indexed once already, so nothing should be missing yet"
+        );
+        drop(connection);
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let panel = window.settings();
-    assert!(settle_until(|| rows(&panel).len() == 1));
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let panel = window.settings();
+        assert!(settle_until(async || rows(&panel).len() == 1).await);
 
-    window.toggle_settings();
-    assert!(
-        frames(&window, 2),
-        "the compositor never painted the settings panel"
-    );
-    let target_y = row_y(&rows(&panel)[0]);
-    panel.test_open_account_menu(1.0, target_y);
-    assert!(
-        panel.activate_action("account.rebuild-index", None).is_ok(),
-        "Rebuild search index should exist on an account row"
-    );
-    panel.test_close_account_menu();
+        window.toggle_settings();
+        assert!(
+            frames(&window, 2),
+            "the compositor never painted the settings panel"
+        );
+        let target_y = row_y(&rows(&panel)[0]);
+        panel.test_open_account_menu(1.0, target_y);
+        assert!(
+            panel.activate_action("account.rebuild-index", None).is_ok(),
+            "Rebuild search index should exist on an account row"
+        );
+        panel.test_close_account_menu();
 
-    // The rebuild clears the row before it refills it (that is the whole
-    // shape #981 asks for), so the message is genuinely missing for a
-    // moment -- and by the time the pass reports itself finished, refilled
-    // again.
-    assert!(
-        settle_until(|| {
-            let connection = database.connect().await.expect("a connection");
-            postio_index::index::messages_missing_body_text_for_account(
-                &connection,
-                account.get(),
-                10,
-            )
-            .expect("candidates")
-            .is_empty()
-        }),
-        "the rebuild should have refilled the account's own index"
-    );
-    assert!(
-        settle_until(|| reindexing_in(&rows(&panel)[0]).is_none()),
-        "the row's progress line should clear once the rebuild is over"
-    );
+        // The rebuild clears the row before it refills it (that is the whole
+        // shape #981 asks for), so the message is genuinely missing for a
+        // moment -- and by the time the pass reports itself finished, refilled
+        // again.
+        assert!(
+            settle_until(async || {
+                let connection = database.connect().await.expect("a connection");
+                postio_index::index::messages_missing_body_text_for_account(
+                    &connection,
+                    account.get(),
+                    10,
+                )
+                .await.expect("candidates")
+                .is_empty()
+            }).await,
+            "the rebuild should have refilled the account's own index"
+        );
+        assert!(
+            settle_until(async || reindexing_in(&rows(&panel)[0]).is_none()).await,
+            "the row's progress line should clear once the rebuild is over"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 /// The row's own reindex-progress line, if a rebuild is running (#981) --

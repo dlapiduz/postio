@@ -58,7 +58,7 @@ fn settle_for(how_long: std::time::Duration) {
     let deadline = std::time::Instant::now() + postio_test_support::scaled(how_long);
     while std::time::Instant::now() < deadline {
         while gtk::glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 

@@ -36,139 +36,141 @@ fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
 }
 
 pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 31);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 31).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let connection = database.connect().await.expect("a connection");
-    let mut account = AccountRepository::new(&connection)
-        .get(report.account.id)
-        .expect("read the seeded account")
-        .expect("the seeded account exists");
+        let connection = database.connect().await.expect("a connection");
+        let mut account = AccountRepository::new(&connection)
+            .get(report.account.id)
+            .await.expect("read the seeded account")
+            .expect("the seeded account exists");
 
-    let mut support = Signature::new("Support", "Support team");
-    let support_id = SignatureRepository::new(&connection)
-        .create(account.id, &mut support)
-        .expect("insert the mailbox's signature");
-    let mut sales = Signature::new("Sales", "Sales team");
-    let sales_id = SignatureRepository::new(&connection)
-        .create(account.id, &mut sales)
-        .expect("insert the account's default signature");
+        let mut support = Signature::new("Support", "Support team");
+        let support_id = SignatureRepository::new(&connection)
+            .create(account.id, &mut support)
+            .await.expect("insert the mailbox's signature");
+        let mut sales = Signature::new("Sales", "Sales team");
+        let sales_id = SignatureRepository::new(&connection)
+            .create(account.id, &mut sales)
+            .await.expect("insert the account's default signature");
 
-    account.default_signature_id = Some(sales_id);
-    AccountRepository::new(&connection)
-        .update(&mut account)
-        .expect("save the account default");
+        account.default_signature_id = Some(sales_id);
+        AccountRepository::new(&connection)
+            .update(&mut account)
+            .await.expect("save the account default");
 
-    // `test_support::account` (which `seed_small` builds on) creates no
-    // identity of its own -- nothing composes without one, so this test
-    // needs its own, unsigned so the account default and the mailbox
-    // override are the only sources of a signature to tell apart. After
-    // the account `update` above, which otherwise deletes any identity not
-    // in the snapshot it was given (`account.identities` was fetched
-    // before this one existed).
-    let mut identity = Identity::new(account.id, account.address.clone());
-    identity.is_default = true;
-    IdentityRepository::new(&connection)
-        .create(&mut identity)
-        .expect("insert a sending identity");
+        // `test_support::account` (which `seed_small` builds on) creates no
+        // identity of its own -- nothing composes without one, so this test
+        // needs its own, unsigned so the account default and the mailbox
+        // override are the only sources of a signature to tell apart. After
+        // the account `update` above, which otherwise deletes any identity not
+        // in the snapshot it was given (`account.identities` was fetched
+        // before this one existed).
+        let mut identity = Identity::new(account.id, account.address.clone());
+        identity.is_default = true;
+        IdentityRepository::new(&connection)
+            .create(&mut identity)
+            .await.expect("insert a sending identity");
 
-    let overridden = report
-        .mailbox(MailboxRole::Sent)
-        .expect("a Sent mailbox from the seed")
-        .clone();
-    let mut overridden = overridden;
-    overridden.signature_id = Some(support_id);
-    MailboxRepository::new(&connection)
-        .update(&overridden)
-        .expect("save the mailbox override");
+        let overridden = report
+            .mailbox(MailboxRole::Sent)
+            .expect("a Sent mailbox from the seed")
+            .clone();
+        let mut overridden = overridden;
+        overridden.signature_id = Some(support_id);
+        MailboxRepository::new(&connection)
+            .update(&overridden)
+            .await.expect("save the mailbox override");
 
-    let plain = report
-        .mailbox(MailboxRole::Inbox)
-        .expect("an Inbox mailbox from the seed")
-        .clone();
-    drop(connection);
+        let plain = report
+            .mailbox(MailboxRole::Inbox)
+            .expect("an Inbox mailbox from the seed")
+            .clone();
+        drop(connection);
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "the list is empty, so selecting a mailbox proves nothing"
-    );
-    let composer = window.composer();
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "the list is empty, so selecting a mailbox proves nothing"
+        );
+        let composer = window.composer();
 
-    // ── the mailbox's own override wins ──────────────────────────────────
-    window.sidebar().select(overridden.id);
-    assert!(
-        settle_until(|| window.sidebar().selected() == Some(overridden.id)),
-        "the sidebar never reported the Sent mailbox as selected"
-    );
-    press(&window, "c", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`c` on a selected mailbox opened nothing"
-    );
-    let body = composer.draft().body.text.unwrap_or_default();
-    assert!(
-        body.contains("Support team"),
-        "the mailbox's own signature override did not reach the compose: {body:?}"
-    );
-    composer.discard();
-    settle();
+        // ── the mailbox's own override wins ──────────────────────────────────
+        window.sidebar().select(overridden.id);
+        assert!(
+            settle_until(async || window.sidebar().selected() == Some(overridden.id)).await,
+            "the sidebar never reported the Sent mailbox as selected"
+        );
+        press(&window, "c", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`c` on a selected mailbox opened nothing"
+        );
+        let body = composer.draft().body.text.unwrap_or_default();
+        assert!(
+            body.contains("Support team"),
+            "the mailbox's own signature override did not reach the compose: {body:?}"
+        );
+        composer.discard();
+        settle();
 
-    // ── no override on this mailbox: the account default applies ────────
-    window.sidebar().select(plain.id);
-    settle();
-    press(&window, "c", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`c` on the plain mailbox opened nothing"
-    );
-    assert!(
-        composer
-            .draft()
-            .body
-            .text
-            .unwrap_or_default()
-            .contains("Sales team"),
-        "the account's default signature did not reach a mailbox with no \
-         override of its own"
-    );
-    composer.discard();
-    settle();
+        // ── no override on this mailbox: the account default applies ────────
+        window.sidebar().select(plain.id);
+        settle();
+        press(&window, "c", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`c` on the plain mailbox opened nothing"
+        );
+        assert!(
+            composer
+                .draft()
+                .body
+                .text
+                .unwrap_or_default()
+                .contains("Sales team"),
+            "the account's default signature did not reach a mailbox with no \
+             override of its own"
+        );
+        composer.discard();
+        settle();
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

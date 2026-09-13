@@ -147,123 +147,125 @@ fn portal_available() -> bool {
 }
 
 pub fn a_dragged_message_survives_the_portal() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    let export_dir = state_dir.path().join("drag");
-    // SAFETY: first statements of a single-threaded test.
-    unsafe {
-        std::env::set_var("XDG_STATE_HOME", state_dir.path());
-        std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
-    }
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        let export_dir = state_dir.path().join("drag");
+        // SAFETY: first statements of a single-threaded test.
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", state_dir.path());
+            std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
+        }
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    if !portal_available() {
-        eprintln!(
-            "skipping: no working org.freedesktop.portal.FileTransfer on this \
-             session bus (either the Documents portal is entirely absent, or \
-             it owns the name but does not answer for FileTransfer — a \
-             sandbox with no working FUSE mount underneath it looks like \
-             this). This test is the sandboxed drag path; it needs a real \
-             desktop portal."
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
+        }
+        if !portal_available() {
+            eprintln!(
+                "skipping: no working org.freedesktop.portal.FileTransfer on this \
+                 session bus (either the Documents portal is entirely absent, or \
+                 it owns the name but does not answer for FileTransfer — a \
+                 sandbox with no working FUSE mount underneath it looks like \
+                 this). This test is the sandboxed drag path; it needs a real \
+                 desktop portal."
+            );
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
+
+        // ── a store with one account, one folder and one real message ───────
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+
+        let message_id = {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
+            message.subject = Some("Lunch on Thursday".into());
+            message.raw_blob_id = Some(blobs.put(RAW).expect("a blob"));
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await.expect("a message")
+        };
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        while glib::MainContext::default().iteration(false) {}
+
+        let list = window.list();
+        list.selection().select_only(message_id);
+        let offer = list.drag_offer();
+
+        // ── an abandoned drag writes nothing ────────────────────────────────
+        // The provider is lazy on purpose: a selection here can be a predicate
+        // over a whole mailbox, and picking five hundred messages up and putting
+        // them down again must not have written five hundred files. Asserting it
+        // *here*, against the offer the running application actually hands GTK,
+        // is the difference between testing the promise and testing a comment.
+        assert!(
+            !export_dir.exists() || std::fs::read_dir(&export_dir).unwrap().next().is_none(),
+            "picking up a drag wrote files before any drop asked for them: {export_dir:?}"
         );
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
 
-    // ── a store with one account, one folder and one real message ───────
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        // ── the drop lands, in the spelling that leaves a sandbox ────────────
+        let stream = gio::MemoryOutputStream::new_resizable();
+        block_on(offer.write_mime_type_future(PORTAL_MIME, &stream, glib::Priority::DEFAULT))
+            .expect("the portal spelling of the drop is served");
+        stream.close(gio::Cancellable::NONE).expect("it closes");
 
-    let message_id = {
-        let connection = database.connect().await.expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection).await;
-        let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-        message.subject = Some("Lunch on Thursday".into());
-        message.raw_blob_id = Some(blobs.put(RAW).expect("a blob"));
-        MessageRepository::new(&connection)
-            .create(&mut message)
-            .expect("a message")
-    };
+        let payload = stream.steal_as_bytes();
+        let key = String::from_utf8_lossy(&payload)
+            .trim_end_matches('\0')
+            .trim()
+            .to_string();
+        assert!(
+            !key.is_empty(),
+            "the portal spelling serialised to nothing. A receiver inside a \
+             sandbox would take this drop and get no files at all."
+        );
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        // ── and a receiver can read the message back off it ──────────────────
+        let files = retrieve_files(&key).expect("the portal resolves the transfer key");
+        assert_eq!(
+            files.len(),
+            1,
+            "one message was dragged; the portal offered {} file(s): {files:?}",
+            files.len()
+        );
+        let path = std::path::PathBuf::from(&files[0]);
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "Lunch on Thursday.eml",
+            "a receiver would save this under the wrong name"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect(
+                "the portal named a file the receiver cannot open. This is the \
+                 silent failure #121 is about: Postio believes the drop succeeded."
+            ),
+            RAW,
+            "the file another application opens is not the message the server sent"
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        the_portal_does_not_copy_the_bytes(&offer, &export_dir);
 
-    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
-    while glib::MainContext::default().iteration(false) {}
-
-    let list = window.list();
-    list.selection().select_only(message_id);
-    let offer = list.drag_offer();
-
-    // ── an abandoned drag writes nothing ────────────────────────────────
-    // The provider is lazy on purpose: a selection here can be a predicate
-    // over a whole mailbox, and picking five hundred messages up and putting
-    // them down again must not have written five hundred files. Asserting it
-    // *here*, against the offer the running application actually hands GTK,
-    // is the difference between testing the promise and testing a comment.
-    assert!(
-        !export_dir.exists() || std::fs::read_dir(&export_dir).unwrap().next().is_none(),
-        "picking up a drag wrote files before any drop asked for them: {export_dir:?}"
-    );
-
-    // ── the drop lands, in the spelling that leaves a sandbox ────────────
-    let stream = gio::MemoryOutputStream::new_resizable();
-    block_on(offer.write_mime_type_future(PORTAL_MIME, &stream, glib::Priority::DEFAULT))
-        .expect("the portal spelling of the drop is served");
-    stream.close(gio::Cancellable::NONE).expect("it closes");
-
-    let payload = stream.steal_as_bytes();
-    let key = String::from_utf8_lossy(&payload)
-        .trim_end_matches('\0')
-        .trim()
-        .to_string();
-    assert!(
-        !key.is_empty(),
-        "the portal spelling serialised to nothing. A receiver inside a \
-         sandbox would take this drop and get no files at all."
-    );
-
-    // ── and a receiver can read the message back off it ──────────────────
-    let files = retrieve_files(&key).expect("the portal resolves the transfer key");
-    assert_eq!(
-        files.len(),
-        1,
-        "one message was dragged; the portal offered {} file(s): {files:?}",
-        files.len()
-    );
-    let path = std::path::PathBuf::from(&files[0]);
-    assert_eq!(
-        path.file_name().unwrap().to_str().unwrap(),
-        "Lunch on Thursday.eml",
-        "a receiver would save this under the wrong name"
-    );
-    assert_eq!(
-        std::fs::read(&path).expect(
-            "the portal named a file the receiver cannot open. This is the \
-             silent failure #121 is about: Postio believes the drop succeeded."
-        ),
-        RAW,
-        "the file another application opens is not the message the server sent"
-    );
-
-    the_portal_does_not_copy_the_bytes(&offer, &export_dir);
-
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }
 
 /// Removing an exported file breaks the receiver, transfer key or not.

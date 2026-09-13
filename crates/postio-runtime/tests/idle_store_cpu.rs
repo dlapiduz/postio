@@ -159,7 +159,7 @@ async fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 /// *answers*.
 async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     let database = test_support::memory().await;
-    let report = seed_large(&database, 11, messages);
+    let report = seed_large(&database, 11, messages).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -175,7 +175,7 @@ async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, boo
     );
 
     let _engine = Engine::spawn(EngineParts {
-        account: report.await.account.id,
+        account: report.account.id,
         database: database.clone(),
         blobs,
         backend: backend.clone(),
@@ -213,7 +213,7 @@ async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, boo
     while Instant::now() < give_up && !woke {
         woke = backend.calls() > called_before;
         if !woke {
-            std::thread::sleep(Duration::from_millis(50));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
 

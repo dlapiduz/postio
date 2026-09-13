@@ -148,20 +148,30 @@ fn session_server(accepted: &'static str) -> u16 {
     port
 }
 
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
-fn drive() {
+/// The whole scenario, async because the store is.
+///
+/// On a `multi_thread` runtime driven by `block_on`, so the body runs on
+/// **this** thread where GTK lives, and so a synchronous callback reaching
+/// `postio_session::blocking::now` finds a runtime it can `block_in_place`
+/// on — see `app_suite`'s `gtk_case`, which is the same shape.
+async fn drive() {
     // ── servers ─────────────────────────────────────────────────────────
     // An auxiliary runtime carries the test server; the app's own work runs
     // on the bridge's runtime as in production.
@@ -264,7 +274,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
         None,
         Arc::new(DeadTransport),
         Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    );
+    ).await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -274,14 +284,14 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.set_address("ada@example.test");
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the native row never resolved: {:?}",
         screen.status()
     );
     screen.test_set_password("the-api-token");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
         "the add never settled: {:?}",
         screen.status()
     );
@@ -296,14 +306,14 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.set_address("grace@fallback.test");
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the fallback row never resolved: {:?}",
         screen.status()
     );
     screen.test_set_password("imap-only-password");
     screen.submit();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
         "the fallback add never settled: {:?}",
         screen.status()
     );
@@ -315,7 +325,7 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
 
     // ── what the rows say ───────────────────────────────────────────────
     let connection = database.connect().await.expect("a connection");
-    let accounts = AccountRepository::new(&connection).list().expect("list");
+    let accounts = AccountRepository::new(&connection).list().await.expect("list");
     let native = accounts
         .iter()
         .find(|account| account.address.address == "ada@example.test")
@@ -340,8 +350,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     bridge.shutdown();
 }
 
-#[test]
-fn the_add_stores_the_first_backend_whose_proof_succeeds() {
+#[tokio::test]
+async fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test binary.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -355,7 +365,12 @@ fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     style::install(&display);
     app::install_icons(&display);
 
-    drive();
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(drive());
 
     // The window this test built joins GTK's toplevel list at
     // construction and stays there, holding a WebProcess, until it is

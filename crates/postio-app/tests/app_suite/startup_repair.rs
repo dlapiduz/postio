@@ -51,94 +51,96 @@ fn screen(window: &Window) -> Option<Onboarding> {
 }
 
 pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── the state 0.1.0 could get itself into ───────────────────────────
-    // An account row, and a keyring that has nothing for it.
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("a connection");
-    let account = test_support::account(&connection).await;
-    drop(connection);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        // ── the state 0.1.0 could get itself into ───────────────────────────
+        // An account row, and a keyring that has nothing for it.
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        drop(connection);
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    )
-    .with_secrets(Arc::new(MemorySecretStore::new()));
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        )
+        .with_secrets(Arc::new(MemorySecretStore::new()));
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-    assert!(
-        screen(&window).is_none(),
-        "the window started on the onboarding screen, so this test cannot fail"
-    );
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(
+            screen(&window).is_none(),
+            "the window started on the onboarding screen, so this test cannot fail"
+        );
 
-    // ── the same call `run()`'s `activate` handler makes ────────────────
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    postio_app::open_or_onboard(
-        &window,
-        &wiring,
-        Default::default(),
-        Vec::new(),
-        std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
-        notifier,
-        std::rc::Rc::new(std::cell::Cell::new(false)),
-    );
+        // ── the same call `run()`'s `activate` handler makes ────────────────
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        postio_app::open_or_onboard(
+            &window,
+            &wiring,
+            Default::default(),
+            Vec::new(),
+            std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
+            notifier,
+            std::rc::Rc::new(std::cell::Cell::new(false)),
+        ).await;
 
-    let arrived = settle_until(|| screen(&window).is_some());
-    assert!(
-        arrived,
-        "an account with no password in the keyring opened as though it were \
-         a working account. That is `postio-67`: the application has no other \
-         way to write a credential, so this window is a dead end."
-    );
+        let arrived = settle_until(async || screen(&window).is_some()).await;
+        assert!(
+            arrived,
+            "an account with no password in the keyring opened as though it were \
+             a working account. That is `postio-67`: the application has no other \
+             way to write a credential, so this window is a dead end."
+        );
 
-    // Not merely *some* screen: a repair, which is a different thing from a
-    // first run and has to read as one.
-    let screen = screen(&window).expect("the onboarding screen");
-    assert!(
-        matches!(screen.status(), Status::Reauthenticate(_)),
-        "the repair arrived looking like a first run: {:?}",
-        screen.status()
-    );
-    assert_eq!(
-        screen.address(),
-        account.address.address,
-        "the screen made the user retype an address the store already had"
-    );
-    assert_eq!(
-        screen.settings().imap.host,
-        account.incoming.host,
-        "the screen made the user retype servers the store already had"
-    );
+        // Not merely *some* screen: a repair, which is a different thing from a
+        // first run and has to read as one.
+        let screen = screen(&window).expect("the onboarding screen");
+        assert!(
+            matches!(screen.status(), Status::Reauthenticate(_)),
+            "the repair arrived looking like a first run: {:?}",
+            screen.status()
+        );
+        assert_eq!(
+            screen.address(),
+            account.address.address,
+            "the screen made the user retype an address the store already had"
+        );
+        assert_eq!(
+            screen.settings().imap.host,
+            account.incoming.host,
+            "the screen made the user retype servers the store already had"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

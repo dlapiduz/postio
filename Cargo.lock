@@ -3875,6 +3875,9 @@ dependencies = [
 [[package]]
 name = "postio-test-support"
 version = "0.2.0"
+dependencies = [
+ "tokio",
+]
 
 [[package]]
 name = "postio-ui"

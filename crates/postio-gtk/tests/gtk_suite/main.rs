@@ -1476,7 +1476,7 @@ pub fn wait_until(condition: impl Fn() -> bool) -> bool {
         if condition() {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     condition()
 }

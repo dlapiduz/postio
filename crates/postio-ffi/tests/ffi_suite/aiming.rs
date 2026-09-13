@@ -257,14 +257,18 @@ mod through_the_boundary {
         session.shutdown();
     }
 
-    fn settle_until(done: impl Fn() -> bool) -> bool {
+    async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
         let deadline = std::time::Instant::now()
             + postio_test_support::scaled(std::time::Duration::from_secs(5));
         while std::time::Instant::now() < deadline {
-            if done() {
+            if done().await {
                 return true;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         done()
     }
