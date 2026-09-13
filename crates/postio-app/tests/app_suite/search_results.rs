@@ -66,292 +66,294 @@ fn listed(list: &postio_gtk::list::MessageList, total: u32) -> Vec<MessageId> {
 }
 
 pub fn a_query_puts_the_matching_messages_in_the_list() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── a store the application has opened ──────────────────────────────
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 11);
-    assert!(
-        report.message_count > 0,
-        "the fixture seeded no mail, so this test could not fail"
-    );
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        // ── a store the application has opened ──────────────────────────────
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(
+            report.message_count > 0,
+            "the fixture seeded no mail, so this test could not fail"
+        );
+        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `open_account` makes ──────────────────────────────
-    //
-    // `search::install` is not called here: `feed_the_window` already makes
-    // that call and leaks the `View`, because whether a window has a search
-    // is the composition root's business. Calling it a second time puts two
-    // views on the box's `connect_run` and the query answers into the one
-    // this test cannot see — which is a way to write a test that fails
-    // against a perfectly wired application.
-    let wired = feed_the_window(&window, &wiring).expect("the store has an account");
-    let feeds = wired.feeds.clone();
-    let view = wired
-        .search
-        .expect("the store has an account, so search installed");
+        // ── the same call `open_account` makes ──────────────────────────────
+        //
+        // `search::install` is not called here: `feed_the_window` already makes
+        // that call and leaks the `View`, because whether a window has a search
+        // is the composition root's business. Calling it a second time puts two
+        // views on the box's `connect_run` and the query answers into the one
+        // this test cannot see — which is a way to write a test that fails
+        // against a perfectly wired application.
+        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let feeds = wired.feeds.clone();
+        let view = wired
+            .search
+            .expect("the store has an account, so search installed");
 
-    // What carries `Event::SearchResults` from the sink `search.rs` emits
-    // into to the `Feed` that turns it into rows. Without this the whole
-    // chain under test is a function nobody calls.
-    let notifier = postio_app::notifications::Notifier::new(
-        database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    let state = SharedState::default();
-    for stream in [events, replies] {
-        commands::drain(&window, &feeds, stream, notifier.clone(), state.clone());
-    }
+        // What carries `Event::SearchResults` from the sink `search.rs` emits
+        // into to the `Feed` that turns it into rows. Without this the whole
+        // chain under test is a function nobody calls.
+        let notifier = postio_app::notifications::Notifier::new(
+            database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        let state = SharedState::default();
+        for stream in [events, replies] {
+            commands::drain(&window, &feeds, stream, notifier.clone(), state.clone());
+        }
 
-    // ── the list starts on the folder ───────────────────────────────────
-    let list = window.list().model();
-    let filled = settle_until(|| !listed(&list, 1).is_empty());
-    assert!(
-        filled,
-        "the list never showed the mailbox, so this test cannot tell a search \
-         that failed to reach it from a list that was never fed at all"
-    );
-    let mailbox_rows = listed(&list, report.message_count as u32);
-    let mailbox_name = window.list().mailbox_name();
-    assert!(
-        !feeds.messages.showing_results(),
-        "the list is in result mode before anything was searched"
-    );
+        // ── the list starts on the folder ───────────────────────────────────
+        let list = window.list().model();
+        let filled = settle_until(async || !listed(&list, 1).is_empty()).await;
+        assert!(
+            filled,
+            "the list never showed the mailbox, so this test cannot tell a search \
+             that failed to reach it from a list that was never fed at all"
+        );
+        let mailbox_rows = listed(&list, report.message_count as u32);
+        let mailbox_name = window.list().mailbox_name();
+        assert!(
+            !feeds.messages.showing_results(),
+            "the list is in result mode before anything was searched"
+        );
 
-    // ── type ────────────────────────────────────────────────────────────
-    let finder = window.finder();
-    finder.open(Mode::Search);
-    finder.set_query(Query {
-        mode: Mode::Search,
-        text: QUERY.to_owned(),
-    });
-    let live = finder
-        .live()
-        .expect("the box has a live readout while searching");
-    // What Enter does. A test that slept out the debounce would be measuring
-    // the timer rather than the wiring.
-    live.flush();
+        // ── type ────────────────────────────────────────────────────────────
+        let finder = window.finder();
+        finder.open(Mode::Search);
+        finder.set_query(Query {
+            mode: Mode::Search,
+            text: QUERY.to_owned(),
+        });
+        let live = finder
+            .live()
+            .expect("the box has a live readout while searching");
+        // What Enter does. A test that slept out the debounce would be measuring
+        // the timer rather than the wiring.
+        live.flush();
 
-    let answered = settle_until(|| live.outcome().is_some_and(|outcome| outcome.hits > 0));
-    let outcome = live.outcome().expect("the box answered");
-    assert!(
-        answered && outcome.hits > 0,
-        "the store holds {} messages, every one of them from an {QUERY} \
-         address, and the box reports {} hits — so the search itself is the \
-         thing that is broken, not the list under it",
-        report.message_count,
-        outcome.hits
-    );
+        let answered = settle_until(async || live.outcome().is_some_and(|outcome| outcome.hits > 0)).await;
+        let outcome = live.outcome().expect("the box answered");
+        assert!(
+            answered && outcome.hits > 0,
+            "the store holds {} messages, every one of them from an {QUERY} \
+             address, and the box reports {} hits — so the search itself is the \
+             thing that is broken, not the list under it",
+            report.message_count,
+            outcome.hits
+        );
 
-    // ── 1. the hits are what the list is showing ────────────────────────
-    let switched = settle_until(|| feeds.messages.showing_results());
-    assert!(
-        switched,
-        "the box found {} hits and the list is still showing the folder. \
-         `Event::SearchResults` is emitted by `search.rs::announce` and \
-         handled by `Feed::apply`; if the list never changed mode, the event \
-         is not reaching it — check that `commands::drain` is running over \
-         the same sink `Wiring::events` holds.",
-        outcome.hits
-    );
+        // ── 1. the hits are what the list is showing ────────────────────────
+        let switched = settle_until(async || feeds.messages.showing_results()).await;
+        assert!(
+            switched,
+            "the box found {} hits and the list is still showing the folder. \
+             `Event::SearchResults` is emitted by `search.rs::announce` and \
+             handled by `Feed::apply`; if the list never changed mode, the event \
+             is not reaching it — check that `commands::drain` is running over \
+             the same sink `Wiring::events` holds.",
+            outcome.hits
+        );
 
-    // The rows themselves, not the mode: a `Feed` that flipped into result
-    // mode and then failed its page read leaves an empty list, which is the
-    // same to a user as never having searched.
-    let hits = outcome.hits as u32;
-    let populated = settle_until(|| !listed(&list, hits).is_empty());
-    let rows = listed(&list, hits);
-    assert!(
-        populated,
-        "the list is in result mode over {} hits and holds no rows at all. \
-         The ids reached `Feed::show_results` and the page read under \
-         `ResultSource::rows` did not answer — which is `Sources`' impl, not \
-         the seam.",
-        outcome.hits
-    );
-
-    // ── 2. they are the messages the store matched, in rank order ───────
-    //
-    // The same query, run straight against the index, as an oracle the wiring
-    // had no hand in. Comparing against the *mailbox* would not do: the scope
-    // is All Mail, so a hit from Sent or Archive is a correct row that was
-    // never in the folder the list was showing.
-    //
-    // Order is asserted, not just membership. Past `RANK_BY_RELEVANCE_LIMIT`
-    // the index falls back to recency, so a result set that got silently
-    // re-sorted on the way through would still hold the right ids — it would
-    // look right in every test that only checked membership, and be wrong
-    // exactly where ranking is the thing the user searched for.
-    let account = postio_app::first_account(&database)
-        .expect("the seeded store has an account")
-        .id;
-    // The scope column starts on All Mail — `search_wiring.rs` asserts that —
-    // so this is the question the box actually asked.
-    let view_scope = Scope::AllMail;
-    let connection = database.connect().await.expect("a connection");
-    let expected: Vec<MessageId> = search(
-        &connection,
-        &SearchRequest {
-            account: AccountScope::Account(account),
-            query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
-            scope: view_scope,
-            limit: 200,
-            order: postio_search::ResultOrder::Relevance,
-        },
-        chrono::Utc::now(),
-    )
-    .expect("the index answers")
-    .hits
-    .iter()
-    .map(|hit| hit.message_id)
-    .collect();
-
-    assert_eq!(
-        rows,
-        expected[..rows.len()],
-        "the list is not showing the hits the index returned, or is showing \
-         them in another order"
-    );
-    assert!(
-        !mailbox_rows.is_empty() && rows != mailbox_rows[..rows.len().min(mailbox_rows.len())],
-        "the list is showing exactly the folder it was showing before the \
-         search, which is what a result set that never arrived looks like"
-    );
-
-    // ── 3. the count is the result set's, not the folder's ──────────────
-    assert_eq!(
-        list.n_items(),
-        hits,
-        "the list says it is {} rows long over a result set of {}. The \
-         scrollbar and every page request are measured against this, so a \
-         stale total pages against the folder's length.",
-        list.n_items(),
-        hits
-    );
-
-    // ── 4. the cursor moves the preview ─────────────────────────────────
-    //
-    // The preview starts on the best match, so this asserts it *moves* — a
-    // pane wired to "the top hit" rather than to the cursor passes every
-    // assertion above and fails this one.
-    let first = view.preview().focused();
-    assert!(
-        first.is_some(),
-        "nothing is previewed at all, so a cursor moving cannot be observed"
-    );
-    assert!(rows.len() > 1, "one hit cannot demonstrate a cursor moving");
-    window.list().next_row();
-    let moved = settle_until(|| view.preview().focused() != first);
-    assert!(
-        moved,
-        "`j` through the results left the preview on {first:?}. \
-         `View::set_focused` is driven by the list's cursor; if it is still \
-         driven by the top hit, walking the results shows one message."
-    );
-    assert_eq!(
-        view.preview().focused(),
-        rows.get(1).copied(),
-        "the preview followed the cursor onto a message that is not the row \
-         the cursor is on"
-    );
-
-    // ── 4b. `o` re-asks the same query in date order (#499) ─────────────
-    //
-    // Through the command, exactly as the key and the header's sort control
-    // dispatch it — not by calling the search again, which would prove the
-    // executor and skip the wiring under test.
-    let dated: Vec<MessageId> = search(
-        &connection,
-        &SearchRequest {
-            account: AccountScope::Account(account),
-            query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
-            scope: view_scope,
-            limit: 200,
-            order: postio_search::ResultOrder::Newest,
-        },
-        chrono::Utc::now(),
-    )
-    .expect("the index answers in date order")
-    .hits
-    .iter()
-    .map(|hit| hit.message_id)
-    .collect();
-
-    window.act(postio_core::Command::ToggleResultOrder);
-    let reordered = settle_until(|| {
+        // The rows themselves, not the mode: a `Feed` that flipped into result
+        // mode and then failed its page read leaves an empty list, which is the
+        // same to a user as never having searched.
+        let hits = outcome.hits as u32;
+        let populated = settle_until(async || !listed(&list, hits).is_empty()).await;
         let rows = listed(&list, hits);
-        !rows.is_empty() && rows == dated[..rows.len()]
+        assert!(
+            populated,
+            "the list is in result mode over {} hits and holds no rows at all. \
+             The ids reached `Feed::show_results` and the page read under \
+             `ResultSource::rows` did not answer — which is `Sources`' impl, not \
+             the seam.",
+            outcome.hits
+        );
+
+        // ── 2. they are the messages the store matched, in rank order ───────
+        //
+        // The same query, run straight against the index, as an oracle the wiring
+        // had no hand in. Comparing against the *mailbox* would not do: the scope
+        // is All Mail, so a hit from Sent or Archive is a correct row that was
+        // never in the folder the list was showing.
+        //
+        // Order is asserted, not just membership. Past `RANK_BY_RELEVANCE_LIMIT`
+        // the index falls back to recency, so a result set that got silently
+        // re-sorted on the way through would still hold the right ids — it would
+        // look right in every test that only checked membership, and be wrong
+        // exactly where ranking is the thing the user searched for.
+        let account = postio_app::first_account(&database)
+            .await.expect("the seeded store has an account")
+            .id;
+        // The scope column starts on All Mail — `search_wiring.rs` asserts that —
+        // so this is the question the box actually asked.
+        let view_scope = Scope::AllMail;
+        let connection = database.connect().await.expect("a connection");
+        let expected: Vec<MessageId> = search(
+            &connection,
+            &SearchRequest {
+                account: AccountScope::Account(account),
+                query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
+                scope: view_scope,
+                limit: 200,
+                order: postio_search::ResultOrder::Relevance,
+            },
+            chrono::Utc::now(),
+        )
+        .await.expect("the index answers")
+        .hits
+        .iter()
+        .map(|hit| hit.message_id)
+        .collect();
+
+        assert_eq!(
+            rows,
+            expected[..rows.len()],
+            "the list is not showing the hits the index returned, or is showing \
+             them in another order"
+        );
+        assert!(
+            !mailbox_rows.is_empty() && rows != mailbox_rows[..rows.len().min(mailbox_rows.len())],
+            "the list is showing exactly the folder it was showing before the \
+             search, which is what a result set that never arrived looks like"
+        );
+
+        // ── 3. the count is the result set's, not the folder's ──────────────
+        assert_eq!(
+            list.n_items(),
+            hits,
+            "the list says it is {} rows long over a result set of {}. The \
+             scrollbar and every page request are measured against this, so a \
+             stale total pages against the folder's length.",
+            list.n_items(),
+            hits
+        );
+
+        // ── 4. the cursor moves the preview ─────────────────────────────────
+        //
+        // The preview starts on the best match, so this asserts it *moves* — a
+        // pane wired to "the top hit" rather than to the cursor passes every
+        // assertion above and fails this one.
+        let first = view.preview().focused();
+        assert!(
+            first.is_some(),
+            "nothing is previewed at all, so a cursor moving cannot be observed"
+        );
+        assert!(rows.len() > 1, "one hit cannot demonstrate a cursor moving");
+        window.list().next_row();
+        let moved = settle_until(async || view.preview().focused() != first).await;
+        assert!(
+            moved,
+            "`j` through the results left the preview on {first:?}. \
+             `View::set_focused` is driven by the list's cursor; if it is still \
+             driven by the top hit, walking the results shows one message."
+        );
+        assert_eq!(
+            view.preview().focused(),
+            rows.get(1).copied(),
+            "the preview followed the cursor onto a message that is not the row \
+             the cursor is on"
+        );
+
+        // ── 4b. `o` re-asks the same query in date order (#499) ─────────────
+        //
+        // Through the command, exactly as the key and the header's sort control
+        // dispatch it — not by calling the search again, which would prove the
+        // executor and skip the wiring under test.
+        let dated: Vec<MessageId> = search(
+            &connection,
+            &SearchRequest {
+                account: AccountScope::Account(account),
+                query: &postio_search::parse(QUERY, chrono::Utc::now().date_naive()),
+                scope: view_scope,
+                limit: 200,
+                order: postio_search::ResultOrder::Newest,
+            },
+            chrono::Utc::now(),
+        )
+        .await.expect("the index answers in date order")
+        .hits
+        .iter()
+        .map(|hit| hit.message_id)
+        .collect();
+
+        window.act(postio_core::Command::ToggleResultOrder);
+        let reordered = settle_until(async || {
+            let rows = listed(&list, hits);
+            !rows.is_empty() && rows == dated[..rows.len()]
+        }).await;
+        assert!(
+            reordered,
+            "`o` over the results did not re-run the search in date order —          `CommandId::ToggleResultOrder` is answered in `search.rs::         install_order_toggle`, and the run reads the order it holds"
+        );
+
+        window.act(postio_core::Command::ToggleResultOrder);
+        let ranked_again = settle_until(async || {
+            let rows = listed(&list, hits);
+            !rows.is_empty() && rows == expected[..rows.len()]
+        }).await;
+        assert!(
+            ranked_again,
+            "a second `o` did not come back to the ranked order"
+        );
+
+        // ── 5. `Esc` puts the mailbox back, where it was ────────────────────
+        // The gesture, not the state: `press_escape` is what the key does, and
+        // `close` would empty the box without telling anything that the search
+        // is over.
+        finder.press_escape();
+        let left = settle_until(async || !feeds.messages.showing_results()).await;
+        assert!(
+            left,
+            "dismissing the box left the list showing the hits. `Esc` is the way \
+             out of a search and the folder is what is behind it."
+        );
+        let back = settle_until(async || listed(&list, 1) == mailbox_rows[..1]).await;
+        assert!(
+            back,
+            "the list came out of the search showing something other than the \
+             folder it went in on"
+        );
+        assert_eq!(
+            window.list().mailbox_name(),
+            mailbox_name,
+            "the column header is still counting results over a folder listing"
+        );
+
+        bridge.shutdown();
     });
-    assert!(
-        reordered,
-        "`o` over the results did not re-run the search in date order —          `CommandId::ToggleResultOrder` is answered in `search.rs::         install_order_toggle`, and the run reads the order it holds"
-    );
-
-    window.act(postio_core::Command::ToggleResultOrder);
-    let ranked_again = settle_until(|| {
-        let rows = listed(&list, hits);
-        !rows.is_empty() && rows == expected[..rows.len()]
-    });
-    assert!(
-        ranked_again,
-        "a second `o` did not come back to the ranked order"
-    );
-
-    // ── 5. `Esc` puts the mailbox back, where it was ────────────────────
-    // The gesture, not the state: `press_escape` is what the key does, and
-    // `close` would empty the box without telling anything that the search
-    // is over.
-    finder.press_escape();
-    let left = settle_until(|| !feeds.messages.showing_results());
-    assert!(
-        left,
-        "dismissing the box left the list showing the hits. `Esc` is the way \
-         out of a search and the folder is what is behind it."
-    );
-    let back = settle_until(|| listed(&list, 1) == mailbox_rows[..1]);
-    assert!(
-        back,
-        "the list came out of the search showing something other than the \
-         folder it went in on"
-    );
-    assert_eq!(
-        window.list().mailbox_name(),
-        mailbox_name,
-        "the column header is still counting results over a folder listing"
-    );
-
-    bridge.shutdown();
 }

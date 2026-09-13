@@ -544,7 +544,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
                 );
                 let _ = tx.send(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     });
 
@@ -619,7 +619,7 @@ fn the_reader_renders_and_hardens_the_corpus() {
                 );
                 let _ = styled_tx.send(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     });
 
@@ -926,7 +926,7 @@ fn load_and_read_title(markup: bool, document: &str) -> (String, String) {
         let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
         while answer.borrow().is_none() && Instant::now() < deadline {
             while glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let injected = answer.borrow_mut().take().unwrap_or_default();
 
@@ -1558,7 +1558,7 @@ fn the_shipped_reader_refuses_a_senders_script() {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     while answer.borrow().is_none() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let injected = answer.borrow_mut().take().unwrap_or_default();
     window.set_visible(false);
@@ -2027,7 +2027,7 @@ fn wait_for_connection(rx: &mpsc::Receiver<()>, timeout: Duration) -> bool {
             return true;
         }
         glib::MainContext::default().iteration(false);
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     false
 }
@@ -2060,7 +2060,7 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
 }
@@ -2081,7 +2081,7 @@ fn pump_for(duration: Duration) {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
         glib::MainContext::default().iteration(false);
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
 

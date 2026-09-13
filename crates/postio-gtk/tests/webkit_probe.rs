@@ -105,7 +105,7 @@ pub fn computed_pseudo(document: &str, selector: &str, pseudo: &str, property: &
         let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
         while answer.borrow().is_none() && Instant::now() < deadline {
             while glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let value = answer.borrow_mut().take().unwrap_or_default();
 
@@ -177,7 +177,7 @@ pub fn measure(document: &str, expression: &str) -> String {
         let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
         while answer.borrow().is_none() && Instant::now() < deadline {
             while glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let value = answer.borrow_mut().take().unwrap_or_default();
 
@@ -201,7 +201,7 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
 }
@@ -213,6 +213,6 @@ fn pump_for(duration: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(duration);
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }

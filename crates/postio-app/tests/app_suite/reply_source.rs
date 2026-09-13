@@ -54,7 +54,7 @@ use postio_model::ids::MessageId;
 use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::seed::seed_small;
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// A key press into the main window, through the keymap the application runs.
 fn press(window: &Window, key: &str, modifiers: gdk::ModifierType) {
@@ -68,7 +68,7 @@ fn marker(id: MessageId) -> String {
 }
 
 /// Land a body for `id` in the store, the way a settled backfill leaves one.
-fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Option<&str>) {
+async fn give_body(database: &Store, id: MessageId, text: Option<&str>, html: Option<&str>) {
     let connection = database.connect().await.expect("a connection");
     let stored = StoredBody {
         text: text.map(str::to_owned),
@@ -79,263 +79,262 @@ fn give_body(database: &Database, id: MessageId, text: Option<&str>, html: Optio
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
-        .expect("store the body");
+        .await.expect("store the body");
 }
 
 /// Move the cursor one row down and answer which message it is on now.
-fn next_message(window: &Window) -> MessageId {
+async fn next_message(window: &Window) -> MessageId {
     let list = window.list();
     let before = list.cursor_id();
     press(window, "j", gdk::ModifierType::empty());
     assert!(
-        settle_until(|| list.cursor_id() != before),
+        settle_until(async || list.cursor_id() != before).await,
         "`j` did not move the cursor, so nothing below can mean anything"
     );
     list.cursor_id().expect("the cursor is on a row")
 }
 
 pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 23);
-    assert!(report.message_count > 4, "not enough mail to walk through");
-    // Every message but the newest flagged: since #755 a folder row is a
-    // conversation and opens the conversation pane, and `e`-on-the-cursor-row
-    // — this file's whole subject — is the single-message rule, which lives
-    // in a query view now. The newest stays out because the folder view the
-    // window opens on has already reported it, and the cursor's dedup would
-    // otherwise swallow the Flagged view's own first report.
-    let flagged_total: u32 = {
-        let connection = database.connect().await.expect("a connection");
-        connection
-            .execute(
-                "UPDATE messages SET flagged = 1 WHERE id NOT IN \
-                 (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
-                (),
-            )
-            .await
-            .expect("the fixture writes");
-        connection
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| postio_storage::sql::RowExt::col(row, 0),
-            )
-            .expect("a count")
-    };
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 23).await;
+        assert!(report.message_count > 4, "not enough mail to walk through");
+        // Every message but the newest flagged: since #755 a folder row is a
+        // conversation and opens the conversation pane, and `e`-on-the-cursor-row
+        // — this file's whole subject — is the single-message rule, which lives
+        // in a query view now. The newest stays out because the folder view the
+        // window opens on has already reported it, and the cursor's dedup would
+        // otherwise swallow the Flagged view's own first report.
+        let flagged_total: u32 = {
+            let connection = database.connect().await.expect("a connection");
+            connection
+                .execute(
+                    "UPDATE messages SET flagged = 1 WHERE id NOT IN \
+                     (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
+                    (),
+                )
+                .await
+                .expect("the fixture writes");
+            postio_storage::sql::one(&*connection, 
+                    "SELECT COUNT(*) FROM messages WHERE flagged = 1",(),
+                    |row| postio_storage::sql::RowExt::col(row, 0)).await
+                .expect("a count")
+        };
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    // ── the same call `run` makes ────────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+        // ── the same call `run` makes ────────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
 
-    // Into the Flagged view, the way the sidebar's row would take it — but
-    // only after the sidebar's own default pick has landed: the folder list
-    // loads asynchronously and picking the default folder is what it does
-    // on arrival, which would stomp a scope opened before it. Then wait for
-    // the swap itself, because the model keeps the folder's rows until the
-    // Flagged page answers.
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 0),
-        "the opening folder never filled, so no scope can be left"
-    );
-    wired
-        .feeds
-        .messages
-        .open(postio_model::ListScope::Flagged(report.account.id));
-    assert!(
-        settle_until(|| list.model().n_items() == flagged_total),
-        "the Flagged view never filled, so there is no cursor to move"
-    );
-    let composer = window.composer();
+        // Into the Flagged view, the way the sidebar's row would take it — but
+        // only after the sidebar's own default pick has landed: the folder list
+        // loads asynchronously and picking the default folder is what it does
+        // on arrival, which would stomp a scope opened before it. Then wait for
+        // the swap itself, because the model keeps the folder's rows until the
+        // Flagged page answers.
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 0).await,
+            "the opening folder never filled, so no scope can be left"
+        );
+        wired
+            .feeds
+            .messages
+            .open(postio_model::ListScope::Flagged(report.account.id));
+        assert!(
+            settle_until(async || list.model().n_items() == flagged_total).await,
+            "the Flagged view never filled, so there is no cursor to move"
+        );
+        let composer = window.composer();
 
-    // ── `e` on a window nobody has touched replies to what it is showing ─
-    // This used to assert the opposite: the pane was empty until the user
-    // moved, so `e` had nothing to answer and did nothing. Since #601 the
-    // pane fills for the autoselected row, and the rule underneath is
-    // unchanged — `e` replies to the message the reader is *showing* — so
-    // the same rule now has the opposite outcome. Worth pinning in that
-    // form, because it is what a person meets one keystroke into a fresh
-    // window.
-    let autoselected = list.cursor_id().expect("a row is autoselected");
-    assert!(
-        settle_until(|| window.reading()),
-        "the window opened without filling the pane"
-    );
-    press(&window, "e", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`e` answered nothing, though the pane was showing a message"
-    );
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(autoselected),
-        "`e` replied to something other than the message on screen"
-    );
-    composer.discard();
-    settle();
+        // ── `e` on a window nobody has touched replies to what it is showing ─
+        // This used to assert the opposite: the pane was empty until the user
+        // moved, so `e` had nothing to answer and did nothing. Since #601 the
+        // pane fills for the autoselected row, and the rule underneath is
+        // unchanged — `e` replies to the message the reader is *showing* — so
+        // the same rule now has the opposite outcome. Worth pinning in that
+        // form, because it is what a person meets one keystroke into a fresh
+        // window.
+        let autoselected = list.cursor_id().expect("a row is autoselected");
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the window opened without filling the pane"
+        );
+        press(&window, "e", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`e` answered nothing, though the pane was showing a message"
+        );
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(autoselected),
+            "`e` replied to something other than the message on screen"
+        );
+        composer.discard();
+        settle();
 
-    // ── Return still opens a reply, on a window whose cursor never moved ─
-    // Activation was the *only* path in before #325, and it must not
-    // regress. Asserted here, before any `j`, so it is genuinely activation
-    // being tested: `connect_cursor_moved` has not fired once at this point,
-    // and deleting the activation wiring would fail this and nothing else.
-    let activated = list.cursor_id().expect("a row is autoselected");
-    give_body(
-        &database,
-        activated,
-        Some(&format!("{}\n", marker(activated))),
-        None,
-    );
-    // Through `GtkListView`'s own `list.activate-item`, the way
-    // `resume_draft.rs` does it: a key put through `Window::handle_key`
-    // never reaches the widget, and the keyboard is not in the list in a
-    // test that has been driving it by hand.
-    list.test_activate_cursor();
-    assert!(
-        settle_until(|| window.reading()),
-        "activation did not open the message, so nothing below is about \
-         replying to it"
-    );
-    press(&window, "e", gdk::ModifierType::empty());
-    assert!(composer.is_open(), "`e` after Return opened nothing");
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(activated),
-        "activation used to be the only path in, and it must still answer"
-    );
-    composer.discard();
-    settle();
+        // ── Return still opens a reply, on a window whose cursor never moved ─
+        // Activation was the *only* path in before #325, and it must not
+        // regress. Asserted here, before any `j`, so it is genuinely activation
+        // being tested: `connect_cursor_moved` has not fired once at this point,
+        // and deleting the activation wiring would fail this and nothing else.
+        let activated = list.cursor_id().expect("a row is autoselected");
+        give_body(
+            &database,
+            activated,
+            Some(&format!("{}\n", marker(activated))),
+            None,
+        ).await;
+        // Through `GtkListView`'s own `list.activate-item`, the way
+        // `resume_draft.rs` does it: a key put through `Window::handle_key`
+        // never reaches the widget, and the keyboard is not in the list in a
+        // test that has been driving it by hand.
+        list.test_activate_cursor();
+        assert!(
+            settle_until(async || window.reading()).await,
+            "activation did not open the message, so nothing below is about \
+             replying to it"
+        );
+        press(&window, "e", gdk::ModifierType::empty());
+        assert!(composer.is_open(), "`e` after Return opened nothing");
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(activated),
+            "activation used to be the only path in, and it must still answer"
+        );
+        composer.discard();
+        settle();
 
-    // ── `e` on the message the cursor is on ──────────────────────────────
-    let replied_to = next_message(&window);
-    give_body(
-        &database,
-        replied_to,
-        Some(&format!("{}\n", marker(replied_to))),
-        None,
-    );
-    assert!(
-        settle_until(|| window.reading()),
-        "the pane never filled, so this cannot be a test about what it shows"
-    );
+        // ── `e` on the message the cursor is on ──────────────────────────────
+        let replied_to = next_message(&window).await;
+        give_body(
+            &database,
+            replied_to,
+            Some(&format!("{}\n", marker(replied_to))),
+            None,
+        ).await;
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the pane never filled, so this cannot be a test about what it shows"
+        );
 
-    press(&window, "e", gdk::ModifierType::empty());
-    assert!(
-        composer.is_open(),
-        "`e` on the message in the reading pane did nothing. The composer's \
-         reply source is fed by activation — Enter or a double click — and \
-         the pane is fed by the cursor, so replying while reading normally \
-         is inert (#325)."
-    );
-    let draft = composer.draft();
-    assert_eq!(draft.kind, DraftKind::Reply);
-    assert_eq!(
-        draft.in_reply_to,
-        Some(replied_to),
-        "the composer replied to a different message than the one on screen"
-    );
-    assert!(
-        draft
-            .body
-            .text
-            .as_deref()
-            .unwrap_or_default()
-            .contains(&marker(replied_to)),
-        "the reply quotes nothing of the message it is a reply to"
-    );
-    // Back to nothing composed, without the discard dialog a person would
-    // answer: the gesture under test is the key press, not the teardown.
-    composer.discard();
-    settle();
-    assert!(!composer.is_open());
+        press(&window, "e", gdk::ModifierType::empty());
+        assert!(
+            composer.is_open(),
+            "`e` on the message in the reading pane did nothing. The composer's \
+             reply source is fed by activation — Enter or a double click — and \
+             the pane is fed by the cursor, so replying while reading normally \
+             is inert (#325)."
+        );
+        let draft = composer.draft();
+        assert_eq!(draft.kind, DraftKind::Reply);
+        assert_eq!(
+            draft.in_reply_to,
+            Some(replied_to),
+            "the composer replied to a different message than the one on screen"
+        );
+        assert!(
+            draft
+                .body
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&marker(replied_to)),
+            "the reply quotes nothing of the message it is a reply to"
+        );
+        // Back to nothing composed, without the discard dialog a person would
+        // answer: the gesture under test is the key press, not the teardown.
+        composer.discard();
+        settle();
+        assert!(!composer.is_open());
 
-    // ── `E` on an HTML-only message: markup in, quoted text out ──────────
-    // Marketing mail, invitations and anything written in a webmail client
-    // are HTML-only, so this is the common case rather than an edge one.
-    let replied_all_to = next_message(&window);
-    give_body(
-        &database,
-        replied_all_to,
-        None,
-        Some(&format!("<p>{}</p>", marker(replied_all_to))),
-    );
-    press(&window, "E", gdk::ModifierType::SHIFT_MASK);
-    assert!(composer.is_open(), "`E` did not open a reply-all (#325)");
-    let draft = composer.draft();
-    assert_eq!(draft.kind, DraftKind::ReplyAll);
-    assert_eq!(draft.in_reply_to, Some(replied_all_to));
-    assert!(
-        draft
-            .body
-            .text
-            .as_deref()
-            .unwrap_or_default()
-            .contains(&marker(replied_all_to)),
-        "an HTML-only message was quoted as an attribution line with nothing \
-         under it"
-    );
-    composer.discard();
-    settle();
+        // ── `E` on an HTML-only message: markup in, quoted text out ──────────
+        // Marketing mail, invitations and anything written in a webmail client
+        // are HTML-only, so this is the common case rather than an edge one.
+        let replied_all_to = next_message(&window).await;
+        give_body(
+            &database,
+            replied_all_to,
+            None,
+            Some(&format!("<p>{}</p>", marker(replied_all_to))),
+        ).await;
+        press(&window, "E", gdk::ModifierType::SHIFT_MASK);
+        assert!(composer.is_open(), "`E` did not open a reply-all (#325)");
+        let draft = composer.draft();
+        assert_eq!(draft.kind, DraftKind::ReplyAll);
+        assert_eq!(draft.in_reply_to, Some(replied_all_to));
+        assert!(
+            draft
+                .body
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&marker(replied_all_to)),
+            "an HTML-only message was quoted as an attribution line with nothing \
+             under it"
+        );
+        composer.discard();
+        settle();
 
-    // ── `f` on the message under the cursor ──────────────────────────────
-    // A forward carries no `in_reply_to` by design, so the quoted marker is
-    // what names the source here.
-    let forwarded = next_message(&window);
-    give_body(
-        &database,
-        forwarded,
-        Some(&format!("{}\n", marker(forwarded))),
-        None,
-    );
-    press(&window, "f", gdk::ModifierType::empty());
-    assert!(composer.is_open(), "`f` did not open a forward (#325)");
-    let draft = composer.draft();
-    assert_eq!(draft.kind, DraftKind::Forward);
-    assert!(
-        draft
-            .body
-            .text
-            .as_deref()
-            .unwrap_or_default()
-            .contains(&marker(forwarded)),
-        "the forward carries none of the message it forwards"
-    );
-    composer.discard();
-    settle();
+        // ── `f` on the message under the cursor ──────────────────────────────
+        // A forward carries no `in_reply_to` by design, so the quoted marker is
+        // what names the source here.
+        let forwarded = next_message(&window).await;
+        give_body(
+            &database,
+            forwarded,
+            Some(&format!("{}\n", marker(forwarded))),
+            None,
+        ).await;
+        press(&window, "f", gdk::ModifierType::empty());
+        assert!(composer.is_open(), "`f` did not open a forward (#325)");
+        let draft = composer.draft();
+        assert_eq!(draft.kind, DraftKind::Forward);
+        assert!(
+            draft
+                .body
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&marker(forwarded)),
+            "the forward carries none of the message it forwards"
+        );
+        composer.discard();
+        settle();
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

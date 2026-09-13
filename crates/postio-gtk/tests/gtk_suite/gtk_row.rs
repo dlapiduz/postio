@@ -697,7 +697,7 @@ fn frames_until(window: &gtk::Window, done: impl Fn() -> bool) -> bool {
     }
     waiting.set(false);
     heartbeat.remove();
-    done()
+    done().await
 }
 
 /// The window's pixels, or `None` if the compositor is not painting it.

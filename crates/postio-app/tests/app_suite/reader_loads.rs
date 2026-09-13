@@ -50,7 +50,7 @@ use postio_gtk::{app, fonts, style};
 use postio_model::ids::MessageId;
 use postio_model::{BodyState, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// `j`, through the keymap the application actually runs.
 fn press_j(window: &Window) {
@@ -58,156 +58,158 @@ fn press_j(window: &Window) {
 }
 
 pub fn moving_and_reopening_a_message_costs_one_document_load_each() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    // ── two messages, both with bodies, so every pane state is a rendered
-    //    document rather than a plate ──────────────────────────────────────
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    let (account, newest, older) = {
-        let connection = database.connect().await.expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection).await;
-        let repository = MessageRepository::new(&connection);
-
-        let mut older = Message::new(
-            account.id,
-            inbox,
-            chrono::Utc::now() - chrono::Duration::hours(1),
-        );
-        older.subject = Some("Last week's figures".into());
-        older.sync.body_state = BodyState::Full;
-        let older = repository.create(&mut older).expect("a message");
-
-        let mut newest = Message::new(account.id, inbox, chrono::Utc::now());
-        newest.subject = Some("Quarterly figures".into());
-        newest.sync.body_state = BodyState::Full;
-        let newest = repository.create(&mut newest).expect("a message");
-
-        (account.id, newest, older)
-    };
-    // Different text in each, so the two documents genuinely differ and a
-    // missing load would be a *visible* failure rather than a bookkeeping one.
-    store_body(&database, newest, "See the attached figures.");
-    store_body(&database, older, "Last week, for comparison.");
-
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    // ── the same call `run` makes ────────────────────────────────────────
-    let wired = feed_the_window(&window, &wiring).expect("the store has an account");
-
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() > 1),
-        "need two rows to move between"
-    );
-    // The autoselect fills the pane for row 0 (#601) — that is the state the
-    // rest of this starts from, not something under test here.
-    assert!(
-        settle_until(|| window.reading()),
-        "the window opened with a row under the cursor and an empty pane"
-    );
-    assert!(
-        settle_until(|| window.reader().loads() > 0),
-        "the pane never loaded a document at all"
-    );
-    // Let the opening settle completely, so what follows is measured against
-    // a pane that has stopped moving.
-    let opened = {
-        let mut steady = window.reader().loads();
-        while !settle_while(|| window.reader().loads() == steady) {
-            steady = window.reader().loads();
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
         }
-        steady
-    };
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── 1. moving the cursor to another message: exactly one load ────────
-    press_j(&window);
-    assert!(
-        settle_until(|| window.reader().loads() > opened),
-        "moving the cursor to the next message never reached the pane"
-    );
-    assert!(settle_while(|| window.reader().loads() == opened + 1));
-    assert_eq!(
-        window.reader().loads(),
-        opened + 1,
-        "moving the cursor one row should build one document, not {}",
-        window.reader().loads() - opened
-    );
+        // ── two messages, both with bodies, so every pane state is a rendered
+        //    document rather than a plate ──────────────────────────────────────
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // ── 2. activating the row already under the cursor: no further load ──
-    //
-    // The filler is wired to the cursor *and* to activation, deliberately —
-    // on a window nobody has touched the cursor has reported nothing, and
-    // Enter still has to open what it is sitting on. What it must not do is
-    // rebuild a document that is already on screen.
-    let moved = window.reader().loads();
-    activate_row(&window, 1);
-    assert!(
-        settle_while(|| window.reader().loads() == moved),
-        "Enter on the row already under the cursor tore the pane's document \
-         down and built the same one again — every reload is a frame of \
-         unpainted WebView, which is what #749 reported seeing as black"
-    );
+        let (account, newest, older) = {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            let repository = MessageRepository::new(&connection);
 
-    // ── 3. a payload arriving for the message on screen: no further load ─
-    //
-    // `Event::BodyLoaded` is emitted for every payload a backfill commits,
-    // and the body is already local here, so the recomposed document is
-    // byte-for-byte the one showing. The pane may well be *asked* to draw —
-    // the parts panel's chips do change — but the person reading must not
-    // have the document pulled out from under them for it.
-    let before = window.reader().paints();
-    for _ in 0..20 {
-        wired.feeds.apply(&Event::BodyLoaded {
-            account,
-            message: older,
-        });
-    }
-    assert!(
-        settle_while(|| window.reader().loads() == moved),
-        "an arrival that recomposes the identical document reloaded it \
-         anyway: {} loads for a document that did not change",
-        window.reader().loads() - moved
-    );
-    assert!(
-        window.reader().paints() >= before,
-        "the paint tally should not go backwards"
-    );
+            let mut older = Message::new(
+                account.id,
+                inbox,
+                chrono::Utc::now() - chrono::Duration::hours(1),
+            );
+            older.subject = Some("Last week's figures".into());
+            older.sync.body_state = BodyState::Full;
+            let older = repository.create(&mut older).await.expect("a message");
 
-    bridge.shutdown();
+            let mut newest = Message::new(account.id, inbox, chrono::Utc::now());
+            newest.subject = Some("Quarterly figures".into());
+            newest.sync.body_state = BodyState::Full;
+            let newest = repository.create(&mut newest).await.expect("a message");
+
+            (account.id, newest, older)
+        };
+        // Different text in each, so the two documents genuinely differ and a
+        // missing load would be a *visible* failure rather than a bookkeeping one.
+        store_body(&database, newest, "See the attached figures.").await;
+        store_body(&database, older, "Last week, for comparison.").await;
+
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        // ── the same call `run` makes ────────────────────────────────────────
+        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() > 1).await,
+            "need two rows to move between"
+        );
+        // The autoselect fills the pane for row 0 (#601) — that is the state the
+        // rest of this starts from, not something under test here.
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the window opened with a row under the cursor and an empty pane"
+        );
+        assert!(
+            settle_until(async || window.reader().loads() > 0).await,
+            "the pane never loaded a document at all"
+        );
+        // Let the opening settle completely, so what follows is measured against
+        // a pane that has stopped moving.
+        let opened = {
+            let mut steady = window.reader().loads();
+            while !settle_while(async || window.reader().loads() == steady).await {
+                steady = window.reader().loads();
+            }
+            steady
+        };
+
+        // ── 1. moving the cursor to another message: exactly one load ────────
+        press_j(&window);
+        assert!(
+            settle_until(async || window.reader().loads() > opened).await,
+            "moving the cursor to the next message never reached the pane"
+        );
+        assert!(settle_while(async || window.reader().loads() == opened + 1).await);
+        assert_eq!(
+            window.reader().loads(),
+            opened + 1,
+            "moving the cursor one row should build one document, not {}",
+            window.reader().loads() - opened
+        );
+
+        // ── 2. activating the row already under the cursor: no further load ──
+        //
+        // The filler is wired to the cursor *and* to activation, deliberately —
+        // on a window nobody has touched the cursor has reported nothing, and
+        // Enter still has to open what it is sitting on. What it must not do is
+        // rebuild a document that is already on screen.
+        let moved = window.reader().loads();
+        activate_row(&window, 1);
+        assert!(
+            settle_while(async || window.reader().loads() == moved).await,
+            "Enter on the row already under the cursor tore the pane's document \
+             down and built the same one again — every reload is a frame of \
+             unpainted WebView, which is what #749 reported seeing as black"
+        );
+
+        // ── 3. a payload arriving for the message on screen: no further load ─
+        //
+        // `Event::BodyLoaded` is emitted for every payload a backfill commits,
+        // and the body is already local here, so the recomposed document is
+        // byte-for-byte the one showing. The pane may well be *asked* to draw —
+        // the parts panel's chips do change — but the person reading must not
+        // have the document pulled out from under them for it.
+        let before = window.reader().paints();
+        for _ in 0..20 {
+            wired.feeds.apply(&Event::BodyLoaded {
+                account,
+                message: older,
+            });
+        }
+        assert!(
+            settle_while(async || window.reader().loads() == moved).await,
+            "an arrival that recomposes the identical document reloaded it \
+             anyway: {} loads for a document that did not change",
+            window.reader().loads() - moved
+        );
+        assert!(
+            window.reader().paints() >= before,
+            "the paint tally should not go backwards"
+        );
+
+        bridge.shutdown();
+    });
 }
 
 /// Write `text` as `message`'s body, as a completed fetch leaves it.
-fn store_body(database: &Database, message: MessageId, text: &str) {
+async fn store_body(database: &Store, message: MessageId, text: &str) {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .set_body(
@@ -221,7 +223,7 @@ fn store_body(database: &Database, message: MessageId, text: &str) {
             },
             BodyState::Full,
         )
-        .expect("the body is stored");
+        .await.expect("the body is stored");
 }
 
 /// Activate row `index`, the way Enter and a double click both arrive.

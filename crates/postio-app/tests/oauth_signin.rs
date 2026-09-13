@@ -213,21 +213,38 @@ fn play_the_browser(authorize_url: &Url, code: &str) {
 // --- harness ------------------------------------------------------------
 
 /// Run the main loop until `done` or the budget runs out.
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(15));
     while std::time::Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }
 
-#[test]
-fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
+#[tokio::test]
+async fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
+    // On a `multi_thread` runtime driven by `block_on`: the body runs on this
+    // thread, where GTK lives, and a synchronous callback reaching
+    // `postio_session::blocking::now` finds a runtime it can `block_in_place`
+    // on. `app_suite`'s `gtk_case` is the same shape and says why.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(sign_in());
+}
+
+async fn sign_in() {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let state_dir = scratch.path().join("state");
     let config_dir = scratch.path().join("config");
@@ -332,7 +349,7 @@ sources = ["own-client"]
         None,
         Arc::new(DeadTransport),
         Arc::new(browser.clone()),
-    );
+    ).await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -342,7 +359,7 @@ sources = ["own-client"]
     screen.set_address(ADDRESS);
     screen.probe();
     assert!(
-        settle_until(|| matches!(screen.status(), Status::Found(_))),
+        settle_until(async || matches!(screen.status(), Status::Found(_))).await,
         "the overlay preset never resolved: {:?}",
         screen.status()
     );
@@ -360,7 +377,7 @@ sources = ["own-client"]
 
     // ── the browser's part ──────────────────────────────────────────────
     assert!(
-        settle_until(|| browser.opened.lock().unwrap().is_some()),
+        settle_until(async || browser.opened.lock().unwrap().is_some()).await,
         "no authorization URL was ever opened: {:?}",
         screen.status()
     );
@@ -373,7 +390,7 @@ sources = ["own-client"]
     play_the_browser(&authorize_url, "the-code");
 
     assert!(
-        settle_until(|| matches!(screen.status(), Status::SyncWindow | Status::Failed(_))),
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
         "the sign-in never settled: {:?}",
         screen.status()
     );
@@ -387,7 +404,7 @@ sources = ["own-client"]
     let connection = database.connect().await.expect("a connection");
     let account = AccountRepository::new(&connection)
         .list()
-        .expect("accounts")
+        .await.expect("accounts")
         .into_iter()
         .find(|account| account.address.address == ADDRESS)
         .expect("the account row landed");

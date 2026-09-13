@@ -57,22 +57,20 @@ use postio_model::TransportSecurity;
 use postio_session::{Wiring, actions};
 use postio_storage::repository::AccountRepository;
 use postio_storage::{BlobStore, test_support};
+use postio_storage::bind;
 
 /// The local row for `rfc_message_id`, if the store has one.
 ///
 /// Phase 3 identifies the message it delivered rather than counting rows —
 /// see there for why.
-fn id_of(
+async fn id_of(
     database: &postio_storage::Store,
     rfc_message_id: &str,
 ) -> Option<postio_model::MessageId> {
     let connection = database.connect().await.ok()?;
-    connection
-        .query_row(
-            "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
-            [rfc_message_id],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
-        )
+    postio_storage::sql::one(&*connection, 
+            "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",bind![rfc_message_id],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
         .ok()
         .map(postio_model::MessageId::new)
 }
@@ -87,8 +85,8 @@ const DELIVERED_MESSAGE_ID: &str = "<harbour-dev.20260302T081200.a1@lists.exampl
 const INBOX_PATH: &str = "INBOX";
 const ARCHIVE_PATH: &str = "Archive";
 
-#[test]
-fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
+#[tokio::test]
+async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -140,7 +138,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         account.incoming.username = server.account().to_owned();
         AccountRepository::new(&connection)
             .update(&mut account)
-            .expect("the account row points at the test server");
+            .await.expect("the account row points at the test server");
     }
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let key = AccountKey::new("test@example.com");
@@ -181,7 +179,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
-        .expect("the store has an account")
+        .await.expect("the store has an account")
         .feeds;
     commands::install(
         &window,
@@ -211,22 +209,20 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // The production entry: reads the account row, builds the real connector
     // and pool, spawns the engine, starts the watch.
-    start_syncing(&window, &wiring);
+    start_syncing(&window, &wiring).await;
 
     // ── 1. wire → window: the first sync fills the list ───────────────────
     let list = window.list();
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && list.model().n_items() != SEEDED.len() as u32 {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if list.model().n_items() != SEEDED.len() as u32 {
         let connection = database.connect().await.expect("a connection");
-        let messages: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+        let messages: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
             .unwrap_or(-1);
-        let mailboxes: i64 = connection
-            .query_row("SELECT count(*) FROM mailboxes", [], |r| r.get(0))
+        let mailboxes: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM mailboxes",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
             .unwrap_or(-1);
         panic!(
             "first sync never reached the list: server saw {} commands (first: {:?}), store holds {mailboxes} mailboxes / {messages} messages, list shows {} rows; sidebar default_mailbox={:?} selected={:?} list feed mailbox={:?}",
@@ -259,7 +255,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
         let connection = database.connect().await.expect("a connection");
         postio_storage::repository::MessageRepository::new(&connection)
             .get(focused)
-            .expect("a read")
+            .await.expect("a read")
             .expect("the cursor row is in the store")
             .server
             .uid
@@ -281,24 +277,26 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
     while Instant::now() < deadline && server.uids(ARCHIVE_PATH).is_empty() {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if server.uids(ARCHIVE_PATH).is_empty() {
         let connection = database.connect().await.expect("a connection");
-        let states: String = connection
-            .prepare("SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue")
-            .and_then(|mut st| {
-                st.query_map([], |r| {
-                    Ok(format!(
-                        "{}:{}:{}",
-                        r.col::<String>(0)?,
-                        r.col::<String>(1)?,
-                        r.col::<String>(2)?
-                    ))
-                })
-                .map(|rows| rows.filter_map(Result::ok).collect::<Vec<_>>().join(", "))
-            })
-            .unwrap_or_else(|e| format!("? ({e})"));
+        let states: String = postio_storage::sql::all(
+            &connection,
+            "SELECT op_type, state, coalesce(last_error,'-') FROM operation_queue",
+            (),
+            |row| {
+                Ok(format!(
+                    "{}:{}:{}",
+                    postio_storage::sql::RowExt::col::<String>(row, 0)?,
+                    postio_storage::sql::RowExt::col::<String>(row, 1)?,
+                    postio_storage::sql::RowExt::col::<String>(row, 2)?
+                ))
+            },
+        )
+        .await
+        .map(|rows| rows.join(", "))
+        .unwrap_or_else(|error| format!("? ({error})"));
         let tail: Vec<String> = server.commands().into_iter().rev().take(6).collect();
         panic!(
             "the archive never landed on the server: queue [{states}], server INBOX={:?} Archive={:?}, last commands={tail:?}",
@@ -339,7 +337,7 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // archive is doing in the background.
     let commands_before = server.commands().len();
     assert!(
-        id_of(&database, DELIVERED_MESSAGE_ID).is_none(),
+        id_of(&database, DELIVERED_MESSAGE_ID).await.is_none(),
         "the fixture phase 3 delivers is already in the store, so its arrival \
          would prove nothing"
     );
@@ -349,16 +347,15 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let mut delivered = None;
     while Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        delivered = id_of(&database, DELIVERED_MESSAGE_ID);
+        delivered = id_of(&database, DELIVERED_MESSAGE_ID).await;
         if delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     if !delivered.is_some_and(|id| list.model().position_of(id).is_some()) {
         let connection = database.connect().await.expect("a connection");
-        let local: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+        let local: i64 = postio_storage::sql::one(&*connection, "SELECT count(*) FROM messages",(), |r| postio_storage::sql::RowExt::col(r, 0)).await
             .unwrap_or(-1);
         let after: Vec<String> = server
             .commands()

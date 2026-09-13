@@ -189,7 +189,7 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     // a duplicate or skip a message, and neither is visible until somebody
     // counts.
     let database = test_support::memory().await;
-    let report = seed_small(&database, 3);
+    let report = seed_small(&database, 3).await;
     let inbox = report
         .await
         .mailbox(MailboxRole::Inbox)
@@ -230,7 +230,7 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     // documentation warns about. It is not a regression, and pretending to
     // fix it would mean a cache that has to be told about every write.
     let database = test_support::memory().await;
-    let report = seed_small(&database, 5);
+    let report = seed_small(&database, 5).await;
     let inbox = report
         .await
         .mailbox(MailboxRole::Inbox)
@@ -279,7 +279,7 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     // The column has an owner now. This is about what happens if it ever
     // stops: the read has to degrade to slow, not to invisible.
     let database = test_support::memory().await;
-    let report = seed_small(&database, 5);
+    let report = seed_small(&database, 5).await;
     let inbox = report
         .await
         .mailbox(MailboxRole::Inbox)

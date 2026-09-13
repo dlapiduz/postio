@@ -39,52 +39,54 @@ use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
 pub fn the_list_fills_from_storage_without_a_server() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statements of a single-threaded test, before the app runs.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statements of a single-threaded test, before the app runs.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    seed_small(&database, 11);
+        let database = test_support::memory().await;
+        seed_small(&database, 11).await;
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let wired = feed_the_window(&window, &wiring);
-    assert!(
-        wired.is_some(),
-        "the seeded store has an account to feed from"
-    );
+        let wired = feed_the_window(&window, &wiring);
+        assert!(
+            wired.await.is_some(),
+            "the seeded store has an account to feed from"
+        );
 
-    // The whole assertion: rows, with nothing connected and nothing to
-    // connect to. If reading stored mail ever needs the network again, this
-    // is where it stops.
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "the list never filled from a seeded store. Stored mail must reach \
-         the screen without a server -- the messages are already on disk, \
-         and startup awaited two IMAP round trips before drawing them (#1434)"
-    );
+        // The whole assertion: rows, with nothing connected and nothing to
+        // connect to. If reading stored mail ever needs the network again, this
+        // is where it stops.
+        assert!(
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "the list never filled from a seeded store. Stored mail must reach \
+             the screen without a server -- the messages are already on disk, \
+             and startup awaited two IMAP round trips before drawing them (#1434)"
+        );
 
-    window.destroy();
+        window.destroy();
+    });
 }

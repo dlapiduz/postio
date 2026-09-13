@@ -35,58 +35,60 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn the_window_warms_its_editing_surface_without_being_asked() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 11);
-    assert!(report.message_count > 0, "the fixture seeded no mail");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        assert!(report.message_count > 0, "the fixture seeded no mail");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    assert!(
-        !window.composer().is_warm(),
-        "the composer was warm before the window was fed, so this test could \
-         not fail"
-    );
+        assert!(
+            !window.composer().is_warm(),
+            "the composer was warm before the window was fed, so this test could \
+             not fail"
+        );
 
-    // The same call `run` makes, and then nothing but time passing.
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let warmed = settle_until(|| window.composer().is_warm());
+        // The same call `run` makes, and then nothing but time passing.
+        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let warmed = settle_until(async || window.composer().is_warm()).await;
 
-    assert!(
-        warmed,
-        "nothing warmed the editing surface. `Composer::warm` exists and its \
-         own test passes; that is exactly the shape of bug #327 is about — \
-         check what is supposed to *call* it."
-    );
-    assert!(
-        !window.composer().is_open(),
-        "warming the editing surface opened the composer over the reading pane"
-    );
+        assert!(
+            warmed,
+            "nothing warmed the editing surface. `Composer::warm` exists and its \
+             own test passes; that is exactly the shape of bug #327 is about — \
+             check what is supposed to *call* it."
+        );
+        assert!(
+            !window.composer().is_open(),
+            "warming the editing surface opened the composer over the reading pane"
+        );
 
-    let _ = wired;
-    bridge.shutdown();
+        let _ = wired;
+        bridge.shutdown();
+    });
 }

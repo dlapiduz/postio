@@ -88,136 +88,138 @@ fn labels_of(rows: Vec<gtk::Widget>) -> Vec<String> {
 }
 
 pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: the suite runs its cases in sequence on one thread.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: the suite runs its cases in sequence on one thread.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
-
-    // ── the server the joining account will be pointed at ────────────────
-    //
-    // Its own runtime, kept for the life of the case: the accept loop and
-    // the sessions live on it, while the engine brings a runtime of its own.
-    let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-    let server = server_runtime.block_on(
-        TestServer::builder()
-            .account(JOINING_ADDRESS)
-            .password(JOINING_PASSWORD)
-            .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
-            .start(),
-    );
-
-    // ── an application already running over somebody else's mail ─────────
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 51);
-
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-
-    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    )
-    .with_secrets(secrets.clone());
-
-    let window = Window::default();
-    window.present();
-    settle();
-    feed_the_window(&window, &wiring).expect("the seeded store has an account");
-
-    // The seeded account's own engine is deliberately never started: this
-    // case is about the one that joins, and `start_syncing` would dial
-    // `imap.example.com`, which no test in the default suite may do.
-    assert_eq!(
-        account_rows(&window).len(),
-        1,
-        "the application starts knowing about exactly the account it opened"
-    );
-
-    // ── the account appears in the store, the way a submission writes it ─
-    let joining = {
-        let connection = database.connect().await.expect("a connection");
-        let mut account = Account::new("Grace", EmailAddress::new(None::<String>, JOINING_ADDRESS));
-        account.incoming.host = server.addr().ip().to_string();
-        account.incoming.port = server.addr().port();
-        account.incoming.security = TransportSecurity::None;
-        account.incoming.username = server.account().to_owned();
-        AccountRepository::new(&connection)
-            .create(&mut account)
-            .expect("the joining account's row");
-        account
-    };
-    server_runtime
-        .block_on(secrets.store(
-            &AccountKey::new(JOINING_ADDRESS),
-            &Password::new(JOINING_PASSWORD),
-        ))
-        .expect("the memory store accepts a password");
-
-    // ── the whole of what "join a running application" means ─────────────
-    attach_account(&window, &wiring, &joining).expect("the pool can carry a second engine");
-
-    // 1. it syncs: the folders and the mail arrive over the wire.
-    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
-    let mut synced = 0;
-    while Instant::now() < deadline {
-        settle();
-        let connection = database.connect().await.expect("a connection");
-        synced = MailboxRepository::new(&connection)
-            .list_for_account(joining.id)
-            .expect("a read")
-            .len();
-        drop(connection);
-        if synced > 0 {
-            break;
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
         }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        synced > 0,
-        "the joining account never synced: no engine came up for it, so \
-         adding an account only takes effect at the next launch. The server \
-         saw {} commands (first: {:?})",
-        server.commands().len(),
-        server.commands().first(),
-    );
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // 2. the surfaces know: the settings panel lists it without being
-    //    reopened.
-    let listed = labels_of(account_rows(&window));
-    assert!(
-        listed.iter().any(|label| label.contains(JOINING_ADDRESS)),
-        "the settings panel does not list the account that just joined \
-         ({listed:?}): attaching started an engine and told no surface \
-         about it"
-    );
-    // The account already there is not disturbed by the arrival of another.
-    assert!(
-        listed
-            .iter()
-            .any(|label| label.contains(report.account.address.address.as_str())),
-        "attaching an account dropped the one that was already open \
-         ({listed:?})"
-    );
+        // ── the server the joining account will be pointed at ────────────────
+        //
+        // Its own runtime, kept for the life of the case: the accept loop and
+        // the sessions live on it, while the engine brings a runtime of its own.
+        let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
+        let server = server_runtime.block_on(
+            TestServer::builder()
+                .account(JOINING_ADDRESS)
+                .password(JOINING_PASSWORD)
+                .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
+                .start(),
+        );
 
-    bridge.shutdown();
+        // ── an application already running over somebody else's mail ─────────
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 51).await;
+
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        )
+        .with_secrets(secrets.clone());
+
+        let window = Window::default();
+        window.present();
+        settle();
+        feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+
+        // The seeded account's own engine is deliberately never started: this
+        // case is about the one that joins, and `start_syncing` would dial
+        // `imap.example.com`, which no test in the default suite may do.
+        assert_eq!(
+            account_rows(&window).len(),
+            1,
+            "the application starts knowing about exactly the account it opened"
+        );
+
+        // ── the account appears in the store, the way a submission writes it ─
+        let joining = {
+            let connection = database.connect().await.expect("a connection");
+            let mut account = Account::new("Grace", EmailAddress::new(None::<String>, JOINING_ADDRESS));
+            account.incoming.host = server.addr().ip().to_string();
+            account.incoming.port = server.addr().port();
+            account.incoming.security = TransportSecurity::None;
+            account.incoming.username = server.account().to_owned();
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .await.expect("the joining account's row");
+            account
+        };
+        server_runtime
+            .block_on(secrets.store(
+                &AccountKey::new(JOINING_ADDRESS),
+                &Password::new(JOINING_PASSWORD),
+            ))
+            .expect("the memory store accepts a password");
+
+        // ── the whole of what "join a running application" means ─────────────
+        attach_account(&window, &wiring, &joining).await.expect("the pool can carry a second engine");
+
+        // 1. it syncs: the folders and the mail arrive over the wire.
+        let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(120));
+        let mut synced = 0;
+        while Instant::now() < deadline {
+            settle();
+            let connection = database.connect().await.expect("a connection");
+            synced = MailboxRepository::new(&connection)
+                .list_for_account(joining.id)
+                .await.expect("a read")
+                .len();
+            drop(connection);
+            if synced > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            synced > 0,
+            "the joining account never synced: no engine came up for it, so \
+             adding an account only takes effect at the next launch. The server \
+             saw {} commands (first: {:?})",
+            server.commands().len(),
+            server.commands().first(),
+        );
+
+        // 2. the surfaces know: the settings panel lists it without being
+        //    reopened.
+        let listed = labels_of(account_rows(&window));
+        assert!(
+            listed.iter().any(|label| label.contains(JOINING_ADDRESS)),
+            "the settings panel does not list the account that just joined \
+             ({listed:?}): attaching started an engine and told no surface \
+             about it"
+        );
+        // The account already there is not disturbed by the arrival of another.
+        assert!(
+            listed
+                .iter()
+                .any(|label| label.contains(report.account.address.address.as_str())),
+            "attaching an account dropped the one that was already open \
+             ({listed:?})"
+        );
+
+        bridge.shutdown();
+    });
 }

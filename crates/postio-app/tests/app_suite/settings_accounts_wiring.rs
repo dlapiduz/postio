@@ -28,175 +28,177 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn account_rows_persist_enable_and_mark_removal() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    seed_small(&database, 41);
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        seed_small(&database, 41).await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // A second account: "one row per account" proves nothing with only the
-    // one `seed_small` itself creates.
-    let connection = database.connect().await.expect("a connection");
-    let mut second = postio_model::Account::new(
-        "Work",
-        EmailAddress::new(None::<String>, "work@example.com"),
-    );
-    let second_id = AccountRepository::new(&connection)
-        .create(&mut second)
-        .expect("insert a second account");
-    drop(connection);
-
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    settle();
-
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let panel = window.settings();
-
-    // ── both accounts show up, without anyone telling the panel to look ──
-    assert!(
-        settle_until(|| rows(&panel).len() == 2),
-        "expected both accounts drawn as rows, got {} row(s)",
-        rows(&panel).len()
-    );
-
-    // ── flipping the second account's switch persists to its own row ────
-    let switch = switch_in(&rows(&panel)[1]);
-    let before = switch.is_active();
-    assert!(before, "Account::new starts an account enabled");
-    switch.set_active(!before);
-    assert!(
-        settle_until(|| !read_enabled(&database, second_id)),
-        "the switch flip should have reached the database"
-    );
-
-    // Flip it back so the removal case below starts from a known state.
-    switch.set_active(true);
-    assert!(settle_until(|| read_enabled(&database, second_id)));
-
-    // ── Remove marks the account rather than deleting it outright ───────
-    // The panel starts hidden (`window.rs` builds it with `set_visible(false)`
-    // until something asks for it), and a hidden row has no real geometry
-    // for `row_at_y` to find -- `open_account_menu` silently finds nothing
-    // there, which is exactly what happened before this was added.
-    window.toggle_settings();
-    assert!(
-        frames(&window, 2),
-        "the compositor never painted the settings panel"
-    );
-    // ── Set as default reaches the store, and moves rather than adds ────
-    // #960's whole point is that the answer to "which account does a new
-    // message come from" stops being insertion order the user cannot see.
-    // A command that resolved, drew a badge and never wrote the row would
-    // pass every assertion the panel's own tests make.
-    let target_y = row_y(&rows(&panel)[1]);
-    panel.test_open_account_menu(1.0, target_y);
-    assert!(
-        panel.activate_action("account.set-default", None).is_ok(),
-        "Set as default should exist on an account row"
-    );
-    panel.test_close_account_menu();
-    assert!(
-        settle_until(|| read_default(&database, second_id)),
-        "marking an account default has to reach the database, or the marker \
-         is a badge that means nothing"
-    );
-
-    let first_id = {
+        // A second account: "one row per account" proves nothing with only the
+        // one `seed_small` itself creates.
         let connection = database.connect().await.expect("a connection");
-        AccountRepository::new(&connection)
-            .list()
-            .expect("list")
-            .first()
-            .expect("the seeded account")
-            .id
-    };
-    let target_y = row_y(&rows(&panel)[0]);
-    panel.test_open_account_menu(1.0, target_y);
-    assert!(
-        panel.activate_action("account.set-default", None).is_ok(),
-        "and on the other row too"
-    );
-    panel.test_close_account_menu();
-    assert!(
-        settle_until(|| read_default(&database, first_id) && !read_default(&database, second_id)),
-        "at most one account is the default: marking a second has to move \
-         the marker rather than leave two rows claiming it"
-    );
+        let mut second = postio_model::Account::new(
+            "Work",
+            EmailAddress::new(None::<String>, "work@example.com"),
+        );
+        let second_id = AccountRepository::new(&connection)
+            .create(&mut second)
+            .await.expect("insert a second account");
+        drop(connection);
 
-    let target_y = row_y(&rows(&panel)[1]);
-    panel.test_open_account_menu(1.0, target_y);
-    assert!(
-        panel.activate_action("account.remove", None).is_ok(),
-        "Remove should exist on an account row"
-    );
-    panel.test_close_account_menu();
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    assert!(
-        settle_until(|| read_pending(&database, second_id)),
-        "Remove must mark the row pending, not delete it -- Q6's undo needs \
-         something to undo"
-    );
-    assert!(
-        settle_until(|| rows(&panel).len() == 1),
-        "a removed account should stop showing immediately, got {} row(s)",
-        rows(&panel).len()
-    );
+        let window = Window::default();
+        window.present();
+        settle();
 
-    bridge.shutdown();
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let panel = window.settings();
+
+        // ── both accounts show up, without anyone telling the panel to look ──
+        assert!(
+            settle_until(async || rows(&panel).len() == 2).await,
+            "expected both accounts drawn as rows, got {} row(s)",
+            rows(&panel).len()
+        );
+
+        // ── flipping the second account's switch persists to its own row ────
+        let switch = switch_in(&rows(&panel)[1]);
+        let before = switch.is_active();
+        assert!(before, "Account::new starts an account enabled");
+        switch.set_active(!before);
+        assert!(
+            settle_until(async || !read_enabled(&database, second_id).await).await,
+            "the switch flip should have reached the database"
+        );
+
+        // Flip it back so the removal case below starts from a known state.
+        switch.set_active(true);
+        assert!(settle_until(async || read_enabled(&database, second_id).await).await);
+
+        // ── Remove marks the account rather than deleting it outright ───────
+        // The panel starts hidden (`window.rs` builds it with `set_visible(false)`
+        // until something asks for it), and a hidden row has no real geometry
+        // for `row_at_y` to find -- `open_account_menu` silently finds nothing
+        // there, which is exactly what happened before this was added.
+        window.toggle_settings();
+        assert!(
+            frames(&window, 2),
+            "the compositor never painted the settings panel"
+        );
+        // ── Set as default reaches the store, and moves rather than adds ────
+        // #960's whole point is that the answer to "which account does a new
+        // message come from" stops being insertion order the user cannot see.
+        // A command that resolved, drew a badge and never wrote the row would
+        // pass every assertion the panel's own tests make.
+        let target_y = row_y(&rows(&panel)[1]);
+        panel.test_open_account_menu(1.0, target_y);
+        assert!(
+            panel.activate_action("account.set-default", None).is_ok(),
+            "Set as default should exist on an account row"
+        );
+        panel.test_close_account_menu();
+        assert!(
+            settle_until(async || read_default(&database, second_id).await).await,
+            "marking an account default has to reach the database, or the marker \
+             is a badge that means nothing"
+        );
+
+        let first_id = {
+            let connection = database.connect().await.expect("a connection");
+            AccountRepository::new(&connection)
+                .list()
+                .await.expect("list")
+                .first()
+                .expect("the seeded account")
+                .id
+        };
+        let target_y = row_y(&rows(&panel)[0]);
+        panel.test_open_account_menu(1.0, target_y);
+        assert!(
+            panel.activate_action("account.set-default", None).is_ok(),
+            "and on the other row too"
+        );
+        panel.test_close_account_menu();
+        assert!(
+            settle_until(async || read_default(&database, first_id).await && !read_default(&database, second_id).await).await,
+            "at most one account is the default: marking a second has to move \
+             the marker rather than leave two rows claiming it"
+        );
+
+        let target_y = row_y(&rows(&panel)[1]);
+        panel.test_open_account_menu(1.0, target_y);
+        assert!(
+            panel.activate_action("account.remove", None).is_ok(),
+            "Remove should exist on an account row"
+        );
+        panel.test_close_account_menu();
+
+        assert!(
+            settle_until(async || read_pending(&database, second_id).await).await,
+            "Remove must mark the row pending, not delete it -- Q6's undo needs \
+             something to undo"
+        );
+        assert!(
+            settle_until(async || rows(&panel).len() == 1).await,
+            "a removed account should stop showing immediately, got {} row(s)",
+            rows(&panel).len()
+        );
+
+        bridge.shutdown();
+    });
 }
 
-fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
+async fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .expect("get")
+        .await.expect("get")
         .expect("still there")
         .enabled
 }
 
-fn read_default(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
+async fn read_default(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .expect("get")
+        .await.expect("get")
         .expect("still there")
         .is_default
 }
 
-fn read_pending(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
+async fn read_pending(database: &postio_storage::Store, id: postio_model::ids::AccountId) -> bool {
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .expect("get")
+        .await.expect("get")
         .expect("still there")
         .pending_deletion
 }

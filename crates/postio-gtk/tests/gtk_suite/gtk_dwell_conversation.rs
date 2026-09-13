@@ -96,7 +96,7 @@ fn wait(time: Duration) {
     let context = gtk::glib::MainContext::default();
     while std::time::Instant::now() < deadline {
         while context.iteration(false) {}
-        std::thread::sleep(Duration::from_millis(2));
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
 }
 
@@ -120,7 +120,7 @@ fn settle_until(done: impl Fn() -> bool) {
     let context = gtk::glib::MainContext::default();
     while !done() && std::time::Instant::now() < deadline {
         while context.iteration(false) {}
-        std::thread::sleep(Duration::from_millis(2));
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
 }
 

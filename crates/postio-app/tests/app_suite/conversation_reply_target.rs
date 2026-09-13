@@ -51,7 +51,7 @@ use postio_model::ids::{MessageId, ThreadId};
 use postio_model::{EmailAddress, Message, Thread};
 use postio_session::Wiring;
 use postio_storage::repository::{MessageRepository, ThreadRepository};
-use postio_storage::{Database, test_support};
+use postio_storage::{Store, test_support};
 
 /// A key press into the main window, through the keymap the application runs.
 fn press(window: &Window, key: &str) {
@@ -63,8 +63,8 @@ fn press(window: &Window, key: &str) {
 }
 
 /// A message in `mailbox`, joined to `thread`.
-fn threaded_message(
-    database: &Database,
+async fn threaded_message(
+    database: &Store,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,
     thread: ThreadId,
@@ -82,160 +82,162 @@ fn threaded_message(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .expect("create the threaded message");
+        .await.expect("create the threaded message");
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .expect("join the message to the thread");
+        .await.expect("join the message to the thread");
     id
 }
 
 pub fn the_conversations_verbs_answer_the_message_they_name() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let (account, inbox) = {
-        let connection = database.connect().await.expect("a connection");
-        test_support::account_with_inbox(&connection).await
-    };
-    let thread = {
-        let connection = database.connect().await.expect("a connection");
-        let mut thread = Thread::new(account.id);
-        ThreadRepository::new(&connection)
-            .create(&mut thread)
-            .expect("create the thread")
-    };
-    let oldest = threaded_message(
-        &database,
-        account.id,
-        inbox,
-        thread,
-        0,
-        "the opening message",
-    );
-    let middle = threaded_message(&database, account.id, inbox, thread, 1, "a reply");
-    let newest = threaded_message(&database, account.id, inbox, thread, 2, "the last word");
+        let database = test_support::memory().await;
+        let (account, inbox) = {
+            let connection = database.connect().await.expect("a connection");
+            test_support::account_with_inbox(&connection).await
+        };
+        let thread = {
+            let connection = database.connect().await.expect("a connection");
+            let mut thread = Thread::new(account.id);
+            ThreadRepository::new(&connection)
+                .create(&mut thread)
+                .await.expect("create the thread")
+        };
+        let oldest = threaded_message(
+            &database,
+            account.id,
+            inbox,
+            thread,
+            0,
+            "the opening message",
+        ).await;
+        let middle = threaded_message(&database, account.id, inbox, thread, 1, "a reply").await;
+        let newest = threaded_message(&database, account.id, inbox, thread, 2, "the last word").await;
 
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = postio_storage::BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = postio_storage::BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let (bridge, _replies) =
-        postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
-            .expect("a runtime");
-    let (sink, _events) = postio_core::bridge::event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) =
+            postio_core::bridge::Bridge::new(postio_core::bridge::handler_fn(|_, _| async {}))
+                .expect("a runtime");
+        let (sink, _events) = postio_core::bridge::event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    settle();
+        let window = Window::default();
+        window.present();
+        settle();
 
-    let _wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() >= 1),
-        "the fixture's conversation never reached the list"
-    );
-    list.first_row();
-    assert!(
-        settle_until(|| window.conversation().len() == 3),
-        "landing on the thread row never filled the pane with all three messages"
-    );
+        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() >= 1).await,
+            "the fixture's conversation never reached the list"
+        );
+        list.first_row();
+        assert!(
+            settle_until(async || window.conversation().len() == 3).await,
+            "landing on the thread row never filled the pane with all three messages"
+        );
 
-    let composer = window.composer();
+        let composer = window.composer();
 
-    // ── the conversation's own verb answers the latest ───────────────────
-    // Not the focused one. The pane opens focused on the newest (FR-015), so
-    // this is deliberately checked *again* below from an older focus, where
-    // the two answers differ.
-    press(&window, "e");
-    assert!(
-        composer.is_open(),
-        "`e` on an open conversation answered nothing"
-    );
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(newest),
-        "a thread-level Reply must answer the latest message of the thread"
-    );
-    composer.discard();
-    settle();
+        // ── the conversation's own verb answers the latest ───────────────────
+        // Not the focused one. The pane opens focused on the newest (FR-015), so
+        // this is deliberately checked *again* below from an older focus, where
+        // the two answers differ.
+        press(&window, "e");
+        assert!(
+            composer.is_open(),
+            "`e` on an open conversation answered nothing"
+        );
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(newest),
+            "a thread-level Reply must answer the latest message of the thread"
+        );
+        composer.discard();
+        settle();
 
-    // ── a per-message verb answers the message it was drawn on ───────────
-    // The oldest, so the answer differs from the thread-level one above:
-    // aiming this at the newest would pass whether or not the scope-to-id
-    // mapping worked at all.
-    window.conversation().test_click_reply(oldest);
-    settle();
-    assert!(composer.is_open(), "a per-message Reply opened nothing");
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(oldest),
-        "a per-message Reply must answer the message it was drawn on, not the \
-         latest -- which is the mistake ADR 0015 Q4's arrangement exists to \
-         prevent"
-    );
-    composer.discard();
-    settle();
+        // ── a per-message verb answers the message it was drawn on ───────────
+        // The oldest, so the answer differs from the thread-level one above:
+        // aiming this at the newest would pass whether or not the scope-to-id
+        // mapping worked at all.
+        window.conversation().test_click_reply(oldest);
+        settle();
+        assert!(composer.is_open(), "a per-message Reply opened nothing");
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(oldest),
+            "a per-message Reply must answer the message it was drawn on, not the \
+             latest -- which is the mistake ADR 0015 Q4's arrangement exists to \
+             prevent"
+        );
+        composer.discard();
+        settle();
 
-    // ── and the bar is unmoved by where focus went ───────────────────────
-    // FR-008 is about the *bar*, and this is the assertion that makes it mean
-    // something: with focus on the middle message the bar must still answer
-    // the latest, or "thread-level" is just a second per-message verb wearing
-    // the conversation's clothes. The two checks above cannot tell the
-    // difference, because the pane opens focused on the newest anyway.
-    window.conversation().focus_message(middle);
-    settle();
-    window
-        .conversation()
-        .header()
-        .actions()
-        .press(postio_core::CommandId::Reply);
-    settle();
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(newest),
-        "the conversation bar's Reply followed the focus instead of the thread"
-    );
-    composer.discard();
-    settle();
+        // ── and the bar is unmoved by where focus went ───────────────────────
+        // FR-008 is about the *bar*, and this is the assertion that makes it mean
+        // something: with focus on the middle message the bar must still answer
+        // the latest, or "thread-level" is just a second per-message verb wearing
+        // the conversation's clothes. The two checks above cannot tell the
+        // difference, because the pane opens focused on the newest anyway.
+        window.conversation().focus_message(middle);
+        settle();
+        window
+            .conversation()
+            .header()
+            .actions()
+            .press(postio_core::CommandId::Reply);
+        settle();
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(newest),
+            "the conversation bar's Reply followed the focus instead of the thread"
+        );
+        composer.discard();
+        settle();
 
-    // The *keyboard* is a different question, and FR-008 does not answer it:
-    // it constrains the bar. `e` here answers the focused message, which for
-    // a keyboard-first application is defensible -- you moved to it, you
-    // reply to it -- and is asserted so that changing it is a decision rather
-    // than a drift. The designer's table wanted `e` for the latest and `⇧e`
-    // for the focused one; the maintainer set that table aside, and `⇧e`
-    // collides with reply-all besides.
-    window.conversation().focus_message(middle);
-    settle();
-    press(&window, "e");
-    assert_eq!(
-        composer.draft().in_reply_to,
-        Some(middle),
-        "`e` inside a conversation answers the message focus is on"
-    );
-    composer.discard();
-    settle();
+        // The *keyboard* is a different question, and FR-008 does not answer it:
+        // it constrains the bar. `e` here answers the focused message, which for
+        // a keyboard-first application is defensible -- you moved to it, you
+        // reply to it -- and is asserted so that changing it is a decision rather
+        // than a drift. The designer's table wanted `e` for the latest and `⇧e`
+        // for the focused one; the maintainer set that table aside, and `⇧e`
+        // collides with reply-all besides.
+        window.conversation().focus_message(middle);
+        settle();
+        press(&window, "e");
+        assert_eq!(
+            composer.draft().in_reply_to,
+            Some(middle),
+            "`e` inside a conversation answers the message focus is on"
+        );
+        composer.discard();
+        settle();
 
-    window.close();
+        window.close();
+    });
 }

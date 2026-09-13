@@ -43,148 +43,150 @@ use postio_storage::{BlobStore, test_support};
 const QUERY: &str = "example.com";
 
 pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 11);
-    let subject_of = |message| {
-        let connection = database.connect().await.expect("a connection");
-        MessageRepository::new(&connection)
-            .get(message)
-            .expect("a read")
-            .expect("the previewed message is in the store")
-            .subject
-            .unwrap_or_default()
-    };
-    assert!(report.message_count > 0, "the fixture seeded no mail");
-    ensure_search_index(&database).expect("the index is part of opening the store");
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 11).await;
+        let subject_of = async |message| {
+            let connection = database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .get(message)
+                .await.expect("a read")
+                .expect("the previewed message is in the store")
+                .subject
+                .unwrap_or_default()
+        };
+        assert!(report.message_count > 0, "the fixture seeded no mail");
+        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // A real bridge, so a command that nothing answers is rejected by the
-    // real dispatcher rather than swallowed by a stub that accepts anything.
-    //
-    // And `run`'s own event arrangement, because the results only reach the
-    // list through `Event::SearchResults` -> `Feeds::apply`: one hub the
-    // search emits into, drained into the panes. Without the drain the box
-    // finds hits, the preview shows one, and the list never leaves the
-    // folder -- so there would be nothing for the open to land on, and the
-    // test would fail for a reason that is not the bug.
-    let hub = EventHub::new();
-    let engine = hub.sink();
-    let bridge = Bridge::builder()
-        .build_with_events(handler_fn(|_, _| async {}), hub.sink())
-        .expect("a runtime");
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        engine,
-        bridge.commands(),
-    );
+        // A real bridge, so a command that nothing answers is rejected by the
+        // real dispatcher rather than swallowed by a stub that accepts anything.
+        //
+        // And `run`'s own event arrangement, because the results only reach the
+        // list through `Event::SearchResults` -> `Feeds::apply`: one hub the
+        // search emits into, drained into the panes. Without the drain the box
+        // finds hits, the preview shows one, and the list never leaves the
+        // folder -- so there would be nothing for the open to land on, and the
+        // test would fail for a reason that is not the bug.
+        let hub = EventHub::new();
+        let engine = hub.sink();
+        let bridge = Bridge::builder()
+            .build_with_events(handler_fn(|_, _| async {}), hub.sink())
+            .expect("a runtime");
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            engine,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // The same call `run` makes, and the `View` it returns rather than a
-    // second `search::install` — two installs answer into a view the test
-    // cannot see.
-    let Wired { feeds, search } =
-        feed_the_window(&window, &wiring).expect("the store has an account");
-    let view = search.expect("search installed");
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    commands::drain(
-        &window,
-        &feeds,
-        hub.subscribe("window"),
-        notifier,
-        SharedState::default(),
-    );
+        // The same call `run` makes, and the `View` it returns rather than a
+        // second `search::install` — two installs answer into a view the test
+        // cannot see.
+        let Wired { feeds, search } =
+            feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let view = search.expect("search installed");
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        commands::drain(
+            &window,
+            &feeds,
+            hub.subscribe("window"),
+            notifier,
+            SharedState::default(),
+        );
 
-    // ── search, and let the preview settle on a result ───────────────────
-    let finder = window.finder();
-    finder.open(Mode::Search);
-    finder.set_query(Query {
-        mode: Mode::Search,
-        text: QUERY.to_owned(),
+        // ── search, and let the preview settle on a result ───────────────────
+        let finder = window.finder();
+        finder.open(Mode::Search);
+        finder.set_query(Query {
+            mode: Mode::Search,
+            text: QUERY.to_owned(),
+        });
+        finder
+            .live()
+            .expect("the box has a live readout while searching")
+            .flush();
+
+        // The hits have to be in the list before anything can be opened out of
+        // it -- that switch is what `search_results.rs` proves separately.
+        let showing = settle_until(async || feeds.messages.showing_results()).await;
+        assert!(
+            showing,
+            "the box found hits and the list is still showing the folder, so \
+             there is nothing here for an open to land on"
+        );
+        let previewed = settle_until(async || view.preview().focused().is_some()).await;
+        assert!(
+            previewed,
+            "the search found nothing to preview, so this test could not fail"
+        );
+        let message = view
+            .preview()
+            .focused()
+            .expect("the preview is showing a result");
+
+        // Cleared first, so what follows is about *opening* rather than about
+        // whatever the pane happened to be showing already.
+        window.clear_reader();
+        assert!(!window.reading(), "the pane was just cleared");
+
+        // ── the gesture: `Ret` on the result, and the Open button ────────────
+        // `Preview::open` is what both are wired to. Everything past this point
+        // is the application's own wiring answering — or, before #767, not.
+        view.preview().open();
+
+        assert!(
+            settle_until(async || window.reading()).await,
+            "opening a previewed search result left the reading pane empty. The \
+             gesture emits `Preview::open`, which becomes `Command::OpenMessage` \
+             — and nothing answers that, so the dispatcher rejects it and the one \
+             verb whose whole purpose is \"open this\" does nothing."
+        );
+        // Which message, read the way a person reads it: the subject on the
+        // reader's own header. Asserting the pane merely *filled* would pass on
+        // opening the wrong message, which is the failure a command carrying an
+        // id can actually produce.
+        let expected = subject_of(message).await;
+        assert!(
+            !expected.trim().is_empty(),
+            "the previewed fixture has no subject, so this assertion would hold \
+             for any message"
+        );
+        assert!(
+            settle_until(async || window.reader().header().subject_label() == expected).await,
+            "the pane opened on a different message than the one previewed: the \
+             header reads {:?}, and the result was {expected:?}",
+            window.reader().header().subject_label()
+        );
+
+        bridge.shutdown();
     });
-    finder
-        .live()
-        .expect("the box has a live readout while searching")
-        .flush();
-
-    // The hits have to be in the list before anything can be opened out of
-    // it -- that switch is what `search_results.rs` proves separately.
-    let showing = settle_until(|| feeds.messages.showing_results());
-    assert!(
-        showing,
-        "the box found hits and the list is still showing the folder, so \
-         there is nothing here for an open to land on"
-    );
-    let previewed = settle_until(|| view.preview().focused().is_some());
-    assert!(
-        previewed,
-        "the search found nothing to preview, so this test could not fail"
-    );
-    let message = view
-        .preview()
-        .focused()
-        .expect("the preview is showing a result");
-
-    // Cleared first, so what follows is about *opening* rather than about
-    // whatever the pane happened to be showing already.
-    window.clear_reader();
-    assert!(!window.reading(), "the pane was just cleared");
-
-    // ── the gesture: `Ret` on the result, and the Open button ────────────
-    // `Preview::open` is what both are wired to. Everything past this point
-    // is the application's own wiring answering — or, before #767, not.
-    view.preview().open();
-
-    assert!(
-        settle_until(|| window.reading()),
-        "opening a previewed search result left the reading pane empty. The \
-         gesture emits `Preview::open`, which becomes `Command::OpenMessage` \
-         — and nothing answers that, so the dispatcher rejects it and the one \
-         verb whose whole purpose is \"open this\" does nothing."
-    );
-    // Which message, read the way a person reads it: the subject on the
-    // reader's own header. Asserting the pane merely *filled* would pass on
-    // opening the wrong message, which is the failure a command carrying an
-    // id can actually produce.
-    let expected = subject_of(message);
-    assert!(
-        !expected.trim().is_empty(),
-        "the previewed fixture has no subject, so this assertion would hold \
-         for any message"
-    );
-    assert!(
-        settle_until(|| window.reader().header().subject_label() == expected),
-        "the pane opened on a different message than the one previewed: the \
-         header reads {:?}, and the result was {expected:?}",
-        window.reader().header().subject_label()
-    );
-
-    bridge.shutdown();
 }

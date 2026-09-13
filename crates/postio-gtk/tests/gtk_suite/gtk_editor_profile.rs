@@ -81,7 +81,7 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
             if listener.accept().is_ok() {
                 let _ = hit_tx.send(());
             }
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     });
 
@@ -194,7 +194,7 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
     );
     for _ in 0..20 {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     assert_eq!(
         eval(&view, "document.body.textContent"),
@@ -214,7 +214,7 @@ pub fn the_editing_profile_runs_our_script_and_nothing_else() {
             contacted = true;
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     stopping.store(true, Ordering::Relaxed);
     watcher.join().expect("the listener thread ends");

@@ -134,7 +134,7 @@ async fn stop_returns_inside_the_grace_while_a_backfill_is_pumping() {
             waited.elapsed() < Duration::from_secs(90),
             "the backfill never started pumping bodies"
         );
-        std::thread::sleep(Duration::from_millis(25));
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 
     let stopping = Instant::now();

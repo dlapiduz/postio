@@ -66,7 +66,7 @@ fn press(window: &Window, key: gdk::Key) -> bool {
 ///
 /// Stays module-local on purpose: it calls this module's own `chips()`,
 /// so hoisting it to the suite root would drag that with it (#842).
-fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
+async fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
@@ -74,133 +74,135 @@ fn settle_for_chip(window: &Window) -> Option<gtk::Button> {
         if let Some(chip) = chips(window).into_iter().next() {
             return Some(chip);
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     None
 }
 
 pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
-    let state_dir_guard = tempfile::tempdir().expect("a state directory");
-    let state_dir = state_dir_guard.path();
-    let export_dir = state_dir.join("export");
-    // SAFETY: first statements of a single-threaded test.
-    unsafe {
-        std::env::set_var("XDG_STATE_HOME", state_dir);
-        std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
-    }
+    crate::gtk_case(async {
+        let state_dir_guard = tempfile::tempdir().expect("a state directory");
+        let state_dir = state_dir_guard.path();
+        let export_dir = state_dir.join("export");
+        // SAFETY: first statements of a single-threaded test.
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", state_dir);
+            std::env::set_var("POSTIO_EXPORT_DIR", &export_dir);
+        }
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    // ── a store with one account, one folder, and a real attached message ──
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        // ── a store with one account, one folder, and a real attached message ──
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    {
-        let connection = database.connect().await.expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection).await;
-        let parsed = postio_model::mime::parse(RAW);
-        let mut message = Message::new(account.id, inbox, chrono::Utc::now());
-        message.subject = Some("Quarterly figures".into());
-        // Already downloaded: this proves the wiring reaches the desktop, not
-        // that a fetch happens first -- `postio_app::reading::part_bytes`
-        // covers the fetch-first case on its own, without a display.
-        message.raw_blob_id = Some(blobs.put(RAW).expect("a blob"));
-        message.attachments = parsed
-            .parts
-            .iter()
-            .map(|part| part.attachment.clone())
-            .collect();
-        MessageRepository::new(&connection)
-            .create(&mut message)
-            .expect("a message");
-    }
+        {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            let parsed = postio_model::mime::parse(RAW);
+            let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+            message.subject = Some("Quarterly figures".into());
+            // Already downloaded: this proves the wiring reaches the desktop, not
+            // that a fetch happens first -- `postio_app::reading::part_bytes`
+            // covers the fetch-first case on its own, without a display.
+            message.raw_blob_id = Some(blobs.put(RAW).expect("a blob"));
+            message.attachments = parsed
+                .parts
+                .iter()
+                .map(|part| part.attachment.clone())
+                .collect();
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await.expect("a message");
+        }
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands());
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── the same call `run` makes ───────────────────────────────────────
-    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
-    while glib::MainContext::default().iteration(false) {}
+        // ── the same call `run` makes ───────────────────────────────────────
+        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        while glib::MainContext::default().iteration(false) {}
 
-    // ── open the message, exactly as a double click or `Enter` does ─────
-    // Wait for a row first. Activating position 0 of an empty model does
-    // nothing at all, and this read is asynchronous -- the test used to win
-    // that race by luck and stopped when the folder gained a second query to
-    // run (#307).
-    assert!(
-        settle_until(|| window.list().model().n_items() > 0),
-        "no rows reached the list, so there is nothing to activate"
-    );
-    activate_first_row(&window);
-    assert!(
-        settle_until(|| window.reading()),
-        "the message was never opened"
-    );
-
-    // ── the chip is the only way into the panel from a running window ───
-    let chip = settle_for_chip(&window).unwrap_or_else(|| {
-        panic!("no attachment chip appeared, so the panel can never be reached")
-    });
-    chip.emit_clicked();
-    while glib::MainContext::default().iteration(false) {}
-    assert!(
-        window.parts().is_visible(),
-        "the chip should open the panel"
-    );
-
-    // ── walk to the attachment; the panel starts on the first part ──────
-    let panel = window.parts();
-    while panel.cursor().map(|node| node.mime) != Some("text/csv".to_owned()) {
+        // ── open the message, exactly as a double click or `Enter` does ─────
+        // Wait for a row first. Activating position 0 of an empty model does
+        // nothing at all, and this read is asynchronous -- the test used to win
+        // that race by luck and stopped when the folder gained a second query to
+        // run (#307).
         assert!(
-            press(&window, gdk::Key::j),
-            "walked off the end of the tree before finding the attachment"
+            settle_until(async || window.list().model().n_items() > 0).await,
+            "no rows reached the list, so there is nothing to activate"
         );
-    }
+        activate_first_row(&window);
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the message was never opened"
+        );
 
-    let saved = export_dir.join("figures.csv");
+        // ── the chip is the only way into the panel from a running window ───
+        let chip = settle_for_chip(&window).await.unwrap_or_else(|| {
+            panic!("no attachment chip appeared, so the panel can never be reached")
+        });
+        chip.emit_clicked();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(
+            window.parts().is_visible(),
+            "the chip should open the panel"
+        );
 
-    // ── `Ret`: connect_open ──────────────────────────────────────────────
-    assert!(!saved.exists(), "nothing should be there before Ret");
-    assert!(press(&window, gdk::Key::Return));
-    assert!(
-        settle_until(|| saved.exists()),
-        "pressing Ret in the parts panel never produced a file. Every layer \
-         under this one is unit-tested and passes -- check whether anything \
-         calls PartsPanel::connect_open."
-    );
-    assert_eq!(
-        std::fs::read(&saved).expect("the file"),
-        b"one,two",
-        "the file opened is not the bytes the sender attached"
-    );
+        // ── walk to the attachment; the panel starts on the first part ──────
+        let panel = window.parts();
+        while panel.cursor().map(|node| node.mime) != Some("text/csv".to_owned()) {
+            assert!(
+                press(&window, gdk::Key::j),
+                "walked off the end of the tree before finding the attachment"
+            );
+        }
 
-    // ── `x`: connect_external, independently of `Ret` ────────────────────
-    std::fs::remove_file(&saved).expect("the fixture cleans up its own file");
-    assert!(press(&window, gdk::Key::x));
-    assert!(
-        settle_until(|| saved.exists()),
-        "pressing x (\"Open with…\") in the parts panel never produced a \
-         file -- check whether anything calls PartsPanel::connect_external."
-    );
+        let saved = export_dir.join("figures.csv");
 
-    bridge.shutdown();
+        // ── `Ret`: connect_open ──────────────────────────────────────────────
+        assert!(!saved.exists(), "nothing should be there before Ret");
+        assert!(press(&window, gdk::Key::Return));
+        assert!(
+            settle_until(async || saved.exists()).await,
+            "pressing Ret in the parts panel never produced a file. Every layer \
+             under this one is unit-tested and passes -- check whether anything \
+             calls PartsPanel::connect_open."
+        );
+        assert_eq!(
+            std::fs::read(&saved).expect("the file"),
+            b"one,two",
+            "the file opened is not the bytes the sender attached"
+        );
+
+        // ── `x`: connect_external, independently of `Ret` ────────────────────
+        std::fs::remove_file(&saved).expect("the fixture cleans up its own file");
+        assert!(press(&window, gdk::Key::x));
+        assert!(
+            settle_until(async || saved.exists()).await,
+            "pressing x (\"Open with…\") in the parts panel never produced a \
+             file -- check whether anything calls PartsPanel::connect_external."
+        );
+
+        bridge.shutdown();
+    });
 }
 
 fn chips(window: &Window) -> Vec<gtk::Button> {

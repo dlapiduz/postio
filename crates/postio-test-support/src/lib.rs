@@ -233,6 +233,68 @@ pub fn settle_until_within(
     }
 }
 
+/// [`settle_until`] for a condition that has to **read** something.
+///
+/// The storage layer is async, so a condition like "is this message findable
+/// yet" is a future. The synchronous form above cannot take one, and the
+/// obvious workaround — building a runtime inside the closure — panics as soon
+/// as the caller is already on one, which every `#[tokio::test]` is.
+///
+/// `pump` stays synchronous: it turns a GTK main loop, which belongs to this
+/// thread, and there is nothing to await in it.
+///
+/// # Panics
+///
+/// If `condition` has not held within [`patience`], with the same two
+/// distinguished messages [`settle_until_within`] uses and for the same
+/// reasons.
+pub async fn settle_until_async<P, C, Fut>(label: &str, mut pump: P, condition: C)
+where
+    P: FnMut(),
+    C: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let limit = patience();
+    let start = Instant::now();
+    let mut longest_pump = Duration::ZERO;
+
+    loop {
+        if start.elapsed() >= limit {
+            let before = Instant::now();
+            pump();
+            longest_pump = longest_pump.max(before.elapsed());
+            if condition().await {
+                return;
+            }
+            if longest_pump >= limit {
+                panic!(
+                    "timed out after {:?} waiting for {label}, but the deadline \
+                     was {limit:?}: a single pump took {longest_pump:?}, longer \
+                     than the whole budget.\n\
+                     (the budget was never the constraint, so {PATIENCE_VAR} \
+                     will not help — something the pump waits on stopped \
+                     answering)",
+                    start.elapsed(),
+                );
+            }
+            panic!(
+                "timed out after {:?} waiting for {label}\n\
+                 (the deadline was {limit:?}, which {PATIENCE_VAR}={} scales; \
+                 raise it for a slow machine rather than editing this test)",
+                start.elapsed(),
+                std::env::var(PATIENCE_VAR).unwrap_or_else(|_| "1".into()),
+            );
+        }
+        let before = Instant::now();
+        pump();
+        longest_pump = longest_pump.max(before.elapsed());
+        if condition().await {
+            return;
+        }
+        tokio::time::sleep(BACKOFF).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

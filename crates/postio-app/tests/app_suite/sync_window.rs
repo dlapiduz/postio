@@ -92,94 +92,96 @@ impl DiscoveryTransport for UnusedTransport {
 }
 
 pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    let config_path = state_dir.path().join("config.toml");
-    // A comment on an unrelated section, the same shape `patch_sync`'s own
-    // tests use: proves the write goes through `patch_sync` rather than a
-    // whole-file reserialize, which would silently drop it (#874, #885).
-    std::fs::write(
-        &config_path,
-        "# a hand-written comment nobody wants to lose\n[ui]\ntheme = \"dark\"\n",
-    )
-    .expect("a starter config.toml");
-    // SAFETY: first statements of a single-threaded test, before the app
-    // under test reads either variable.
-    unsafe {
-        std::env::set_var("XDG_STATE_HOME", state_dir.path());
-        std::env::set_var("POSTIO_CONFIG", &config_path);
-    }
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        let config_path = state_dir.path().join("config.toml");
+        // A comment on an unrelated section, the same shape `patch_sync`'s own
+        // tests use: proves the write goes through `patch_sync` rather than a
+        // whole-file reserialize, which would silently drop it (#874, #885).
+        std::fs::write(
+            &config_path,
+            "# a hand-written comment nobody wants to lose\n[ui]\ntheme = \"dark\"\n",
+        )
+        .expect("a starter config.toml");
+        // SAFETY: first statements of a single-threaded test, before the app
+        // under test reads either variable.
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", state_dir.path());
+            std::env::set_var("POSTIO_CONFIG", &config_path);
+        }
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under `scripts/test-headless.sh`)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, events) = event_channel();
-    let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
-        .with_secrets(Arc::new(MemorySecretStore::new()));
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, events) = event_channel();
+        let wiring = Wiring::new(database, blobs, bridge.handle(), sink, bridge.commands())
+            .with_secrets(Arc::new(MemorySecretStore::new()));
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
 
-    let notifier = notifications::Notifier::new(
-        wiring.database.clone(),
-        wiring.store.clone(),
-        wiring.runtime.clone(),
-        Default::default(),
-    );
-    postio_app::onboarding::install(
-        &window,
-        &wiring,
-        Default::default(),
-        Vec::new(),
-        std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
-        notifier,
-        None,
-        Arc::new(UnusedTransport) as Arc<dyn DiscoveryTransport>,
-        Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    );
+        let notifier = notifications::Notifier::new(
+            wiring.database.clone(),
+            wiring.store.clone(),
+            wiring.runtime.clone(),
+            Default::default(),
+        );
+        postio_app::onboarding::install(
+            &window,
+            &wiring,
+            Default::default(),
+            Vec::new(),
+            std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
+            notifier,
+            None,
+            Arc::new(UnusedTransport) as Arc<dyn DiscoveryTransport>,
+            Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
+        ).await;
 
-    let screen = window
-        .content()
-        .and_downcast::<Onboarding>()
-        .expect("the onboarding screen");
+        let screen = window
+            .content()
+            .and_downcast::<Onboarding>()
+            .expect("the onboarding screen");
 
-    // The account and its credential are already written by the time this
-    // step shows in the real flow (`submit`/`submit_oauth`) -- this test
-    // starts from exactly that point rather than re-proving the write those
-    // functions' own tests already cover.
-    screen.set_status(Status::SyncWindow);
-    screen.test_select_sync_window(SyncWindow::LastMonth);
-    screen.start_sync();
+        // The account and its credential are already written by the time this
+        // step shows in the real flow (`submit`/`submit_oauth`) -- this test
+        // starts from exactly that point rather than re-proving the write those
+        // functions' own tests already cover.
+        screen.set_status(Status::SyncWindow);
+        screen.test_select_sync_window(SyncWindow::LastMonth);
+        screen.start_sync();
 
-    let written = std::fs::read_to_string(&config_path).expect("config.toml");
-    let config = postio_config::Config::from_toml_str(&written).expect("the write still parses");
-    assert_eq!(
-        config.sync.initial_sync_messages,
-        SyncWindow::LastMonth.message_count(),
-        "Start sync did not reach [sync].initial_sync_messages: {written}"
-    );
-    assert!(
-        written.contains("# a hand-written comment nobody wants to lose"),
-        "the write touched more than [sync]: {written}"
-    );
-    assert!(
-        written.contains("theme = \"dark\""),
-        "the write touched more than [sync]: {written}"
-    );
+        let written = std::fs::read_to_string(&config_path).expect("config.toml");
+        let config = postio_config::Config::from_toml_str(&written).expect("the write still parses");
+        assert_eq!(
+            config.sync.initial_sync_messages,
+            SyncWindow::LastMonth.message_count(),
+            "Start sync did not reach [sync].initial_sync_messages: {written}"
+        );
+        assert!(
+            written.contains("# a hand-written comment nobody wants to lose"),
+            "the write touched more than [sync]: {written}"
+        );
+        assert!(
+            written.contains("theme = \"dark\""),
+            "the write touched more than [sync]: {written}"
+        );
 
-    bridge.shutdown();
+        bridge.shutdown();
+    });
 }

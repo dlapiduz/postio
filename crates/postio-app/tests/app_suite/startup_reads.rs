@@ -44,7 +44,7 @@ use postio_session::Wiring;
 use postio_storage::BlobStore;
 use postio_storage::seed::seed_large;
 use postio_storage::test_support;
-use postio_storage::test_support::counting::{Counts, counted};
+use postio_storage::test_support::counting::{Counts, counted_async};
 
 /// The two mailboxes, an order of magnitude apart.
 ///
@@ -71,9 +71,9 @@ struct Opened {
 }
 
 /// What the main thread read while a window was pointed at a store of `size`.
-fn opening(size: usize) -> Opened {
+async fn opening(size: usize) -> Opened {
     let database = test_support::memory().await;
-    let report = seed_large(&database, 11, size);
+    let report = seed_large(&database, 11, size).await;
     assert_eq!(
         report.message_count, size,
         "the seed should have written the mailbox this case is about"
@@ -111,9 +111,10 @@ fn opening(size: usize) -> Opened {
     // on screen, and a panel's own figures are not the first frame's to wait
     // for — which is a claim about the code under test, so the case has to
     // put the window in the state the claim is about.
-    let counts = counted(|| {
-        let _ = feed_the_window(&window, &wiring);
-    });
+    let counts = counted_async(async || {
+        let _ = feed_the_window(&window, &wiring).await;
+    })
+    .await;
     for phase in [
         postio_gtk::startup::Phase::Account,
         postio_gtk::startup::Phase::Feeds,
@@ -138,79 +139,111 @@ fn opening(size: usize) -> Opened {
 }
 
 pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+    crate::gtk_case(async {
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let small = opening(SMALL).counts;
-    let opened = opening(LARGE);
-    let large = opened.counts;
-    eprintln!("  opening over {SMALL:>6} messages: {small:?}");
-    eprintln!("  opening over {LARGE:>6} messages: {large:?}");
+        let small = opening(SMALL).await.counts;
+        let opened = opening(LARGE).await;
+        let large = opened.counts;
+        eprintln!("  opening over {SMALL:>6} messages: {small:?}");
+        eprintln!("  opening over {LARGE:>6} messages: {large:?}");
 
-    assert_eq!(
-        small.statements, large.statements,
-        "pointing a window at {LARGE} messages issued {} statements where \
-         {SMALL} issued {}. A statement count that moves with the mailbox is \
-         a read per message on the thread that has to draw the first frame.",
-        large.statements, small.statements
-    );
-    assert_eq!(
-        small.rows, large.rows,
-        "pointing a window at {LARGE} messages produced {} rows where {SMALL} \
-         produced {}. §18's 'never load a whole mailbox into memory' is the \
-         claim, and startup is where it is easiest to break.",
-        large.rows, small.rows
-    );
-    assert_eq!(
-        small.steps, large.steps,
-        "pointing a window at {LARGE} messages cost {} SQLite steps where \
-         {SMALL} cost {}. Work proportional to the mailbox on the first \
-         frame's own thread is exactly what #1479 measured as 1044ms of a \
-         1250ms startup — and an aggregate that scans the table hides from \
-         the statement and row counts above, which is why this line exists.",
-        large.steps, small.steps
-    );
-    // The control, and the reason the step assertion is known to have teeth.
-    // #100 asks that each counted budget "fails when the invariant it guards
-    // is deliberately broken"; this demonstrates it without ever breaking the
-    // code under test, by counting the read that used to be on this path.
-    //
-    // `read_receipt_requested_count` is the privacy pane's own figure: one
-    // statement, one row, and a scan of every message the account holds to
-    // produce it. It ran unconditionally from `settings_privacy::install`,
-    // which `feed_the_window` calls, for a number drawn in a panel that is
-    // not on screen. It is still here and still costs what it costs — it is
-    // read when the pane is looked at now, which is the whole of the fix.
-    let scan = {
+        assert_eq!(
+            small.statements, large.statements,
+            "pointing a window at {LARGE} messages issued {} statements where \
+             {SMALL} issued {}. A statement count that moves with the mailbox is \
+             a read per message on the thread that has to draw the first frame.",
+            large.statements, small.statements
+        );
+        assert_eq!(
+            small.rows, large.rows,
+            "pointing a window at {LARGE} messages produced {} rows where {SMALL} \
+             produced {}. §18's 'never load a whole mailbox into memory' is the \
+             claim, and startup is where it is easiest to break.",
+            large.rows, small.rows
+        );
+        // There used to be a third assertion here, on the VM **step** count,
+        // and it was the one with the teeth: an aggregate that scans the whole
+        // table is one statement returning one row, so it hides from both
+        // counts above. #1479 was exactly that -- 1044 ms of a 1250 ms startup,
+        // invisible to a budget written in statements and rows.
+        //
+        // The step count came off SQLite's trace hook, and this engine has no
+        // trace hook. What replaces it is structural rather than numeric:
+        // `counting::scans` asks the planner whether a query *can* be cheap.
+        // Weaker in one way -- it has to be pointed at a statement by name,
+        // where the step count saw every statement the window issued -- and
+        // stronger in another, in that it says which query and why.
+        //
+        // So the two halves below. The read the window actually makes must
+        // plan without a scan, and the read that #1479 took *off* this path
+        // must still be a scan, which is what demonstrates that the two counts
+        // above cannot see one.
         let connection = opened.database.connect().await.expect("a connection");
         let messages = postio_storage::repository::MessageRepository::new(&connection);
-        counted(|| {
+        let window_query = postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Account(opened.account),
+            limit: 50,
+            after: None,
+        };
+        let scanned = postio_storage::test_support::counting::scans(
+            &connection,
+            &messages.explain(&window_query),
+        )
+        .await;
+        assert!(
+            scanned.is_empty(),
+            "the window's own list read plans as a scan of {scanned:?}. Work \
+             proportional to the mailbox on the first frame's own thread is \
+             what #1479 measured as 1044ms of a 1250ms startup, and it is \
+             invisible to the statement and row counts above."
+        );
+        // The control, and the reason the step assertion is known to have teeth.
+        // #100 asks that each counted budget "fails when the invariant it guards
+        // is deliberately broken"; this demonstrates it without ever breaking the
+        // code under test, by counting the read that used to be on this path.
+        //
+        // `read_receipt_requested_count` is the privacy pane's own figure: one
+        // statement, one row, and a scan of every message the account holds to
+        // produce it. It ran unconditionally from `settings_privacy::install`,
+        // which `feed_the_window` calls, for a number drawn in a panel that is
+        // not on screen. It is still here and still costs what it costs — it is
+        // read when the pane is looked at now, which is the whole of the fix.
+        let scan = postio_storage::test_support::counting::counted_async(async || {
             let _ = messages
                 .read_receipt_requested_count(opened.account)
+                .await
                 .expect("a count");
         })
-    };
-    eprintln!("  one scan of {LARGE:>6} messages: {scan:?}");
-    assert_eq!(
-        (scan.statements, scan.rows),
-        (1, 1),
-        "an aggregate is one statement and one row however much it reads, \
-         which is what makes it invisible to the two counts above"
-    );
-    assert!(
-        scan.steps > large.steps,
-        "one scan of {LARGE} messages cost {} steps against {} for opening \
-         the whole window, so the step count cannot tell a full scan from a \
-         bounded read and the assertion above is not guarding anything. \
-         Either this mailbox is too small for the comparison to mean \
-         anything, or opening a window has itself become a scan.",
-        scan.steps,
-        large.steps
-    );
+        .await;
+        eprintln!("  one scan of {LARGE:>6} messages: {scan:?}");
+        assert_eq!(
+            (scan.statements, scan.rows),
+            (1, 1),
+            "an aggregate is one statement and one row however much it reads, \
+             which is what makes it invisible to the two counts above"
+        );
+        let control = postio_storage::test_support::counting::scans(
+            &connection,
+            "SELECT count(*) FROM messages
+              WHERE account_id = ?1 AND read_receipt_requested = 1
+                AND deleted_locally = 0",
+        )
+        .await;
+        assert!(
+            !control.is_empty(),
+            "the privacy pane's own figure has stopped being a scan, so this \
+             case no longer demonstrates that a statement count cannot see one \
+             -- and the assertion above is guarding nothing it can prove. \
+             Either an index arrived for `read_receipt_requested` (good: say so \
+             here and pick a new control) or the query changed."
+        );
+    });
 }

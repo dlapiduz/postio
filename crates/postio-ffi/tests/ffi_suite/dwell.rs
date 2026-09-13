@@ -99,17 +99,21 @@ fn the_arming_decision_crosses_whole() {
 
 /// Drive until `done`, or give up. The verb is local-first: it writes and
 /// returns, and the write lands on the runtime a moment later.
-fn settle_until(done: impl Fn() -> bool) -> bool {
+async fn settle_until<F, Fut>(done: F) -> bool
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     // Scaled, so `POSTIO_TEST_PATIENCE` reaches it. A hand-rolled deadline
     // measures the process it runs in, which on a shared machine is a flake
     // nobody can reproduce alone (#842, #957).
     let deadline =
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
-        if done() {
+        if done().await {
             return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    done()
+    done().await
 }

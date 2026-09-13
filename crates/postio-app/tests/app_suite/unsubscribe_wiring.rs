@@ -24,7 +24,7 @@ use postio_gtk::window::Window;
 use postio_gtk::{app, fonts, style};
 use postio_model::BodyState;
 use postio_storage::repository::{MessageRepository, StoredBody, UnsubscribeRepository};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 /// A plain message with no `List-Id` — the sender's domain is #971's own
 /// fallback, so this exercises that path without depending on `mail_parser`'s
@@ -38,8 +38,8 @@ Content-Type: text/plain; charset=utf-8\r\n\
 Nothing much happened\r\n";
 
 /// Store `raw` as a message with a body, the way the backfill commits one.
-fn store(
-    database: &Database,
+async fn store(
+    database: &Store,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,
     raw: &[u8],
@@ -55,7 +55,7 @@ fn store(
     // headers carry.
     let mut message = parsed.into_message(account, mailbox, chrono::Utc::now());
     message.sync.body_state = BodyState::Full;
-    let id = repository.create(&mut message).expect("a message");
+    let id = repository.create(&mut message).await.expect("a message");
 
     let stored = StoredBody {
         text: body.text,
@@ -66,127 +66,129 @@ fn store(
     };
     repository
         .set_body(id, &stored, BodyState::Full)
-        .expect("a body");
+        .await.expect("a body");
     id
 }
 
 pub fn clicking_unsubscribe_logs_the_activation_and_the_privacy_pane_lists_it() {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+    crate::gtk_case(async {
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under scripts/test-headless.sh)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (run under scripts/test-headless.sh)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    let account = {
-        let connection = database.connect().await.expect("a connection");
-        let (account, inbox) = test_support::account_with_inbox(&connection).await;
-        drop(connection);
-        store(&database, account.id, inbox, NEWSLETTER);
-        account.id
-    };
+        let account = {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            drop(connection);
+            store(&database, account.id, inbox, NEWSLETTER).await;
+            account.id
+        };
 
-    let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
+        let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
 
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-    let _wired = feed_the_window(&window, &wiring).expect("the store has an account");
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
 
-    let list = window.list();
-    assert!(
-        settle_until(|| list.model().n_items() == 1),
-        "the message never reached the list"
-    );
+        let list = window.list();
+        assert!(
+            settle_until(async || list.model().n_items() == 1).await,
+            "the message never reached the list"
+        );
 
-    activate_first_row(&window);
-    assert!(
-        settle_until(|| window.reading()),
-        "the message was opened and the reading pane never filled"
-    );
-    assert!(
-        settle_until(|| window.reader().unsubscribe_banner_visible()),
-        "a message with a sender should always have a list to leave -- the \
-         domain fallback if nothing else"
-    );
+        activate_first_row(&window);
+        assert!(
+            settle_until(async || window.reading()).await,
+            "the message was opened and the reading pane never filled"
+        );
+        assert!(
+            settle_until(async || window.reader().unsubscribe_banner_visible()).await,
+            "a message with a sender should always have a list to leave -- the \
+             domain fallback if nothing else"
+        );
 
-    // ── the store starts with no activation logged ───────────────────────
-    {
-        let connection = database.connect().await.expect("a connection");
-        assert_eq!(
+        // ── the store starts with no activation logged ───────────────────────
+        {
+            let connection = database.connect().await.expect("a connection");
+            assert_eq!(
+                UnsubscribeRepository::new(&connection)
+                    .for_account(account)
+                    .await.expect("list")
+                    .len(),
+                0,
+                "nothing has been activated yet"
+            );
+        }
+
+        // ── clicking unsubscribe reaches the store, account stamped ──────────
+        window.reader().click_unsubscribe();
+        let landed = settle_until(async || {
+            let connection = database.connect().await.expect("a connection");
             UnsubscribeRepository::new(&connection)
                 .for_account(account)
-                .expect("list")
-                .len(),
-            0,
-            "nothing has been activated yet"
+                .await.expect("list")
+                .len()
+                == 1
+        }).await;
+        assert!(
+            landed,
+            "the click never reached storage -- the reader only asks, and \
+             nothing answered"
         );
-    }
+        {
+            let connection = database.connect().await.expect("a connection");
+            let logged = UnsubscribeRepository::new(&connection)
+                .for_account(account)
+                .await.expect("list");
+            assert_eq!(logged[0].account_id, account);
+            assert_eq!(
+                logged[0].list_identifier, "news.example.org",
+                "no List-Id on this fixture, so the sender's domain is what \
+                 should have been logged"
+            );
+        }
 
-    // ── clicking unsubscribe reaches the store, account stamped ──────────
-    window.reader().click_unsubscribe();
-    let landed = settle_until(|| {
-        let connection = database.connect().await.expect("a connection");
-        UnsubscribeRepository::new(&connection)
-            .for_account(account)
-            .expect("list")
-            .len()
-            == 1
-    });
-    assert!(
-        landed,
-        "the click never reached storage -- the reader only asks, and \
-         nothing answered"
-    );
-    {
-        let connection = database.connect().await.expect("a connection");
-        let logged = UnsubscribeRepository::new(&connection)
-            .for_account(account)
-            .expect("list");
-        assert_eq!(logged[0].account_id, account);
-        assert_eq!(
-            logged[0].list_identifier, "news.example.org",
-            "no List-Id on this fixture, so the sender's domain is what \
-             should have been logged"
+        // ── opening settings lists it ────────────────────────────────────────
+        window.act(postio_core::Command::Settings);
+        while glib::MainContext::default().iteration(false) {}
+        // From the panel, not from the main window: settings is a window of its
+        // own since #1179, so its widgets are no longer descendants of this one.
+        let listed = find(&window.settings().upcast(), &|widget| {
+            widget.has_css_class("postio-settings-unsubscribe-row")
+        });
+        assert!(
+            listed.is_some(),
+            "the privacy pane lists no activations over a log that holds one"
         );
-    }
 
-    // ── opening settings lists it ────────────────────────────────────────
-    window.act(postio_core::Command::Settings);
-    while glib::MainContext::default().iteration(false) {}
-    // From the panel, not from the main window: settings is a window of its
-    // own since #1179, so its widgets are no longer descendants of this one.
-    let listed = find(&window.settings().upcast(), &|widget| {
-        widget.has_css_class("postio-settings-unsubscribe-row")
+        bridge.shutdown();
     });
-    assert!(
-        listed.is_some(),
-        "the privacy pane lists no activations over a log that holds one"
-    );
-
-    bridge.shutdown();
 }
 
 fn activate_first_row(window: &Window) {
