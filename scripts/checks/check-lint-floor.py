@@ -68,13 +68,10 @@ EXCEPTIONS: dict[str, str] = {
     # routinely has three sessions compiling on it. No library code in this
     # crate uses `unsafe`.
     "postio-config": "deny",
-    # One FFI call, in `db.rs`: `OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT)`,
-    # behind a `Once` and a documented `# Safety`. SQLCipher pulls libcrypto
-    # in, libcrypto registers an `atexit` handler that frees its own state,
-    # and a sync thread still writing when the process exits then encrypts a
-    # page through freed memory. Declaring the symbol is the only way to say
-    # "do not register that handler"; see the call site for the coredump this
-    # comes from. No other `unsafe` in this crate.
+    # No `unsafe` left: the one FFI call this exception used to cover --
+    # `OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT)`, against libcrypto's
+    # atexit handler freeing state under a sync thread still writing --
+    # went with SQLCipher when the engine became pure Rust.
     "postio-storage": "deny",
 }
 

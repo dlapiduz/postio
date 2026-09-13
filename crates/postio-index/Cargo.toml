@@ -21,7 +21,7 @@ postio-storage = { workspace = true }
 # The engine, for its Row and Value types. postio-index is the one crate
 # besides postio-storage that speaks SQL -- it maintains the search index
 # over the same tables (ADR 0016).
-turso = "=0.8.0-pre.11"
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
 thiserror = "2.0.20"
 tracing = "0.1"
 

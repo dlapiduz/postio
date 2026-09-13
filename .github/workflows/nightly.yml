@@ -59,7 +59,8 @@ jobs:
 
       # None of scripts/coverage-floors.json's crates need GTK -- postio-model,
       # postio-search and postio-config are pure leaves, and postio-storage /
-      # postio-sync need SQLite and the keyring, not a display. Still ubuntu-26.04
+      # postio-sync need the keyring, not a display (the store engine is pure
+      # Rust and brings no system library). Still ubuntu-26.04
       # rather than ubuntu-latest, so the pinned toolchain's cache key and the
       # rest of this workflow's runner-version assumptions stay one thing.
       - name: Install system dependencies
@@ -68,7 +69,6 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential \
             pkg-config \
-            libsqlite3-dev \
             libsecret-1-dev \
             libglib2.0-dev
 

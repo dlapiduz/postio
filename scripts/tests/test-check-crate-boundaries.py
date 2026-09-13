@@ -3,7 +3,7 @@
 
 A guard that has never been seen to fail is not a guard. This builds throwaway
 cargo workspaces in a temp dir -- with dummy path crates literally named `gtk4`,
-`libadwaita`, `rusqlite`, `io-imap`, `ammonia` and `tokio` -- and asserts that
+`libadwaita`, `turso`, `io-imap`, `ammonia` and `tokio` -- and asserts that
 the boundary check passes on a clean layout and fails, naming the offending
 crate *and* the offending dependency, on every way an invariant can be broken:
 directly, transitively, and through a dev-dependency.
@@ -82,7 +82,9 @@ def build_fixture(
     for bystander in ("postio-ffi", "postio-gmail", "postio-jmap"):
         write_crate(root, "crates", bystander)
     # Stand-ins for the real third-party crates, so nothing is fetched.
-    for banned in ("gtk4", "libadwaita", "rusqlite", "io-imap", "ammonia", "tokio"):
+    # Both engine names: `turso` is the live rule, `rusqlite` stays banned so
+    # the rule survives the rename that already happened once.
+    for banned in ("gtk4", "libadwaita", "turso", "rusqlite", "io-imap", "ammonia", "tokio"):
         write_crate(root, "vendor", banned)
     return root / "Cargo.toml"
 
@@ -177,16 +179,16 @@ def main() -> int:
 
         # 4. SQL in the view layer.
         check_case(
-            "postio-gtk gains a direct rusqlite dependency",
+            "postio-gtk gains a direct turso dependency",
             build_fixture(
-                tmp_path / "gtk-rusqlite",
+                tmp_path / "gtk-turso",
                 gtk_deps=(
                     'postio-core = { path = "../postio-core" }\n'
-                    'rusqlite = { path = "../../vendor/rusqlite" }\n'
+                    'turso = { path = "../../vendor/turso" }\n'
                 ),
             ),
             expected_status=1,
-            must_mention=("postio-gtk", "rusqlite"),
+            must_mention=("postio-gtk", "turso"),
         )
 
         # 5. Protocol types in the view layer, via a test-only dependency.
@@ -254,13 +256,13 @@ def main() -> int:
         #     same query string means the same thing in the search bar, the
         #     sidebar and `[filters]` -- postio-index is the FTS5 executor.
         check_case(
-            "postio-search gains a direct rusqlite dependency",
+            "postio-search gains a direct turso dependency",
             build_fixture(
-                tmp_path / "search-rusqlite",
-                search_deps='rusqlite = { path = "../../vendor/rusqlite" }\n',
+                tmp_path / "search-turso",
+                search_deps='turso = { path = "../../vendor/turso" }\n',
             ),
             expected_status=1,
-            must_mention=("postio-search", "rusqlite"),
+            must_mention=("postio-search", "turso"),
         )
 
         # 11. postio-body is the other pure leaf ADR 0004 carved out --
@@ -301,6 +303,8 @@ def main() -> int:
         )
 
         # 14. postio-config parses and validates TOML; it does no SQL.
+        # Deliberately the *old* engine's name: this is the case that proves
+        # a rename does not quietly lift the ban.
         check_case(
             "postio-config gains a direct rusqlite dependency",
             build_fixture(

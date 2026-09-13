@@ -46,7 +46,13 @@ postio-model = { version = "0.2.0", path = "../postio-model" }
 # experimental upstream and neither has been audited; spec.md makes "no
 # plaintext in the file" and "another key is refused" acceptance criteria
 # rather than assumptions for that reason.
-turso = "=0.8.0-pre.11"
+#
+# `default-features = false` because the default set includes `mimalloc`,
+# and that feature makes a *library* install a `#[global_allocator]` into
+# whatever binary links it — an allocator choice belongs to the binary, and
+# `postio-app` makes it explicitly. `fts` stays: the search index is built
+# on the engine's full-text index method.
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
 # Unicode normalisation for the diacritic fold the engine does not do.
 # `postio-index` applies it on both the write and the query path; it lives
 # here because the folded column is written where the body is.
@@ -56,7 +62,9 @@ tempfile = { version = "3.27.0", optional = true }
 # Blob compression (ADR 0017). `zstd` rather than a pure-Rust decoder because
 # the store must compress as well as decompress; the C library is BSD-3-Clause,
 # which `deny.toml` already allows.
-zstd = "0.14.0"
+# 0.13 rather than newest: the engine's fts (tantivy) is on 0.13, and one
+# version means one wrapper over the single zstd-sys both share.
+zstd = "0.13"
 thiserror = "2.0.20"
 tracing = "0.1"
 
@@ -68,7 +76,7 @@ postio-storage = { path = ".", features = ["test-support"] }
 tempfile = "3.27.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
-turso = "=0.8.0-pre.11"
+turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
 # Tests only. The crate is async but brings no runtime of its own -- whoever
 # calls it supplies one, and postio-runtime is the only thing that does.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

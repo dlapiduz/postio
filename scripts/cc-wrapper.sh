@@ -3,14 +3,15 @@
 # as `[env] CC`: put a machine-wide compile cache in front of every
 # build-script C compile, and get out of the way when the machine has none.
 #
-# scripts/rustc-wrapper.sh gives every *Rust* compile the shared sccache, and
-# ADR 0014 priced the vendored OpenSSL on the assumption the same held for C
-# ("sccache absorbs it machine-wide"). It did not: the C compiler inside the
-# openssl-src, libsqlite3-sys and zstd-sys build scripts is invoked by
-# make/cc directly, which RUSTC_WRAPPER never sees. Measured on a fresh
-# worktree target, 77% of a `cargo build -p postio-storage` was uncached C —
-# ~4 minutes at the pinned `jobs = 2`, paid again by every worktree, on the
-# critical path of the gate chain (#736).
+# scripts/rustc-wrapper.sh gives every *Rust* compile the shared sccache, but
+# the C compiler inside a -sys crate's build script is invoked by make/cc
+# directly, which RUSTC_WRAPPER never sees. When the store was SQLCipher that
+# was 77% of a `cargo build -p postio-storage` — openssl-src and
+# libsqlite3-sys, ~4 minutes per cold worktree (#736). Those are gone with
+# the pure-Rust engine; what is left in C is small (zstd-sys, blake3's asm,
+# mimalloc for the app binary, ring) and this wrapper still catches it, so it
+# stays — but it is no longer load-bearing, and deleting it costs seconds,
+# not minutes, if it ever misbehaves.
 #
 # ccache, NOT sccache, and that is measured rather than preferred: openssl-src
 # extracts and compiles its sources inside each target directory, so every

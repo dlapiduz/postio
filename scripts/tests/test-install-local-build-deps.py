@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
 """Self-test for scripts/install-local.sh's build-dependency check.
 
-#646: the store is SQLCipher and rusqlite carries
-`bundled-sqlcipher-vendored-openssl` (ADR 0014 Q1), so a release build
-compiles OpenSSL from source and runs its `Configure` -- a perl program.
-Distributions that split the perl standard library into packages ship none
-of the modules it needs, so the build ran for several minutes and then died
-inside a cargo build script with `Can't locate FindBin.pm in @INC`. Install
-that one module, build again, die on `IPC::Cmd`. Six modules is six failed
-release builds.
+Born of #646, when the store was SQLCipher and a release build compiled
+OpenSSL from source: six missing perl modules were six failed builds,
+several minutes each. The engine is pure Rust now and the perl probe is
+gone with OpenSSL, but the shape the incident taught survives in the
+pkg-config half: report *every* missing dependency at once, before `cargo`
+is started, and stay out of the way on a machine that has everything -- a
+probe that blocks a working build would be worse than the problem it
+solves.
 
-The check must therefore report *every* missing dependency at once, before
-`cargo` is started, and must stay out of the way on a machine that has
-everything -- a probe that blocks a working build would be worse than the
-problem it solves.
-
-`perl`, `pkg-config` and `cargo` are stubbed on PATH: the perl and
-pkg-config stubs fail for exactly the names a case names missing, and the
-cargo stub records whether it was ever called. No compiler, no display, no
-network, and nothing installed anywhere real.
+`pkg-config` and `cargo` are stubbed on PATH: the pkg-config stub fails
+for exactly the names a case names missing, and the cargo stub records
+whether it was ever called. No compiler, no display, no network, and
+nothing installed anywhere real.
 
 Usage: scripts/tests/test-install-local-build-deps.py
 Exit status: 0 all cases behaved, 1 otherwise.
@@ -66,24 +61,6 @@ exit 0
 
 # Fails for the modules STUB_PERL_MISSING names, the way a perl without them
 # does: a `Can't locate` on stderr and a non-zero status.
-PERL_STUB = """#!/usr/bin/env bash
-for arg in "$@"; do
-    case "$arg" in
-        -M*)
-            module="${arg#-M}"
-            for missing in $STUB_PERL_MISSING; do
-                if [ "$module" = "$missing" ]; then
-                    path="${module//:://}"
-                    echo "Can't locate $path.pm in @INC" >&2
-                    exit 2
-                fi
-            done
-            ;;
-    esac
-done
-exit 0
-"""
-
 PKG_CONFIG_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--exists" ]; then
     for missing in $STUB_PKGCONFIG_MISSING; do
@@ -122,9 +99,7 @@ def _borrow(bin_dir: Path) -> None:
 
 def run(
     *args: str,
-    perl_missing: str = "",
     pkgconfig_missing: str = "",
-    with_perl: bool = True,
     with_pkg_config: bool = True,
 ) -> subprocess.CompletedProcess:
     """Run install-local.sh against stubs, and hand back the finished process.
@@ -145,9 +120,6 @@ def run(
     ):
         (bin_dir / name).write_text(body, encoding="utf-8")
         (bin_dir / name).chmod(0o755)
-    if with_perl:
-        (bin_dir / "perl").write_text(PERL_STUB, encoding="utf-8")
-        (bin_dir / "perl").chmod(0o755)
     if with_pkg_config:
         (bin_dir / "pkg-config").write_text(PKG_CONFIG_STUB, encoding="utf-8")
         (bin_dir / "pkg-config").chmod(0o755)
@@ -164,7 +136,6 @@ def run(
     env = dict(os.environ)
     env["PATH"] = str(bin_dir)
     env["STUB_DIR"] = str(stub_dir)
-    env["STUB_PERL_MISSING"] = perl_missing
     env["STUB_PKGCONFIG_MISSING"] = pkgconfig_missing
     env["XDG_DATA_HOME"] = str(data_home)
     env["PREFIX"] = str(prefix)
@@ -188,38 +159,6 @@ def cargo_ran(proc: subprocess.CompletedProcess) -> bool:
     return bool(proc._cargo_calls.read_text(encoding="utf-8").strip())
 
 
-def case_every_missing_perl_module_is_named_at_once() -> None:
-    label = "a missing perl module stops the build and names every one that is missing"
-    proc = run(perl_missing="IPC::Cmd Pod::Html")
-    if proc.returncode == 0:
-        FAILURES.append(f"{label}: expected a non-zero exit, got 0\n{proc.stdout}")
-        return
-    if cargo_ran(proc):
-        FAILURES.append(
-            f"{label}: cargo was started anyway, so the failure still costs a whole build"
-        )
-    combined = proc.stdout + proc.stderr
-    for module in ("IPC::Cmd", "Pod::Html"):
-        if module not in combined:
-            FAILURES.append(f"{label}: {module} is missing and unmentioned: {combined!r}")
-    if "FindBin" in combined:
-        FAILURES.append(
-            f"{label}: FindBin is installed in this case and must not be reported: {combined!r}"
-        )
-
-
-def case_the_advice_survives_a_machine_without_dnf() -> None:
-    label = "the message names the modules and points at the README, not only a dnf line"
-    proc = run(perl_missing="FindBin")
-    combined = proc.stdout + proc.stderr
-    if "README" not in combined:
-        FAILURES.append(f"{label}: nothing points at the documented list: {combined!r}")
-    if "dnf" in combined and "Fedora" not in combined:
-        FAILURES.append(
-            f"{label}: a dnf command with no word about which distribution it is for: {combined!r}"
-        )
-
-
 def case_a_missing_library_is_reported_too() -> None:
     label = "a missing pkg-config library stops the build and is named"
     proc = run(pkgconfig_missing="webkitgtk-6.0")
@@ -231,19 +170,8 @@ def case_a_missing_library_is_reported_too() -> None:
     combined = proc.stdout + proc.stderr
     if "webkitgtk-6.0" not in combined:
         FAILURES.append(f"{label}: the missing library is unnamed: {combined!r}")
-
-
-def case_perl_itself_missing_is_not_reported_as_six_modules() -> None:
-    label = "no perl at all is reported as no perl"
-    proc = run(with_perl=False)
-    if proc.returncode == 0:
-        FAILURES.append(f"{label}: expected a non-zero exit, got 0\n{proc.stdout}")
-        return
-    combined = proc.stdout + proc.stderr
-    if "perl" not in combined.lower():
-        FAILURES.append(f"{label}: perl is not on the machine and goes unmentioned: {combined!r}")
-    if cargo_ran(proc):
-        FAILURES.append(f"{label}: cargo was started with no perl to configure OpenSSL with")
+    if "README" not in combined:
+        FAILURES.append(f"{label}: nothing points at the documented list: {combined!r}")
 
 
 def case_a_complete_machine_builds_exactly_as_before() -> None:
@@ -260,7 +188,7 @@ def case_a_complete_machine_builds_exactly_as_before() -> None:
 
 def case_uninstall_never_asks_for_a_compiler_s_dependencies() -> None:
     label = "--uninstall works on a machine that could not build"
-    proc = run("--uninstall", perl_missing="FindBin IPC::Cmd", pkgconfig_missing="gtk4")
+    proc = run("--uninstall", pkgconfig_missing="gtk4")
     if proc.returncode != 0:
         FAILURES.append(
             f"{label}: removing an installed copy needs no build dependencies, "
@@ -279,7 +207,6 @@ def case_the_check_can_be_stepped_over() -> None:
         ("cargo", CARGO_STUB),
         ("gtk-update-icon-cache", NOOP_STUB),
         ("update-desktop-database", NOOP_STUB),
-        ("perl", PERL_STUB),
         ("pkg-config", PKG_CONFIG_STUB),
     ):
         (bin_dir / name).write_text(body, encoding="utf-8")
@@ -291,7 +218,6 @@ def case_the_check_can_be_stepped_over() -> None:
     env = dict(os.environ)
     env["PATH"] = str(bin_dir)
     env["STUB_DIR"] = str(stub_dir)
-    env["STUB_PERL_MISSING"] = "FindBin IPC::Cmd"
     env["STUB_PKGCONFIG_MISSING"] = "gtk4"
     env["XDG_DATA_HOME"] = str(Path(tmp.name) / "data-home")
     env["PREFIX"] = str(Path(tmp.name) / "prefix")
@@ -317,10 +243,7 @@ def main() -> int:
     if not SCRIPT.exists():
         print(f"missing: {SCRIPT}", file=sys.stderr)
         return 1
-    case_every_missing_perl_module_is_named_at_once()
-    case_the_advice_survives_a_machine_without_dnf()
     case_a_missing_library_is_reported_too()
-    case_perl_itself_missing_is_not_reported_as_six_modules()
     case_a_complete_machine_builds_exactly_as_before()
     case_uninstall_never_asks_for_a_compiler_s_dependencies()
     case_the_check_can_be_stepped_over()
