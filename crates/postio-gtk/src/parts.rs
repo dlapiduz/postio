@@ -849,6 +849,7 @@ impl PartsPanel {
         imp.summary.set_hexpand(true);
 
         imp.blocked.set_text("remote blocked");
+        imp.blocked.add_css_class("postio-chip-base");
         imp.blocked.add_css_class("postio-parts-blocked");
         imp.blocked.set_visible(false);
 
