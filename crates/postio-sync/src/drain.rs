@@ -225,6 +225,7 @@ impl<'a> Drainer<'a> {
         // heal. It reads before it writes and is a no-op in the ordinary case.
         match postio_storage::repository::DraftRepository::new(connection)
             .fail_orphaned_sends(account)
+            .await
         {
             Ok(0) => {}
             Ok(healed) => tracing::warn!(
