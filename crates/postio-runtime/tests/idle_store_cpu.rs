@@ -96,13 +96,13 @@ const CEILING: f64 = 0.05;
 /// clock's 10 ms tick and the noise of a shared machine — not for a slope.
 const SLOPE: f64 = 4.0;
 
-#[test]
-fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
+#[tokio::test]
+async fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
     assert_the_clock_can_see_a_burn();
 
     let mut readings = Vec::new();
     for messages in SIZES {
-        let (burned, elapsed, woke) = idle_for(messages, WINDOW);
+        let (burned, elapsed, woke) = idle_for(messages, WINDOW).await;
         assert!(
             woke,
             "the engine did not answer a delivery after idling {elapsed:?} over \
@@ -157,7 +157,7 @@ fn an_idle_engine_costs_the_same_whatever_the_store_holds() {
 /// the engine had long since settled, the count was zero, and a healthy engine
 /// was reported as a stopped one. What proves it is alive is that it still
 /// *answers*.
-fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
+async fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     let database = test_support::memory().await;
     let report = seed_large(&database, 11, messages);
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -175,7 +175,7 @@ fn idle_for(messages: usize, window: Duration) -> (Duration, Duration, bool) {
     );
 
     let _engine = Engine::spawn(EngineParts {
-        account: report.account.id,
+        account: report.await.account.id,
         database: database.clone(),
         blobs,
         backend: backend.clone(),

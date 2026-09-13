@@ -70,13 +70,14 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
 /// Subjects and sender addresses whole; previews trimmed to a distinctive
 /// prefix, because a whole preview is long enough that a formatter could wrap
 /// or truncate it and the test would pass by accident.
-fn content_of(
+async fn content_of(
     database: &postio_storage::Store,
     account: postio_model::AccountId,
 ) -> Vec<String> {
     let connection = database.connect().await.expect("a connection");
     let rows = MessageRepository::new(&connection)
         .page(&ListQuery::account(account).limit(500))
+        .await
         .expect("reading the seeded mail");
     assert!(!rows.is_empty(), "the fixture seeded no mail to protect");
 
@@ -87,6 +88,7 @@ fn content_of(
     {
         let account = postio_storage::repository::AccountRepository::new(&connection)
             .list_enabled()
+            .await
             .expect("reading the account")
             .into_iter()
             .next()
@@ -126,8 +128,8 @@ fn server() -> MockBackend {
         .build()
 }
 
-#[test]
-fn no_message_content_reaches_the_log_at_any_level() {
+#[tokio::test]
+async fn no_message_content_reaches_the_log_at_any_level() {
     let captured = Captured::default();
 
     // Everything, with no filter at all: this has to hold at `trace` in a
@@ -148,8 +150,8 @@ fn no_message_content_reaches_the_log_at_any_level() {
         .expect("this test binary runs one test and owns the subscriber");
 
     let database = test_support::memory().await;
-    let report = seed_small(&database, 11);
-    let secrets = content_of(&database, report.account.id);
+    let report = seed_small(&database, 11).await;
+    let secrets = content_of(&database, report.account.id).await;
 
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -181,16 +183,10 @@ fn no_message_content_reaches_the_log_at_any_level() {
 
     // Drive the paths that handle mail: connect, drain, sync a real folder,
     // and seed a backfill over the seeded messages.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime");
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    runtime.block_on(async {
-        let _ = engine.drain().await;
-        let _ = engine.sync(inbox).await;
-        let _ = engine.seed_backfill(inbox, 50).await;
-    });
+    let _ = engine.drain().await;
+    let _ = engine.sync(inbox).await;
+    let _ = engine.seed_backfill(inbox, 50).await;
     drop(engine);
 
     let log = captured.text();

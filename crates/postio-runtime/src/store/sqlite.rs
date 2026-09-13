@@ -327,7 +327,8 @@ impl SqliteStore {
         };
         self.read(move |connection| async move {
             let folder = MailboxRepository::new(&connection)
-                .get(mailbox).await?
+                .get(mailbox)
+                .await?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?;
             Ok(folder.role != postio_model::mailbox::MailboxRole::Drafts)
         })
@@ -377,14 +378,15 @@ impl SqliteStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            let mut rows = threads.page_at(
-                &ThreadListQuery {
-                    after: seek,
-                    ..query.clone()
-                },
-                skip,
-            )
-            .await?;
+            let mut rows = threads
+                .page_at(
+                    &ThreadListQuery {
+                        after: seek,
+                        ..query.clone()
+                    },
+                    skip,
+                )
+                .await?;
 
             // An empty page inside a list that says it has rows means the
             // mark we seeked from lied: it claimed a cursor stood at some
@@ -445,13 +447,15 @@ impl SqliteStore {
                 Some((at, cursor)) => (Some(cursor), request.offset - at),
                 None => (None, request.offset),
             };
-            let groups = threads.unified_page_at(
-                &UnifiedThreadListQuery {
-                    limit: request.limit,
-                    after: seek,
-                },
-                skip,
-            ).await?;
+            let groups = threads
+                .unified_page_at(
+                    &UnifiedThreadListQuery {
+                        limit: request.limit,
+                        after: seek,
+                    },
+                    skip,
+                )
+                .await?;
             if let Some(last) = groups.last() {
                 marks
                     .lock()
@@ -471,7 +475,9 @@ impl SqliteStore {
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
         if matches!(scope, ListScope::Unified) {
             return self
-                .read(move |connection| async move { Ok(ThreadRepository::new(&connection).unified_count().await?) })
+                .read(move |connection| async move {
+                    Ok(ThreadRepository::new(&connection).unified_count().await?)
+                })
                 .await;
         }
         self.read(move |connection| async move {
@@ -515,7 +521,9 @@ impl SqliteStore {
 
     async fn read_mailboxes(&self, account: AccountId) -> Result<Vec<Mailbox>, StoreError> {
         self.read(move |connection| async move {
-            Ok(MailboxRepository::new(&connection).list_for_account(account).await?)
+            Ok(MailboxRepository::new(&connection)
+                .list_for_account(account)
+                .await?)
         })
         .await
     }
@@ -604,7 +612,8 @@ async fn thread_query(
             // `idx_threads_account_last_at`, so without it the window has no
             // index to seek and the whole flat-paging argument collapses.
             let account = MailboxRepository::new(&connection)
-                .get(mailbox).await?
+                .get(mailbox)
+                .await?
                 .ok_or_else(|| StoreError::new("That folder is no longer here"))?
                 .account_id;
             Ok(ThreadListQuery::in_mailbox(account, mailbox).limit(limit))
@@ -672,7 +681,8 @@ async fn summarise(
 ) -> Result<MessageSummary, StoreError> {
     let thread_count = match row.thread_id {
         Some(id) => threads
-            .get(id).await?
+            .get(id)
+            .await?
             .map(|thread| thread.message_count)
             .unwrap_or(1),
         None => 1,
@@ -731,12 +741,10 @@ impl MailStore for SqliteStore {
         &self,
         account: AccountId,
     ) -> Read<'_, postio_storage::repository::DraftCounts> {
-        Box::pin(
-            self.read(move |connection| async move {
-                Ok(MailboxRepository::new(&connection)
-                    .draft_counts(account)
-                    .await?)
-            }),
-        )
+        Box::pin(self.read(move |connection| async move {
+            Ok(MailboxRepository::new(&connection)
+                .draft_counts(account)
+                .await?)
+        }))
     }
 }

@@ -27,7 +27,7 @@ use postio_storage::repository::{
     AccountRepository, ListQuery, ListScope, MailboxRepository, MessageRepository,
 };
 use postio_storage::test_support::TempStore;
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 use crate::harness;
 
@@ -78,7 +78,7 @@ fn folder(path: &str, attributes: &[&str], messages: u32) -> MockMailbox {
 /// wave this file is about stops overlapping — not because the engine stopped
 /// running passes concurrently, but because the store underneath it was one
 /// Postio never uses. See #79, where exactly this made three lanes serialise.
-fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
+async fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
     let database = test_support::temp().await;
     let account = {
         let connection = database.connect().await.expect("a connection");
@@ -117,15 +117,17 @@ fn engine_over(backend: Arc<MockBackend>) -> (TempStore, Engine, BlobDir) {
 
 /// How many messages the store holds under the mailbox at `path`, and `None`
 /// while that folder has not been discovered yet.
-fn stored(database: &Database, path: &str) -> Option<u32> {
-    let connection = database.connection().ok()?;
+async fn stored(database: &Store, path: &str) -> Option<u32> {
+    let connection = database.connect().await.ok()?;
     let account = AccountRepository::new(&connection)
         .list()
+        .await
         .ok()?
         .into_iter()
         .next()?;
     let mailbox = MailboxRepository::new(&connection)
         .list_for_account(account.id)
+        .await
         .ok()?
         .into_iter()
         .find(|mailbox| mailbox.path == path)?;
@@ -135,6 +137,7 @@ fn stored(database: &Database, path: &str) -> Option<u32> {
             limit: 0,
             after: None,
         })
+        .await
         .ok()
 }
 
@@ -148,9 +151,13 @@ fn stored(database: &Database, path: &str) -> Option<u32> {
 /// #125). Performance claims live in the benches; a genuinely hung test
 /// costing three minutes once is cheaper than a flake costing a bisection
 /// every month.
-async fn until(what: &str, mut condition: impl FnMut() -> bool) {
+async fn until<F, Fut>(what: &str, condition: F)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     let waited = tokio::time::timeout(Duration::from_secs(180), async {
-        while !condition() {
+        while !condition().await {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -229,12 +236,15 @@ async fn a_first_sync_asks_about_several_mailboxes_at_once() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
 
-    until("every folder to finish its first sync", || {
-        ["INBOX", "Sent Messages", "Archive", "Deleted Messages"]
-            .iter()
-            .all(|path| stored(&database, path) == Some(40))
+    until("every folder to finish its first sync", async || {
+        for path in ["INBOX", "Sent Messages", "Archive", "Deleted Messages"] {
+            if stored(&database, path).await != Some(40) {
+                return false;
+            }
+        }
+        true
     })
     .await;
 
@@ -262,14 +272,15 @@ async fn the_inbox_finishes_while_a_large_archive_is_still_going() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
 
     // Liveness only: wait for the whole wave, then judge the order the
     // server actually saw. Waiting for both is what makes the assertion
     // non-vacuous — nothing about a slow machine can change a log that has
     // already been written.
-    until("both folders to finish their first sync", || {
-        stored(&database, "INBOX") == Some(10) && stored(&database, "Archive") == Some(2_000)
+    until("both folders to finish their first sync", async || {
+        stored(&database, "INBOX").await == Some(10)
+            && stored(&database, "Archive").await == Some(2_000)
     })
     .await;
 
@@ -305,12 +316,14 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
 
     // Wait until the wave is demonstrably under way rather than guessing at a
     // sleep: one committed batch means a pass is running.
-    until("the archive to start arriving", || {
-        stored(&database, "Archive").is_some_and(|count| count > 0)
+    until("the archive to start arriving", async || {
+        stored(&database, "Archive")
+            .await
+            .is_some_and(|count| count > 0)
     })
     .await;
 
@@ -322,8 +335,8 @@ async fn a_job_is_served_without_waiting_out_the_wave_it_arrived_during() {
 
     // And nothing was dropped on the way: an interrupted pass is requeued and
     // resumes, so the archive still finishes.
-    until("the archive to finish anyway", || {
-        stored(&database, "Archive") == Some(2_000)
+    until("the archive to finish anyway", async || {
+        stored(&database, "Archive").await == Some(2_000)
     })
     .await;
 
@@ -356,17 +369,18 @@ async fn inbox_bodies_start_before_the_archive_s_headers_finish() {
     );
     backend.set_latency(LATENCY);
 
-    let (database, engine, _directory) = engine_over(backend.clone());
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
 
-    until("both folders to finish their first sync", || {
-        stored(&database, "INBOX") == Some(10) && stored(&database, "Archive") == Some(2_000)
+    until("both folders to finish their first sync", async || {
+        stored(&database, "INBOX").await == Some(10)
+            && stored(&database, "Archive").await == Some(2_000)
     })
     .await;
 
     // Give the backfill lane a moment to fetch what it seeded -- the wave
     // above only guarantees headers are in; bodies are a separate queue this
     // waits for the same way `until` waits for anything else.
-    until("INBOX to have at least one body fetched", || {
+    until("INBOX to have at least one body fetched", async || {
         backend
             .body_fetches()
             .iter()
