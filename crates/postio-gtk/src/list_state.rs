@@ -30,7 +30,7 @@
 //!
 //! Same shape as [`crate::sidebar`]'s own gap: [`ListStateView::set_status`]
 //! is the whole input surface, and nothing calls it with live data yet.
-//! [`ConnectionState::Failing`] carries a typed category, not prose —
+//! [`postio_core::ConnectionState::Failing`] carries a typed category, not prose —
 //! see its doc comment — so the reason has to arrive through
 //! [`SyncStatus::detail`], the same field the sidebar's status line already
 //! reads. The store and queue counts are plain `u64`s a caller supplies,

@@ -5,7 +5,7 @@
 //! The engine's own row accessor is `Row::get::<T>`, over a `FromValue` trait
 //! that is **sealed** and has no `Option<T>`: a NULL is an error rather than a
 //! `None`. Most columns in this schema are nullable, so almost every read
-//! would be a `match` on `get_value`. [`RowExt`] is that `match`, written once.
+//! would be a `match` on `get_value`. [`crate::sql::RowExt`] is that `match`, written once.
 //!
 //! It is not a port of anyone's API. It is eight accessors and three
 //! functions, shaped by what the repositories in this crate ask for, and it
@@ -16,8 +16,9 @@
 //! **A `Rows` holds its connection until it is dropped.** The next statement
 //! on the same connection fails at runtime with "connection is busy with
 //! another operation" — there is no borrow to catch it at compile time, the
-//! way `rusqlite`'s `Statement` borrowing its `Connection` did. So [`all`] and
-//! [`first`] collect and drop before returning, and nothing in this crate
+//! way `rusqlite`'s `Statement` borrowing its `Connection` did. So
+//! [`crate::sql::all`] and [`crate::sql::first`] collect and drop before
+//! returning, and nothing in this crate
 //! holds a `Rows` across a write.
 
 use turso::{Connection, IntoParams, Row, Value};
