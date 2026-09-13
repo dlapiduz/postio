@@ -1737,14 +1737,30 @@ impl MessageListView {
     /// `gtk_focus_visible.rs` records -- `has-focus` is gated on the toplevel
     /// being active, which a headless window never is.
     fn adopt_cursor_focus(&self) {
-        let imp = self.imp();
-        if !imp.view.is_focus() {
+        if !self.imp().view.is_focus() {
             return;
         }
+        self.focus_cursor();
+    }
+
+    /// Put the keyboard on the cursor's row, wherever it is now.
+    ///
+    /// The deliberate half of [`adopt_cursor_focus`](Self::adopt_cursor_focus),
+    /// for a caller handing the list the keyboard back rather than one
+    /// tidying up a grab that already landed -- `Window::close_finder`
+    /// returning from the search box being the case that needs it. That path
+    /// used to end in `grab_focus` on the pane container, which moved nothing
+    /// at all: focus stayed in the search entry, so the box closed and every
+    /// key after it was still typed rather than acted on.
+    ///
+    /// Does nothing when there is no cursor, which is a list with no rows.
+    pub fn focus_cursor(&self) {
+        let imp = self.imp();
         let position = imp.cursor.selected();
         if position == gtk::INVALID_LIST_POSITION {
             return;
         }
+        imp.view.grab_focus();
         imp.view
             .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
     }

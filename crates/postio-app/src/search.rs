@@ -651,9 +651,16 @@ fn install_results(
         let list = list.clone();
         let restore = restore.clone();
         let order = order.clone();
-        let window = window.clone();
+        // Weak: this handler is registered on `feeds`, which outlives the
+        // window, and a strong clone here is the cycle #794 catalogued and
+        // `install_run` states the rule against. `window_teardown` is what
+        // notices, and it noticed this one.
+        let window = glib::object::ObjectExt::downgrade(window);
         let finder = finder.clone();
         move |count| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
             // The list is showing this query's results, which is the fact
             // `Window::set_searching` wants -- not "there is text in the box",
             // which stays true after `Esc` has put the folder back.
@@ -715,11 +722,15 @@ fn install_results(
         let list = list.clone();
         let feeds = feeds.clone();
         let order = order.clone();
-        let window = window.clone();
+        // Weak, for the reason `connect_results` above gives.
+        let window = glib::object::ObjectExt::downgrade(window);
         move || {
             if !feeds.messages.close_results() {
                 return;
             }
+            let Some(window) = window.upgrade() else {
+                return;
+            };
             // The next search starts ranked, whatever this one was switched
             // to: `Relevance` is the default because it is the answer the
             // ranking exists to give, and a sticky `Newest` would quietly

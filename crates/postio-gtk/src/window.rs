@@ -2980,6 +2980,15 @@ impl Window {
         // `shell().grab_focus()`'s own memory happens to restore.
         if self.context() == Context::Sidebar {
             self.sidebar().focus_folders();
+        } else if matches!(self.context(), Context::List | Context::Conversation) {
+            // The row, not the pane. `shell().grab_focus()` is a grab on a
+            // container that has no focus handling of its own, and `pane`
+            // above only records which pane the narrow layout shows -- so
+            // between them nothing moved the keyboard, and it stayed in the
+            // search entry with the box shut over it. Escape means get me out
+            // of here, and coming back to the message you left is the whole
+            // of "out of here" from a search.
+            self.list().focus_cursor();
         } else {
             self.shell().grab_focus();
         }
