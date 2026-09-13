@@ -974,6 +974,6 @@ fn pump_until(ready: impl Fn() -> bool) {
         if ready() {
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }

@@ -189,7 +189,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     // Refused means untouched: give any stray report a beat to arrive.
     for _ in 0..10 {
         while glib::MainContext::default().iteration(false) {}
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(
         editor.document(),

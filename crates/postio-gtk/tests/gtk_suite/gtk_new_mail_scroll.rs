@@ -234,10 +234,10 @@ fn pump_until(done: impl Fn() -> bool) {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         pump();
-        if done().await {
+        if done() {
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(done(), "timed out waiting for the list to catch up");
 }
