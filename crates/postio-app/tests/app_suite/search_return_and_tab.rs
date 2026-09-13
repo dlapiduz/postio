@@ -169,11 +169,17 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
             mode: Mode::Search,
             text: NO_HITS.to_owned(),
         });
-        settle_until(async || {
-            finder
-                .live()
-                .is_some_and(|live| live.outcome().is_some_and(|outcome| outcome.hits == 0))
-        }).await;
+        assert!(
+            settle_until(async || {
+                finder
+                    .live()
+                    .is_some_and(|live| live.outcome().is_some_and(|outcome| outcome.hits == 0))
+            })
+            .await,
+            "the no-hits query never produced a readout, so Tab below is being \
+             pressed while the search is still in flight -- which is a \
+             different test from the one this says it is"
+        );
 
         let claimed = finder.press_tab();
         assert!(
@@ -182,8 +188,19 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
              the keyboard itself rather than falling through to an \
              unpredictable GTK focus-chain destination"
         );
+        // Settled rather than asserted outright, which is a correction rather
+        // than a loosening: `press_tab` returns whether a handler *claimed*
+        // the gesture, and where the keyboard ends up is decided a
+        // main-context turn later. Asserting immediately was reading the focus
+        // before GTK had moved it -- which is why this case has a doc comment
+        // about failing once on CI and never reproducing. It reproduces every
+        // time now that the case body yields to a runtime between statements.
+        //
+        // The failure this can still produce is the same one, with the same
+        // diagnosis: a timeout here means the keyboard never arrived, not that
+        // it arrived late.
         assert!(
-            list_has_keyboard(&window),
+            settle_until(async || list_has_keyboard(&window)).await,
             "Tab claimed the keyboard but did not move it to the message list. {}",
             focus_diagnosis(&window)
         );
