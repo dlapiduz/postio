@@ -147,7 +147,7 @@ mod through_the_boundary {
 
     /// A session over a store holding one conversation of two messages, with
     /// the real action handlers on the bus.
-    fn conversation() -> (
+    async fn conversation() -> (
         std::sync::Arc<Session>,
         ScopeFfi,
         Vec<i64>,
@@ -160,12 +160,12 @@ mod through_the_boundary {
             let messages = MessageRepository::new(&connection);
             let threads = ThreadRepository::new(&connection);
             let mut thread = postio_model::Thread::new(account.id);
-            threads.create(&mut thread).expect("a thread");
+            threads.create(&mut thread).await.expect("a thread");
             let mut members = Vec::new();
             for _ in 0..2 {
                 let mut message = Message::new(account.id, inbox, Utc::now());
-                let id = messages.create(&mut message).expect("a message");
-                threads.add_message(thread.id, id).expect("membership");
+                let id = messages.create(&mut message).await.expect("a message");
+                threads.add_message(thread.id, id).await.expect("membership");
                 members.push(id.get());
             }
             (inbox, members)
@@ -196,19 +196,19 @@ mod through_the_boundary {
         )
     }
 
-    fn is_flagged(database: &postio_storage::Store, message: i64) -> bool {
+    async fn is_flagged(database: &postio_storage::Store, message: i64) -> bool {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .get(postio_model::ids::MessageId::new(message))
-            .expect("a read")
+            .await.expect("a read")
             .expect("the message is still there")
             .flags
             .contains(&Flag::Flagged)
     }
 
-    #[test]
-    fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
-        let (session, scope, members, database) = conversation();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
+        let (session, scope, members, database) = conversation().await;
         session.open_scope(scope);
         // Draw the row, the way a table does. Pages load when something asks
         // for them, so a session that has only opened a scope is holding no
@@ -230,26 +230,36 @@ mod through_the_boundary {
         session.invoke("flag");
         session.settle_for_test();
 
-        let flagged = settle_until(|| members.iter().all(|id| is_flagged(&database, *id)));
+        let flagged = settle_until(async || {
+            for id in &members {
+                if !is_flagged(&database, *id).await {
+                    return false;
+                }
+            }
+            true
+        })
+        .await;
+        // Counted before the assertion rather than inside it: the message is
+        // only built on failure, and it cannot await there.
+        let mut acted_on = 0usize;
+        for id in &members {
+            acted_on += usize::from(is_flagged(&database, *id).await);
+        }
         assert!(
             flagged,
-            "flagging a conversation row reached the bus but acted on {} of \
-             its {} messages -- the boundary aimed at the row's own message \
-             instead of the thread it stands for",
-            members
-                .iter()
-                .filter(|id| is_flagged(&database, **id))
-                .count(),
+            "flagging a conversation row reached the bus but acted on \
+             {acted_on} of its {} messages -- the boundary aimed at the row's \
+             own message instead of the thread it stands for",
             members.len()
         );
         session.shutdown();
     }
 
-    #[test]
-    fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
         // It arrives from another process. A boundary that panicked on a
         // typo would be one Swift could crash.
-        let (session, scope, _members, _database) = conversation();
+        let (session, scope, _members, _database) = conversation().await;
         session.open_scope(scope);
         session.invoke("no_such_command");
         session.invoke("");
@@ -270,6 +280,6 @@ where
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        done()
+        done().await
     }
 }
