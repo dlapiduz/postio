@@ -85,7 +85,11 @@ const DELIVERED_MESSAGE_ID: &str = "<harbour-dev.20260302T081200.a1@lists.exampl
 const INBOX_PATH: &str = "INBOX";
 const ARCHIVE_PATH: &str = "Archive";
 
-#[tokio::test]
+/// `multi_thread`, and the flavour is load-bearing:
+/// `postio_session::blocking::now` is how a synchronous GTK callback reads the
+/// store, and it reaches for `block_in_place`, which panics outright on a
+/// current_thread runtime. `app_suite`'s `gtk_case` is the same shape.
+#[tokio::test(flavor = "multi_thread")]
 async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
@@ -111,18 +115,18 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
 
     // ── the server: real wire bytes on an ephemeral loopback port ─────────
     //
-    // Its own runtime, kept for the life of the test: the server's accept
-    // loop and sessions live on it, while the engine brings a runtime of its
-    // own — exactly as the app and a real server own their halves.
-    let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-    let server = server_runtime.block_on(
-        TestServer::builder()
-            .account("test@example.com")
-            .password("hunter2")
-            .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
-            .mailbox(TestMailbox::new("Archive").attributes(["\\Archive"]))
-            .start(),
-    );
+    // On this test's own runtime. The server's accept loop and sessions live
+    // there while the engine brings a runtime of its own -- exactly as the app
+    // and a real server own their halves, which is what this used to build a
+    // third runtime to say. It cannot any more: the test is async now, so
+    // `Runtime::new().block_on()` here is a runtime started from inside one.
+    let server = TestServer::builder()
+        .account("test@example.com")
+        .password("hunter2")
+        .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
+        .mailbox(TestMailbox::new("Archive").attributes(["\\Archive"]))
+        .start()
+        .await;
 
     // ── the store: empty except the account row pointing at that server ───
     //
@@ -142,8 +146,9 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     }
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let key = AccountKey::new("test@example.com");
-    server_runtime
-        .block_on(secrets.store(&key, &Password::new("hunter2")))
+    secrets
+        .store(&key, &Password::new("hunter2"))
+        .await
         .expect("the memory store accepts a password");
 
     let directory = tempfile::tempdir().expect("a blob directory");
@@ -380,8 +385,11 @@ async fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
     // this in the same place, right after the GTK loop returns.
     postio_runtime::stop_retained();
 
-    // The server's runtime must not block teardown on its live sessions.
-    server_runtime.shutdown_background();
+    // The server's sessions used to be on a runtime of their own, shut down
+    // in the background here so live connections could not hold teardown up.
+    // They are on this test's runtime now, which `#[tokio::test]` drops when
+    // the body returns -- and dropping a runtime does not wait for detached
+    // tasks either, so the property is unchanged.
 
     // The window this test built joins GTK's toplevel list at
     // construction and stays there, holding a WebProcess, until it is
