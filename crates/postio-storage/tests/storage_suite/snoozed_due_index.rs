@@ -56,7 +56,7 @@ const MESSAGES: usize = 20_000;
 /// The query `MessageRepository::wake_due` runs, verbatim.
 ///
 /// Note what is *not* in it: an `ORDER BY`. With one the planner declines this
-/// index and scans `idx_messages_partial` instead, whose leading column is
+/// index and scans `idx_messages_list` instead, whose leading column is
 /// `mailbox_id` -- trading the walk this file exists to prevent for a sorter
 /// over at most a handful of ids. `wake_due` sorts in Rust for that reason,
 /// and this constant has to stay in step with it or the test is asserting

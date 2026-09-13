@@ -1266,8 +1266,8 @@ impl<'a> MessageRepository<'a> {
         // application (#1237).
         // No `ORDER BY` in the SQL, and the sort below instead. With one the
         // planner declines `idx_messages_snoozed_due` and scans
-        // `idx_messages_partial` -- whose leading column is `mailbox_id`, so
-        // it arrives in order -- trading a walk over every message the
+        // `idx_messages_list` -- whose leading column is `mailbox_id`, so it
+        // arrives in order -- trading a walk over every message the
         // account has for a sorter over at most a handful of mailbox ids.
         // That is exactly the walk #1237 removed, and it comes back every
         // five seconds for the life of the process. The order still matters
@@ -1707,9 +1707,8 @@ impl<'a> MessageRepository<'a> {
     ///
     /// Scoped to one mailbox because that is how the caller always has this
     /// question: `postio-sync`'s initial and incremental syncs are already
-    /// mailbox at a time, and `idx_messages_body_state` is a partial index on
-    /// exactly `(mailbox_id, received_at DESC) WHERE body_state <> 'full'`, so
-    /// this is a seek, never a scan.
+    /// mailbox at a time, so this seeks `idx_messages_list` to the mailbox and
+    /// walks its newest rows, never scanning the table.
     ///
     /// A message with no `UID` yet is not a candidate: there is nothing to
     /// issue a `FETCH` against until the server has assigned one.
@@ -1968,11 +1967,23 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
     // scope that names nothing does not leave a hole at ?1.
     let first = scope_arguments(&query.scope).len() + 1;
     let cursor = if with_cursor {
-        // A row value, so SQLite can turn it into one range constraint on
-        // (received_at, id) and seek straight to the cursor. Spelled as an OR
-        // it would be a filter, and a deep page would walk every row above it.
+        // Spelled with a redundant `<=` in front of the tie-break, rather than
+        // as the row value `(messages.received_at, messages.id) < (?{first}, ?{first + 1})` it used to be.
+        //
+        // A row value is the clearer spelling and SQLite turns it into one
+        // range constraint on the index. This engine does not: it seeks on the
+        // scope alone and then *filters*, so a page 95,000 rows in walks every
+        // row above it -- measured at 1.4 ms for the first page and 107 ms for
+        // the deep one, which is the skip this cursor exists to avoid. The
+        // leading `messages.received_at <= ?{first}` is what gives the planner the range it will
+        // actually seek on; the `OR` behind it resolves the tie on the id, and
+        // the two together mean exactly what the row value meant.
+        //
+        // `plan_seeks_past_the_cursor` is what notices if this regresses, and
+        // it asserts on the plan rather than on a clock.
         format!(
-            " AND (messages.received_at, messages.id) < (?{first}, ?{})",
+            " AND messages.received_at <= ?{first}
+              AND (messages.received_at < ?{first} OR messages.id < ?{})",
             first + 1
         )
     } else {

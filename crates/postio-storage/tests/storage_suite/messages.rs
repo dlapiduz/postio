@@ -1251,7 +1251,7 @@ async fn the_message_list_plan_never_sorts() {
         ] {
             let plan = plan_of(&connection, &sql).await;
             assert!(
-                !plan.contains("TEMP B-TREE"),
+                !postio_storage::test_support::sorts(&plan),
                 "{label} / {kind}: the list must never sort at query time:\n{plan}"
             );
             assert!(
@@ -1263,6 +1263,45 @@ async fn the_message_list_plan_never_sorts() {
                 "{label} / {kind}: expected an index, got:\n{plan}"
             );
         }
+    }
+}
+
+/// A cursor page seeks past the cursor rather than filtering down to it.
+///
+/// The clock version of this is `paging_stays_flat_over_a_hundred_thousand_messages`,
+/// which seeds 100,000 rows and takes two minutes. This asks the same question
+/// of the planner in a tenth of a second, and it is the one that will say
+/// *why*: an index term naming the sort column means a seek, and its absence
+/// means the engine found the scope, then walked every row above the cursor
+/// testing each one. Measured before the fix, that was 1.4 ms for the first
+/// page against 107 ms for a page 95,000 rows in.
+///
+/// The spelling that produces the term is in `where_clause`, and it is not the
+/// obvious one -- a row value comparison, which SQLite turns into exactly this
+/// range constraint, this engine plans as a filter. So the assertion is about
+/// the plan and not about the SQL: what matters is that the cursor *reaches*
+/// the index, however it is written.
+#[tokio::test]
+async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let messages = MessageRepository::new(&connection);
+
+    for (label, query, sort_column) in [
+        ("mailbox", ListQuery::mailbox(MailboxId::new(1)), "received_at"),
+        ("account", ListQuery::account(postio_model::AccountId::new(1)), "received_at"),
+    ] {
+        let sql = messages.explain(&query.clone().after(ListCursor {
+            received_at: at(0),
+            id: MessageId::new(1),
+        }));
+        let plan = plan_of(&connection, &sql).await;
+        assert!(
+            plan.contains(sort_column),
+            "{label}: the cursor never reaches the index -- the engine seeks \
+             the scope and then filters every row above the cursor, which is \
+             the skip keyset paging exists to avoid:\n{plan}"
+        );
     }
 }
 

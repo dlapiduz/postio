@@ -327,7 +327,7 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
         let plan = test_support::plan(&connection, &sql).await;
 
         assert!(
-            !plan.contains("TEMP B-TREE"),
+            !postio_storage::test_support::sorts(&plan),
             "{order:?}: the drill-in must not sort:\n{plan}"
         );
         assert!(
@@ -509,7 +509,7 @@ async fn the_thread_list_plan_never_sorts() {
             let plan = test_support::plan(&connection, &sql).await;
 
             assert!(
-                !plan.contains("TEMP B-TREE"),
+                !postio_storage::test_support::sorts(&plan),
                 "{label} / cursor={after}: the thread list must never sort:\n{plan}"
             );
             assert!(

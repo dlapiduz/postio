@@ -569,9 +569,6 @@ CREATE INDEX idx_attachments_filename ON attachments (filename);
 
 CREATE INDEX idx_attachments_message ON attachments (message_id, position);
 
-CREATE INDEX idx_attachments_pending
-    ON attachments (message_id);
-
 CREATE UNIQUE INDEX idx_contacts_account_address
     ON contacts (account_id, address_normalized) WHERE account_id IS NOT NULL;
 
@@ -615,12 +612,6 @@ CREATE INDEX idx_message_labels_label ON message_labels (label_id, message_id);
 CREATE INDEX idx_messages_account_list
     ON messages (account_id, received_at DESC, id DESC, deleted_locally, snoozed_until);
 
-CREATE INDEX idx_messages_body_state
-    ON messages (mailbox_id, received_at DESC);
-
-CREATE INDEX idx_messages_flagged
-    ON messages (account_id, received_at DESC, id DESC);
-
 CREATE INDEX idx_messages_in_reply_to
     ON messages (account_id, in_reply_to);
 
@@ -632,9 +623,6 @@ CREATE INDEX idx_messages_list_id ON messages (account_id, list_id);
 CREATE INDEX idx_messages_mailbox_remote_id ON messages (mailbox_id, remote_id);
 
 CREATE INDEX idx_messages_mod_seq ON messages (mailbox_id, mod_seq);
-
-CREATE INDEX idx_messages_partial
-    ON messages (mailbox_id, received_at DESC);
 
 CREATE INDEX idx_messages_recency
     ON messages (received_at DESC, id DESC, deleted_locally, snoozed_until);
@@ -866,7 +854,6 @@ mod tests {
     "idx_attachments_draft",
     "idx_attachments_filename",
     "idx_attachments_message",
-    "idx_attachments_pending",
     "idx_contacts_account_address",
     "idx_contacts_rank",
     "idx_contacts_shared_address",
@@ -884,14 +871,11 @@ mod tests {
     "idx_mailboxes_parent",
     "idx_message_labels_label",
     "idx_messages_account_list",
-    "idx_messages_body_state",
-    "idx_messages_flagged",
     "idx_messages_in_reply_to",
     "idx_messages_list",
     "idx_messages_list_id",
     "idx_messages_mailbox_remote_id",
     "idx_messages_mod_seq",
-    "idx_messages_partial",
     "idx_messages_recency",
     "idx_messages_rfc_message_id",
     "idx_messages_send_state",

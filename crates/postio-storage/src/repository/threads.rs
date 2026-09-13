@@ -649,7 +649,9 @@ impl<'a> ThreadRepository<'a> {
     /// One raw window of threads across every account, newest first.
     async fn unified_raw_page(&self, limit: u32, after: Option<ThreadCursor>) -> Result<Vec<Thread>> {
         let cursor = if after.is_some() {
-            " AND (last_at, id) < (?1, ?2)"
+            // See `where_clause` in `messages.rs`: a row value reads better and
+            // this engine will not seek on one.
+            " AND last_at <= ?1 AND (last_at < ?1 OR id < ?2)"
         } else {
             ""
         };
@@ -953,7 +955,7 @@ impl<'a> ThreadRepository<'a> {
         // hidden: an empty row is not something the user can act on.
         let Some(_) = query.mailbox else {
             let cursor = if query.after.is_some() {
-                " AND (last_at, id) < (?2, ?3)"
+                " AND last_at <= ?2 AND (last_at < ?2 OR id < ?3)"
             } else {
                 ""
             };
@@ -966,7 +968,7 @@ impl<'a> ThreadRepository<'a> {
         };
 
         let cursor = if query.after.is_some() {
-            " AND (rep.received_at, rep.id) < (?3, ?4)"
+            " AND rep.received_at <= ?3 AND (rep.received_at < ?3 OR rep.id < ?4)"
         } else {
             ""
         };

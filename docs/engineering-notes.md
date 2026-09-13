@@ -3366,6 +3366,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [A row-value cursor is a filter, not a seek](notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md) — Turso will not seek on `(a, b) < (?, ?)`, so every keyset cursor needs a redundant bare inequality on the sort column or the page is a skip (2026-09-12).
 - [A partial index the planner will not read](notes/2026-09-12-a-partial-index-the-planner-will-not-read.md) — Turso's planner declines a partial index for reads and still enforces a partial UNIQUE, so a `WHERE` on an index must be a constraint and never a size optimisation (2026-09-12).
 - [A window before its store is a new set of states](notes/2026-09-12-a-window-before-its-store-is-a-new-set-of-states.md) — presenting the window first moves the startup budget's subject, makes the absence of a plate a decision, and needs a guard where the work starts rather than where it ends (2026-09-12, #1114)
 - [An aggregate hides from a row count](notes/2026-09-11-an-aggregate-hides-from-a-row-count.md) — a `count(*)` over a mailbox is one statement and one row, so the two counted budgets in the workspace were blind to a full scan on the first-frame path (2026-09-11, #1479)
