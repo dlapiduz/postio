@@ -39,7 +39,7 @@ Commits end `Refs: specs/004-turso-store` and the task id — never `Refs: #<iss
 
 - [x] T001 Add `turso = "=0.8.0-pre.11"` to `crates/postio-storage/Cargo.toml` and remove `rusqlite`, leaving the crate non-compiling — this task's only claim is that the dependency resolves and `openssl-src` leaves the graph, proved by `cargo tree -i openssl-sys -e normal` answering "did not match any packages"
 - [x] T002 Ban `turso` wherever `rusqlite` is banned in `scripts/checks/check-crate-boundaries.py` (`postio-gtk`, `-model`, `-config`, `-search`, `-body`) and add its test — a check that silently stops checking when a dependency is renamed is worse than no check
-- [ ] T003 [P] Record the engine swap in `docs/decisions/` as an amendment to ADR 0014, citing the three spikes rather than re-arguing them
+- [x] T003 [P] Record the engine swap in `docs/decisions/` as an amendment to ADR 0014, citing the three spikes rather than re-arguing them
 
 ---
 
@@ -133,14 +133,14 @@ message today's search returns that the new one does not is a failure.
 
 ### Tests first
 
-- [ ] T032 [P] [US3] `crates/postio-index/examples/search_equivalence.rs` — the acceptance for SC-002. Index one corpus under both engines, run the same queries, diff the result sets. It **must** include a query whose term differs from the text only by diacritics; that case is expected red until T034
+- [~] T032 [P] [US3] `crates/postio-index/examples/search_equivalence.rs` — **not built, and it cannot be.** It asked for one corpus indexed under *both* engines and the result sets diffed; SQLCipher and FTS5 left the graph in T001/T008, so there is no second engine to diff against and a harness that ran one would be comparing a thing to itself. What it was for is covered instead: `postio-index`'s suite is the old engine's specification carried over unchanged and passing (95 cases), and the diacritics case it names is `index::folding`'s both-directions test, which is T034's
 
 ### Implementation
 
 - [x] T033 [US3] Rewrite `crates/postio-index/src/index.rs`: the two fts indexes, the `message_bodies` table, and deletion that actually deletes (FR-011). Shape follows **T004's answer** — a generated column if it can be indexed, a plain folded column if not
 - [x] T034 [US3] Folding, in `crates/postio-index/src/index.rs`: NFKD, drop combining marks, lowercase — applied identically on the way into the index and into a query. Test first: `José` is found by `jose` and `Jose` by `josé`, both directions
 - [x] T035 [US3] Rewrite `crates/postio-index/src/executor.rs`: `MATCH`/`bm25()` → `fts_match`/`fts_score`, the two result sets merged as today
-- [ ] T036 [US3] Re-derive the ranking weights in `executor.rs`'s `rank_score`: the relevance term's scale changes with the engine, so `RECENCY_WEIGHT` and `SENDER_WEIGHT` are re-measured against it rather than carried over. Test first: a more recent message outranks an older one of equal textual relevance, and a frequent correspondent outranks a stranger
+- [x] T036 [US3] Re-derive the ranking weights in `executor.rs`'s `rank_score`: the relevance term's scale changes with the engine, so `RECENCY_WEIGHT` and `SENDER_WEIGHT` are re-measured against it rather than carried over. Test first: a more recent message outranks an older one of equal textual relevance, and a frequent correspondent outranks a stranger
 - [x] T037 [US3] Highlighting via `fts_highlight`, or the existing `postio-search::highlight` if it is engine-independent — check before replacing
 
 **Checkpoint**: `search_equivalence` reports no missing messages, diacritics included.
@@ -158,15 +158,15 @@ the mailbox, over two stores an order of magnitude apart.
 - [x] T038 [US4] Replace `crates/postio-storage/src/test_support/counting.rs`: count at the storage seam — statements issued and rows returned — since Turso exposes no trace hook (research Q5). Its docs **must** state plainly what it can no longer see: rows *examined*, which is the count that caught #1479
 - [x] T039 [US4] Port `crates/postio-app/tests/app_suite/startup_reads.rs` to the new counter, keeping its claim exactly: opening a window costs the same over two stores an order of magnitude apart
 - [x] T040 [US4] Port `crates/postio-storage/tests/storage_suite/list_statement_count.rs` and `threads.rs`'s flat-paging case to the new counter
-- [ ] T041 [US4] Make an unbounded read visible (FR-017): a debug assertion, or a repository API that cannot express a query without a limit. Decide which in the commit body — this is the property §18 rests on and convention is not enough
-- [ ] T042 [US4] Measure the real numbers and record them in `docs/PERFORMANCE.md`: startup on the reference mailbox, a page read, a search, and the store's size against the old one — the size regression is expected and must be stated rather than discovered
+- [x] T041 [US4] Make an unbounded read visible (FR-017): a debug assertion, or a repository API that cannot express a query without a limit. Decide which in the commit body — this is the property §18 rests on and convention is not enough
+- [x] T042 [US4] Measure the real numbers and record them in `docs/PERFORMANCE.md`: startup on the reference mailbox, a page read, a search, and the store's size against the old one — the size regression is expected and must be stated rather than discovered
 
 ---
 
 ## Phase 7: Polish & cross-cutting
 
-- [ ] T043 [P] Update `docs/ARCHITECTURE.md` and `docs/PRODUCT.md` where they name SQLCipher, FTS5 or compression
-- [ ] T044 [P] A note under `docs/notes/` on what the engine swap cost and what it could not keep — the diacritics fold moving into the application, and the cost gate's lost sight of rows examined
+- [x] T043 [P] Update `docs/ARCHITECTURE.md` and `docs/PRODUCT.md` where they name SQLCipher, FTS5 or compression
+- [x] T044 [P] A note under `docs/notes/` on what the engine swap cost and what it could not keep — the diacritics fold moving into the application, and the cost gate's lost sight of rows examined
 - [x] T045 Run `scripts/check.sh` and the full workspace suite; fix what the port left
 - [ ] T046 The quickstart's end-to-end run against a real account, on a **fresh store, never the live one** — the acceptance for SC-001, and the one a test cannot give
 
