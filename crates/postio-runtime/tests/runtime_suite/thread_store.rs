@@ -226,10 +226,10 @@ async fn paging_a_folder_counts_it_once_rather_than_once_per_page() {
     // Counted, not timed: the count is a statement, and statements are what
     // `postio_storage`'s trace hook sees. Six pages of the same folder should
     // not cost six counts.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, 600);
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 600).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, 4);
+    thread_seeded_messages(&database, report.account.id, 4).await;
     let store = SqliteStore::new(&database);
 
     // One page, to establish what a page costs including its first count.
@@ -274,10 +274,10 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
     // The witness is `mailboxes.total_count`, maintained by the counting
     // triggers -- so this asserts the trigger and the cache agree, not just
     // that the cache has an invalidation path.
-    let database = test_support::temp();
-    let report = seed_large(&database, 7, 300);
+    let database = test_support::temp().await;
+    let report = seed_large(&database, 7, 300).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, 4);
+    thread_seeded_messages(&database, report.account.id, 4).await;
     let store = SqliteStore::new(&database);
 
     let first = store
@@ -287,7 +287,7 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
 
     // New mail, through the repository the sync uses, so the triggers run.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut arrival = postio_model::Message::new(
             report.account.id,
             inbox,
@@ -300,6 +300,7 @@ async fn a_folder_that_gains_a_message_is_counted_again() {
         )];
         postio_storage::repository::MessageRepository::new(&connection)
             .create(&mut arrival)
+            .await
             .expect("the arrival");
     }
 
