@@ -454,6 +454,9 @@ mod imp {
         pub(super) folders: RefCell<Vec<MailboxId>>,
         /// What the empty box is offering, as a person reads it.
         pub(super) hints: RefCell<Vec<String>>,
+        /// The mode each hint row enters, in the order the rows are drawn.
+        /// Parallel to `hints`, which is the readable half.
+        pub(super) hinted: RefCell<Vec<Mode>>,
         pub(super) available_labels: RefCell<Vec<Label>>,
         pub(super) labels: RefCell<Vec<LabelId>>,
         pub(super) matched: RefCell<Vec<ContactHit>>,
@@ -498,6 +501,7 @@ mod imp {
                 commands: RefCell::new(Vec::new()),
                 folders: RefCell::new(Vec::new()),
                 hints: RefCell::new(Vec::new()),
+                hinted: RefCell::new(Vec::new()),
                 available_labels: RefCell::new(Vec::new()),
                 labels: RefCell::new(Vec::new()),
                 matched: RefCell::new(Vec::new()),
@@ -860,6 +864,25 @@ impl Finder {
         let imp = self.imp();
         match self.mode() {
             Mode::Search => {
+                // A picked hint is a mode, not a query. The rows an empty box
+                // offers are the only thing on the plate, so Return on one
+                // has to mean what the row says -- it draws, it highlights,
+                // and before this it did nothing, which is worse than not
+                // being there.
+                if let Some(mode) = self
+                    .selected_index()
+                    .and_then(|index| imp.hinted.borrow().get(index).copied())
+                {
+                    self.open(mode);
+                    return;
+                }
+                // Nothing typed is nothing to search for -- the same rule
+                // `refresh` follows when it offers the modes instead. Running
+                // the empty query put the folder back in the list, which
+                // reads as the box having thrown the gesture away.
+                if self.query().text.is_empty() {
+                    return;
+                }
                 // Enter means "search now": the debounce is sized to typing
                 // cadence (see `crate::search::DEBOUNCE`), which is long
                 // enough to feel when the query is finished and the person
@@ -1208,6 +1231,7 @@ impl Finder {
                 // here: this runs on each rebuild, and appending would stack
                 // the same four hints up again on every keystroke.
                 let mut hints = Vec::new();
+                let mut hinted = Vec::new();
                 if query.text.is_empty() {
                     for mode in postio_ui::finder::MODES {
                         let Some(prefix) = mode.prefix else {
@@ -1229,9 +1253,14 @@ impl Finder {
                         }
                         imp.list.append(&hint_row(mode.purpose, prefix));
                         hints.push(format!("{}, {prefix}", mode.purpose));
+                        // Beside the row, not derived from the prefix later:
+                        // the two lists are the same list, and reading the
+                        // prefix back off a label is how they drift.
+                        hinted.extend(Mode::of_prefix(prefix));
                     }
                 }
                 *imp.hints.borrow_mut() = hints;
+                *imp.hinted.borrow_mut() = hinted;
 
                 let parsed = postio_search::parse(&query.text, today());
                 *imp.parsed.borrow_mut() = parsed;

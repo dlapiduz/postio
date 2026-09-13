@@ -246,3 +246,87 @@ pub fn escape_out_of_the_box_returns_the_keyboard_to_the_row_it_left() {
         GtkWindowExt::focus(&window).map(|w| w.widget_name())
     );
 }
+
+/// Return on a mode hint enters that mode.
+///
+/// Reported from a live run: "the hints show fine now but when i press return
+/// it goes to the inbox it doesnt do anything with the hint". They were rows
+/// a person could see and move onto, and `activate` had no idea they existed
+/// -- in `Mode::Search` it runs the query, and the query on an empty box is
+/// empty, so Return searched for nothing and the list fell back to the
+/// folder. A row that draws, highlights and then does nothing is worse than
+/// no row.
+///
+/// Also pins the no-selection case: Return on an empty box with nothing
+/// picked does not run an empty search either. "Nothing typed is nothing to
+/// search for" is already what `refresh` says about the hints; this makes
+/// Return agree with it.
+pub fn return_on_a_mode_hint_enters_that_mode() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    window.list().model().set_source(Rc::new(Pages));
+    window
+        .list()
+        .model()
+        .deliver(0, (0..ROWS).map(row).collect());
+    settle_until(|| cursor_message(&window).is_some());
+
+    let key = |name: &str| {
+        window.handle_key(
+            gdk::Key::from_name(name).unwrap(),
+            gdk::ModifierType::empty(),
+        );
+    };
+
+    key("slash");
+    settle_until(|| window.finder().is_open());
+    let hints = window.finder().mode_hints();
+    assert!(!hints.is_empty(), "the empty box offers its modes");
+
+    // Return with nothing picked stays put: an empty box has no query to run.
+    key("Return");
+    settle_until(|| !window.finder().is_open());
+    assert!(
+        window.finder().is_open(),
+        "Return on an empty box with no hint picked runs no search -- there \
+         is nothing typed to search for, and falling back to the folder reads \
+         as the box having thrown the gesture away"
+    );
+
+    // Down onto the first hint, then Return. Driven through the finder's own
+    // handlers rather than `handle_key`: Up, Down and Return inside the box
+    // are decided by a controller on the entry, which is a different seam
+    // from the window's keymap and the one a person's press actually reaches.
+    let finder = window.finder();
+    finder.move_selection(1);
+    finder.activate();
+    settle_until(|| finder.mode() == postio_gtk::finder::Mode::Command);
+
+    assert_eq!(
+        finder.mode(),
+        postio_gtk::finder::Mode::Command,
+        "Return on \"Run a command\" enters command mode, which is what the \
+         row says it is for"
+    );
+    // And the keyboard is in the box, on the character the row stood for:
+    // activating a hint is the box typing it for you, so what follows is the
+    // command you came to run.
+    let field = finder.field().expect("the header field");
+    assert!(
+        field.text.is_focus(),
+        "the keyboard stays in the box after picking a mode -- the next thing \
+         a person does is type the command"
+    );
+    assert!(
+        finder.is_open(),
+        "and the box is still open to type it into"
+    );
+}
