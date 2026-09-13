@@ -1626,19 +1626,20 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
 /// piece cannot see.
 #[tokio::test]
 async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
-    let database = test_support::memory();
-    let connection = database.connection().expect("checkout");
-    let (account, _) = account_with_sent(&connection);
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _) = account_with_sent(&connection).await;
     // A Drafts folder, because #166's mirror row is only written when there is
     // one -- and the mirror is what the Outbox and the Drafts list read, so a
     // fixture without it would assert the healing on the half nothing draws.
-    test_support::mailbox(&connection, &account, "Drafts");
+    test_support::mailbox(&connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    let draft_id = drafts.save(&mut draft).expect("save draft");
+    let draft_id = drafts.save(&mut draft).await.expect("save draft");
     drafts
         .queue_send(&mut draft, at(9))
+        .await
         .expect("queue the send");
 
     // What the drainer's failure path used to leave behind, once
@@ -1646,15 +1647,22 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
     // way and there is nothing to carry it.
     let queued = OperationQueueRepository::new(&connection)
         .pending(account.id, at(10))
+        .await
         .expect("the queue")
         .into_iter()
         .find(|op| op.target == OperationTarget::Draft(draft_id))
         .expect("the send is queued");
     OperationQueueRepository::new(&connection)
         .delete(queued.id)
+        .await
         .expect("delete the operation");
     assert_eq!(
-        drafts.get(draft_id).expect("get").expect("there").state,
+        drafts
+            .get(draft_id)
+            .await
+            .expect("get")
+            .expect("there")
+            .state,
         postio_model::DraftState::Queued,
         "the fixture has to start in the state the real store was found in"
     );
@@ -1686,7 +1694,12 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
     );
 
     assert_eq!(
-        drafts.get(draft_id).expect("get").expect("there").state,
+        drafts
+            .get(draft_id)
+            .await
+            .expect("get")
+            .expect("there")
+            .state,
         postio_model::DraftState::Failed,
         "running the client left the draft claiming to be on its way, which is \
          the state it cannot get out of by itself"
@@ -1695,15 +1708,19 @@ async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
     // And the mirror row #166 keeps in Drafts, which is what the Outbox and
     // the Drafts list actually read. A heal that stopped at the `drafts` table
     // would leave the row on screen saying it is sending.
-    let mirror: Option<String> = connection
-        .query_row(
-            "SELECT m.send_state FROM messages m
-               JOIN drafts d ON d.message_id = m.id
-              WHERE d.id = ?1",
-            [draft_id.get()],
-            |row| row.get(0),
-        )
-        .expect("the mirror row");
+    let mirror: Option<String> = postio_storage::sql::one(
+        &connection,
+        "SELECT m.send_state FROM messages m
+           JOIN drafts d ON d.message_id = m.id
+          WHERE d.id = ?1",
+        [draft_id.get()],
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            row.opt_text(0)
+        },
+    )
+    .await
+    .expect("the mirror row");
     assert_eq!(
         mirror.as_deref(),
         Some("failed"),

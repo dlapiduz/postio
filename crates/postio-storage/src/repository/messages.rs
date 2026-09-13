@@ -891,16 +891,15 @@ impl<'a> MessageRepository<'a> {
     /// pane, deciding which verbs a message gets (#1525) -- and widening the
     /// message read for it would pay for the column on every caller that does
     /// not care.
-    pub fn send_state(&self, id: MessageId) -> Result<Option<DraftState>> {
-        let state: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT send_state FROM messages WHERE id = ?1",
-                [id.get()],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
+    pub async fn send_state(&self, id: MessageId) -> Result<Option<DraftState>> {
+        let state: Option<String> = sql::first(
+            self.connection,
+            "SELECT send_state FROM messages WHERE id = ?1",
+            [id.get()],
+            |row| row.opt_text(0),
+        )
+        .await?
+        .flatten();
         state
             .map(|state| {
                 DraftState::from_name(&state)
