@@ -60,8 +60,11 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
     );
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
-        .await.expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
+        .await
+        .expect("target account");
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX")
+        .await
+        .id;
 
     let mut message = Message::new(source.id, source_inbox, at(8));
     message.server.uid = Some(Uid::new(1));
@@ -72,7 +75,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
     }
     let source_message = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("source message");
+        .await
+        .expect("source message");
 
     // The provisional copy the user sees in the target the instant they
     // press the key — `relocate_rows` makes one for every cross-account
@@ -87,7 +91,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
     copy.server = postio_model::ServerIdentifiers::default();
     let target_message = MessageRepository::new(&connection)
         .create(&mut copy)
-        .await.expect("the provisional copy");
+        .await
+        .expect("the provisional copy");
 
     let blob = blobs.put(raw).expect("raw blob");
     let saga = CrossAccountMoveRepository::new(&connection)
@@ -101,7 +106,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
             raw_blob_id: Some(blob.as_str().to_owned()),
             rfc_message_id: with_message_id.then(|| "<engine@example.com>".to_owned()),
         })
-        .await.expect("saga");
+        .await
+        .expect("saga");
 
     let queue = OperationQueueRepository::new(&connection);
     queue
@@ -111,7 +117,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
             &Operation::CrossAccountCopy { saga },
             at(9),
         )
-        .await.expect("enqueue copy");
+        .await
+        .expect("enqueue copy");
     queue
         .enqueue(
             source.id,
@@ -119,7 +126,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
             &Operation::CrossAccountRemove { saga },
             at(9),
         )
-        .await.expect("enqueue remove");
+        .await
+        .expect("enqueue remove");
     drop(connection);
 
     World {
@@ -180,7 +188,8 @@ async fn phase(world: &World) -> MovePhase {
     let connection = world.database.connect().await.expect("checkout");
     CrossAccountMoveRepository::new(&connection)
         .get(world.saga)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the saga")
         .phase
 }
@@ -238,7 +247,8 @@ async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
         let connection = world.database.connect().await.expect("checkout");
         MessageRepository::new(&connection)
             .get(copy)
-            .await.expect("read")
+            .await
+            .expect("read")
             .expect("the copy")
             .server
     };
@@ -255,14 +265,16 @@ async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
     let connection = world.database.connect().await.expect("checkout");
     let saga = CrossAccountMoveRepository::new(&connection)
         .get(world.saga)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the saga");
     let confirmed = saga
         .confirmed_remote_id
         .expect("the saga records what the append proved");
     let stored = MessageRepository::new(&connection)
         .get(copy)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the copy")
         .server;
 
@@ -298,7 +310,8 @@ async fn a_replayed_copy_finds_the_first_copy_and_makes_no_second() {
             .execute(
                 "UPDATE operation_queue SET state = 'pending' WHERE account_id = ?1",
                 [world.target_account.get()],
-            ).await
+            )
+            .await
             .expect("reset the row");
     }
     drain(&world, &target, world.target_account).await;
@@ -380,7 +393,8 @@ async fn the_removal_uses_the_coordinate_its_queue_row_snapshotted() {
             .execute(
                 "UPDATE messages SET remote_id = NULL, uid = NULL WHERE id = ?1",
                 [world.source_message.get()],
-            ).await
+            )
+            .await
             .expect("clear the live coordinates");
     }
     assert_eq!(
@@ -415,7 +429,8 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
         let connection = world.database.connect().await.expect("checkout");
         postio_storage::repository::MailboxRepository::new(&connection)
             .delete(world.target_inbox)
-            .await.expect("the destination goes away");
+            .await
+            .expect("the destination goes away");
     }
 
     drain(&world, &target, world.target_account).await;
@@ -433,7 +448,8 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
     assert!(
         MessageRepository::new(&connection)
             .get(world.source_message)
-            .await.expect("read")
+            .await
+            .expect("read")
             .is_some(),
         "the local source row survived the abort"
     );
@@ -473,7 +489,8 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
         let connection = world.database.connect().await.expect("checkout");
         MessageRepository::new(&connection)
             .get(world.target_message)
-            .await.expect("read")
+            .await
+            .expect("read")
             .expect("the copy")
             .server
             .remote_id
@@ -485,7 +502,8 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
         let connection = world.database.connect().await.expect("checkout");
         CrossAccountMoveRepository::new(&connection)
             .get(world.saga)
-            .await.expect("read")
+            .await
+            .expect("read")
             .expect("the forward saga")
             .raw_blob_id
     };
@@ -506,7 +524,8 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
                 raw_blob_id: forward_blob.clone(),
                 rfc_message_id: Some("<engine@example.com>".to_owned()),
             })
-            .await.expect("the inverse saga");
+            .await
+            .expect("the inverse saga");
         let queue = OperationQueueRepository::new(&connection);
         queue
             .enqueue(
@@ -515,7 +534,8 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
                 &Operation::CrossAccountCopy { saga: inverse },
                 at(11),
             )
-            .await.expect("enqueue the copy back");
+            .await
+            .expect("enqueue the copy back");
         // Enqueued while the copy still carries B's identity, which is what
         // `source_remote_id` snapshots — and what phase 3 removes by.
         queue
@@ -525,10 +545,12 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
                 &Operation::CrossAccountRemove { saga: inverse },
                 at(11),
             )
-            .await.expect("enqueue the removal from B");
+            .await
+            .expect("enqueue the removal from B");
         MessageRepository::new(&connection)
             .set_deleted_locally(&[world.source_message], false)
-            .await.expect("the original comes back");
+            .await
+            .expect("the original comes back");
         inverse
     };
 
@@ -540,7 +562,8 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
         let connection = world.database.connect().await.expect("checkout");
         CrossAccountMoveRepository::new(&connection)
             .get(inverse)
-            .await.expect("read")
+            .await
+            .expect("read")
             .expect("the inverse saga")
             .phase
     };
@@ -591,7 +614,8 @@ async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
         let connection = world.database.connect().await.expect("checkout");
         postio_storage::repository::MailboxRepository::new(&connection)
             .delete(world.target_inbox)
-            .await.expect("the destination goes away");
+            .await
+            .expect("the destination goes away");
     }
 
     drain(&world, &target, world.target_account).await;
@@ -603,7 +627,8 @@ async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
             .execute(
                 "UPDATE operation_queue SET state = 'pending' WHERE account_id = ?1",
                 [world.target_account.get()],
-            ).await
+            )
+            .await
             .expect("re-queue the copy as a restart would find it");
     }
     drain(&world, &target, world.target_account).await;
@@ -692,8 +717,11 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
     );
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
-        .await.expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
+        .await
+        .expect("target account");
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX")
+        .await
+        .id;
 
     // No `server.remote_id` at all -- born locally with nowhere on a server
     // it has ever been, which is the state #940 describes for a provisional
@@ -702,7 +730,8 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
     let mut message = Message::new(source.id, source_inbox, at(8));
     let source_message = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("source message");
+        .await
+        .expect("source message");
 
     let saga = CrossAccountMoveRepository::new(&connection)
         .create(&NewCrossAccountMove {
@@ -715,13 +744,15 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
             raw_blob_id: None,
             rfc_message_id: None,
         })
-        .await.expect("saga");
+        .await
+        .expect("saga");
     // `remove` refuses to run before `confirmed` -- reachable straight from
     // `copying`, per the phase graph, without staging a whole copy this test
     // is not about.
     CrossAccountMoveRepository::new(&connection)
         .transition(saga, MovePhase::Confirmed)
-        .await.expect("confirmed");
+        .await
+        .expect("confirmed");
 
     let queue = OperationQueueRepository::new(&connection);
     queue
@@ -731,7 +762,8 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
             &Operation::CrossAccountRemove { saga },
             at(9),
         )
-        .await.expect("enqueue remove");
+        .await
+        .expect("enqueue remove");
     drop(connection);
 
     let source_backend = MockBackend::builder()
@@ -748,7 +780,8 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
 
     let phase = CrossAccountMoveRepository::new(&connection)
         .get(saga)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the saga")
         .phase;
     assert_eq!(
@@ -780,14 +813,18 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
     );
     postio_storage::repository::AccountRepository::new(&connection)
         .create(&mut target)
-        .await.expect("target account");
-    let target_inbox = test_support::mailbox(&connection, &target, "INBOX").await.id;
+        .await
+        .expect("target account");
+    let target_inbox = test_support::mailbox(&connection, &target, "INBOX")
+        .await
+        .id;
 
     let mut message = Message::new(source.id, source_inbox, at(8));
     message.server.remote_id = Some(postio_model::RemoteId::new("1:1"));
     let source_message = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("source message");
+        .await
+        .expect("source message");
     let mut copy = message.clone();
     copy.id = MessageId::UNASSIGNED;
     copy.account_id = target.id;
@@ -795,7 +832,8 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
     copy.server = postio_model::ServerIdentifiers::default();
     let target_message = MessageRepository::new(&connection)
         .create(&mut copy)
-        .await.expect("the provisional copy");
+        .await
+        .expect("the provisional copy");
 
     // No `raw_blob_id` at all -- the state a queue row is in the moment it
     // is enqueued, before the backfill that will eventually fetch this
@@ -811,7 +849,8 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
             raw_blob_id: None,
             rfc_message_id: None,
         })
-        .await.expect("saga");
+        .await
+        .expect("saga");
 
     let queue = OperationQueueRepository::new(&connection);
     queue
@@ -821,7 +860,8 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
             &Operation::CrossAccountCopy { saga },
             at(9),
         )
-        .await.expect("enqueue copy");
+        .await
+        .expect("enqueue copy");
     drop(connection);
 
     let target_backend = MockBackend::builder()
@@ -838,7 +878,8 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
 
     let phase = CrossAccountMoveRepository::new(&connection)
         .get(saga)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the saga")
         .phase;
     assert_eq!(

@@ -38,8 +38,8 @@
 
 use postio_account::backend::{MailBackend, MailboxFilter, MailboxSummary};
 use postio_model::{AccountId, Mailbox, MailboxId, MailboxRole, RoleOverrides};
-use postio_storage::repository::{MailboxRepository, MailboxRoleRepository};
 use postio_storage::Connection;
+use postio_storage::repository::{MailboxRepository, MailboxRoleRepository};
 
 use crate::drain::Result;
 
@@ -154,10 +154,13 @@ async fn create_missing_roles(
     backend: &dyn MailBackend,
     account: AccountId,
 ) -> Result<bool> {
-    let known = MailboxRepository::new(connection).list_for_account(account).await?;
+    let known = MailboxRepository::new(connection)
+        .list_for_account(account)
+        .await?;
     let roles = MailboxRoleRepository::new(connection);
     let refused: Vec<MailboxRole> = roles
-        .refusals(account).await?
+        .refusals(account)
+        .await?
         .into_iter()
         .map(|(role, _)| role)
         .collect();
@@ -252,7 +255,9 @@ pub async fn reconcile(
     overrides: &RoleOverrides,
 ) -> std::result::Result<DiscoveryReport, postio_storage::Error> {
     let mailboxes = MailboxRepository::new(connection);
-    let chosen = MailboxRoleRepository::new(connection).for_account(account).await?;
+    let chosen = MailboxRoleRepository::new(connection)
+        .for_account(account)
+        .await?;
     let overrides = &overrides.over(chosen);
     let mut report = DiscoveryReport::default();
 
@@ -392,7 +397,8 @@ pub async fn selectable(
     account: AccountId,
 ) -> std::result::Result<Vec<MailboxId>, postio_storage::Error> {
     Ok(MailboxRepository::new(connection)
-        .list_for_account(account).await?
+        .list_for_account(account)
+        .await?
         .into_iter()
         .filter(|mailbox| mailbox.selectable)
         .map(|mailbox| mailbox.id)

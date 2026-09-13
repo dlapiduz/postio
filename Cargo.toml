@@ -109,6 +109,15 @@ missing_docs = "warn"
 # mode whose only symptom is the absence of one.
 unused_must_use = "deny"
 
+[workspace.lints.clippy]
+# `let _ = some_async_call();` is the hole `unused_must_use` cannot see: the
+# value *is* used -- it is bound to `_` -- so the compiler is satisfied and the
+# future is dropped unpolled. That is how the draft that had just been sent
+# went on existing (`send.rs`: `let _ = DraftRepository::new(..).delete(..)`),
+# and it reads exactly like the deliberate "I don't care about this Result"
+# it is copied from.
+let_underscore_future = "deny"
+
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }
 postio-storage = { path = "crates/postio-storage" }

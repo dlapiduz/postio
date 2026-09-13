@@ -27,6 +27,7 @@ use postio_model::{
     AccountId, BodyState, Flag, FlagSet, FullResyncReason, Mailbox, MessageId, ModSeq, Operation,
     OperationTarget, Uid, UidValidity,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{
     ContactRepository, MessageRepository, MessageSet, OperationQueueRepository, SyncStateRepository,
 };
@@ -36,7 +37,6 @@ use postio_sync::backfill::{BackfillPolicy, BodyRequest, Outcome as BackfillOutc
 use postio_sync::{
     Attention, Drainer, Outcome, Watch, WatchPolicy, Watcher, resync_mailbox, sync_mailbox,
 };
-use postio_storage::Connection;
 
 const INBOX: &str = "INBOX";
 const ARCHIVE: &str = "Archive";
@@ -103,7 +103,8 @@ async fn bootstrap(connection: &Checkout, backend: &ImapBackend, mailbox: &Mailb
 async fn known_uids(connection: &Connection, mailbox: &Mailbox, generation: u32) -> Vec<u32> {
     MessageRepository::new(connection)
         .uids_in(mailbox.id, postio_model::Generation::new(generation))
-        .await.expect("uids_in")
+        .await
+        .expect("uids_in")
         .into_iter()
         .map(Uid::get)
         .collect()
@@ -126,7 +127,10 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
         .expect("initial sync");
 
     assert_eq!(report.inserted, 3);
-    assert_eq!(known_uids(&connection, &inbox, VALIDITY).await, vec![1, 2, 3]);
+    assert_eq!(
+        known_uids(&connection, &inbox, VALIDITY).await,
+        vec![1, 2, 3]
+    );
 
     // The corpus reached the database through ENVELOPE and BODYSTRUCTURE on
     // the wire, not through a mock handing back what it was given.
@@ -136,14 +140,16 @@ async fn the_engine_syncs_a_mailbox_over_a_real_socket() {
             postio_model::Generation::new(VALIDITY),
             Uid::new(1),
         )
-        .await.expect("look up")
+        .await
+        .expect("look up")
         .expect("message 1");
     assert_eq!(stored.subject.as_deref(), Some("Tuesday walkthrough notes"));
     assert_eq!(stored.from[0].address, "ada.norwood@example.com");
 
     let state = SyncStateRepository::new(&connection)
         .require(inbox.id)
-        .await.expect("sync state");
+        .await
+        .expect("sync state");
     assert_eq!(
         state.generation,
         Some(postio_model::Generation::new(VALIDITY))
@@ -195,7 +201,8 @@ async fn an_incremental_resync_sees_a_flag_change_and_an_arrival() {
             postio_model::Generation::new(VALIDITY),
             Uid::new(2),
         )
-        .await.expect("look up")
+        .await
+        .expect("look up")
         .expect("message 2");
     assert!(seen.flags.is_seen());
 }
@@ -239,7 +246,8 @@ async fn a_uidvalidity_bump_rebuilds_rather_than_reporting_wrong_mail() {
     assert_eq!(
         SyncStateRepository::new(&connection)
             .require(inbox.id)
-            .await.expect("sync state")
+            .await
+            .expect("sync state")
             .generation,
         Some(postio_model::Generation::new(9_001))
     );
@@ -283,7 +291,8 @@ async fn a_malformed_sequence_number_rebuilds_rather_than_losing_the_delta() {
             postio_model::Generation::new(VALIDITY),
             Uid::new(2),
         )
-        .await.expect("look up")
+        .await
+        .expect("look up")
         .expect("message 2");
     assert!(seen.flags.is_seen());
 }
@@ -304,7 +313,8 @@ async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_corr
 
     let seen_before: Vec<(String, u32)> = ContactRepository::new(&connection)
         .list(Some(account_id))
-        .await.expect("list contacts")
+        .await
+        .expect("list contacts")
         .into_iter()
         .map(|contact| (contact.address.normalized(), contact.times_seen))
         .collect();
@@ -326,7 +336,8 @@ async fn a_rebuild_that_re_reads_known_messages_does_not_double_count_their_corr
 
     let seen_after: Vec<(String, u32)> = ContactRepository::new(&connection)
         .list(Some(account_id))
-        .await.expect("list contacts")
+        .await
+        .expect("list contacts")
         .into_iter()
         .map(|contact| (contact.address.normalized(), contact.times_seen))
         .collect();
@@ -374,8 +385,8 @@ async fn a_stalled_server_fails_the_pass_instead_of_wedging_the_engine() {
             command_timeout: Duration::from_millis(300),
             ..PoolConfig::default()
         },
-    ).await
-    ;
+    )
+    .await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (_account, inbox, _archive) = local(&connection).await;
@@ -423,7 +434,8 @@ async fn a_queued_flag_change_and_move_reach_a_real_server() {
             flags: FlagSet::from_iter([Flag::Seen]),
         },
         at(9),
-    ).await;
+    )
+    .await;
     enqueue(
         &connection,
         account,
@@ -433,7 +445,8 @@ async fn a_queued_flag_change_and_move_reach_a_real_server() {
             to: archive.id,
         },
         at(9),
-    ).await;
+    )
+    .await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, account, at(10))
@@ -471,10 +484,12 @@ async fn a_local_move_still_reaches_the_server() {
             to: archive.id,
         },
         at(9),
-    ).await;
+    )
+    .await;
     MessageRepository::new(&connection)
         .move_to(&[message], archive.id)
-        .await.expect("the local move");
+        .await
+        .expect("the local move");
 
     let report = Drainer::new(&backend)
         .drain(&connection, account, at(10))
@@ -512,10 +527,12 @@ async fn a_local_delete_still_reaches_the_server() {
             trash: trash.id,
         },
         at(9),
-    ).await;
+    )
+    .await;
     MessageRepository::new(&connection)
         .move_to(&[message], trash.id)
-        .await.expect("the local delete");
+        .await
+        .expect("the local delete");
 
     let report = Drainer::new(&backend)
         .drain(&connection, account, at(10))
@@ -554,11 +571,13 @@ async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
             },
             at(9),
         )
-        .await.expect("enqueue_set")
+        .await
+        .expect("enqueue_set")
         .expect("the mailbox was not empty");
     MessageRepository::new(&connection)
         .move_set(&everything, archive.id)
-        .await.expect("the local bulk move");
+        .await
+        .expect("the local bulk move");
 
     let report = Drainer::new(&backend)
         .drain(&connection, account, at(10))
@@ -596,10 +615,12 @@ async fn a_drained_move_does_not_resurrect_on_resync() {
             to: archive.id,
         },
         at(9),
-    ).await;
+    )
+    .await;
     MessageRepository::new(&connection)
         .move_to(&[message], archive.id)
-        .await.expect("the local move");
+        .await
+        .expect("the local move");
     Drainer::new(&backend)
         .drain(&connection, account, at(10))
         .await
@@ -728,7 +749,8 @@ async fn a_body_torn_off_the_socket_stores_nothing() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert_eq!(
         stored.sync.body_state,
@@ -803,7 +825,9 @@ async fn a_delivery_during_an_idle_wakes_the_watcher_and_the_pull_finds_it() {
         .await
         .expect("resync");
     assert!(
-        known_uids(&connection, &inbox, VALIDITY).await.contains(&arrival.get()),
+        known_uids(&connection, &inbox, VALIDITY)
+            .await
+            .contains(&arrival.get()),
         "the message the wake-up was about has to be in the database"
     );
 }
@@ -919,7 +943,8 @@ fn is_transient(error: &postio_sync::SyncError) -> bool {
 async fn message_at(connection: &Connection, mailbox: &Mailbox, uid: Uid) -> MessageId {
     MessageRepository::new(connection)
         .by_uid(mailbox.id, postio_model::Generation::new(VALIDITY), uid)
-        .await.expect("look up")
+        .await
+        .expect("look up")
         .expect("a synced message")
         .id
 }
@@ -933,5 +958,6 @@ async fn enqueue(
 ) {
     OperationQueueRepository::new(connection)
         .enqueue(account, OperationTarget::Message(message), &operation, when)
-        .await.expect("enqueue");
+        .await
+        .expect("enqueue");
 }

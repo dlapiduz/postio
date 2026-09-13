@@ -456,8 +456,7 @@ impl Wiring {
 pub async fn open_store(
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
-    open_store_at(paths::store_path(), store_key)
-        .await
+    open_store_at(paths::store_path(), store_key).await
 }
 
 /// What [`open_store_reporting`] is doing right now.
@@ -492,8 +491,7 @@ pub async fn open_store_reporting(
     store_key: &postio_storage::key::StoreKey,
     report: &dyn Fn(Opening),
 ) -> Result<(Store, BlobStore), String> {
-    open_store_at_reporting(paths::store_path(), store_key, report)
-        .await
+    open_store_at_reporting(paths::store_path(), store_key, report).await
 }
 
 /// [`open_store`], over a store at a path the caller chooses.
@@ -511,8 +509,7 @@ pub async fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
-    open_store_at_reporting(path, store_key, &|_| {})
-        .await
+    open_store_at_reporting(path, store_key, &|_| {}).await
 }
 
 /// [`open_store_at`], saying what it is doing — see [`open_store_reporting`].
@@ -602,7 +599,8 @@ pub async fn begin_session(database: &Store) -> bool {
         return false;
     };
     let settings = postio_storage::repository::SettingsRepository::new(&connection);
-    let unclean = matches!(settings.get(SESSION_STATE_KEY).await, Ok(Some(state)) if state == "open");
+    let unclean =
+        matches!(settings.get(SESSION_STATE_KEY).await, Ok(Some(state)) if state == "open");
     if let Err(error) = settings.set(SESSION_STATE_KEY, "open").await {
         tracing::warn!(%error, "could not record the session start");
     }
@@ -790,7 +788,9 @@ pub async fn reclaim_orphaned_blobs(
     min_age: Duration,
 ) -> Result<GarbageReport, Box<dyn std::error::Error>> {
     let connection = database.connect().await?;
-    let report = blobs.collect_garbage(&connection, GarbageCollection { min_age }).await?;
+    let report = blobs
+        .collect_garbage(&connection, GarbageCollection { min_age })
+        .await?;
     if report.removed > 0 {
         // Counts and bytes only: what was in those blobs is somebody's mail.
         tracing::info!(
@@ -930,7 +930,9 @@ pub async fn repair_header_blocks(
     loop {
         let connection = database.connect().await?;
         let messages = postio_storage::repository::MessageRepository::new(&connection);
-        let candidates = messages.messages_missing_headers(REPAIR_HEADERS_BATCH).await?;
+        let candidates = messages
+            .messages_missing_headers(REPAIR_HEADERS_BATCH)
+            .await?;
         if candidates.is_empty() {
             break;
         }
@@ -964,7 +966,9 @@ pub async fn repair_header_blocks(
             let Some(block) = postio_model::headers::block_of(&raw) else {
                 continue;
             };
-            messages.set_headers(candidate.message_id, Some(&block)).await?;
+            messages
+                .set_headers(candidate.message_id, Some(&block))
+                .await?;
             repaired += 1;
         }
     }
@@ -1108,7 +1112,8 @@ pub async fn index_local_bodies(database: &Store) -> Result<usize, Box<dyn std::
         {
             let _permit = connection
                 .write_gate()
-                .acquire(postio_storage::WritePriority::Background);
+                .acquire(postio_storage::WritePriority::Background)
+                .await;
             connection.execute_batch("BEGIN IMMEDIATE").await?;
             for (id, body) in &bodies {
                 match postio_index::index::index_body_of(&connection, *id, body).await {
@@ -1202,7 +1207,8 @@ pub async fn index_local_headers(database: &Store) -> Result<usize, Box<dyn std:
     loop {
         let connection = database.connect().await?;
         let candidates =
-            postio_index::index::messages_missing_header_rows(&connection, INDEX_HEADERS_BATCH).await?;
+            postio_index::index::messages_missing_header_rows(&connection, INDEX_HEADERS_BATCH)
+                .await?;
         if candidates.is_empty() {
             break;
         }
@@ -1245,7 +1251,8 @@ pub async fn index_local_headers(database: &Store) -> Result<usize, Box<dyn std:
         {
             let _permit = connection
                 .write_gate()
-                .acquire(postio_storage::WritePriority::Background);
+                .acquire(postio_storage::WritePriority::Background)
+                .await;
             connection.execute_batch("BEGIN IMMEDIATE").await?;
             for (id, headers) in &blocks {
                 match postio_index::index::index_headers(&connection, *id, headers).await {
@@ -1341,13 +1348,15 @@ pub async fn reindex_account(
         &connection,
         account_id,
         u32::MAX,
-    ).await?
+    )
+    .await?
     .len()
         + postio_index::index::messages_missing_header_rows_for_account(
             &connection,
             account_id,
             u32::MAX,
-        ).await?
+        )
+        .await?
         .len();
     drop(connection);
 
@@ -1362,7 +1371,8 @@ pub async fn reindex_account(
             &connection,
             account_id,
             REINDEX_ACCOUNT_BATCH,
-        ).await?;
+        )
+        .await?;
         if candidates.is_empty() {
             break;
         }
@@ -1399,7 +1409,8 @@ pub async fn reindex_account(
         {
             let _permit = connection
                 .write_gate()
-                .acquire(postio_storage::WritePriority::Background);
+                .acquire(postio_storage::WritePriority::Background)
+                .await;
             connection.execute_batch("BEGIN IMMEDIATE").await?;
             for (id, body) in &bodies {
                 match postio_index::index::index_body_of(&connection, *id, body).await {
@@ -1428,7 +1439,8 @@ pub async fn reindex_account(
             &connection,
             account_id,
             REINDEX_ACCOUNT_BATCH,
-        ).await?;
+        )
+        .await?;
         if candidates.is_empty() {
             break;
         }
@@ -1457,7 +1469,8 @@ pub async fn reindex_account(
         {
             let _permit = connection
                 .write_gate()
-                .acquire(postio_storage::WritePriority::Background);
+                .acquire(postio_storage::WritePriority::Background)
+                .await;
             connection.execute_batch("BEGIN IMMEDIATE").await?;
             for (id, headers) in &blocks {
                 match postio_index::index::index_headers(&connection, *id, headers).await {
@@ -1511,7 +1524,8 @@ pub async fn reindex_account(
 /// indexed read before the window is presented.
 pub async fn first_account(database: &Store) -> Option<postio_model::Account> {
     let connection = database
-        .connect().await
+        .connect()
+        .await
         .map_err(|error| tracing::error!(%error, "cannot read the accounts: {error}"))
         .ok()?;
     AccountRepository::new(&connection)

@@ -29,7 +29,7 @@
 //! is gone, and with it the thread pool that shape needed.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use turso::Builder;
 
@@ -138,8 +138,20 @@ pub struct WriteGate {
 
 #[derive(Debug)]
 struct GateInner {
+    /// The whole of the gate's state, under a *blocking* mutex.
+    ///
+    /// Deliberately `std::sync::Mutex` and not the async one: nothing awaits
+    /// while it is held, every critical section is a handful of integer
+    /// operations, and an async mutex here would cost a task wake-up per
+    /// acquisition to protect nothing.
     state: Mutex<GateState>,
-    free: Condvar,
+    /// Where waiters park. `tokio::sync::Notify`, not a `Condvar`, and that is
+    /// the whole of the change this engine forced: a `Condvar` blocks the
+    /// *thread*, and a thread in a tokio runtime is a worker. Three writers
+    /// waiting on a condvar for a permit the sync pass will release when its
+    /// own task next runs is a deadlock with no error message -- there is
+    /// nobody left to run the task that releases it.
+    free: tokio::sync::Notify,
 }
 
 #[derive(Debug, Default)]
@@ -158,42 +170,52 @@ impl WriteGate {
         Self {
             inner: Arc::new(GateInner {
                 state: Mutex::new(GateState::default()),
-                free: Condvar::new(),
+                free: tokio::sync::Notify::new(),
             }),
         }
     }
 
-    /// Waits for the right to hold SQLite's write lock, and returns the permit
-    /// that carries it. Releasing is dropping the permit.
+    /// Waits for the right to hold the engine's write lock, and returns the
+    /// permit that carries it. Releasing is dropping the permit.
+    ///
+    /// `async`, and it has to be: see [`GateInner::free`]. A waiter yields its
+    /// worker rather than parking it, so the task that will release the permit
+    /// can actually run.
     ///
     /// Read [`WriteGate`]'s two rules for callers before adding a call site.
-    pub fn acquire(&self, priority: WritePriority) -> WritePermit {
-        let mut state = self.lock();
-        match priority {
-            WritePriority::Interactive => {
-                state.interactive_waiting += 1;
-                while state.held {
-                    state = self
-                        .inner
-                        .free
-                        .wait(state)
-                        .unwrap_or_else(PoisonError::into_inner);
-                }
-                state.interactive_waiting -= 1;
-            }
-            WritePriority::Background => {
-                while state.held || state.interactive_waiting > 0 {
-                    state = self
-                        .inner
-                        .free
-                        .wait(state)
-                        .unwrap_or_else(PoisonError::into_inner);
-                }
-            }
+    pub async fn acquire(&self, priority: WritePriority) -> WritePermit {
+        // Registered before the first look, not after: a background writer
+        // that checks the state in between must already see us, or it takes
+        // the lock out from under the interactive writer this exists for.
+        if priority == WritePriority::Interactive {
+            self.lock().interactive_waiting += 1;
         }
-        state.held = true;
-        WritePermit {
-            inner: Arc::clone(&self.inner),
+        loop {
+            // The future is created and *enabled* before the state is read,
+            // which is what closes the lost-wake-up window: a permit released
+            // between the read and the await still counts.
+            let waiting = self.inner.free.notified();
+            tokio::pin!(waiting);
+            waiting.as_mut().enable();
+
+            {
+                let mut state = self.lock();
+                let free = match priority {
+                    WritePriority::Interactive => !state.held,
+                    WritePriority::Background => !state.held && state.interactive_waiting == 0,
+                };
+                if free {
+                    state.held = true;
+                    if priority == WritePriority::Interactive {
+                        state.interactive_waiting -= 1;
+                    }
+                    return WritePermit {
+                        inner: Arc::clone(&self.inner),
+                    };
+                }
+            }
+
+            waiting.await;
         }
     }
 
@@ -235,13 +257,69 @@ impl Drop for WritePermit {
             .unwrap_or_else(PoisonError::into_inner);
         state.held = false;
         drop(state);
-        // `notify_all`, not `notify_one`: the waiters do not share a predicate
-        // — a background writer must also see `interactive_waiting == 0` — so
-        // waking a single arbitrary one can wake the only thread that still
-        // has to go back to sleep, and leave the lock idle with a queue on it.
-        self.inner.free.notify_all();
+        // `notify_waiters`, which wakes every one of them, not `notify_one`:
+        // the waiters do not share a predicate — a background writer must also
+        // see `interactive_waiting == 0` — so waking a single arbitrary one
+        // can wake the only task that still has to go back to sleep, and leave
+        // the lock idle with a queue on it.
+        self.inner.free.notify_waiters();
     }
 }
+
+/// The settings every connection needs, because every one of them is per
+/// connection and none of them defaults to what Postio wants.
+///
+/// Measured against a fresh store, which is the only honest way to write this
+/// down -- an engine's documented default and its actual one have already
+/// differed twice here:
+///
+/// ```text
+/// foreign_keys         0  -> 1
+/// temp_store           2     (already MEMORY; asserted anyway, see below)
+/// busy_timeout         0  -> 5000
+/// cache_size       -2000  -> -65536
+/// synchronous          2  -> 1
+/// journal_mode       wal     (already; setting it is a query, not an execute)
+/// ```
+///
+/// **`foreign_keys`.** Per connection and off by default, so a connection that
+/// skipped this would see every `ON DELETE CASCADE` and `ON DELETE SET NULL`
+/// in the schema silently not happen -- deleting an account would leave its
+/// mailboxes behind, and a cross-account move would go on naming an account
+/// that is gone. Found exactly that way: the saga test asserted the target
+/// went NULL and it did not.
+///
+/// **`temp_store`.** ADR 0014's threat model closes the temp spill explicitly:
+/// an encrypted database whose sort scratch lands on disk in the clear has
+/// encrypted the wrong thing. This engine already defaults it to MEMORY where
+/// SQLite defaults it to DEFAULT, and it is set anyway --
+/// `temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk` asserts the
+/// value rather than the statement, so a default that changes is caught.
+///
+/// **`busy_timeout`, and it was the one that mattered.** The engine defaults
+/// it to **0**: a writer that finds the lock taken gets `Busy` immediately,
+/// with no retry at all. SQLCipher's configuration set 5,000 ms and
+/// `WriteGate`'s own documentation is written against that behaviour -- the
+/// gate orders Postio's *own* writers, and the timeout is what covers
+/// everything it does not. Without it
+/// `a_resync_batch_does_not_lock_out_an_interactive_write` fails as
+/// `database is locked`, which is exactly the symptom a person would see on
+/// a keystroke during a sync.
+///
+/// **`cache_size`.** -2000 is two megabytes; -65536 is the 64 MiB the old
+/// store used. A cap rather than a reservation -- the cache grows lazily, so
+/// a small store never allocates it.
+///
+/// **`synchronous = NORMAL`.** FULL fsyncs on every commit, which under WAL
+/// buys durability against power loss at a cost paid on every flag change.
+/// NORMAL is the WAL-appropriate setting and what this store has always used.
+const PER_CONNECTION: &str = "\
+PRAGMA foreign_keys = ON;
+PRAGMA temp_store = 2;
+PRAGMA busy_timeout = 5000;
+PRAGMA cache_size = -65536;
+PRAGMA synchronous = 1;
+";
 
 /// The store: a database handle and the path it came from.
 ///
@@ -362,14 +440,7 @@ impl Store {
     /// better -- is an invitation to be wrong quietly.
     pub async fn connect(&self) -> Result<Checkout> {
         let connection = self.database.connect()?;
-        connection.execute("PRAGMA foreign_keys = ON", ()).await?;
-        // ADR 0014's threat model closes the temp spill explicitly: an
-        // encrypted database whose sort scratch lands on disk in the clear
-        // has encrypted the wrong thing. The engine defaults this to 0
-        // (DEFAULT), not 2 (MEMORY) -- checked, not assumed, and
-        // `temp_store_is_memory_so_sorts_never_spill_plaintext_to_disk` is
-        // what keeps it checked.
-        connection.execute("PRAGMA temp_store = 2", ()).await?;
+        connection.execute_batch(PER_CONNECTION).await?;
         Ok(Checkout {
             connection,
             gate: self.gate.clone(),
@@ -383,7 +454,7 @@ impl Store {
     /// being separate is what makes the wrong order possible. Every
     /// local-first verb in the application goes through here.
     pub async fn interactive_write(&self) -> Result<(Checkout, WritePermit)> {
-        let permit = self.gate.acquire(WritePriority::Interactive);
+        let permit = self.gate.acquire(WritePriority::Interactive).await;
         let connection = self.connect().await?;
         Ok((connection, permit))
     }

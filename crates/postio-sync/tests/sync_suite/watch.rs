@@ -178,7 +178,8 @@ async fn mail_that_arrives_while_idling_reaches_the_local_store() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
-            .await.expect("uids")
+            .await
+            .expect("uids")
             .len(),
         3,
         "the message that arrived during IDLE must be local now, with nobody \
@@ -302,7 +303,8 @@ async fn a_server_that_accepts_idle_and_then_says_nothing_cannot_hide_mail() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .uids_in(local.inbox.id, postio_model::Generation::new(VALIDITY))
-            .await.expect("uids")
+            .await
+            .expect("uids")
             .len(),
         2
     );

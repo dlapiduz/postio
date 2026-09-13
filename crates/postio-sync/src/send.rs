@@ -84,11 +84,11 @@ use postio_smtp::session::SmtpSession;
 use postio_smtp::settings::ConnectionSettings;
 use postio_smtp::transport::SmtpConnector;
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{
     AccountRepository, DraftRepository, MailboxRepository, MessageRepository, StoredBody,
     ThreadingRepository,
 };
-use postio_storage::Connection;
 use secrecy::SecretString;
 use std::collections::BTreeSet;
 
@@ -207,7 +207,9 @@ pub(crate) async fn resolve(
         // `Unconfirmed` is the resting state for the same fact, and it is
         // what the user is shown (#674).
         if draft.state == DraftState::Sending {
-            DraftRepository::new(connection).set_state(draft.id, DraftState::Unconfirmed).await?;
+            DraftRepository::new(connection)
+                .set_state(draft.id, DraftState::Unconfirmed)
+                .await?;
         }
         return Ok(ResolvedSend::Uncertain(INDETERMINATE.to_owned()));
     }
@@ -217,7 +219,10 @@ pub(crate) async fn resolve(
         ));
     }
 
-    let Some(account) = AccountRepository::new(connection).get(draft.account_id).await? else {
+    let Some(account) = AccountRepository::new(connection)
+        .get(draft.account_id)
+        .await?
+    else {
         return Ok(ResolvedSend::Impossible(
             "the account is no longer in the local store".to_owned(),
         ));
@@ -259,7 +264,9 @@ pub(crate) async fn resolve(
 
     let built = outgoing::build(&draft, identity, &outgoing_attachments, parent.as_ref());
 
-    let Some(sent) = MailboxRepository::new(connection).by_role(account.id, MailboxRole::Sent).await?
+    let Some(sent) = MailboxRepository::new(connection)
+        .by_role(account.id, MailboxRole::Sent)
+        .await?
     else {
         return Ok(ResolvedSend::Impossible(
             "this account has no Sent mailbox yet".to_owned(),
@@ -270,7 +277,8 @@ pub(crate) async fn resolve(
     // transaction nothing may fail, so nothing may still need looking up.
     let drafts_copy = match crate::drafts::server_copy(&draft) {
         Some(copy) => MailboxRepository::new(connection)
-            .by_role(account.id, MailboxRole::Drafts).await?
+            .by_role(account.id, MailboxRole::Drafts)
+            .await?
             .map(|mailbox| (mailbox.id, mailbox.path, copy)),
         None => None,
     };
@@ -441,7 +449,7 @@ async fn submit(
     //
     // A failure here cannot become anything but `Applied`, for the same
     // reason nothing else below can: the message has gone.
-    let _ = mark(connection, job, DraftState::Sent);
+    let _ = mark(connection, job, DraftState::Sent).await;
 
     let _ = session.quit().await;
     confirm_sent_copy(connection, backend, smtp, resync, job, filed).await;
@@ -537,7 +545,10 @@ async fn file_sent_locally(
     // silently undid the assignment -- so a sent reply was filed correctly,
     // threaded correctly, and then un-threaded by the confirmation, showing
     // up in Sent as a conversation of its own.
-    match ThreadingRepository::new(connection, job.account).thread(&message).await {
+    match ThreadingRepository::new(connection, job.account)
+        .thread(&message)
+        .await
+    {
         Ok(threaded) => message.thread_id = Some(threaded.thread_id),
         // Not fatal: an unthreaded Sent copy is worse than a threaded one and
         // better than no copy at all. Said out loud rather than swallowed,
@@ -562,7 +573,9 @@ async fn file_sent_locally(
         // have gone wrong. The one honest `false` in the codebase (#901).
         encoding_problems: false,
     };
-    let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
+    let _ = messages
+        .set_body(message.id, &body, postio_model::BodyState::Full)
+        .await;
     Some(message)
 }
 
@@ -578,7 +591,8 @@ async fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
     let Some(message) = filed else {
         return;
     };
-    if let Err(error) = MessageRepository::new(connection).delete(&[message.id])
+    if let Err(error) = MessageRepository::new(connection)
+        .delete(&[message.id])
         .await
     {
         tracing::warn!(
@@ -627,8 +641,7 @@ async fn confirm_sent_copy(
                 message.server.uid = Some(mapping.destination);
                 message.server.uid_validity = Some(mapping.uid_validity);
                 message.server.remote_id = Some(mapping.destination_remote_id());
-                if let Err(error) = messages.update(&mut message).await
-    {
+                if let Err(error) = messages.update(&mut message).await {
                     tracing::warn!(
                         %error,
                         "could not record where the Sent copy landed; a resync \
@@ -655,7 +668,9 @@ async fn confirm_sent_copy(
             if messages.create(&mut message).await.is_err() {
                 return;
             }
-            let _ = ThreadingRepository::new(connection, job.account).thread(&message);
+            let _ = ThreadingRepository::new(connection, job.account)
+                .thread(&message)
+                .await;
             let block = postio_model::headers::block_of(&job.raw);
             let body = StoredBody {
                 text: stored_text(message.body.text.as_deref()),
@@ -666,11 +681,13 @@ async fn confirm_sent_copy(
                 // decode to have gone wrong (#901).
                 encoding_problems: false,
             };
-            let _ = messages.set_body(message.id, &body, postio_model::BodyState::Full);
+            let _ = messages
+                .set_body(message.id, &body, postio_model::BodyState::Full)
+                .await;
         }
     }
 
-    let _ = DraftRepository::new(connection).delete(job.draft);
+    let _ = DraftRepository::new(connection).delete(job.draft).await;
     remove_drafts_copy(backend, resync, job).await;
 }
 
@@ -748,7 +765,8 @@ pub async fn confirm_unconfirmed(
         // in a *different* account is somebody else's copy of a conversation,
         // not evidence that this account's submission succeeded.
         let Some(message) = messages
-            .ids_by_rfc_message_id(account, reserved).await?
+            .ids_by_rfc_message_id(account, reserved)
+            .await?
             .into_iter()
             .next()
         else {

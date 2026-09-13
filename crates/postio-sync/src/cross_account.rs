@@ -22,10 +22,10 @@
 use postio_account::backend::{AppendMessage, MailBackend};
 use postio_model::ids::CrossAccountMoveId;
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{
     CrossAccountMove, CrossAccountMoveRepository, MailboxRepository, MessageRepository, MovePhase,
 };
-use postio_storage::Connection;
 
 use crate::drain::Outcome;
 
@@ -67,7 +67,8 @@ pub(crate) async fn copy(
             saga_id,
             "the destination no longer exists; the move was abandoned and \
              the source copy is intact",
-        ).await;
+        )
+        .await;
     };
 
     // Confirm before append — both the idempotency rule and phase 2 itself.
@@ -117,8 +118,8 @@ pub(crate) async fn copy(
                 flags: Default::default(),
                 internal_date: None,
             },
-        ).await
-        
+        )
+        .await
     {
         Ok(mapping) => mapping,
         Err(error) => {
@@ -148,8 +149,7 @@ pub(crate) async fn copy(
             Err(error) => failed(format!("could not record the confirmation: {error}")),
         };
     }
-    if let Err(error) = sagas.transition(saga_id, MovePhase::Unconfirmed).await
-    {
+    if let Err(error) = sagas.transition(saga_id, MovePhase::Unconfirmed).await {
         return failed(format!("could not record the unconfirmed append: {error}"));
     }
     failed(
@@ -202,7 +202,7 @@ pub(crate) async fn remove(
         Some(mailbox) => MailboxRepository::new(connection)
             .get(mailbox)
             .await
-                        .ok()
+            .ok()
             .flatten()
             .map(|mailbox| mailbox.path),
         None => None,
@@ -257,8 +257,8 @@ pub(crate) async fn remove(
             &path,
             &ids,
             &postio_account::backend::FlagChange::Add(deleted_flag()),
-        ).await
-        
+        )
+        .await
     {
         return Outcome::Retry {
             reason: format!("could not mark the source copy deleted: {error}"),
@@ -298,8 +298,7 @@ async fn abort(
     saga: CrossAccountMoveId,
     reason: &str,
 ) -> Outcome {
-    if let Err(error) = sagas.transition(saga, MovePhase::Aborted).await
-    {
+    if let Err(error) = sagas.transition(saga, MovePhase::Aborted).await {
         return failed(format!("could not abandon the move: {error}"));
     }
     failed(reason.to_owned())

@@ -76,22 +76,25 @@ impl EgressRecorder {
                         batch.push(event);
                     }
                     runtime.block_on(async {
-                    let Ok(connection) = database.connect().await else {
-                        return;
-                    };
-                    let _permit = connection.write_gate().acquire(WritePriority::Background);
-                    if connection.execute("BEGIN IMMEDIATE", ()).await.is_err() {
-                        return;
-                    }
-                    let log = EgressLogRepository::new(&connection);
-                    for event in &batch {
-                        if let Err(error) = log.record(event).await {
-                            tracing::warn!(%error, "an egress event was not recorded");
+                        let Ok(connection) = database.connect().await else {
+                            return;
+                        };
+                        let _permit = connection
+                            .write_gate()
+                            .acquire(WritePriority::Background)
+                            .await;
+                        if connection.execute("BEGIN IMMEDIATE", ()).await.is_err() {
+                            return;
                         }
-                    }
-                    if let Err(error) = connection.execute("COMMIT", ()).await {
-                        tracing::warn!(%error, "an egress batch did not commit");
-                    }
+                        let log = EgressLogRepository::new(&connection);
+                        for event in &batch {
+                            if let Err(error) = log.record(event).await {
+                                tracing::warn!(%error, "an egress event was not recorded");
+                            }
+                        }
+                        if let Err(error) = connection.execute("COMMIT", ()).await {
+                            tracing::warn!(%error, "an egress batch did not commit");
+                        }
                     });
                 }
             });

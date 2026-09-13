@@ -444,10 +444,13 @@ async fn an_excluded_folder_seeds_nothing_into_the_background_lane() {
 
     MailboxRepository::new(&local.connection)
         .set_backfill_excluded(local.inbox.id, true)
-        .await.expect("exclude the inbox");
+        .await
+        .expect("exclude the inbox");
 
     let mut backfill = Backfill::new(policy());
-    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).await.expect("seed");
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200)
+        .await
+        .expect("seed");
 
     assert_eq!(
         queued, 0,
@@ -465,7 +468,9 @@ async fn an_ordinary_folder_still_seeds_once_excluded_elsewhere() {
     headers(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200).await.expect("seed");
+    let queued = seed(&local.connection, &mut backfill, local.inbox.id, 200)
+        .await
+        .expect("seed");
 
     assert_eq!(queued, 5);
 }
@@ -483,10 +488,13 @@ async fn opening_a_message_in_an_excluded_folder_still_fetches_its_body() {
 
     MailboxRepository::new(&local.connection)
         .set_backfill_excluded(local.inbox.id, true)
-        .await.expect("exclude the inbox");
+        .await
+        .expect("exclude the inbox");
 
     let mut backfill = Backfill::new(policy());
-    let asked = request_body(&local.connection, &mut backfill, id).await.expect("request_body");
+    let asked = request_body(&local.connection, &mut backfill, id)
+        .await
+        .expect("request_body");
     assert!(asked, "an on-open request must still be honoured");
 
     let outcome = fetch_body(
@@ -515,7 +523,13 @@ async fn fetching_a_body_stores_the_raw_message_and_its_decoded_text() {
 
     let messages = MessageRepository::new(&local.connection);
     assert_eq!(
-        messages.get(id).await.expect("get").expect("row").sync.body_state,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .sync
+            .body_state,
         BodyState::HeadersOnly,
         "the header pass leaves the body on the server"
     );
@@ -557,7 +571,8 @@ async fn a_message_deleted_before_its_body_arrived_is_gone_rather_than_failed() 
     let (id, uid) = rows[0];
     MessageRepository::new(&local.connection)
         .delete(&[id])
-        .await.expect("delete");
+        .await
+        .expect("delete");
 
     let outcome = fetch_body(
         &local.connection,
@@ -598,7 +613,8 @@ async fn a_dropped_connection_mid_body_stores_nothing() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert_eq!(
         stored.sync.body_state,
@@ -633,7 +649,8 @@ async fn a_cancelled_fetch_stores_nothing() {
     assert_eq!(
         MessageRepository::new(&local.connection)
             .get(id)
-            .await.expect("get")
+            .await
+            .expect("get")
             .expect("row")
             .sync
             .body_state,
@@ -655,21 +672,36 @@ async fn a_cancelled_fetch_stores_nothing() {
 /// mailbox duplicated inside SQLite). Presence and matching are therefore the
 /// only two questions available, and between them they are the ones these
 /// tests were always really asking.
+/// Whether `id` has been through `index_body` at all.
+///
+/// `body_search` is `NULL` until it has and the **empty string** after it,
+/// even for a message with no words — the column is the record that indexing
+/// happened, and #500's infinite loop is what "tried, nothing there" spelled
+/// as `NULL` cost.
 async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -> bool {
-    postio_storage::sql::one(&*connection, 
-            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = ?1)",bind![id.get()],
-            |row| postio_storage::sql::RowExt::col::<bool>(row, 0)).await
-        .unwrap_or(false)
+    postio_storage::sql::exists(
+        connection,
+        "SELECT 1 FROM messages WHERE id = ?1 AND body_search IS NOT NULL",
+        bind![id.get()],
+    )
+    .await
+    .unwrap_or(false)
 }
 
-/// Whether `id`'s indexed body matches `query` — an FTS5 match expression, so
-/// a bare word or a `"quoted phrase"`.
+/// Whether `id`'s indexed body matches `query` — a full-text match
+/// expression, so a bare word or a `"quoted phrase"`.
+///
+/// Folded on the way in, because the engine's tokenizer does not fold
+/// diacritics and `index_body` folded the text it stored. A query that skips
+/// the fold matches nothing an accented body contains.
 async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, query: &str) -> bool {
-    postio_storage::sql::one(&*connection, 
-            "SELECT EXISTS (SELECT 1 FROM message_bodies_fts
-                             WHERE rowid = ?1 AND message_bodies_fts MATCH ?2)",bind![id.get(), query],
-            |row| postio_storage::sql::RowExt::col::<bool>(row, 0)).await
-        .unwrap_or(false)
+    postio_storage::sql::exists(
+        connection,
+        "SELECT 1 FROM messages WHERE id = ?1 AND fts_match(body_search, ?2)",
+        bind![id.get(), postio_model::fold::fold(query)],
+    )
+    .await
+    .unwrap_or(false)
 }
 
 /// Issue #327: `index_body` existed, was tested, and nothing ever called it.
@@ -685,7 +717,9 @@ async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, quer
 async fn a_fetched_body_becomes_searchable_text() {
     let backend = server(2).await;
     let local = local().await;
-    postio_index::index::ensure_schema(&local.connection).await.expect("the search schema");
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
@@ -738,7 +772,9 @@ async fn an_html_only_body_is_indexed_as_text_and_not_as_markup() {
     backend.connect().await.expect("connect");
 
     let local = local().await;
-    postio_index::index::ensure_schema(&local.connection).await.expect("the search schema");
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -905,7 +941,8 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
 }
@@ -925,7 +962,12 @@ async fn a_row_synced_before_the_text_sections_existed_still_gets_its_body() {
     // sections -- exactly the shape of a pre-0008 row.
     let messages = MessageRepository::new(&local.connection);
     assert_eq!(
-        messages.get(id).await.expect("get").expect("row").text_part_id,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .text_part_id,
         None
     );
 
@@ -985,7 +1027,8 @@ async fn a_payload_with_nothing_to_explain_its_bytes_asks_for_every_byte() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert!(
         stored.raw_blob_id.is_some(),
@@ -1007,7 +1050,9 @@ async fn text_fetched_by_section_reaches_the_search_index() {
     backend.connect().await.expect("connect");
 
     let local = local().await;
-    postio_index::index::ensure_schema(&local.connection).await.expect("the search schema");
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1037,12 +1082,16 @@ async fn header_is_indexed(
     name: &str,
     value: &str,
 ) -> bool {
-    postio_storage::sql::one(&*connection, 
-            "SELECT EXISTS (SELECT 1 FROM message_headers
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT EXISTS (SELECT 1 FROM message_headers
                              WHERE message_id = ?1 AND name = ?2
-                               AND value LIKE '%' || ?3 || '%')",bind![id.get(), name, value],
-            |row| postio_storage::sql::RowExt::col::<bool>(row, 0)).await
-        .unwrap_or(false)
+                               AND value LIKE '%' || ?3 || '%')",
+        bind![id.get(), name, value],
+        |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
+    )
+    .await
+    .unwrap_or(false)
 }
 
 #[tokio::test]
@@ -1055,7 +1104,9 @@ async fn a_fetched_body_reaches_the_header_index() {
     // that does not work.
     let backend = server(2).await;
     let local = local().await;
-    postio_index::index::ensure_schema(&local.connection).await.expect("the search schema");
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[1];
 
@@ -1096,7 +1147,9 @@ async fn text_fetched_by_section_reaches_the_header_index() {
     backend.connect().await.expect("connect");
 
     let local = local().await;
-    postio_index::index::ensure_schema(&local.connection).await.expect("the search schema");
+    postio_index::index::ensure_schema(&local.connection)
+        .await
+        .expect("the search schema");
     let rows = headers(&local, &backend).await;
     let (id, uid) = rows[0];
 
@@ -1176,7 +1229,13 @@ async fn text_that_is_not_part_one_is_still_found() {
     let html = body.html.expect("the HTML alternative at 2.2");
     assert_eq!(html, "<p>Scan attached.</p>");
     assert_eq!(
-        messages.get(id).await.expect("get").expect("row").sync.body_state,
+        messages
+            .get(id)
+            .await
+            .expect("get")
+            .expect("row")
+            .sync
+            .body_state,
         BodyState::Partial,
         "the scan itself stayed on the server"
     );
@@ -1303,7 +1362,8 @@ async fn a_partial_message(local: &Local, backend: &MockBackend) -> (MessageId, 
     .expect("text");
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert_eq!(
         stored.sync.body_state,
@@ -1340,7 +1400,9 @@ async fn opening_an_attachment_fetches_the_part_and_records_where_it_landed() {
 
     let mut backfill = Backfill::new(policy());
     assert!(
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask"),
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "there is a payload on the server to ask for"
     );
     let claim = backfill.next_body().expect("a claim");
@@ -1394,7 +1456,9 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -1409,7 +1473,9 @@ async fn a_payload_already_on_this_machine_is_never_fetched_twice() {
     let after_first = backend.calls();
 
     assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask"),
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "the bytes are here; opening it again must not reach the network"
     );
     assert!(backfill.next_body().is_none());
@@ -1441,7 +1507,9 @@ async fn an_evicted_payload_can_be_fetched_again() {
     let messages = MessageRepository::new(&local.connection);
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -1462,7 +1530,12 @@ async fn an_evicted_payload_can_be_fetched_again() {
             bytes: PDF.len() as u64,
         },
     );
-    let blob = messages.get(id).await.expect("get").expect("row").attachments[0]
+    let blob = messages
+        .get(id)
+        .await
+        .expect("get")
+        .expect("row")
+        .attachments[0]
         .blob_id
         .clone()
         .expect("the payload is here to begin with");
@@ -1471,7 +1544,8 @@ async fn an_evicted_payload_can_be_fetched_again() {
     let report = local
         .blobs
         .evict_to_fit(&local.connection, 0)
-        .await.expect("evict");
+        .await
+        .expect("evict");
     assert_eq!(report.removed, 1, "the payload was the only thing to take");
     assert!(!local.blobs.contains(&blob), "the bytes really are gone");
 
@@ -1485,7 +1559,9 @@ async fn an_evicted_payload_can_be_fetched_again() {
     // And the part is askable again, from the same call the attachment chip
     // makes when somebody presses download.
     assert!(
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask"),
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "an evicted payload is a payload the server still has: eviction is \
          not a delete from the user's point of view"
     );
@@ -1549,7 +1625,9 @@ async fn two_messages_carrying_the_same_file_share_one_blob() {
         .expect("text");
 
         let mut backfill = Backfill::new(policy());
-        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask");
+        request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask");
         let claim = backfill.next_body().expect("a claim");
         fetch_body(
             &local.connection,
@@ -1586,7 +1664,9 @@ async fn never_leaves_a_payload_on_the_server_even_when_it_is_opened() {
     });
 
     assert!(
-        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask"),
+        !request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+            .await
+            .expect("ask"),
         "filename search and nothing more -- that is what `never` promises"
     );
     assert!(backfill.next_body().is_none());
@@ -1608,7 +1688,9 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
         ..policy()
     });
     assert_eq!(
-        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).await.expect("seed"),
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         1
     );
 
@@ -1633,12 +1715,15 @@ async fn eager_queues_the_payloads_the_text_lane_left_behind() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert!(stored.attachments[0].is_downloaded());
     assert_eq!(stored.sync.body_state, BodyState::Full);
     assert_eq!(
-        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10).await.expect("seed"),
+        seed_payloads(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         0,
         "and there is nothing left for it to find"
     );
@@ -1674,7 +1759,9 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
 
     for (part, expected) in [("2", BodyState::Partial), ("3", BodyState::Full)] {
         let mut backfill = Backfill::new(policy());
-        request_payloads(&local.connection, &mut backfill, id, &[part.to_owned()]).await.expect("ask");
+        request_payloads(&local.connection, &mut backfill, id, &[part.to_owned()])
+            .await
+            .expect("ask");
         let claim = backfill.next_body().expect("a claim");
         fetch_body(
             &local.connection,
@@ -1687,7 +1774,13 @@ async fn a_message_is_full_only_once_its_last_payload_is_local() {
         .await
         .expect("fetch");
         assert_eq!(
-            messages.get(id).await.expect("get").expect("row").sync.body_state,
+            messages
+                .get(id)
+                .await
+                .expect("get")
+                .expect("row")
+                .sync
+                .body_state,
             expected,
             "after fetching part {part}"
         );
@@ -1869,7 +1962,8 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
 
     let logo = stored
@@ -1949,7 +2043,8 @@ async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
 }
@@ -1999,7 +2094,8 @@ async fn a_named_attachment_is_never_dragged_down_the_text_axis() {
 
     let stored = MessageRepository::new(&local.connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("row");
     assert!(
         stored.attachments.iter().all(|part| part.blob_id.is_none()),
@@ -2036,7 +2132,8 @@ async fn a_fetched_body_stores_the_header_block_it_arrived_with() {
 
     let stored = MessageRepository::new(&local.connection)
         .body(id)
-        .await.expect("body")
+        .await
+        .expect("body")
         .expect("the row");
     let block = stored
         .headers
@@ -2072,7 +2169,9 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
     let (id, _uid) = a_partial_message(&local, &backend).await;
 
     let mut backfill = Backfill::new(policy());
-    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()]).await.expect("ask");
+    request_payloads(&local.connection, &mut backfill, id, &["2".to_owned()])
+        .await
+        .expect("ask");
     let claim = backfill.next_body().expect("a claim");
     fetch_body(
         &local.connection,
@@ -2097,7 +2196,8 @@ async fn the_text_axis_stores_a_block_even_though_it_stores_no_raw_blob() {
     assert!(
         messages
             .get(id)
-            .await.expect("get")
+            .await
+            .expect("get")
             .expect("row")
             .raw_blob_id
             .is_none(),
@@ -2125,11 +2225,15 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     let messages = MessageRepository::new(&local.connection);
 
     // Wind it back to what a pre-#884 store holds: body local, block absent.
-    messages.set_headers(id, None).await.expect("clear the block");
+    messages
+        .set_headers(id, None)
+        .await
+        .expect("clear the block");
     assert!(
         messages
             .body(id)
-            .await.expect("body")
+            .await
+            .expect("body")
             .expect("row")
             .headers
             .is_none(),
@@ -2138,7 +2242,8 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     assert!(
         messages
             .get(id)
-            .await.expect("get")
+            .await
+            .expect("get")
             .expect("row")
             .raw_blob_id
             .is_none(),
@@ -2146,8 +2251,9 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
     );
 
     let mut backfill = Backfill::new(policy());
-    let queued =
-        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).await.expect("seed");
+    let queued = seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10)
+        .await
+        .expect("seed");
     assert_eq!(
         queued, 1,
         "the row needs a block and nothing local can give it"
@@ -2183,7 +2289,9 @@ async fn a_legacy_row_with_no_block_and_no_blob_is_queued_and_filled() {
 
     // And it stops being offered, or the lane spins (#500).
     assert_eq!(
-        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10).await.expect("seed"),
+        seed_header_blocks(&local.connection, &mut backfill, local.inbox.id, 10)
+            .await
+            .expect("seed"),
         0
     );
 }

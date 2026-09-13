@@ -73,11 +73,11 @@ use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
     ResyncPlan, Uid,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
 use postio_storage::{Checkout, WritePriority};
-use postio_storage::Connection;
 
 use crate::drain::SyncError;
 use crate::initial::{self, Progress};
@@ -205,7 +205,9 @@ pub async fn resync_mailbox(
                     initial::Coverage::Everything
                 }
             };
-            sync_state.observe(mailbox.id, &reported, Utc::now()).await?;
+            sync_state
+                .observe(mailbox.id, &reported, Utc::now())
+                .await?;
             let report = initial::enumerate(
                 connection,
                 backend,
@@ -237,7 +239,9 @@ pub async fn resync_mailbox(
 
             match outcome {
                 Ok(outcome) => {
-                    sync_state.observe(mailbox.id, &reported, Utc::now()).await?;
+                    sync_state
+                        .observe(mailbox.id, &reported, Utc::now())
+                        .await?;
                     Ok(outcome)
                 }
                 // The pull cannot be trusted, and asking the same question
@@ -270,7 +274,9 @@ pub async fn resync_mailbox(
         }
         ResyncPlan::UpToDate => {
             tracing::debug!(mailbox = mailbox.id.get(), "already up to date");
-            sync_state.observe(mailbox.id, &reported, Utc::now()).await?;
+            sync_state
+                .observe(mailbox.id, &reported, Utc::now())
+                .await?;
             Ok(Outcome::UpToDate)
         }
     }
@@ -311,7 +317,9 @@ async fn rebuild(
         wipe_mailbox(connection, mailbox.id, stale).await?;
     }
 
-    SyncStateRepository::new(connection).observe(mailbox.id, &reported, Utc::now()).await?;
+    SyncStateRepository::new(connection)
+        .observe(mailbox.id, &reported, Utc::now())
+        .await?;
 
     // A wiped mailbox has nothing left to skip, so the cheaper pass covers
     // it; an intact one has to be re-read rather than filled in, because the
@@ -395,7 +403,9 @@ async fn incremental(
         // Read once rather than per unit: the account does not change under
         // this loop, and the lookup is a statement that would otherwise
         // repeat for every twenty-five messages.
-        let account = AccountRepository::new(connection).get(mailbox.account_id).await?;
+        let account = AccountRepository::new(connection)
+            .get(mailbox.account_id)
+            .await?;
 
         // `initial::WRITE_UNIT` at a time, the same size and for the same two
         // reasons its own loop gives. A *unit* rather than a message, because
@@ -413,7 +423,10 @@ async fn incremental(
             // Ahead of `BEGIN IMMEDIATE`, never after: the permit is what
             // stands this aside for a keystroke's write, and standing aside
             // after taking SQLite's lock would be standing aside too late.
-            let permit = connection.write_gate().acquire(WritePriority::Background);
+            let permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
 
             // IMMEDIATE for the reason `initial.rs` gives at its own
             // transaction (#79): the first statement here is a SELECT, and a
@@ -482,7 +495,10 @@ async fn incremental(
 
         let mut ids = Vec::with_capacity(vanished.len());
         for uid in vanished {
-            if let Some(message) = messages.by_uid(mailbox.id, selected.generation, uid).await? {
+            if let Some(message) = messages
+                .by_uid(mailbox.id, selected.generation, uid)
+                .await?
+            {
                 ids.push(message.id);
             }
         }

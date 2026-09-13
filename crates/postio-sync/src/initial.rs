@@ -66,7 +66,6 @@ use postio_storage::repository::{
 };
 use postio_storage::{Checkout, Connection, WritePriority};
 
-
 use crate::drain::SyncError;
 use postio_account::cancel::CancelToken;
 
@@ -236,7 +235,9 @@ pub(crate) async fn enumerate(
     }
 
     let now = Utc::now();
-    SyncStateRepository::new(connection).observe(mailbox.id, &server_status, now).await?;
+    SyncStateRepository::new(connection)
+        .observe(mailbox.id, &server_status, now)
+        .await?;
 
     // The UID ceiling: the highest UID this pass could reach, and the range
     // it enumerates. Not what progress is reported against — see
@@ -245,12 +246,15 @@ pub(crate) async fn enumerate(
     let mut report = Report::default();
 
     if highest_uid < 1 {
-        SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now).await?;
+        SyncStateRepository::new(connection)
+            .complete_full_sync(mailbox.id, now)
+            .await?;
         return Ok(report);
     }
 
     let known: BTreeSet<u32> = MessageRepository::new(connection)
-        .uids_in(mailbox.id, selected.generation).await?
+        .uids_in(mailbox.id, selected.generation)
+        .await?
         .into_iter()
         .map(Uid::get)
         .collect();
@@ -259,7 +263,9 @@ pub(crate) async fn enumerate(
     // recorded against never changes mid-pass. `None` (an orphaned mailbox
     // row) just means no sightings are recorded, rather than failing sync
     // over a nicety.
-    let account = AccountRepository::new(connection).get(mailbox.account_id).await?;
+    let account = AccountRepository::new(connection)
+        .get(mailbox.account_id)
+        .await?;
 
     // What the server actually holds, when it will say — otherwise every UID
     // below the ceiling, which is what this did for every backend before
@@ -351,7 +357,8 @@ pub(crate) async fn enumerate(
         }
 
         let wrote_from = std::time::Instant::now();
-        let batch = commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages).await?;
+        let batch =
+            commit_batch(connection, mailbox, account.as_ref(), &known, &mut messages).await?;
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
@@ -377,7 +384,9 @@ pub(crate) async fn enumerate(
         });
     }
 
-    SyncStateRepository::new(connection).complete_full_sync(mailbox.id, now).await?;
+    SyncStateRepository::new(connection)
+        .complete_full_sync(mailbox.id, now)
+        .await?;
     Ok(report)
 }
 
@@ -488,7 +497,10 @@ pub async fn commit_batch(
         // SQLite's lock would be standing aside too late. Re-taken per unit
         // rather than held across the batch, so a person waits for one unit at
         // most (#425).
-        let permit = connection.write_gate().acquire(WritePriority::Background);
+        let permit = connection
+            .write_gate()
+            .acquire(WritePriority::Background)
+            .await;
 
         // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
         // outermost level, and for the reason #79 records: the first

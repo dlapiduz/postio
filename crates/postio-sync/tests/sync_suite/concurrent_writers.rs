@@ -79,7 +79,8 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("the fixture writes");
+            .await
+            .expect("the fixture writes");
         (account, inbox, id)
     };
     let _ = account;
@@ -127,7 +128,8 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
                 };
                 messages
                     .set_flags(scratch, &warm(false), FlagSource::Local)
-                    .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                    .await
+                    .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                 ready.wait().await;
                 while !stop.load(Ordering::Relaxed) {
                     flagged = !flagged;
@@ -136,7 +138,8 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
                     // WAL under whatever the sync pass is holding.
                     messages
                         .set_flags(scratch, &warm(flagged), FlagSource::Local)
-                        .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                        .await
+                        .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                     commits.fetch_add(1, Ordering::Relaxed);
                 }
                 Ok::<(), String>(())

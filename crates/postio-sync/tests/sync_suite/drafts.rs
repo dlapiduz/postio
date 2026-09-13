@@ -8,12 +8,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox};
 use postio_model::{Account, Draft, EmailAddress, Identity, MailboxId, Operation, OperationTarget};
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{
     AccountRepository, DraftRepository, MailboxRepository, OperationQueueRepository,
 };
 use postio_storage::test_support;
 use postio_sync::{DrainReport, Drainer};
-use postio_storage::Connection;
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
@@ -62,7 +62,8 @@ async fn account_with_drafts(connection: &Connection) -> (Account, MailboxId) {
 
     AccountRepository::new(connection)
         .create(&mut account)
-        .await.expect("create account");
+        .await
+        .expect("create account");
     let drafts = test_support::mailbox(connection, &account, "Drafts").await;
     (account, drafts.id)
 }
@@ -112,7 +113,8 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
-        .await.expect("save and queue");
+        .await
+        .expect("save and queue");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
@@ -121,7 +123,8 @@ async fn an_autosaved_draft_reaches_the_drafts_mailbox() {
 
     let stored = DraftRepository::new(&connection)
         .get(draft.id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("the draft");
     assert!(
         stored.server.remote_id.is_some(),
@@ -144,7 +147,8 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
     drain(&connection, &backend, &blobs.store, &account).await;
     let first = drafts
         .get(draft.id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("the draft")
         .server
         .remote_id;
@@ -152,7 +156,8 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
     draft.body.text = Some("Half a thought, now most of one.".to_owned());
     drafts
         .save_and_sync(&mut draft, at(10))
-        .await.expect("save again");
+        .await
+        .expect("save again");
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
     assert_eq!(report.applied, 1, "{report:?}");
@@ -164,7 +169,8 @@ async fn editing_a_draft_replaces_its_copy_rather_than_adding_one() {
 
     let second = drafts
         .get(draft.id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("the draft")
         .server
         .remote_id;
@@ -186,7 +192,10 @@ async fn a_run_of_autosaves_costs_one_round_trip() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     for (index, hour) in [7, 8, 9].into_iter().enumerate() {
         draft.subject = format!("Tide gate interlock, revision {index}");
-        drafts.save_and_sync(&mut draft, at(hour)).await.expect("save");
+        drafts
+            .save_and_sync(&mut draft, at(hour))
+            .await
+            .expect("save");
     }
 
     let before = backend.calls();
@@ -271,7 +280,8 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save(&mut draft)
-        .await.expect("save");
+        .await
+        .expect("save");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -282,7 +292,8 @@ async fn a_renumbered_drafts_mailbox_is_never_expunged_by_a_stale_uid() {
             },
             at(9),
         )
-        .await.expect("enqueue");
+        .await
+        .expect("enqueue");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
@@ -310,7 +321,8 @@ async fn a_draft_whose_attachment_is_still_being_written_waits_rather_than_fails
     )];
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
-        .await.expect("save");
+        .await
+        .expect("save");
 
     let report = drain(&connection, &backend, &blobs.store, &account).await;
 
@@ -335,13 +347,15 @@ async fn the_copy_in_drafts_keeps_the_bcc_the_sent_message_will_not() {
     draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
-        .await.expect("save and queue");
+        .await
+        .expect("save and queue");
 
     drain(&connection, &backend, &blobs.store, &account).await;
 
     let stored = DraftRepository::new(&connection)
         .get(draft.id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("the draft");
     let remote_id = stored.server.remote_id.expect("the copy landed");
 
@@ -377,7 +391,8 @@ async fn listed(connection: &Connection, mailbox: MailboxId) -> Vec<String> {
     };
     postio_storage::repository::MessageRepository::new(connection)
         .page(&query)
-        .await.expect("a page of the Drafts folder")
+        .await
+        .expect("a page of the Drafts folder")
         .into_iter()
         .map(|row| row.subject.unwrap_or_default())
         .collect()
@@ -415,7 +430,8 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
     let mut draft = a_draft(&account, "Tide gate interlock");
     DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(9))
-        .await.expect("save and queue");
+        .await
+        .expect("save and queue");
     drain(&connection, &backend, &blobs.store, &account).await;
     assert_eq!(
         exists(&backend, "Drafts").await,
@@ -425,7 +441,8 @@ async fn a_draft_this_client_uploaded_does_not_come_back_as_a_second_row() {
 
     let mailbox = MailboxRepository::new(&connection)
         .get(drafts_mailbox)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .expect("the Drafts folder");
     postio_sync::sync_mailbox(
         &connection,

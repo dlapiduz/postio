@@ -168,7 +168,7 @@ fn churn(database: Database, stop: &AtomicBool) {
     while !stop.load(Ordering::Relaxed) {
         let connection = database.connection().expect("writer checkout");
         {
-            let _permit = connection.write_gate().acquire(WritePriority::Background);
+            let _permit = connection.write_gate().acquire(WritePriority::Background).await;
             connection
                 .execute_batch("BEGIN IMMEDIATE")
                 .expect("writer begin");

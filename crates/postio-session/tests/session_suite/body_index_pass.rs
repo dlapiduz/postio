@@ -34,7 +34,10 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
     // empty, and before #500 that meant the message never left the candidate
     // set.
     let messages = MessageRepository::new(&connection);
-    connection.execute_batch("BEGIN").await.expect("begin fixture");
+    connection
+        .execute_batch("BEGIN")
+        .await
+        .expect("begin fixture");
     for i in 0..TEXTLESS {
         let mut message = Message::new(
             account.id,
@@ -45,7 +48,10 @@ fn a_store_full_of_textless_bodies_is_swept_once_and_left_alone() {
         message.sync.body_state = BodyState::Full;
         messages.create(&mut message).expect("create");
     }
-    connection.execute_batch("COMMIT").await.expect("commit fixture");
+    connection
+        .execute_batch("COMMIT")
+        .await
+        .expect("commit fixture");
     drop(connection);
 
     let indexed = postio_session::index_local_bodies(&database).expect("the pass runs");

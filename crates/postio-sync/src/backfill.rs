@@ -49,10 +49,10 @@ use postio_account::backend::{BackendError, BodyPart, MailBackend, VecSink};
 use postio_account::cancel::CancelToken;
 use postio_model::{BodyState, MailboxId, MessageId, Uid, mime};
 use postio_storage::BlobStore;
+use postio_storage::Connection;
 use postio_storage::repository::{
     BackfillCandidate, MailboxRepository, MessageRepository, StoredBody,
 };
-use postio_storage::Connection;
 
 use crate::blob_sink::BlobSink;
 use crate::drain::SyncError;
@@ -790,13 +790,18 @@ pub async fn seed(
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_backfill_from(mailbox_id, limit, offset).await?;
+        let candidates = messages
+            .needing_backfill_from(mailbox_id, limit, offset)
+            .await?;
         let read = candidates.len();
         let queued = candidates
             .into_iter()
@@ -826,7 +831,10 @@ pub async fn request_body(
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id).await? else {
+    let Some(candidate) = MessageRepository::new(connection)
+        .backfill_candidate(message_id)
+        .await?
+    else {
         return Ok(false);
     };
     backfill.request_now(candidate.into());
@@ -849,7 +857,10 @@ pub async fn request_whole(
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
-    let Some(candidate) = MessageRepository::new(connection).backfill_candidate(message_id).await? else {
+    let Some(candidate) = MessageRepository::new(connection)
+        .backfill_candidate(message_id)
+        .await?
+    else {
         return Ok(false);
     };
     let mut request = BodyRequest::from(candidate);
@@ -947,12 +958,18 @@ pub async fn seed_header_blocks(
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut queued = 0;
-    for candidate in messages.messages_needing_a_header_fetch(mailbox_id, limit).await? {
+    for candidate in messages
+        .messages_needing_a_header_fetch(mailbox_id, limit)
+        .await?
+    {
         let mut request = BodyRequest::from(candidate);
         request.want = Want::HeaderBlock;
         if backfill.enqueue(request) {
@@ -981,13 +998,18 @@ pub async fn seed_payloads(
     mailbox_id: MailboxId,
     limit: u32,
 ) -> Result<usize> {
-    if MailboxRepository::new(connection).backfill_excluded(mailbox_id).await? {
+    if MailboxRepository::new(connection)
+        .backfill_excluded(mailbox_id)
+        .await?
+    {
         return Ok(0);
     }
     let messages = MessageRepository::new(connection);
     let mut offset = 0;
     loop {
-        let candidates = messages.needing_payloads_from(mailbox_id, limit, offset).await?;
+        let candidates = messages
+            .needing_payloads_from(mailbox_id, limit, offset)
+            .await?;
         let read = candidates.len();
         let mut queued = 0;
         for candidate in candidates {
@@ -1204,13 +1226,17 @@ pub async fn fetch_body(
             continue;
         };
         let blob = blobs.put(&part.content)?;
-        messages.set_attachment_blob(request.message, part_id, &blob).await?;
+        messages
+            .set_attachment_blob(request.message, part_id, &blob)
+            .await?;
     }
 
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
     // `postio_app::reading::part_bytes` falls back to.
-    messages.set_body(request.message, &stored, BodyState::Full).await?;
+    messages
+        .set_body(request.message, &stored, BodyState::Full)
+        .await?;
 
     // And into the search index, *after* the commit point.
     //
@@ -1230,8 +1256,8 @@ pub async fn fetch_body(
     // state (a headless sync, a test that only wants mail), and trading a
     // fetched message for an unavailable index would be the wrong way round.
     // `postio_session::index_local_bodies` sweeps up whatever this misses.
-    if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &parsed.body)
-        .await
+    if let Err(error) =
+        postio_index::index::index_body_of(connection, request.message.get(), &parsed.body).await
     {
         tracing::debug!(
             message = request.message.get(),
@@ -1271,8 +1297,9 @@ async fn index_the_header_block(
         return;
     };
     let headers = postio_model::headers::parse_block(&block.text);
-    if let Err(error) = postio_index::index::index_headers(connection, message.get(), &headers)
-        .await {
+    if let Err(error) =
+        postio_index::index::index_headers(connection, message.get(), &headers).await
+    {
         tracing::debug!(
             message = message.get(),
             %error,
@@ -1401,7 +1428,9 @@ async fn fetch_text_parts(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, &part_id, &blob).await?;
+        messages
+            .set_attachment_blob(request.message, &part_id, &blob)
+            .await?;
         // Kept in step with the row, so `state_for` below reads the truth
         // rather than the structure as the header sync left it.
         if let Some(attachment) = message
@@ -1444,8 +1473,8 @@ async fn fetch_text_parts(
     // is concerned. See `fetch_body` for why it is last.
     messages.set_body(request.message, &stored, state).await?;
 
-    if let Err(error) = postio_index::index::index_body_of(connection, request.message.get(), &body)
-        .await
+    if let Err(error) =
+        postio_index::index::index_body_of(connection, request.message.get(), &body).await
     {
         tracing::debug!(
             message = request.message.get(),
@@ -1640,7 +1669,9 @@ async fn fetch_payloads(
             continue;
         };
         bytes += moved;
-        messages.set_attachment_blob(request.message, part_id, &blob).await?;
+        messages
+            .set_attachment_blob(request.message, part_id, &blob)
+            .await?;
     }
 
     // The commit point for this axis. Re-read rather than reasoned about: the
@@ -1833,7 +1864,9 @@ mod tests {
         }
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        let queued = seed(&connection, &mut backfill, inbox, 10).await.expect("seed");
+        let queued = seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
 
         assert_eq!(queued, 3);
         assert_eq!(backfill.progress().pending, 3);
@@ -1850,7 +1883,9 @@ mod tests {
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
         assert_eq!(
-            seed(&connection, &mut backfill, inbox, 10).await.expect("seed"),
+            seed(&connection, &mut backfill, inbox, 10)
+                .await
+                .expect("seed"),
             0
         );
         assert!(backfill.next_body().is_none());
@@ -1869,11 +1904,17 @@ mod tests {
         messages.create(&mut newer).await.expect("create");
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
-        seed(&connection, &mut backfill, inbox, 10).await.expect("seed");
+        seed(&connection, &mut backfill, inbox, 10)
+            .await
+            .expect("seed");
 
         // The user opened the OLDER message; the interactive lane must still
         // put it ahead of the newer one the background lane would fetch first.
-        assert!(request_body(&connection, &mut backfill, older.id).await.expect("lookup"));
+        assert!(
+            request_body(&connection, &mut backfill, older.id)
+                .await
+                .expect("lookup")
+        );
 
         let claim = backfill.next_body().expect("a claim");
         assert_eq!(claim.priority, Priority::Interactive);
@@ -1893,9 +1934,15 @@ mod tests {
 
         let mut backfill = Backfill::new(BackfillPolicy::default());
 
-        assert!(!request_body(&connection, &mut backfill, fully_fetched.id).await.expect("lookup"));
         assert!(
-            !request_body(&connection, &mut backfill, MessageId::new(404)).await.expect("lookup"),
+            !request_body(&connection, &mut backfill, fully_fetched.id)
+                .await
+                .expect("lookup")
+        );
+        assert!(
+            !request_body(&connection, &mut backfill, MessageId::new(404))
+                .await
+                .expect("lookup"),
             "no local row at all is the same answer, not an error"
         );
         assert!(backfill.next_body().is_none());
