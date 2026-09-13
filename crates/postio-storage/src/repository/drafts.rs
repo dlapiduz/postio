@@ -505,12 +505,10 @@ impl<'a> DraftRepository<'a> {
     /// One draft, with its recipients and attachments.
     pub async fn get(&self, id: DraftId) -> Result<Option<Draft>> {
         let mut statement = self.connection.prepare(&format!("SELECT {DRAFT_COLUMNS} FROM drafts WHERE id = ?1")).await?;
-        let mut rows = statement.query([id.get()]).await?;
-        let Some(row) = rows.next().await? else {
+        let found = crate::sql::first_of(&mut statement, [id.get()], read_draft).await?;
+        let Some(mut draft) = found else {
             return Ok(None);
         };
-        let mut draft = read_draft(&row)?;
-        drop(rows);
 
         self.fill(&mut draft).await?;
         Ok(Some(draft))

@@ -413,7 +413,7 @@ async fn counts_stay_correct_after_a_flag_change() {
     connection
         .execute(
             "UPDATE messages SET seen = 1, flags = '\\Seen' WHERE id = (SELECT min(id) FROM messages)",
-            [],
+            (),
         )
         .await
         .expect("mark one as read");
@@ -437,7 +437,7 @@ async fn a_message_deleted_locally_is_not_in_the_counts() {
     connection
         .execute(
             "UPDATE messages SET deleted_locally = 1 WHERE id = (SELECT min(id) FROM messages)",
-            [],
+            (),
         )
         .await
         .expect("hide one pending a remote delete");

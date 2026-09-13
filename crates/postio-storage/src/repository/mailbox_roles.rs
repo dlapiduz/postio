@@ -17,7 +17,6 @@ use postio_model::{AccountId, MailboxRole};
 
 
 use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
 use crate::store::Connection;
 use crate::error::Result;
 

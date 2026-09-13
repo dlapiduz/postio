@@ -11,7 +11,7 @@ use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::{seed_large, seed_small};
 use postio_storage::test_support;
 
-use postio_storage::test_support::counting::{counted, install};
+use postio_storage::test_support::counting::{counted_async, install};
 
 #[tokio::test]
 async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns() {

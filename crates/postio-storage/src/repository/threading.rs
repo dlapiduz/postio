@@ -44,7 +44,6 @@ use postio_model::{
 use super::{MessageRepository, ThreadRepository};
 
 use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
 use crate::store::Connection;
 use crate::error::Result;
 

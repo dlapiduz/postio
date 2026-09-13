@@ -10,11 +10,9 @@
 //! The rest prove the properties `spec.md` makes acceptance criteria: that the
 //! store opens, that it is encrypted, and that another key is refused.
 
-use postio_storage::sql::bind;
 use postio_storage::Store;
 use postio_storage::key::{Purpose, StoreKey};
 use postio_storage::sql;
-use postio_storage::sql::RowExt as _;
 use postio_storage::store::CIPHER;
 
 fn temp(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -97,10 +95,11 @@ async fn the_store_keeps_no_plaintext_on_disk() {
         )
         .await
         .expect("write the probe");
-    connection
-        .execute("PRAGMA wal_checkpoint(TRUNCATE)", ())
-        .await
-        .ok();
+    // A query, not an `execute`: the pragma answers with a row, and the engine
+    // refuses a statement whose rows nobody reads.
+    if let Ok(mut rows) = connection.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await {
+        let _ = rows.next().await;
+    }
     drop(connection);
     drop(store);
 
@@ -171,7 +170,7 @@ async fn r1_an_fts_index_can_be_built_over_a_generated_column() {
 
     let matched = count(
         &connection,
-        "SELECT count(*).await FROM probe WHERE fts_match(body_indexed, 'wombat')",
+        "SELECT count(*) FROM probe WHERE fts_match(body_indexed, 'wombat')",
     )
     .await;
     assert_eq!(
@@ -241,7 +240,7 @@ async fn the_engine_folds_case_but_not_diacritics() {
         async move {
             count(
                 &connection,
-                &format!("SELECT count(*).await FROM accents WHERE fts_match(body, '{term}')"),
+                &format!("SELECT count(*) FROM accents WHERE fts_match(body, '{term}')"),
             )
             .await
         }

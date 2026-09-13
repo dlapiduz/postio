@@ -911,12 +911,10 @@ impl<'a> MessageRepository<'a> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
         )).await?;
-        let mut rows = statement.query([id.get()]).await?;
-        let Some(row) = rows.next().await? else {
+        let found = crate::sql::first_of(&mut statement, [id.get()], read_message).await?;
+        let Some(mut message) = found else {
             return Ok(None);
         };
-        let mut message = read_message(&row)?;
-        drop(rows);
         drop(statement);
 
         read_recipients(self.connection, &mut message).await?;
@@ -998,7 +996,7 @@ impl<'a> MessageRepository<'a> {
             "SELECT count(*) FROM messages WHERE {}",
             where_clause(query, false)
         );
-        let mut arguments = scope_arguments(&query.scope);
+        let arguments = scope_arguments(&query.scope);
         let count: i64 =
             sql::one(
                 self.connection,
@@ -1266,14 +1264,23 @@ impl<'a> MessageRepository<'a> {
         // life of the process, and the SQL never changes. Preparing it afresh
         // each time put `sqlite3RunParser` into a profile of an idle
         // application (#1237).
+        // No `ORDER BY` in the SQL, and the sort below instead. With one the
+        // planner declines `idx_messages_snoozed_due` and scans
+        // `idx_messages_partial` -- whose leading column is `mailbox_id`, so
+        // it arrives in order -- trading a walk over every message the
+        // account has for a sorter over at most a handful of mailbox ids.
+        // That is exactly the walk #1237 removed, and it comes back every
+        // five seconds for the life of the process. The order still matters
+        // (a caller repainting in a stable order), so it is done in Rust over
+        // a list that cannot be longer than the account's mailbox count.
         let mut statement = self.connection.prepare_cached(
             "SELECT DISTINCT mailbox_id FROM messages
-              WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2
-              ORDER BY mailbox_id",
+              WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
         ).await?;
-        let woken: Vec<MailboxId> = sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
+        let mut woken: Vec<MailboxId> = sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
                 Ok(MailboxId::new(row.col(0)?))
             }).await?;
+        woken.sort_unstable();
 
         if !woken.is_empty() {
             self.connection.execute(
@@ -1866,12 +1873,11 @@ impl<'a> MessageRepository<'a> {
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0",
         ).await?;
-        let mut rows = statement.query([message_id.get()]).await?;
-        let Some(row) = rows.next().await? else {
-            return Ok(None);
-        };
-        let mailbox_id = MailboxId::new(row.col(6)?);
-        Ok(Some(read_backfill_candidate(&row, mailbox_id)?))
+        crate::sql::first_of(&mut statement, [message_id.get()], |row| {
+            let mailbox_id = MailboxId::new(row.col(6)?);
+            read_backfill_candidate(row, mailbox_id)
+        })
+        .await
     }
 
     /// Messages in `mailbox_id` that carry no usable thread reference at all —
@@ -2268,11 +2274,12 @@ async fn find_by_remote_id(
 ) -> Result<Option<MessageId>> {
     // Cached: once per message on every batch a sync pass writes (#728).
     let mut statement = connection.prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2").await?;
-    let mut rows = statement.query(bind![mailbox_id.get(), remote_id.as_str()]).await?;
-    Ok(match rows.next().await? {
-        Some(row) => Some(MessageId::new(row.col(0)?)),
-        None => None,
-    })
+    crate::sql::first_of(
+        &mut statement,
+        bind![mailbox_id.get(), remote_id.as_str()],
+        |row| Ok(MessageId::new(row.col(0)?)),
+    )
+    .await
 }
 
 /// The engine-facing lookup: the caller tracks an opaque [`Generation`],
@@ -2289,15 +2296,16 @@ async fn find_by_generation_uid(
         "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
     ).await?;
-    let mut rows = statement.query(bind![
-        mailbox_id.get(),
-        i64::from(generation.get()),
-        i64::from(uid.get()),
-    ]).await?;
-    Ok(match rows.next().await? {
-        Some(row) => Some(MessageId::new(row.col(0)?)),
-        None => None,
-    })
+    crate::sql::first_of(
+        &mut statement,
+        bind![
+            mailbox_id.get(),
+            i64::from(generation.get()),
+            i64::from(uid.get()),
+        ],
+        |row| Ok(MessageId::new(row.col(0)?)),
+    )
+    .await
 }
 
 /// Reads a [`BackfillCandidate`] from a row of `(id, uid, size, received_at,

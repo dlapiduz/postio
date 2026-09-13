@@ -290,7 +290,7 @@ impl<'a> OperationQueueRepository<'a> {
             // `idx_messages_list`, which is keyed `received_at DESC, id DESC`,
             // where before it had scanned in rowid order. The queue drains in id
             // order, so this decides the order operations reach the server.
-            let (predicate, mut arguments) = set.predicate(8);
+            let (predicate, arguments) = set.predicate(8);
             let sql = format!(
                 "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
                                               mailbox_id, payload, inverse, state, attempts,
@@ -424,13 +424,7 @@ impl<'a> OperationQueueRepository<'a> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {COLUMNS} FROM operation_queue WHERE id = ?1"
         )).await?;
-        let mut rows = statement.query([id.get()]).await?;
-        let found = match rows.next().await? {
-            Some(row) => Some(read_queued(&row)?),
-            None => None,
-        };
-        drop(rows);
-        Ok(found)
+        crate::sql::first_of(&mut statement, [id.get()], read_queued).await
     }
 
     /// The account's operations that are due to be drained at `now`, in order.
@@ -475,13 +469,7 @@ impl<'a> OperationQueueRepository<'a> {
               ORDER BY id
               LIMIT 1"
         )).await?;
-        let mut rows = statement.query(bind![target.kind(), target.id()]).await?;
-        let found = match rows.next().await? {
-            Some(row) => Some(read_queued(&row)?),
-            None => None,
-        };
-        drop(rows);
-        Ok(found)
+        crate::sql::first_of(&mut statement, bind![target.kind(), target.id()], read_queued).await
     }
 
     /// Why the last attempt against `target` gave up, if one did.

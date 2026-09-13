@@ -88,12 +88,9 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     account.auth = AuthMethod::XOAuth2;
     accounts.create(&mut account).await.expect("create");
 
-    let (incoming, outgoing, auth): (String, String, String) = connection
-        .query_row(
-            "SELECT incoming_security, outgoing_security, auth_method FROM accounts",
-            [],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?)),
-        )
+    let (incoming, outgoing, auth): (String, String, String) = postio_storage::sql::one(&*connection, 
+            "SELECT incoming_security, outgoing_security, auth_method FROM accounts",(),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))).await
         .expect("read the raw row");
 
     assert_eq!(incoming, TransportSecurity::StartTls.as_str());
@@ -514,7 +511,7 @@ async fn reaping_cascades_exactly_like_an_ordinary_delete() {
     connection
         .execute(
             "INSERT INTO mailboxes (id, account_id, name, path) VALUES (1, 1, 'INBOX', 'INBOX')",
-            [],
+            (),
         )
         .await
         .expect("seed a mailbox");

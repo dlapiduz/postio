@@ -27,13 +27,10 @@ async fn insert_message(connection: &Connection, mailbox: MailboxId, uid: u32) {
         .expect("insert a message");
 }
 
-fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
-    connection
-        .query_row(
-            "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
-            [mailbox.get()],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+async fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
+    postio_storage::sql::one(&*connection, 
+            "SELECT count(*) FROM messages WHERE mailbox_id = ?1",bind![mailbox.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("count messages")
 }
 
@@ -269,7 +266,7 @@ async fn state_and_the_messages_it_describes_commit_together() {
         .expect("complete");
     transaction.commit().await.expect("commit");
 
-    assert_eq!(message_count(&connection, inbox), 2);
+    assert_eq!(message_count(&connection, inbox).await, 2);
     let state = SyncStateRepository::new(&connection)
         .get(inbox)
         .await
@@ -300,7 +297,7 @@ async fn a_crash_mid_sync_leaves_resumable_state_rather_than_a_lie() {
         .expect("complete");
     drop(transaction); // the crash
 
-    assert_eq!(message_count(&connection, inbox), 0);
+    assert_eq!(message_count(&connection, inbox).await, 0);
     let states = SyncStateRepository::new(&connection);
     let state = states.get(inbox).await.expect("get").expect("a row");
     assert_eq!(
@@ -347,7 +344,7 @@ async fn state_never_advances_past_a_half_written_batch() {
 
     let states = SyncStateRepository::new(&connection);
     let state = states.get(inbox).await.expect("get").expect("a row");
-    assert_eq!(message_count(&connection, inbox), 1);
+    assert_eq!(message_count(&connection, inbox).await, 1);
     assert_eq!(
         state.highest_mod_seq,
         Some(ModSeq::new(100)),

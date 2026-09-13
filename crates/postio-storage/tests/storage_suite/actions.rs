@@ -179,26 +179,43 @@ async fn a_trash_relocation_enqueues_a_delete() {
 /// The other half of "the caller owns the transaction": a rule whose sync
 /// pass fails must leave no trace, and a verb that committed internally would
 /// leave the move behind with the insert rolled back.
+///
+/// The rollback is spelled as an error out of the scope rather than as a
+/// dropped guard. `Drop` cannot await, so an async transaction that rolled
+/// back on drop would have to block a runtime thread to do it; the scope
+/// rolls back on the `Err` arm instead, which is the same guarantee said out
+/// loud. Reaching for a guard here is what `postio_storage::transaction`
+/// exists to stop.
 #[tokio::test]
 async fn a_rolled_back_transaction_relocates_nothing() {
     let database = test_support::memory().await;
-    let mut connection = database.connect().await.expect("checkout");
+    let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
     let message = a_message(&connection, inbox, "uid-9").await;
 
-    let transaction = connection.transaction().await.expect("open a transaction");
-    relocate(
-        &transaction,
-        account.id,
-        &[(inbox, vec![message])].into_iter().collect(),
-        archive,
-        Relocation::Move,
-        at(9),
-    )
-    .await
-    .expect("relocate");
-    drop(transaction);
+    let rolled_back: Result<(), postio_storage::Error> =
+        postio_storage::transaction(&connection, async |transaction| {
+            relocate(
+                &transaction,
+                account.id,
+                &[(inbox, vec![message])].into_iter().collect(),
+                archive,
+                Relocation::Move,
+                at(9),
+            )
+            .await
+            .expect("relocate");
+            // What a failing sync pass does: the work is done and then
+            // abandoned, so what the assertions below see is the rollback and
+            // not a `relocate` that never ran.
+            Err(postio_storage::Error::NotFound {
+                entity: "a reason to roll back",
+                id: 0,
+            })
+        })
+        .await;
+    assert!(rolled_back.is_err(), "the scope returns the caller's error");
 
     let row = MessageRepository::new(&connection)
         .get(message)

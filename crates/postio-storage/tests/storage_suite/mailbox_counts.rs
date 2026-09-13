@@ -110,7 +110,7 @@ async fn a_batch_upsert_counts_each_row_once() {
     let messages = MessageRepository::new(&connection);
 
     let mut batch: Vec<Message> = Vec::new();
-    for uid in (1..=4) {
+    for uid in 1..=4 {
         batch.push(a_message(&account, inbox, uid, &[]).await);
     }
     messages.upsert_batch(&mut batch).await.expect("first pass");
@@ -118,7 +118,7 @@ async fn a_batch_upsert_counts_each_row_once() {
 
     // The same UIDs again — an interrupted pass resuming, which is ordinary.
     let mut again: Vec<Message> = Vec::new();
-    for uid in (1..=4) {
+    for uid in 1..=4 {
         again.push(a_message(&account, inbox, uid, &[Flag::Seen]).await);
     }
     messages.upsert_batch(&mut again).await.expect("second pass");
@@ -268,7 +268,7 @@ async fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
     connection
         .execute(
             "UPDATE mailboxes SET total_count = 0, unread_count = 0, flagged_count = 0",
-            [],
+            (),
         )
         .await
         .expect("zero the counts");
@@ -396,12 +396,12 @@ async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
     // on every arrival, so a read that grew with the mailbox would be paid
     // for on the surface redrawn most often. `idx_messages_send_state` is
     // partial on exactly this predicate, so the account's mail is not touched.
-    use postio_storage::test_support::counting::{counted, install};
+    use postio_storage::test_support::counting::{counted_async, install};
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account_mid_send(&connection).await;
-    let inbox = test_support::mailbox(&connection, &test_support::account(&connection).await, "INBOX");
+    let inbox = test_support::mailbox(&connection, &test_support::account(&connection).await, "INBOX").await;
     install(&connection);
 
     let mailboxes = MailboxRepository::new(&connection);

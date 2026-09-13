@@ -223,10 +223,8 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
         .collect();
     let id = messages.create(&mut message).await.expect("create");
 
-    let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) = connection
-        .query_row(
-            "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",
-            [id.get()],
+    let (flags, seen, flagged, answered, draft): (String, bool, bool, bool, bool) = postio_storage::sql::one(&*connection, 
+            "SELECT flags, seen, flagged, answered, draft FROM messages WHERE id = ?1",bind![id.get()],
             |row| {
                 Ok((
                     postio_storage::sql::RowExt::col(row, 0)?,
@@ -235,8 +233,7 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
                     postio_storage::sql::RowExt::col(row, 3)?,
                     postio_storage::sql::RowExt::col(row, 4)?,
                 ))
-            },
-        )
+            }).await
         .expect("read the raw row");
 
     assert!(seen && flagged && answered && !draft);
@@ -1220,20 +1217,7 @@ async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_fold
 
 /// Whether a plan resolves through an index rather than a scan or a sort.
 async fn plan_of(connection: &Connection, sql: &str) -> String {
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-        .await
-        .unwrap_or_else(|error| panic!("prepare {sql}: {error}"));
-    // The list query is parameterised; the planner does not care what the
-    // values are, only that there are the right number of them.
-    let arguments = vec![1i64; statement.parameter_count()];
-    let rows = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
-            postio_storage::sql::RowExt::col::<String>(row, 3)
-        })
-        .expect("plan")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect");
-    rows.join("\n")
+    test_support::plan(connection, sql).await
 }
 
 #[tokio::test]
@@ -1297,7 +1281,7 @@ async fn paging_stays_flat_over_a_hundred_thousand_messages() {
         (start.elapsed(), page)
     };
 
-    let (first_duration, first) = time(&query);
+    let (first_duration, first) = time(&query).await;
     assert_eq!(first.len(), 50, "a page is a window, never the mailbox");
 
     // Walk to the far end of the mailbox and time a page there.
@@ -1310,7 +1294,7 @@ async fn paging_stays_flat_over_a_hundred_thousand_messages() {
         pages += 1;
     }
 
-    let (deep_duration, deep) = time(&query.clone().after(cursor));
+    let (deep_duration, deep) = time(&query.clone().after(cursor)).await;
     assert_eq!(deep.len(), 50, "still a full window, 95000 rows in");
     assert!(
         deep_duration < first_duration * 5 + Duration::from_millis(3),
@@ -1447,13 +1431,10 @@ async fn enqueue_and_move_locally(
         .expect("local move");
 }
 
-fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
-    connection
-        .query_row(
-            "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",
-            [mailbox.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
-        )
+async fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
+    postio_storage::sql::one(&*connection, 
+            "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",bind![mailbox.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
         .expect("count") as usize
 }
 
@@ -1486,11 +1467,11 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
         archive.id,
     ).await;
     assert_eq!(
-        rows_in(&connection, inbox),
+        rows_in(&connection, inbox).await,
         0,
         "the archive was local-first"
     );
-    assert_eq!(rows_in(&connection, archive.id), 1);
+    assert_eq!(rows_in(&connection, archive.id).await, 1);
 
     // Now an INBOX resync runs before the queue drains. The server still
     // lists the message in INBOX, so this is exactly what it hands back.
@@ -1501,14 +1482,14 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     let report = messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert_eq!(
-        rows_in(&connection, inbox),
+        rows_in(&connection, inbox).await,
         0,
         "the archived message came back to the inbox: the resync re-created a \
          row the user had already moved, and it will sit there until the \
          queue drains (#368)"
     );
     assert_eq!(
-        rows_in(&connection, archive.id),
+        rows_in(&connection, archive.id).await,
         1,
         "and it must still be the one copy, in Archive where the user put it"
     );
@@ -1552,12 +1533,12 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
     messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
     assert_eq!(
-        rows_in(&connection, inbox),
+        rows_in(&connection, inbox).await,
         0,
         "a pending delete has the same shape as a pending move and needs the \
          same shadow (#368)"
     );
-    assert_eq!(rows_in(&connection, trash.id), 1);
+    assert_eq!(rows_in(&connection, trash.id).await, 1);
 }
 
 #[tokio::test]
@@ -1614,7 +1595,7 @@ async fn the_shadow_lifts_once_the_operation_settles() {
         messages.upsert_batch(&mut resynced).await.expect("resync upsert");
 
         assert_eq!(
-            rows_in(&connection, inbox),
+            rows_in(&connection, inbox).await,
             1,
             "{settled:?}: the shadow must lift when the operation settles, or \
              a move the server refused would hide the message for ever"

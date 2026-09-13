@@ -72,7 +72,6 @@ pub use messages::{
 };
 
 use chrono::{DateTime, Utc};
-use crate::store::Connection;
 
 use crate::error::{Error, Result};
 
