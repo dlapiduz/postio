@@ -20,8 +20,8 @@
 //! first wrote it.
 
 use postio_model::{Account, EmailAddress, Message};
-use postio_storage::repository::ContactRepository;
 use postio_storage::Connection;
+use postio_storage::repository::ContactRepository;
 
 use crate::drain::Result;
 
@@ -33,7 +33,11 @@ use crate::drain::Result;
 /// the sender of everything filed in Sent. `record_message` has no way to
 /// know which address is "ours" — it only sees one message at a time — so
 /// the exclusion happens here, against every address `account` can send as.
-pub(crate) async fn record(connection: &Connection, account: &Account, message: &Message) -> Result<()> {
+pub(crate) async fn record(
+    connection: &Connection,
+    account: &Account,
+    message: &Message,
+) -> Result<()> {
     let is_own = |address: &EmailAddress| {
         let normalized = address.normalized();
         account.address.normalized() == normalized
@@ -53,7 +57,9 @@ pub(crate) async fn record(connection: &Connection, account: &Account, message: 
     trimmed.cc.retain(|address| !is_own(address));
     trimmed.bcc.retain(|address| !is_own(address));
 
-    ContactRepository::new(connection).record_message(&trimmed).await?;
+    ContactRepository::new(connection)
+        .record_message(&trimmed)
+        .await?;
     Ok(())
 }
 
@@ -90,7 +96,9 @@ mod tests {
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         let message = message(&connection, &account, mailbox).await;
 
-        record(&connection, &account, &message).await.expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))
@@ -118,7 +126,9 @@ mod tests {
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         let message = message(&connection, &account, mailbox).await;
 
-        record(&connection, &account, &message).await.expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))
@@ -153,7 +163,9 @@ mod tests {
             .await
             .expect("create message");
 
-        record(&connection, &account, &message).await.expect("record");
+        record(&connection, &account, &message)
+            .await
+            .expect("record");
 
         let contacts = ContactRepository::new(&connection)
             .list(Some(account.id))

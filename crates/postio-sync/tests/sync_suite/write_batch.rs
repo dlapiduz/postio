@@ -15,10 +15,10 @@ use std::collections::BTreeSet;
 use postio_model::{
     Account, EmailAddress, Generation, Mailbox, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository};
 use postio_storage::test_support;
 use postio_sync::commit_batch;
-use postio_storage::Connection;
 
 const INBOX: &str = "INBOX";
 
@@ -66,7 +66,8 @@ async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() 
         &BTreeSet::new(),
         &mut batch,
     )
-    .await.expect("the batch commits");
+    .await
+    .expect("the batch commits");
 
     assert_eq!(report.inserted, 2, "both messages are new");
     assert_eq!(report.threaded, 2, "both were filed into a thread");
@@ -84,7 +85,8 @@ async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() 
         assert!(written.id.get() > 0, "the upsert assigned an id");
         let stored = messages
             .get(written.id)
-            .await.expect("read the message back")
+            .await
+            .expect("read the message back")
             .expect("the message is in the store");
         assert!(
             stored.thread_id.is_some(),
@@ -92,7 +94,10 @@ async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() 
         );
     }
 
-    let stored = messages.uids_in(inbox.id, GENERATION).await.expect("uids_in");
+    let stored = messages
+        .uids_in(inbox.id, GENERATION)
+        .await
+        .expect("uids_in");
     assert_eq!(stored.len(), 2, "both messages reached the store");
 
     // Recorded: the correspondent list is built by the sync path and nothing
@@ -100,7 +105,8 @@ async fn a_committed_batch_is_stored_threaded_and_its_correspondents_recorded() 
     // finder and the composer's completion empty however much mail arrives.
     let contacts = ContactRepository::new(&connection)
         .list(Some(account.id))
-        .await.expect("list contacts");
+        .await
+        .expect("list contacts");
     let addresses: Vec<String> = contacts.iter().map(|c| c.address.normalized()).collect();
     assert!(
         addresses.contains(&"ada@example.com".to_string()),
@@ -127,7 +133,8 @@ async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &BTreeSet::new(),
         &mut first,
     )
-    .await.expect("the first batch commits");
+    .await
+    .expect("the first batch commits");
 
     // A re-enumeration: UID 1 is known going in, so it is refreshed but not
     // counted as a new sighting. Recording it again would inflate `times_seen`
@@ -141,7 +148,8 @@ async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
         &BTreeSet::from([1]),
         &mut again,
     )
-    .await.expect("the second batch commits");
+    .await
+    .expect("the second batch commits");
 
     assert_eq!(report.inserted, 0, "nothing was new");
     assert_eq!(report.updated, 1, "the known message was written again");
@@ -156,7 +164,8 @@ async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
 async fn sightings_of(connection: &Connection, account: &Account, address: &str) -> u32 {
     ContactRepository::new(connection)
         .list(Some(account.id))
-        .await.expect("list contacts")
+        .await
+        .expect("list contacts")
         .iter()
         .find(|contact| contact.address.normalized() == address)
         .map(|contact| contact.times_seen)

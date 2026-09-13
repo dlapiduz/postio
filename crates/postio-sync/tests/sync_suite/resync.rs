@@ -9,15 +9,16 @@ use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, Mock
 use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Flag, FlagSet, Mailbox, Uid, UidValidity};
 use postio_storage::Checkout;
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Outcome, resync_mailbox, sync_mailbox, sync_mailbox_with_batch_size};
-use postio_storage::Connection;
 
 async fn times_ada_was_seen(connection: &Connection, account_id: AccountId) -> u32 {
     ContactRepository::new(connection)
         .list(Some(account_id))
-        .await.expect("list contacts")
+        .await
+        .expect("list contacts")
         .into_iter()
         .find(|contact| contact.address.normalized() == "ada@example.com")
         .map(|contact| contact.times_seen)
@@ -67,7 +68,8 @@ async fn bootstrap(connection: &Checkout, backend: &MockBackend, mailbox: &Mailb
 async fn known_uids(connection: &Connection, mailbox: &Mailbox) -> Vec<u32> {
     MessageRepository::new(connection)
         .uids_in(mailbox.id, postio_model::Generation::new(VALIDITY))
-        .await.expect("uids_in")
+        .await
+        .expect("uids_in")
         .into_iter()
         .map(Uid::get)
         .collect()
@@ -151,7 +153,8 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
             postio_model::Generation::new(VALIDITY),
             Uid::new(2),
         )
-        .await.expect("look up message 2")
+        .await
+        .expect("look up message 2")
         .expect("message 2 still stored");
     assert!(
         seen.flags.is_seen(),
@@ -341,7 +344,8 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
                 postio_model::Generation::new(VALIDITY),
                 Uid::new(1)
             )
-            .await.expect("look up under the old generation")
+            .await
+            .expect("look up under the old generation")
             .is_none(),
         "rows under the stale UIDVALIDITY must be gone"
     );
@@ -351,13 +355,15 @@ async fn a_uid_validity_change_wipes_and_rebuilds_the_mailbox() {
             postio_model::Generation::new(new_validity.get()),
             Uid::new(1),
         )
-        .await.expect("look up under the new generation")
+        .await
+        .expect("look up under the new generation")
         .expect("rebuilt under the new generation");
     assert_eq!(rebuilt.server.uid_validity, Some(new_validity));
 
     let state = SyncStateRepository::new(&connection)
         .require(inbox.id)
-        .await.expect("sync state");
+        .await
+        .expect("sync state");
     assert_eq!(
         state.generation,
         Some(postio_model::Generation::new(new_validity.get()))
@@ -392,7 +398,8 @@ async fn read_locally_and_enqueue(
     flags.insert(Flag::Seen);
     MessageRepository::new(connection)
         .set_flags(message, &flags, FlagSource::Local)
-        .await.expect("the local write");
+        .await
+        .expect("the local write");
     OperationQueueRepository::new(connection)
         .enqueue(
             account,
@@ -400,7 +407,8 @@ async fn read_locally_and_enqueue(
             &postio_model::Operation::SetFlags { flags },
             chrono::Utc::now(),
         )
-        .await.expect("enqueue");
+        .await
+        .expect("enqueue");
 }
 
 #[tokio::test]
@@ -428,7 +436,8 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
             postio_model::Generation::new(VALIDITY),
             Uid::new(1),
         )
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the first message");
     assert!(
         !message.flags.contains(&Flag::Seen),
@@ -456,7 +465,8 @@ async fn a_read_that_has_not_drained_survives_the_resync_that_has_not_heard_it()
 
     let after = MessageRepository::new(&connection)
         .get(message.id)
-        .await.expect("read")
+        .await
+        .expect("read")
         .expect("the message");
     assert!(
         after.flags.contains(&Flag::Flagged),
@@ -598,7 +608,8 @@ async fn a_pass_that_fetches_nothing_does_not_throw_away_what_the_last_one_store
     assert!(
         SyncStateRepository::new(&connection)
             .get(inbox.id)
-            .await.expect("sync state")
+            .await
+            .expect("sync state")
             .is_none_or(|state| !state.has_synced()),
         "an interrupted pass must not have recorded a completed full sync"
     );

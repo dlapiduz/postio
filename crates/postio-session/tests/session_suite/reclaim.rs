@@ -19,11 +19,7 @@ use postio_storage::test_support;
 
 /// A store, a blob directory beside it, and one message holding one blob —
 /// its raw RFC 5322 source.
-fn store_with_a_message() -> (
-    test_support::TempStore,
-    BlobStore,
-    postio_model::MessageId,
-) {
+fn store_with_a_message() -> (test_support::TempStore, BlobStore, postio_model::MessageId) {
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),

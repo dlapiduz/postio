@@ -95,12 +95,12 @@ async fn sweep(
 ) -> (Duration, usize) {
     let connection = database.connect().await.expect("a connection");
     connection
-        .pragma_update("cache_size", -kib)
+        .execute(&format!("PRAGMA cache_size = {}", -kib), ())
         .await
         .expect("set the cache");
     // So each size starts from the same place rather than inheriting the last
     // one's pages -- without this the sweep measures the order it ran in.
-    let _ = connection.pragma_update("shrink_memory", 1i64);
+    let _ = connection.execute("PRAGMA shrink_memory", ()).await;
 
     let before = cpu();
     let mut seen = 0usize;

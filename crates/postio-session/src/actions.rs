@@ -51,7 +51,7 @@ use postio_storage::repository::{
     MailboxRoleRepository, MessageRepository, MessageSet, OperationQueueRepository, ThreadOrder,
     ThreadRepository,
 };
-use postio_storage::{Store, Checkout, WritePermit, WritePriority};
+use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
 /// The commands this module answers.
 ///
@@ -249,11 +249,14 @@ impl Actions {
         recording: Recording,
     ) -> Result<(), CommandError> {
         let applied: Vec<Applied> = match command {
-            Command::Archive { target } => self.relocate(
-                target,
-                Destination::Role(MailboxRole::Archive),
-                UndoKind::Archive,
-            ).await?,
+            Command::Archive { target } => {
+                self.relocate(
+                    target,
+                    Destination::Role(MailboxRole::Archive),
+                    UndoKind::Archive,
+                )
+                .await?
+            }
             Command::ArchiveThread { thread } => {
                 let thread = match thread {
                     Some(thread) => *thread,
@@ -263,13 +266,17 @@ impl Actions {
                     &MessageTarget::Thread(thread),
                     Destination::Role(MailboxRole::Archive),
                     UndoKind::Archive,
-                ).await?
+                )
+                .await?
             }
-            Command::Delete { target } => self.relocate(
-                target,
-                Destination::Role(MailboxRole::Trash),
-                UndoKind::Delete,
-            ).await?,
+            Command::Delete { target } => {
+                self.relocate(
+                    target,
+                    Destination::Role(MailboxRole::Trash),
+                    UndoKind::Delete,
+                )
+                .await?
+            }
             Command::Move { target, to } => {
                 // A move with no destination is not a move that failed; it
                 // is half a request — `None` means "ask the user". Nothing
@@ -277,13 +284,17 @@ impl Actions {
                 let to = to.ok_or_else(|| {
                     CommandError::rejected("Pick a folder to move to — drag the rows onto one")
                 })?;
-                self.relocate(target, Destination::Mailbox(to), UndoKind::Move).await?
+                self.relocate(target, Destination::Mailbox(to), UndoKind::Move)
+                    .await?
             }
-            Command::Flag { target, flagged } => self.set_flag(target, Flag::Flagged, *flagged).await?,
+            Command::Flag { target, flagged } => {
+                self.set_flag(target, Flag::Flagged, *flagged).await?
+            }
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
             Command::MarkUnread { target, unread } => {
-                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread)).await?
+                self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))
+                    .await?
             }
             Command::AddLabel { target, label, on } => {
                 // `None` is half a request, not a failure: ADR 0005's picker
@@ -292,7 +303,9 @@ impl Actions {
                 let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
                 vec![self.set_label(target, label, *on).await?]
             }
-            Command::Snooze { target } => vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE).await?],
+            Command::Snooze { target } => {
+                vec![self.snooze(target, Utc::now() + DEFAULT_SNOOZE).await?]
+            }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
@@ -303,12 +316,18 @@ impl Actions {
                 account,
                 role,
                 path,
-            } => vec![self.map_mailbox_role(*account, *role, path.as_deref()).await?],
-            Command::MarkReadOnDwell { message } => self.set_flag(
-                &MessageTarget::Messages(vec![*message]),
-                Flag::Seen,
-                Some(true),
-            ).await?,
+            } => vec![
+                self.map_mailbox_role(*account, *role, path.as_deref())
+                    .await?,
+            ],
+            Command::MarkReadOnDwell { message } => {
+                self.set_flag(
+                    &MessageTarget::Messages(vec![*message]),
+                    Flag::Seen,
+                    Some(true),
+                )
+                .await?
+            }
             other => {
                 return Err(CommandError::rejected(format!(
                     "`{}` is not wired up yet",
@@ -337,7 +356,10 @@ impl Actions {
         // The undo stack records source rows; the saga table is the only
         // place that knows the move spanned two accounts, so it is asked
         // before the inverse commands are (#531, ADR 0005 Q9).
-        if let Some(cancelled) = self.cancel_cross_account_moves(entry.messages(), events).await? {
+        if let Some(cancelled) = self
+            .cancel_cross_account_moves(entry.messages(), events)
+            .await?
+        {
             events.emit(Event::UndoPerformed {
                 description: cancelled,
             });
@@ -567,14 +589,10 @@ impl Actions {
                 let mut applied = Vec::with_capacity(units.len());
                 let mut nothing_to_do = None;
                 for unit in units {
-                    match self.relocate_set(
-                        &mut connection,
-                        unit.set,
-                        unit.account,
-                        unit.from,
-                        to,
-                        kind,
-                    ).await {
+                    match self
+                        .relocate_set(&mut connection, unit.set, unit.account, unit.from, to, kind)
+                        .await
+                    {
                         Ok(one) => applied.push(one),
                         Err(CommandError::Rejected(reason)) => nothing_to_do = Some(reason),
                         Err(error) => return Err(error),
@@ -735,7 +753,9 @@ impl Actions {
                 .map_err(store_failure)?
                 .ok_or_else(|| CommandError::rejected("That folder no longer exists"))?;
             if target.account_id != account {
-                return self.cross_account_relocate(connection, rows, &target, kind).await;
+                return self
+                    .cross_account_relocate(connection, rows, &target, kind)
+                    .await;
             }
         }
         let destination = mailbox_for(connection, account, to).await?;
@@ -1098,9 +1118,15 @@ impl Actions {
             let queue = OperationQueueRepository::new(&transaction);
             for message in &touched {
                 if wanted {
-                    labels.attach(message.id, label).await.map_err(store_failure)?;
+                    labels
+                        .attach(message.id, label)
+                        .await
+                        .map_err(store_failure)?;
                 } else {
-                    labels.detach(message.id, label).await.map_err(store_failure)?;
+                    labels
+                        .detach(message.id, label)
+                        .await
+                        .map_err(store_failure)?;
                 }
                 let mut flags = message.flags.clone();
                 if wanted {
@@ -1187,14 +1213,17 @@ impl Actions {
                 let mut applied = Vec::with_capacity(units.len());
                 let mut nothing_to_do = None;
                 for unit in units {
-                    match self.set_flag_set(
-                        &mut connection,
-                        unit.set,
-                        unit.account,
-                        unit.from,
-                        flag.clone(),
-                        Some(wanted),
-                    ).await {
+                    match self
+                        .set_flag_set(
+                            &mut connection,
+                            unit.set,
+                            unit.account,
+                            unit.from,
+                            flag.clone(),
+                            Some(wanted),
+                        )
+                        .await
+                    {
                         Ok(one) => applied.push(one),
                         // This account already agreed. That is not a failure
                         // for the accounts that did not — but if none of them
@@ -1694,8 +1723,15 @@ impl Actions {
                     .map_err(store_failure)?
                     .filter(|mailbox| mailbox.selectable)
                     .ok_or_else(|| CommandError::rejected("This account has no such folder"))?;
-                roles.set(account, role, path).await.map_err(store_failure)?;
-                for mut mailbox in mailboxes.list_for_account(account).await.map_err(store_failure)? {
+                roles
+                    .set(account, role, path)
+                    .await
+                    .map_err(store_failure)?;
+                for mut mailbox in mailboxes
+                    .list_for_account(account)
+                    .await
+                    .map_err(store_failure)?
+                {
                     let wanted = if mailbox.id == chosen.id {
                         role
                     } else if mailbox.role == role {
@@ -1961,7 +1997,8 @@ impl Actions {
         let permit = self
             .database
             .write_gate()
-            .acquire(WritePriority::Interactive);
+            .acquire(WritePriority::Interactive)
+            .await;
         Ok((connection, permit))
     }
 
@@ -2039,10 +2076,7 @@ fn store_failure(error: impl std::fmt::Display) -> CommandError {
 /// One row read, and it is a folder rather than a message: a whole-folder
 /// selection names no message to ask, and the account is what finds the
 /// Archive. A scope that already carries its account does not come here.
-async fn account_of(
-    connection: &Checkout,
-    mailbox: MailboxId,
-) -> Result<AccountId, CommandError> {
+async fn account_of(connection: &Checkout, mailbox: MailboxId) -> Result<AccountId, CommandError> {
     Ok(MailboxRepository::new(connection)
         .get(mailbox)
         .await
@@ -2275,8 +2309,12 @@ mod tests {
         let (account, inbox, archive, trash) = {
             let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
-            let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
-            let trash = test_support::mailbox(&connection, &account, "Trash").await.id;
+            let archive = test_support::mailbox(&connection, &account, "Archive")
+                .await
+                .id;
+            let trash = test_support::mailbox(&connection, &account, "Trash")
+                .await
+                .id;
             (account, inbox, archive, trash)
         };
         let state = SharedState::default();
@@ -2312,7 +2350,12 @@ mod tests {
 
         /// What the window would have mirrored: a folder open, rows marked,
         /// the cursor somewhere.
-        async fn looking_at(&self, mailbox: MailboxId, selected: &[MessageId], focus: Option<MessageId>) {
+        async fn looking_at(
+            &self,
+            mailbox: MailboxId,
+            selected: &[MessageId],
+            focus: Option<MessageId>,
+        ) {
             self.state
                 .update(&self.quiet, |app: &mut AppState| app.open_mailbox(mailbox));
             self.state.update(&self.quiet, |app: &mut AppState| {
@@ -2346,8 +2389,12 @@ mod tests {
                 .create(&mut account)
                 .await
                 .expect("a second account");
-            let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
-            let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+            let inbox = test_support::mailbox(&connection, &account, "INBOX")
+                .await
+                .id;
+            let archive = test_support::mailbox(&connection, &account, "Archive")
+                .await
+                .id;
             Elsewhere {
                 account,
                 inbox,
@@ -2356,7 +2403,12 @@ mod tests {
         }
 
         /// A message in another account's `mailbox`.
-        async fn message_for(&self, account: &Account, mailbox: MailboxId, flags: &[Flag]) -> MessageId {
+        async fn message_for(
+            &self,
+            account: &Account,
+            mailbox: MailboxId,
+            flags: &[Flag],
+        ) -> MessageId {
             let connection = self.database.connect().await.expect("a connection");
             let mut message = Message::new(account.id, mailbox, Utc::now());
             for flag in flags {
@@ -2432,7 +2484,8 @@ mod tests {
         async fn two_sent_folders(&self) -> (MailboxId, MailboxId) {
             let connection = self.database.connect().await.expect("a connection");
             let sent = test_support::mailbox(&connection, &self.account, "Sent").await;
-            let sent_messages = test_support::mailbox(&connection, &self.account, "Sent Messages").await;
+            let sent_messages =
+                test_support::mailbox(&connection, &self.account, "Sent Messages").await;
             (sent.id, sent_messages.id)
         }
 
@@ -2466,7 +2519,8 @@ mod tests {
                 account: Some(self.account.id),
                 role: Some(postio_model::MailboxRole::Sent),
                 path: path.map(str::to_owned),
-            }).await
+            })
+            .await
         }
 
         async fn mailbox_of(&self, message: MessageId) -> MailboxId {
@@ -2580,7 +2634,9 @@ mod tests {
         };
 
         // Both marked, as a unified view lets them be.
-        world.looking_at(world.inbox, &[mine, theirs], Some(mine)).await;
+        world
+            .looking_at(world.inbox, &[mine, theirs], Some(mine))
+            .await;
 
         world
             .run(Command::Archive {
@@ -2670,7 +2726,10 @@ mod tests {
             }),
             "the folder they landed in is longer than it was"
         );
-        assert_eq!(completion(&events).await, Some(("Archived 1 message", true)));
+        assert_eq!(
+            completion(&events).await,
+            Some(("Archived 1 message", true))
+        );
     }
 
     #[tokio::test]
@@ -2680,7 +2739,9 @@ mod tests {
         for _ in 0..3 {
             messages.push(world.message(world.inbox, &[]).await);
         }
-        world.looking_at(world.inbox, &messages, Some(messages[0])).await;
+        world
+            .looking_at(world.inbox, &messages, Some(messages[0]))
+            .await;
 
         world
             .run(Command::Archive {
@@ -2748,7 +2809,10 @@ mod tests {
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).await.expect("a thread");
             for message in [first, second] {
-                threads.add_message(thread.id, message).await.expect("membership");
+                threads
+                    .add_message(thread.id, message)
+                    .await
+                    .expect("membership");
             }
             thread.id
         };
@@ -2813,7 +2877,9 @@ mod tests {
         let world = world().await;
         let flagged = world.message(world.inbox, &[Flag::Flagged]).await;
         let plain = world.message(world.inbox, &[]).await;
-        world.looking_at(world.inbox, &[flagged, plain], Some(flagged)).await;
+        world
+            .looking_at(world.inbox, &[flagged, plain], Some(flagged))
+            .await;
 
         world
             .run(Command::Flag {
@@ -3236,7 +3302,10 @@ mod tests {
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).await.expect("a thread");
             for message in [first, second, third] {
-                threads.add_message(thread.id, message).await.expect("membership");
+                threads
+                    .add_message(thread.id, message)
+                    .await
+                    .expect("membership");
             }
             thread.id
         };
@@ -3276,7 +3345,10 @@ mod tests {
             let mut thread = postio_model::Thread::new(world.account.id);
             threads.create(&mut thread).await.expect("a thread");
             for message in [first, second, third] {
-                threads.add_message(thread.id, message).await.expect("membership");
+                threads
+                    .add_message(thread.id, message)
+                    .await
+                    .expect("membership");
             }
         }
 
@@ -3400,10 +3472,11 @@ mod tests {
         let message = world.message(world.inbox, &[]).await;
         world.looking_at(world.inbox, &[], Some(message)).await;
 
-        let outcome = world.run(Command::Move {
-            target: MessageTarget::Selection,
-            to: None,
-        })
+        let outcome = world
+            .run(Command::Move {
+                target: MessageTarget::Selection,
+                to: None,
+            })
             .await;
 
         assert!(matches!(outcome, Err(CommandError::Rejected(_))));
@@ -3433,7 +3506,11 @@ mod tests {
         for message in &messages {
             assert_eq!(world.mailbox_of(*message).await, world.archive);
         }
-        assert_eq!(world.queued().await.len(), 30, "the server has to be told too");
+        assert_eq!(
+            world.queued().await.len(),
+            30,
+            "the server has to be told too"
+        );
         assert_eq!(
             completion(&world.drained().await).await,
             Some(("Archived 30 messages", true)),
@@ -3451,13 +3528,13 @@ mod tests {
         let world = world().await;
         let mut flagged: Vec<MessageId> = Vec::new();
         for index in 0..6 {
-                let mailbox = if index % 2 == 0 {
-                    world.inbox
-                } else {
-                    world.archive
-                };
-                let message = world.message(mailbox, &[]).await;
-                world.flag(message, Flag::Flagged).await;
+            let mailbox = if index % 2 == 0 {
+                world.inbox
+            } else {
+                world.archive
+            };
+            let message = world.message(mailbox, &[]).await;
+            world.flag(message, Flag::Flagged).await;
             flagged.push(message);
         }
         let untouched = world.message(world.inbox, &[]).await;
@@ -3526,7 +3603,9 @@ mod tests {
         let away = world.second_account().await;
         let mine = world.message(world.inbox, &[]).await;
         let theirs = world.message_for(&away.account, away.inbox, &[]).await;
-        world.everything_unified(&[world.account.id, away.account.id]).await;
+        world
+            .everything_unified(&[world.account.id, away.account.id])
+            .await;
 
         world
             .run(Command::Archive {
@@ -3575,7 +3654,9 @@ mod tests {
         let away = world.second_account().await;
         world.message(world.inbox, &[]).await;
         world.message_for(&away.account, away.inbox, &[]).await;
-        world.everything_unified(&[world.account.id, away.account.id]).await;
+        world
+            .everything_unified(&[world.account.id, away.account.id])
+            .await;
 
         world
             .run(Command::Archive {
@@ -3610,13 +3691,13 @@ mod tests {
         let world = world().await;
         let mut flagged: Vec<MessageId> = Vec::new();
         for index in 0..4 {
-                let mailbox = if index % 2 == 0 {
-                    world.inbox
-                } else {
-                    world.archive
-                };
-                let message = world.message(mailbox, &[]).await;
-                world.flag(message, Flag::Flagged).await;
+            let mailbox = if index % 2 == 0 {
+                world.inbox
+            } else {
+                world.archive
+            };
+            let message = world.message(mailbox, &[]).await;
+            world.flag(message, Flag::Flagged).await;
             flagged.push(message);
         }
         world.everything_flagged().await;
@@ -3740,7 +3821,11 @@ mod tests {
         world.run(Command::Undo).await.expect("undo");
 
         for message in &messages {
-            assert_eq!(world.mailbox_of(*message).await, world.inbox, "all the way back");
+            assert_eq!(
+                world.mailbox_of(*message).await,
+                world.inbox,
+                "all the way back"
+            );
         }
         assert_eq!(
             world.mailbox_of(elsewhere).await,
@@ -3860,9 +3945,11 @@ mod tests {
         world.everything_in(world.archive).await;
 
         assert_eq!(
-            world.run(Command::Archive {
-                target: MessageTarget::Selection,
-            }).await,
+            world
+                .run(Command::Archive {
+                    target: MessageTarget::Selection,
+                })
+                .await,
             Err(CommandError::rejected("Already there"))
         );
     }
@@ -3876,9 +3963,11 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         assert_eq!(
-            world.run(Command::Archive {
-                target: MessageTarget::Selection,
-            }).await,
+            world
+                .run(Command::Archive {
+                    target: MessageTarget::Selection,
+                })
+                .await,
             Err(CommandError::rejected("There is nothing here to move"))
         );
     }
@@ -3940,7 +4029,10 @@ mod tests {
             .await
             .expect("toggle the mailbox");
         for message in &messages {
-            assert!(world.flags_of(*message).await.is_flagged(), "they now agree");
+            assert!(
+                world.flags_of(*message).await.is_flagged(),
+                "they now agree"
+            );
         }
 
         world
@@ -4018,7 +4110,10 @@ mod tests {
         world.run(Command::Undo).await.expect("undo");
 
         for message in &rest {
-            assert!(!world.flags_of(*message).await.is_flagged(), "all the way back");
+            assert!(
+                !world.flags_of(*message).await.is_flagged(),
+                "all the way back"
+            );
         }
         assert!(
             world.flags_of(already).await.is_flagged(),
@@ -4039,10 +4134,12 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         assert_eq!(
-            world.run(Command::Flag {
-                target: MessageTarget::Selection,
-                flagged: Some(true),
-            }).await,
+            world
+                .run(Command::Flag {
+                    target: MessageTarget::Selection,
+                    flagged: Some(true),
+                })
+                .await,
             Err(CommandError::rejected("Already set"))
         );
     }
@@ -4053,10 +4150,12 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         assert_eq!(
-            world.run(Command::Flag {
-                target: MessageTarget::Selection,
-                flagged: Some(true),
-            }).await,
+            world
+                .run(Command::Flag {
+                    target: MessageTarget::Selection,
+                    flagged: Some(true),
+                })
+                .await,
             Err(CommandError::rejected("There is nothing here to change"))
         );
     }
@@ -4108,8 +4207,12 @@ mod tests {
                 .create(&mut account)
                 .await
                 .expect("second account");
-            let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
-            let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+            let inbox = test_support::mailbox(&connection, &account, "INBOX")
+                .await
+                .id;
+            let archive = test_support::mailbox(&connection, &account, "Archive")
+                .await
+                .id;
             (account.id, inbox, archive)
         };
 
@@ -4163,7 +4266,10 @@ mod tests {
         );
 
         let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
-        let first_ops = queue.pending(world.account.id, Utc::now()).await.expect("queue");
+        let first_ops = queue
+            .pending(world.account.id, Utc::now())
+            .await
+            .expect("queue");
         let second_ops = queue.pending(second, Utc::now()).await.expect("queue");
         assert_eq!(first_ops.len(), 1, "one operation in the first queue");
         assert_eq!(
@@ -4191,7 +4297,9 @@ mod tests {
                 .create(&mut account)
                 .await
                 .expect("second account");
-            let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
+            let inbox = test_support::mailbox(&connection, &account, "INBOX")
+                .await
+                .id;
             (account.id, inbox)
         };
         let message = world.message(world.inbox, &[]).await;
@@ -4207,7 +4315,10 @@ mod tests {
 
         let connection = world.database.connect().await.expect("a connection");
         let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
-        let source_ops = queue.pending(world.account.id, Utc::now()).await.expect("queue");
+        let source_ops = queue
+            .pending(world.account.id, Utc::now())
+            .await
+            .expect("queue");
         let target_ops = queue.pending(second, Utc::now()).await.expect("queue");
         assert_eq!(source_ops.len(), 1);
         assert_eq!(
@@ -4247,7 +4358,9 @@ mod tests {
             .create(&mut account)
             .await
             .expect("second account");
-        let inbox = test_support::mailbox(&connection, &account, "INBOX").await.id;
+        let inbox = test_support::mailbox(&connection, &account, "INBOX")
+            .await
+            .id;
         (account.id, inbox)
     }
 
@@ -4399,7 +4512,10 @@ mod tests {
                 .await
                 .expect("a read")
             {
-                queue.delete(operation.id).await.expect("the copy operation ran");
+                queue
+                    .delete(operation.id)
+                    .await
+                    .expect("the copy operation ran");
             }
         }
         sagas
@@ -4426,7 +4542,10 @@ mod tests {
     }
 
     /// The saga the world holds, whatever phase it is in.
-    async fn only_saga(world: &World, source: MessageId) -> postio_storage::repository::CrossAccountMove {
+    async fn only_saga(
+        world: &World,
+        source: MessageId,
+    ) -> postio_storage::repository::CrossAccountMove {
         use postio_storage::repository::MovePhase;
         let connection = world.database.connect().await.expect("a connection");
         let mut all = postio_storage::repository::CrossAccountMoveRepository::new(&connection)
@@ -4580,7 +4699,10 @@ mod tests {
             .await
             .expect("the move starts");
 
-        world.run(Command::Undo).await.expect("undo cancels the saga");
+        world
+            .run(Command::Undo)
+            .await
+            .expect("undo cancels the saga");
 
         let connection = world.database.connect().await.expect("a connection");
         let messages = MessageRepository::new(&connection);
@@ -4610,7 +4732,11 @@ mod tests {
             "the remove never runs: it was withdrawn, not left to be skipped"
         );
         assert!(
-            queue.pending(second, Utc::now()).await.expect("queue").is_empty(),
+            queue
+                .pending(second, Utc::now())
+                .await
+                .expect("queue")
+                .is_empty(),
             "and neither does the copy"
         );
 
@@ -4682,7 +4808,10 @@ mod tests {
             );
         }
 
-        world.run(Command::Undo).await.expect("undo inverts the saga");
+        world
+            .run(Command::Undo)
+            .await
+            .expect("undo inverts the saga");
 
         let connection = world.database.connect().await.expect("a connection");
         let sagas = CrossAccountMoveRepository::new(&connection);
@@ -4746,7 +4875,9 @@ mod tests {
         let (_second, second_inbox) = second_account(&world).await;
         let first = world.message(world.inbox, &[]).await;
         let second_message = world.message(world.inbox, &[]).await;
-        world.looking_at(world.inbox, &[first, second_message], Some(first)).await;
+        world
+            .looking_at(world.inbox, &[first, second_message], Some(first))
+            .await;
 
         world
             .run(Command::Move {
@@ -4858,8 +4989,7 @@ mod tests {
                 .expect("the append ran and could not be proven");
         }
 
-        let outcome = world.run(Command::Undo)
-            .await;
+        let outcome = world.run(Command::Undo).await;
 
         assert!(
             outcome.is_err(),
@@ -4904,7 +5034,10 @@ mod tests {
 
         let connection = world.database.connect().await.expect("a connection");
         let queue = postio_storage::repository::OperationQueueRepository::new(&connection);
-        let ops = queue.pending(world.account.id, Utc::now()).await.expect("queue");
+        let ops = queue
+            .pending(world.account.id, Utc::now())
+            .await
+            .expect("queue");
         assert_eq!(ops.len(), 1, "one operation on one queue");
         assert_eq!(ops[0].operation.op_type(), "move");
         let sagas: i64 = postio_storage::sql::one(
@@ -4925,9 +5058,10 @@ mod tests {
     async fn nothing_selected_and_nothing_focused_is_a_rejection() {
         let world = world().await;
 
-        let outcome = world.run(Command::Archive {
-            target: MessageTarget::Selection,
-        })
+        let outcome = world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
             .await;
 
         assert_eq!(outcome, Err(CommandError::rejected("Nothing selected")));
@@ -4950,9 +5084,10 @@ mod tests {
         let message = world.message(world.inbox, &[]).await;
         world.looking_at(world.inbox, &[], Some(message)).await;
 
-        let outcome = world.run(Command::Archive {
-            target: MessageTarget::Selection,
-        })
+        let outcome = world
+            .run(Command::Archive {
+                target: MessageTarget::Selection,
+            })
             .await;
 
         assert!(
@@ -4968,8 +5103,7 @@ mod tests {
     async fn undo_with_nothing_to_take_back_is_a_rejection() {
         let world = world().await;
 
-        let outcome = world.run(Command::Undo)
-            .await;
+        let outcome = world.run(Command::Undo).await;
 
         assert_eq!(
             outcome,
@@ -5023,8 +5157,7 @@ mod tests {
         let message = world.message(world.inbox, &[]).await;
         for id in WIRED.iter().copied().filter(|id| *id != CommandId::Undo) {
             world.looking_at(world.inbox, &[], Some(message)).await;
-            let outcome = world.run(Command::default_for(id))
-            .await;
+            let outcome = world.run(Command::default_for(id)).await;
             assert!(
                 !matches!(&outcome, Err(CommandError::Rejected(reason)) if reason.contains("not wired up")),
                 "`{id}` is registered on the bus but `act` has no arm for it"
@@ -5156,11 +5289,13 @@ mod tests {
         let world = world().await;
         world.message(world.inbox, &[]).await;
         assert_eq!(
-            world.run(Command::AddLabel {
-                target: MessageTarget::Selection,
-                label: None,
-                on: None,
-            }).await,
+            world
+                .run(Command::AddLabel {
+                    target: MessageTarget::Selection,
+                    label: None,
+                    on: None,
+                })
+                .await,
             Err(CommandError::rejected("Pick a label to add"))
         );
     }
@@ -5186,14 +5321,20 @@ mod tests {
             }),
             "the sidebar has to relabel: {events:?}"
         );
-        assert_eq!(completion(&events).await, Some(("Changed a folder's role", true)));
+        assert_eq!(
+            completion(&events).await,
+            Some(("Changed a folder's role", true))
+        );
         assert_eq!(
             world.wearing(postio_model::MailboxRole::Sent).await,
             vec![sent_messages],
             "exactly one selectable row wears the role, and it is the chosen one"
         );
         assert_eq!(
-            world.mapped(postio_model::MailboxRole::Sent).await.as_deref(),
+            world
+                .mapped(postio_model::MailboxRole::Sent)
+                .await
+                .as_deref(),
             Some("Sent Messages"),
             "and the choice is written down where discovery reads it"
         );
@@ -5208,9 +5349,15 @@ mod tests {
             .map_sent_to(Some("Sent Messages"))
             .await
             .expect("first choice");
-        world.map_sent_to(Some("Sent")).await.expect("second choice");
+        world
+            .map_sent_to(Some("Sent"))
+            .await
+            .expect("second choice");
         let _ = world.drained().await;
-        assert_eq!(world.wearing(postio_model::MailboxRole::Sent).await, vec![sent]);
+        assert_eq!(
+            world.wearing(postio_model::MailboxRole::Sent).await,
+            vec![sent]
+        );
 
         world.run(Command::Undo).await.expect("undo");
 
@@ -5222,7 +5369,10 @@ mod tests {
             "{events:?}"
         );
         assert_eq!(
-            world.mapped(postio_model::MailboxRole::Sent).await.as_deref(),
+            world
+                .mapped(postio_model::MailboxRole::Sent)
+                .await
+                .as_deref(),
             Some("Sent Messages"),
             "undo is the previous entry, not the absence of one"
         );
@@ -5244,8 +5394,7 @@ mod tests {
         let world = world().await;
         let (sent, sent_messages) = world.two_sent_folders().await;
 
-        let outcome = world.map_sent_to(Some("Nowhere"))
-            .await;
+        let outcome = world.map_sent_to(Some("Nowhere")).await;
 
         assert!(
             matches!(outcome, Err(CommandError::Rejected(_))),
@@ -5257,6 +5406,9 @@ mod tests {
             vec![sent, sent_messages],
             "nothing moved"
         );
-        assert!(world.drained().await.is_empty(), "and nothing was announced");
+        assert!(
+            world.drained().await.is_empty(),
+            "and nothing was announced"
+        );
     }
 }

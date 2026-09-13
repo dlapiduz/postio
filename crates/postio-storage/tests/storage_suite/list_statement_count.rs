@@ -222,8 +222,15 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
          after the fact would read more than a page to fill one, which is how \
          a windowed list quietly stops being windowed"
     );
-    assert_eq!(
-        counts.nested, 0,
-        "no trigger or virtual-table work on a read"
+    // What `counts.nested == 0` used to say -- no trigger or virtual-table
+    // work on a read -- asked of the planner instead, because there is no
+    // trace hook to count trigger firings any more. A scan on a windowed list
+    // is the same failure said structurally: it is how a page of 20 comes to
+    // read a mailbox.
+    assert!(
+        postio_storage::test_support::counting::scans(&connection, &messages.explain(&query),)
+            .await
+            .is_empty(),
+        "a page of a mailbox must be a seek, not a scan"
     );
 }

@@ -68,8 +68,8 @@ use chrono::{DateTime, Utc};
 use postio_account::backend::{BackendError, Capabilities, Capability, FlagChange, MailBackend};
 use postio_model::{AccountId, MailboxId, Operation, OperationId, OperationTarget};
 use postio_storage::BlobStore;
-use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
 use postio_storage::Connection;
+use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
 
 use crate::coalesce::{Step, coalesce};
 use crate::retry::RetryPolicy;
@@ -258,7 +258,9 @@ impl<'a> Drainer<'a> {
         // happen, and undo may still want to find them.
         for id in &plan.obsolete {
             queue.mark_done(*id, now).await?;
-            queue.note(*id, "folded into an operation that undid it").await?;
+            queue
+                .note(*id, "folded into an operation that undid it")
+                .await?;
         }
 
         let capabilities = self.backend.capabilities().await?;
@@ -276,7 +278,9 @@ impl<'a> Drainer<'a> {
                 target = step.target.id()
             );
             let outcome = async {
-                let outcome = self.run(connection, step, &capabilities, &mut resync).await?;
+                let outcome = self
+                    .run(connection, step, &capabilities, &mut resync)
+                    .await?;
                 Ok::<_, crate::drain::SyncError>(match outcome {
                     Pending::Settled(outcome) => outcome,
                     Pending::Send(context) => {
@@ -289,7 +293,8 @@ impl<'a> Drainer<'a> {
             let _entered = span.enter();
             tracing::debug!(outcome = ?outcome, "operation settled");
             drop(_entered);
-            self.settle(connection, step, outcome, now, &mut report).await?;
+            self.settle(connection, step, outcome, now, &mut report)
+                .await?;
         }
 
         report.needs_resync = resync.into_iter().map(MailboxId::new).collect();
@@ -476,7 +481,8 @@ impl<'a> Drainer<'a> {
             // (#940, #531).
             let snapshot = match step.operation {
                 Operation::CrossAccountRemove { .. } => OperationQueueRepository::new(connection)
-                    .get(step.head()).await?
+                    .get(step.head())
+                    .await?
                     .and_then(|row| row.source_remote_id),
                 _ => None,
             };
@@ -550,7 +556,8 @@ impl<'a> Drainer<'a> {
                 let snapshot = match &step.operation {
                     Operation::Move { .. } | Operation::Delete { .. } => {
                         OperationQueueRepository::new(connection)
-                            .get(step.head()).await?
+                            .get(step.head())
+                            .await?
                             .and_then(|row| row.source_remote_id)
                     }
                     _ => None,
@@ -608,7 +615,11 @@ impl<'a> Drainer<'a> {
     /// Split out rather than folded into [`Drainer::resolve`]'s match because
     /// neither names a message: a draft has no row in `messages` and, in the
     /// discard case, no row anywhere at all by the time this runs.
-    async fn resolve_draft(&self, connection: &Connection, step: &Step) -> Result<Option<Resolved>> {
+    async fn resolve_draft(
+        &self,
+        connection: &Connection,
+        step: &Step,
+    ) -> Result<Option<Resolved>> {
         let resolved = match (&step.operation, step.target) {
             (Operation::SaveDraft { mailbox }, OperationTarget::Draft(draft)) => {
                 crate::drafts::resolve_save(connection, self.blobs, draft, *mailbox).await?

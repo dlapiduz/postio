@@ -7,10 +7,10 @@
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{AccountId, Mailbox, MailboxId, Uid};
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository, SyncStateRepository};
 use postio_storage::test_support;
 use postio_sync::{Progress, sync_mailbox, sync_mailbox_with_batch_size};
-use postio_storage::Connection;
 use std::collections::BTreeSet;
 
 const INBOX: &str = "INBOX";
@@ -75,7 +75,8 @@ async fn known_uids(
 ) -> BTreeSet<u32> {
     MessageRepository::new(connection)
         .uids_in(mailbox_id, generation)
-        .await.expect("uids_in")
+        .await
+        .expect("uids_in")
         .into_iter()
         .map(Uid::get)
         .collect()
@@ -153,7 +154,8 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     assert!(
         !SyncStateRepository::new(&connection)
             .require(inbox.id)
-            .await.expect("sync state")
+            .await
+            .expect("sync state")
             .has_synced(),
         "an interrupted pass must not be marked complete"
     );
@@ -180,7 +182,8 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     assert!(
         SyncStateRepository::new(&connection)
             .require(inbox.id)
-            .await.expect("sync state")
+            .await
+            .expect("sync state")
             .has_synced()
     );
 }
@@ -223,11 +226,13 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
     let messages = MessageRepository::new(&connection);
     let parent = messages
         .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(1))
-        .await.expect("look up parent")
+        .await
+        .expect("look up parent")
         .expect("parent stored");
     let reply = messages
         .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(2))
-        .await.expect("look up reply")
+        .await
+        .expect("look up reply")
         .expect("reply stored");
 
     assert!(parent.thread_id.is_some());
@@ -256,7 +261,8 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
 
     let contacts = ContactRepository::new(&connection)
         .list(Some(account_id))
-        .await.expect("list contacts");
+        .await
+        .expect("list contacts");
     let ada = contacts
         .iter()
         .find(|contact| contact.address.normalized() == "ada@example.com")
@@ -364,7 +370,7 @@ async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn running_ahead_never_reorders_or_loses_a_batch() {
     // The pipelining must not disturb what #32's constraints pin: newest
     // first, every message exactly once, and a resumable pass. Latency here

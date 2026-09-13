@@ -120,7 +120,8 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("the fixture writes");
+            .await
+            .expect("the fixture writes");
         (inbox, id)
     };
 
@@ -173,8 +174,9 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
                 // connection and the permit is what has to be re-taken.
                 let connection = database.connect().await.map_err(|e| e.to_string())?;
                 connection
-                    .execute(&format!("PRAGMA busy_timeout = {WRITER_BUSY_TIMEOUT}"), ())
-                    .await
+                    .busy_timeout(std::time::Duration::from_millis(u64::from(
+                        WRITER_BUSY_TIMEOUT,
+                    )))
                     .map_err(|e| e.to_string())?;
                 let messages = MessageRepository::new(&connection);
                 let mut flagged = false;
@@ -190,17 +192,22 @@ async fn a_resync_batch_does_not_lock_out_an_interactive_write() {
                 // by the time the resync starts.
                 messages
                     .set_flags(scratch, &flags(false), FlagSource::Local)
-                    .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                    .await
+                    .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                 ready.wait().await;
                 while !stop.load(Ordering::Relaxed) {
-                    std::thread::sleep(WRITER_PACE);
+                    tokio::time::sleep(WRITER_PACE).await;
                     flagged = !flagged;
-                    let _permit = database.write_gate().acquire(WritePriority::Interactive);
+                    let _permit = database
+                        .write_gate()
+                        .acquire(WritePriority::Interactive)
+                        .await;
                     // One statement, one commit — what `f` on a focused row
                     // costs, and what a draft's autosave costs.
                     messages
                         .set_flags(scratch, &flags(flagged), FlagSource::Local)
-                        .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                        .await
+                        .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                     commits.fetch_add(1, Ordering::Relaxed);
                 }
                 Ok::<(), String>(())

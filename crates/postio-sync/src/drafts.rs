@@ -44,8 +44,8 @@ use postio_account::backend::{AppendMessage, Capabilities, Capability, FlagChang
 use postio_model::ids::DraftId;
 use postio_model::{Flag, FlagSet, MailboxId, OutgoingAttachment, RemoteId, outgoing};
 use postio_storage::BlobStore;
-use postio_storage::repository::{AccountRepository, DraftRepository, MailboxRepository};
 use postio_storage::Connection;
+use postio_storage::repository::{AccountRepository, DraftRepository, MailboxRepository};
 
 use crate::drain::{Outcome, Result};
 
@@ -105,7 +105,10 @@ pub(crate) async fn resolve_save(
         ));
     };
 
-    let Some(account) = AccountRepository::new(connection).get(draft.account_id).await? else {
+    let Some(account) = AccountRepository::new(connection)
+        .get(draft.account_id)
+        .await?
+    else {
         return Ok(ResolvedDraft::Impossible(
             "the account is no longer in the local store".to_owned(),
         ));
@@ -305,7 +308,8 @@ async fn save(
             None
         }
     };
-    if let Err(error) = DraftRepository::new(connection).set_server_copy(draft, location.as_ref())
+    if let Err(error) = DraftRepository::new(connection)
+        .set_server_copy(draft, location.as_ref())
         .await
     {
         // The draft was discarded while its own upload was in flight. The copy
