@@ -144,6 +144,12 @@ fn the_places_people_go_most_answer_to_two_keys() {
              standing when they want to be somewhere else"
         );
         assert!(
+            spec.contexts.contains(Context::Sidebar),
+            "{id} has to work from the folder list too -- standing there is the \
+             likeliest moment to want a different folder, and a key that works \
+             one pane over and not here reads as broken"
+        );
+        assert!(
             !spec.contexts.contains(Context::Composer),
             "{id} must not fire in the composer, where `g` is a letter someone \
              is typing"

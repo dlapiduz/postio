@@ -88,6 +88,7 @@ mod gtk_focus_visible;
 mod gtk_folder_reload_scope;
 mod gtk_folder_sections;
 mod gtk_go_to;
+mod gtk_startup_focus;
 mod gtk_identity;
 mod gtk_keymap_lazy;
 mod gtk_layout_intent;
@@ -449,6 +450,14 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders",
         gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders as fn(),
+    ),
+    (
+        "gtk_startup_focus::a_presented_window_puts_the_keyboard_on_the_first_message",
+        gtk_startup_focus::a_presented_window_puts_the_keyboard_on_the_first_message as fn(),
+    ),
+    (
+        "gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate",
+        gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate as fn(),
     ),
     (
         "gtk_go_to::a_destination_this_account_does_not_have_is_reported",

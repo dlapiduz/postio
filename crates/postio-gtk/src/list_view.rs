@@ -1430,7 +1430,10 @@ impl MessageListView {
         imp.model.connect_filled(glib::clone!(
             #[weak(rename_to = pane)]
             self,
-            move |_| pane.report_cursor()
+            move |_| {
+                pane.adopt_cursor_focus();
+                pane.report_cursor()
+            }
         ));
 
         let scroller = gtk::ScrolledWindow::new();
@@ -1711,6 +1714,39 @@ impl MessageListView {
             self.report_cursor();
         }
         false
+    }
+
+    /// Hand the keyboard to the cursor's row when this pane holds it and no
+    /// row does.
+    ///
+    /// #1473. `Window::present` grabs focus on this pane, but at that moment
+    /// the model is empty -- the store answers afterwards -- so the grab
+    /// lands on the `GtkListView` itself and stops there. The autoselect then
+    /// puts the *cursor* on row 0 as soon as rows arrive, and fills the
+    /// reading pane from it, but a `SingleSelection` changing has never moved
+    /// GTK's focus: that only happens through `scroll_to(.., FOCUS)`, which
+    /// every deliberate cursor move calls and the autoselect does not. The
+    /// window therefore opened showing the first message with the keyboard
+    /// parked one level above it, so the first key pressed had no row to act
+    /// on.
+    ///
+    /// Gated on this pane already being the focus widget, which is the whole
+    /// of the fix's licence: mail arriving while somebody is typing in the
+    /// header, reading, or anywhere else must not pull the keyboard back
+    /// here. `is_focus` rather than `has_focus` for the reason
+    /// `gtk_focus_visible.rs` records -- `has-focus` is gated on the toplevel
+    /// being active, which a headless window never is.
+    fn adopt_cursor_focus(&self) {
+        let imp = self.imp();
+        if !imp.view.is_focus() {
+            return;
+        }
+        let position = imp.cursor.selected();
+        if position == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        imp.view
+            .scroll_to(position, gtk::ListScrollFlags::FOCUS, None);
     }
 
     /// Move the keyboard to `position`, and the focus with it.

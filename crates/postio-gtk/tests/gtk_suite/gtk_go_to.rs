@@ -14,6 +14,7 @@
 use crate::pump;
 
 use gtk::gdk;
+use gtk::prelude::*;
 use postio_gtk::window::Window;
 use postio_gtk::{fonts, style};
 use postio_model::ids::{AccountId, MailboxId};
@@ -83,5 +84,42 @@ pub fn a_destination_this_account_does_not_have_is_reported() {
             .announced()
             .is_some_and(|said| said.contains("inbox")),
         "the inbox is right here and the window claimed otherwise"
+    );
+}
+
+/// The state the window actually starts in: focus lands in the search field
+/// before any folder has loaded.
+///
+/// `focusing_the_field_offers_the_modes` sets mailboxes first, so it never
+/// sees this -- and this is the state a person meets at launch, where an
+/// offer with nothing in it is the empty plate hanging under the field.
+pub fn an_empty_box_at_startup_is_not_a_blank_plate() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    pump();
+
+    // No folders, no contacts, no labels -- nothing has loaded yet.
+    let field = window.finder().field().expect("the header field");
+    field.text.grab_focus();
+    pump();
+
+    let finder = window.finder();
+    assert!(finder.is_open(), "focus opens the box");
+    let hints = finder.mode_hints();
+    assert!(
+        !hints.is_empty(),
+        "an open box with nothing to say draws a plate with nothing on it"
+    );
+    assert!(
+        finder.is_visible(),
+        "the plate is up, and it has rows: {hints:?}"
     );
 }

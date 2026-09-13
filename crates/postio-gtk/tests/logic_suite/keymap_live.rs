@@ -75,14 +75,19 @@ fn editing_the_keys_section_rebinds_immediately() {
 #[test]
 fn a_rebind_reaches_a_sequence_too() {
     let directory = TempDir::new().expect("a temporary directory");
-    let path = write(directory.path(), "[keys]\nfirst_message = \"g t\"\n");
+    // Any sequence the registry does not already ship: what is under test is
+    // that a rebind reaches a two-key binding at all, not this particular
+    // pair. It was `g t` until the Gmail-shaped go-to family claimed that one
+    // for Sent, at which point the rebind was a genuine conflict and the
+    // keymap said so.
+    let path = write(directory.path(), "[keys]\nfirst_message = \"g m\"\n");
     let service = ConfigService::load(&path);
 
     let (mut resolver, problems) = Resolver::from_commands(service.keymap());
     assert!(problems.is_empty(), "{problems:?}");
 
     assert_eq!(
-        command(&mut resolver, "g t").as_deref(),
+        command(&mut resolver, "g m").as_deref(),
         Some("first_message")
     );
     assert_eq!(
