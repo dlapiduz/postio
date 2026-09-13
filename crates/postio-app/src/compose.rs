@@ -609,10 +609,20 @@ fn recover(
     };
     drop(connection);
 
-    let Some(draft) = drafts
-        .into_iter()
-        .find(|draft| draft.state == DraftState::Editing)
-    else {
+    // Worth recovering, by the same rule Esc uses. An untouched buffer is
+    // not work -- and recovering one is self-perpetuating, because the
+    // composer it reopens autosaves another `Editing` row for the empty
+    // draft it is now holding, so every unclean stop after the first opens
+    // the client into a stale compose buffer. That is the state #491's own
+    // doc calls reading broken, arrived at by #491's own fix.
+    //
+    // `closing` rather than a second definition of empty: it is what decides
+    // whether Esc parks a draft or drops it, and the two questions are the
+    // same question. Whitespace and the signature do not count, per its rule.
+    let Some(draft) = drafts.into_iter().find(|draft| {
+        draft.state == DraftState::Editing
+            && postio_gtk::composer::closing(draft) == postio_gtk::composer::Closing::Keep
+    }) else {
         return;
     };
     last_id.set(Some(draft.id));
