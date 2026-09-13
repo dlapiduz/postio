@@ -59,5 +59,10 @@ Chips and kickers are constructors now. Still hand-rolled, with counts:
   (`postio-runtime/src/network.rs`) — the workspace's worst
   dependency-per-line ratio, kept because online/offline detection has no
   cheaper honest source. A decision, not drift, as of this audit.
+- Bulk test fixtures pay the fts index per document, so
+  `total_hits_stops_counting_at_the_cap` (10,050 repository inserts) runs
+  2-5 minutes and carries a nextest timeout override. A bulk loader that
+  seeds `messages`/`search_documents` in multi-row statements would take
+  most of that back.
 - `postio-body/src/styles.rs` (501 lines over `cssparser`) may duplicate
   `ammonia`'s style filtering — unconfirmed; check before touching.
