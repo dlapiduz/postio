@@ -2180,15 +2180,34 @@ fn sync_lanes(concurrent_passes: usize) -> usize {
 /// now rather than less: a lane occupied by a forty-thousand-message archive
 /// is a lane INBOX is not waiting behind.
 ///
-/// # Why the connections are all taken before any pass starts
+/// # A lane that frees is refilled, while nothing has asked
 ///
-/// [`postio_storage::db::Pool::get`] blocks the *OS thread* on a condvar when
-/// the store is exhausted, and the engine is a single-thread runtime. Two
-/// concurrent passes both calling it with nothing left to hand out would both
-/// block that one thread, with nothing able to run and release a connection:
-/// a real deadlock rather than contention. Acquiring every lane's connection
-/// up front, sequentially, before anything is concurrent is what makes that
-/// unreachable — see `docs/engineering-notes.md`.
+/// A wave used to return only when *every* pass in it had finished, and the
+/// outer loop starts no wave before the last one returns — so one slow pass
+/// held every mailbox still queued, however many lanes sat free. That is the
+/// live incident in
+/// `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`:
+/// fifteen folders queued, two started, one finished, fifty-nine thousand
+/// messages never attempted behind a twenty-five-message Drafts pass.
+///
+/// So a completed pass now admits the next queued mailbox into its lane —
+/// but only after checking the same conditions [`interruption`] watches,
+/// because the first version of this refill was reverted: with `biased;`
+/// completions first, a wave that feeds itself at every completion can keep
+/// the first branch ready and starve the arm that yields to the user
+/// (#944, #122). Checking *at the completion boundary, before admitting*
+/// closes that hole from the other side: back-to-back completions each pass
+/// through the check, so a waiting job stops the refill exactly where the
+/// starvation would have begun, and the running passes are cancelled as
+/// before. `a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave`
+/// and `a_job_is_served_without_waiting_out_the_wave_it_arrived_during`
+/// hold the two halves.
+///
+/// (An older section here explained why every connection was taken before
+/// any pass started: the previous engine's pool blocked the OS thread on a
+/// condvar when exhausted, which on a single-thread runtime was a real
+/// deadlock. This engine's `connect` is async and pools internally, so a
+/// lane can take its connection as it is admitted.)
 async fn sync_wave(
     parts: &EngineParts,
     store: &Store,
@@ -2206,28 +2225,6 @@ async fn sync_wave(
         return;
     }
 
-    // Every connection this wave will ever need, taken one at a time while
-    // nothing else on this thread is running. See the note above.
-    let mut lanes: Vec<(MailboxId, Checkout)> = Vec::new();
-    for _ in 0..sync_lanes(postio_storage::MAX_CONCURRENT_PASSES) {
-        let Some(mailbox) = state.to_sync.pop_front() else {
-            break;
-        };
-        match store.connect().await {
-            Ok(connection) => lanes.push((mailbox, connection)),
-            Err(error) => {
-                // Nothing to sync it with. Put it back rather than dropping
-                // it: the next wave will have a connection.
-                state.to_sync.push_front(mailbox);
-                tracing::warn!(%error, "no connection for a sync lane");
-                break;
-            }
-        }
-    }
-    if lanes.is_empty() {
-        return;
-    }
-
     // Shared by every pass in the wave, and cancelled as one: a job the user
     // is waiting on must not queue behind three mailboxes. A cancelled pass
     // keeps everything it committed and resumes from there, so this costs at
@@ -2242,9 +2239,50 @@ async fn sync_wave(
     // that out; an owned handle on the same `RefCell` does not. See
     // `State::status`.
     let status = state.status.clone();
+
+    // One place makes a pass's future, so the initial fill and every refill
+    // push the same type into `running` — and so the future owns its
+    // connection outright, which is what lets a lane be admitted while its
+    // wave-mates are still borrowing theirs.
+    let make_pass = |mailbox: MailboxId, connection: Checkout| {
+        let status = status.clone();
+        let cancel = cancel.clone();
+        async move { sync_pass(parts, &connection, &status, mailbox, &cancel).await }
+    };
+
+    // Settling writes through its own connection: the lanes' connections
+    // live inside their futures now.
+    let settle_connection = match store.connect().await {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::warn!(%error, "no connection to settle a sync wave");
+            return;
+        }
+    };
+
+    let lanes = sync_lanes(postio_storage::MAX_CONCURRENT_PASSES);
+    let mut admitted: Vec<MailboxId> = Vec::new();
     let mut running = FuturesUnordered::new();
-    for (mailbox, connection) in &lanes {
-        running.push(sync_pass(parts, connection, &status, *mailbox, &cancel));
+    while running.len() < lanes {
+        let Some(mailbox) = state.to_sync.pop_front() else {
+            break;
+        };
+        match store.connect().await {
+            Ok(connection) => {
+                admitted.push(mailbox);
+                running.push(make_pass(mailbox, connection));
+            }
+            Err(error) => {
+                // Nothing to sync it with. Put it back rather than dropping
+                // it: the next wave will have a connection.
+                state.to_sync.push_front(mailbox);
+                tracing::warn!(%error, "no connection for a sync lane");
+                break;
+            }
+        }
+    }
+    if running.is_empty() {
+        return;
     }
 
     // #631: settled and pumped the instant each individual pass finishes,
@@ -2273,13 +2311,45 @@ async fn sync_wave(
                 // resumes, and saying so would put a spurious error on
                 // screen every time the user did something during a first
                 // sync.
-                let connection = &lanes[0].1;
-                if let Err(error) = settle_pass(parts, state, connection, outcome).await
+                if let Err(error) = settle_pass(parts, state, &settle_connection, outcome).await
                     && !stopped_early
                 {
                     parts.events.emit(Event::Error {
                         message: error.message().to_string(),
                     });
+                }
+                // The interruption conditions, checked here as well as in
+                // the arm below: `biased;` polls completions first, so
+                // completions arriving back to back could starve that arm —
+                // which is how the first refill was reverted. Checked
+                // *before* admitting anything, no pass is ever refilled past
+                // a job that has already asked.
+                if !asked_to_stop
+                    && (!nothing_asked(inbox) || has_queued_work(parts, store).await)
+                {
+                    asked_to_stop = true;
+                    cancel.cancel();
+                }
+                // The freed lane takes the next queued mailbox, highest
+                // priority first — one slow pass must not hold the folders
+                // queued behind the wave (see the refill note above).
+                if !asked_to_stop {
+                    while running.len() < lanes {
+                        let Some(mailbox) = state.to_sync.pop_front() else {
+                            break;
+                        };
+                        match store.connect().await {
+                            Ok(connection) => {
+                                admitted.push(mailbox);
+                                running.push(make_pass(mailbox, connection));
+                            }
+                            Err(error) => {
+                                state.to_sync.push_front(mailbox);
+                                tracing::warn!(%error, "no connection for a refilled sync lane");
+                                break;
+                            }
+                        }
+                    }
                 }
                 // Not once a job is waiting — draining the backfill queue
                 // here is exactly the extra work a waiting job must not
@@ -2309,7 +2379,7 @@ async fn sync_wave(
     // Back on the front of the queue, in the order they were taken off it —
     // completion order says nothing about priority, and INBOX must not come
     // back behind the archive it started alongside.
-    for (mailbox, _) in lanes.iter().rev() {
+    for mailbox in admitted.iter().rev() {
         if interrupted.contains(mailbox) {
             state.to_sync.push_front(*mailbox);
         }

@@ -478,6 +478,11 @@ async fn incremental(
             .await?;
             arrived.extend(newly);
             drop(permit);
+            // One real yield per unit, for the reason `initial.rs` gives at
+            // its own batch loop: an uncontended gate and a commit whose work
+            // runs inside the poll can both come back `Ready`, and a pass
+            // that never yields cannot be interrupted or stood aside from.
+            initial::yield_once().await;
         }
     }
 
