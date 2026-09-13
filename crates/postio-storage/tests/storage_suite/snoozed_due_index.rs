@@ -53,7 +53,7 @@ const DUE: &str = "SELECT DISTINCT mailbox_id FROM messages
 const CLEAR: &str = "UPDATE messages SET snoozed_until = NULL
      WHERE account_id = 1 AND snoozed_until IS NOT NULL AND snoozed_until <= 1700000500";
 
-async fn migrated() -> (postio_storage::Store, Connection) {
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     let store = postio_storage::test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
     (store, connection)
@@ -64,8 +64,8 @@ async fn plan(connection: &Connection, query: &str) -> String {
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
         .await
         .expect("a query plan");
-    statement
-        .query_map([], |row| row.get::<_, String>(3))
+    postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col::<String>(row, 3))
+        .await
         .expect("plan rows")
         .collect::<Result<Vec<_>, _>>()
         .expect("plan rows")
@@ -118,13 +118,14 @@ async fn waking_due_snoozes_seeks_the_snoozed_rows_instead_of_walking_the_accoun
 #[tokio::test]
 async fn the_index_holds_only_snoozed_rows() {
     let (_store, connection) = migrated().await;
-    let definition: String = connection
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
-            ["idx_messages_snoozed_due"],
-            |row| row.get(0),
-        )
-        .expect("idx_messages_snoozed_due exists");
+    let definition: String = postio_storage::sql::one(
+        &connection,
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        ["idx_messages_snoozed_due"],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("idx_messages_snoozed_due exists");
 
     // Partial, and that is the whole point: an index over every message would
     // be as large as the table and would have to be maintained on every
@@ -145,24 +146,22 @@ async fn the_index_does_not_change_which_messages_wake() {
     // in. An index the planner declines to use would still return these, by
     // scanning, which is why the plan is asserted above as well.
     let mut statement = connection.prepare(DUE).await.expect("prepare");
-    let woken: Vec<i64> = statement
-        .query_map([], |row| row.get(0))
+    let woken: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col(row, 0))
+        .await
         .expect("rows")
         .collect::<Result<_, _>>()
         .expect("rows");
 
-    let expected: Vec<i64> = connection
-        .prepare(
-            "SELECT DISTINCT mailbox_id FROM messages
-              WHERE snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
-              ORDER BY mailbox_id",
-        )
-        .await
-        .expect("prepare")
-        .query_map([], |row| row.get(0))
-        .expect("rows")
-        .collect::<Result<_, _>>()
-        .expect("rows");
+    let expected: Vec<i64> = postio_storage::sql::all(
+        &connection,
+        "SELECT DISTINCT mailbox_id FROM messages
+          WHERE snoozed_until IS NOT NULL AND snoozed_until <= 1700000500
+          ORDER BY mailbox_id",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("rows");
 
     assert_eq!(
         woken, expected,

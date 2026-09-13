@@ -1270,7 +1270,7 @@ async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
             Ok(connection.query_row(
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
                 [inbox.id.get()],
-                |row| row.get::<_, i64>(0),
+                |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
             )?)
         },
     );
@@ -1349,7 +1349,7 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
             Ok(connection.query_row(
                 "SELECT id FROM messages WHERE mailbox_id = ?1 AND uid BETWEEN 1 AND 10 LIMIT 1",
                 [inbox.id.get()],
-                |row| row.get::<_, i64>(0),
+                |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
             )?)
         },
     );
@@ -1370,7 +1370,7 @@ async fn a_body_the_user_asked_for_is_indexed_as_well_as_stored() {
                 Ok(connection.query_row(
                     "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
                     [id],
-                    |row| row.get::<_, i64>(0),
+                    |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
                 )? > 0)
             },
         )
@@ -1504,7 +1504,7 @@ fn headers_in(database: &postio_storage::Store, mailbox: postio_model::ids::Mail
         Ok(connection.query_row(
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
             [mailbox.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )?)
     })
 }
@@ -1515,7 +1515,7 @@ fn bodies_local(database: &postio_storage::Store, mailbox: postio_model::ids::Ma
         Ok(connection.query_row(
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND body_state = 'full'",
             [mailbox.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )?)
     })
 }

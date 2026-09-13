@@ -52,7 +52,7 @@ async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
     let (database, report) = seeded();
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let page = |offset, limit| {
+    let page = async |offset, limit| {
         let store = store.clone();
         async move {
             store
@@ -168,7 +168,7 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
     let (database, report) = seeded();
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    let page = |offset| {
+    let page = async |offset| {
         let store = store.clone();
         async move {
             store

@@ -659,7 +659,7 @@ fn body_is_indexed(connection: &postio_storage::PooledConnection, id: MessageId)
         .query_row(
             "SELECT EXISTS (SELECT 1 FROM message_bodies_fts WHERE rowid = ?1)",
             [id.get()],
-            |row| row.get::<_, bool>(0),
+            |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
         )
         .unwrap_or(false)
 }
@@ -672,7 +672,7 @@ fn body_matches(connection: &postio_storage::PooledConnection, id: MessageId, qu
             "SELECT EXISTS (SELECT 1 FROM message_bodies_fts
                              WHERE rowid = ?1 AND message_bodies_fts MATCH ?2)",
             bind![id.get(), query],
-            |row| row.get::<_, bool>(0),
+            |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
         )
         .unwrap_or(false)
 }
@@ -1048,7 +1048,7 @@ fn header_is_indexed(
                              WHERE message_id = ?1 AND name = ?2
                                AND value LIKE '%' || ?3 || '%')",
             bind![id.get(), name, value],
-            |row| row.get::<_, bool>(0),
+            |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
         )
         .unwrap_or(false)
 }

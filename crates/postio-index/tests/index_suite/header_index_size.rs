@@ -162,7 +162,7 @@ fn header_index_bytes(connection: &Connection) -> i64 {
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
               WHERE name = 'message_headers' OR name LIKE 'idx_message_headers%'",
             [],
-            |row| row.get(0),
+            |row| postio_storage::sql::RowExt::col(row, 0),
         )
         .expect("dbstat")
 }
@@ -173,7 +173,7 @@ fn table_bytes(connection: &Connection, name: &str) -> i64 {
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
               WHERE name = ?1 OR name LIKE ?1 || '\\_%' ESCAPE '\\'",
             [name],
-            |row| row.get(0),
+            |row| postio_storage::sql::RowExt::col(row, 0),
         )
         .expect("dbstat")
 }
@@ -210,7 +210,7 @@ fn no_message_may_contribute_more_than_the_two_caps_allow() {
             "SELECT count(*), coalesce(max(length(value)), 0) FROM message_headers
               WHERE message_id = ?1",
             [message.id.get()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
         )
         .expect("measure");
 
@@ -246,9 +246,14 @@ fn the_header_index_stays_inside_its_per_message_ceiling() {
     }
     connection.execute_batch("COMMIT").expect("commit");
 
-    let header_rows: i64 = connection
-        .query_row("SELECT count(*) FROM message_headers", [], |row| row.get(0))
-        .expect("count");
+    let header_rows: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM message_headers",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert!(
         header_rows >= MESSAGES as i64 * 20,
         "the fixture has to be a real block per message, or the ratio below \

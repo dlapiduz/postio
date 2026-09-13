@@ -71,7 +71,7 @@ fn id_of(
         .query_row(
             "SELECT id FROM messages WHERE rfc_message_id = ?1 AND deleted_locally = 0",
             [rfc_message_id],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
         .ok()
         .map(postio_model::MessageId::new)
@@ -291,9 +291,9 @@ fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
                 st.query_map([], |r| {
                     Ok(format!(
                         "{}:{}:{}",
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?
+                        r.col::<String>(0)?,
+                        r.col::<String>(1)?,
+                        r.col::<String>(2)?
                     ))
                 })
                 .map(|rows| rows.filter_map(Result::ok).collect::<Vec<_>>().join(", "))

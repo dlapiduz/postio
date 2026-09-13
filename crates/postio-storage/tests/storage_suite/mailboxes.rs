@@ -75,13 +75,14 @@ async fn synchronization_state_lives_in_its_own_table() {
     mailbox.generation = Some(Generation::new(7));
     let id = mailboxes.create(&mut mailbox).await.expect("create");
 
-    let uid_validity: i64 = connection
-        .query_row(
-            "SELECT uid_validity FROM sync_state WHERE mailbox_id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )
-        .expect("the sync_state row exists");
+    let uid_validity: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT uid_validity FROM sync_state WHERE mailbox_id = ?1",
+        [id.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the sync_state row exists");
     assert_eq!(uid_validity, 7);
 
     // The sync engine writes that table directly, in the same transaction as
@@ -134,13 +135,14 @@ async fn roles_are_stored_with_the_spelling_the_model_documents() {
         let mut mailbox = Mailbox::new(account_id, path, Some('/'));
         let id = mailboxes.create(&mut mailbox).await.expect("create");
 
-        let raw: String = connection
-            .query_row(
-                "SELECT role FROM mailboxes WHERE id = ?1",
-                [id.get()],
-                |row| row.get(0),
-            )
-            .expect("read the raw role");
+        let raw: String = postio_storage::sql::one(
+            &connection,
+            "SELECT role FROM mailboxes WHERE id = ?1",
+            [id.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("read the raw role");
         assert_eq!(raw, expected.as_str(), "{path}");
         assert_eq!(
             mailboxes.get(id).await.expect("get").expect("the mailbox").role,
@@ -345,11 +347,14 @@ async fn deleting_a_mailbox_takes_its_messages_and_its_sync_state() {
     assert!(mailboxes.delete(id).await.expect("delete"));
 
     for table in ["mailboxes", "messages", "sync_state"] {
-        let remaining: i64 = connection
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .expect("count");
+        let remaining: i64 = postio_storage::sql::one(
+            &connection,
+            &format!("SELECT count(*) FROM {table}"),
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("count");
         assert_eq!(remaining, 0, "{table}");
     }
     assert!(!mailboxes.delete(id).await.expect("delete again"));

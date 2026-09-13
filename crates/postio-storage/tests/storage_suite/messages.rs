@@ -21,15 +21,15 @@ use postio_storage::repository::{
 };
 use postio_storage::test_support;
 
-async fn at(seconds: i64) -> DateTime<Utc> {
+fn at(seconds: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(1_770_000_000 + seconds, 0)
         .single()
         .unwrap()
 }
 
 /// A message with enough on it to be worth round-tripping.
-async fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
-    let mut message = Message::new(account, mailbox, at(seconds).await);
+fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = Message::new(account, mailbox, at(seconds));
     message.rfc_message_id = Some(RfcMessageId::new(format!("<m{seconds}@example.com>")));
     message.in_reply_to = Some(RfcMessageId::new("<parent@example.com>"));
     message.references = vec![
@@ -43,7 +43,7 @@ async fn a_message(mailbox: MailboxId, account: postio_model::AccountId, seconds
     ];
     message.cc = vec![EmailAddress::new(None::<String>, "cc@example.com")];
     message.subject = Some(format!("Re: Subject {seconds}"));
-    message.date = Some(at(seconds - 10).await);
+    message.date = Some(at(seconds - 10));
     message.preview = Some("A short snippet".to_owned());
     message.size = 4_096;
     message.flags = [Flag::Seen, Flag::Keyword("Work".to_owned())]
@@ -71,7 +71,7 @@ async fn a_message_round_trips_with_its_recipients_and_attachments() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 100).await;
+    let mut message = a_message(inbox, account.id, 100);
     let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 2_048);
     attachment.filename = Some("layout.pdf".to_owned());
     attachment.part_id = Some("2".to_owned());
@@ -115,7 +115,7 @@ async fn a_message_s_own_content_type_round_trips() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 200).await;
+    let mut message = a_message(inbox, account.id, 200);
     message.content_type = Some("multipart/related".to_owned());
     let id = messages.create(&mut message).await.expect("create");
 
@@ -133,7 +133,7 @@ async fn a_message_with_no_content_type_recorded_reads_back_as_none() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 201).await;
+    let mut message = a_message(inbox, account.id, 201);
     assert_eq!(message.content_type, None);
     let id = messages.create(&mut message).await.expect("create");
 
@@ -152,7 +152,7 @@ async fn a_message_s_text_is_flowed_flag_round_trips() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 202).await;
+    let mut message = a_message(inbox, account.id, 202);
     message.text_is_flowed = true;
     let id = messages.create(&mut message).await.expect("create");
 
@@ -167,7 +167,7 @@ async fn a_message_with_no_flag_recorded_reads_back_as_not_flowed() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 203).await;
+    let mut message = a_message(inbox, account.id, 203);
     assert!(!message.text_is_flowed);
     let id = messages.create(&mut message).await.expect("create");
 
@@ -182,7 +182,7 @@ async fn a_message_s_list_id_round_trips() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 300).await;
+    let mut message = a_message(inbox, account.id, 300);
     message.list_id = Some("harbour-dev.lists.example.org".to_owned());
     let id = messages.create(&mut message).await.expect("create");
 
@@ -202,7 +202,7 @@ async fn a_message_with_no_list_id_reads_back_as_none() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 301).await;
+    let mut message = a_message(inbox, account.id, 301);
     assert_eq!(message.list_id, None);
     let id = messages.create(&mut message).await.expect("create");
 
@@ -217,7 +217,7 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 1).await;
+    let mut message = a_message(inbox, account.id, 1);
     message.flags = [Flag::Seen, Flag::Flagged, Flag::Answered, Flag::Recent]
         .into_iter()
         .collect();
@@ -229,11 +229,11 @@ async fn flags_are_denormalized_so_the_list_never_parses_a_string() {
             [id.get()],
             |row| {
                 Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
+                    postio_storage::sql::RowExt::col(row, 0)?,
+                    postio_storage::sql::RowExt::col(row, 1)?,
+                    postio_storage::sql::RowExt::col(row, 2)?,
+                    postio_storage::sql::RowExt::col(row, 3)?,
+                    postio_storage::sql::RowExt::col(row, 4)?,
                 ))
             },
         )
@@ -263,7 +263,7 @@ async fn updating_a_message_replaces_its_recipients_rather_than_appending() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 2).await;
+    let mut message = a_message(inbox, account.id, 2);
     let id = messages.create(&mut message).await.expect("create");
 
     message.to = vec![EmailAddress::new(None::<String>, "only@example.com")];
@@ -275,9 +275,14 @@ async fn updating_a_message_replaces_its_recipients_rather_than_appending() {
     assert_eq!(stored.to.len(), 1);
     assert_eq!(stored.subject.as_deref(), Some("Rewritten"));
 
-    let recipients: i64 = connection
-        .query_row("SELECT count(*) FROM recipients", [], |row| row.get(0))
-        .expect("count");
+    let recipients: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM recipients",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(recipients, 3, "from + to + cc, with no leftovers");
 }
 
@@ -288,8 +293,8 @@ async fn deleting_messages_takes_their_recipients_and_attachments() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut first = a_message(inbox, account.id, 3).await;
-    let mut second = a_message(inbox, account.id, 4).await;
+    let mut first = a_message(inbox, account.id, 3);
+    let mut second = a_message(inbox, account.id, 4);
     let first_id = messages.create(&mut first).await.expect("create");
     let second_id = messages.create(&mut second).await.expect("create");
 
@@ -297,11 +302,14 @@ async fn deleting_messages_takes_their_recipients_and_attachments() {
     assert!(messages.get(first_id).await.expect("get").is_none());
 
     for table in ["messages", "recipients", "attachments"] {
-        let remaining: i64 = connection
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .expect("count");
+        let remaining: i64 = postio_storage::sql::one(
+            &connection,
+            &format!("SELECT count(*) FROM {table}"),
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("count");
         assert_eq!(remaining, 0, "{table}");
     }
     assert_eq!(
@@ -324,7 +332,7 @@ async fn a_read_message_does_not_carry_its_body_and_the_raw_blob_key_survives() 
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 5).await;
+    let mut message = a_message(inbox, account.id, 5);
     // The raw `.eml` is still a blob: large, streamed, deduplicated.
     message.raw_blob_id = Some(postio_model::BlobId::new("a".repeat(64)));
     let id = messages.create(&mut message).await.expect("create");
@@ -370,9 +378,9 @@ async fn needing_backfill_returns_newest_first_and_skips_full_bodies() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut oldest = a_message(inbox, account.id, 1).await;
-    let mut newest = a_message(inbox, account.id, 3).await;
-    let mut already_full = a_message(inbox, account.id, 2).await;
+    let mut oldest = a_message(inbox, account.id, 1);
+    let mut newest = a_message(inbox, account.id, 3);
+    let mut already_full = a_message(inbox, account.id, 2);
     already_full.sync.body_state = BodyState::Full;
 
     for message in [&mut oldest, &mut newest, &mut already_full] {
@@ -401,12 +409,12 @@ async fn needing_backfill_is_windowed_and_scoped_to_its_mailbox() {
 
     for seconds in 0..5 {
         messages
-            .create(&mut a_message(inbox, account.id, seconds).await)
+            .create(&mut a_message(inbox, account.id, seconds))
             .await
             .expect("create");
     }
     messages
-        .create(&mut a_message(archive.id, account.id, 99).await)
+        .create(&mut a_message(archive.id, account.id, 99))
         .await
         .expect("create in another mailbox");
 
@@ -428,7 +436,7 @@ async fn a_message_with_no_uid_yet_is_not_a_backfill_candidate() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut composed = a_message(inbox, account.id, 1).await;
+    let mut composed = a_message(inbox, account.id, 1);
     composed.server.uid = None;
     messages.create(&mut composed).await.expect("create");
 
@@ -455,7 +463,7 @@ async fn backfill_candidate_looks_up_a_single_message_by_id_alone() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 7).await;
+    let mut message = a_message(inbox, account.id, 7);
     messages.create(&mut message).await.expect("create");
 
     let candidate = messages
@@ -493,8 +501,8 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
     let messages = MessageRepository::new(&connection);
 
     let mut batch = vec![
-        a_message(inbox, account.id, 10).await,
-        a_message(inbox, account.id, 11).await,
+        a_message(inbox, account.id, 10),
+        a_message(inbox, account.id, 11),
     ];
     let report = messages.upsert_batch(&mut batch).await.expect("first upsert");
     assert_eq!(report.inserted, 2);
@@ -504,9 +512,9 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
 
     // The same UIDs come back with a flag change, plus one genuinely new one.
     let mut again = vec![
-        a_message(inbox, account.id, 10).await,
-        a_message(inbox, account.id, 11).await,
-        a_message(inbox, account.id, 12).await,
+        a_message(inbox, account.id, 10),
+        a_message(inbox, account.id, 11),
+        a_message(inbox, account.id, 12),
     ];
     again[0].flags = [Flag::Seen, Flag::Flagged].into_iter().collect();
     let report = messages.upsert_batch(&mut again).await.expect("second upsert");
@@ -518,9 +526,14 @@ async fn upserting_a_batch_inserts_what_is_new_and_updates_what_is_known() {
         "a message keeps its local id across a resync, so the UI's selection survives"
     );
 
-    let total: i64 = connection
-        .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
-        .expect("count");
+    let total: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM messages",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(total, 3, "no duplicates");
     assert!(
         messages
@@ -540,9 +553,9 @@ async fn a_locally_composed_message_with_no_uid_is_never_matched_by_upsert() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut first = a_message(inbox, account.id, 20).await;
+    let mut first = a_message(inbox, account.id, 20);
     first.server = Default::default();
-    let mut second = a_message(inbox, account.id, 21).await;
+    let mut second = a_message(inbox, account.id, 21);
     second.server = Default::default();
 
     let mut batch = vec![first, second];
@@ -566,7 +579,7 @@ async fn a_message_can_be_found_by_its_server_uid() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 30).await;
+    let mut message = a_message(inbox, account.id, 30);
     let id = messages.create(&mut message).await.expect("create");
     let uid = message.server.uid.unwrap();
     let validity = postio_model::Generation::new(message.server.uid_validity.unwrap().get());
@@ -605,9 +618,9 @@ async fn messages_can_be_found_by_rfc_message_id_and_duplicates_all_come_back() 
     let messages = MessageRepository::new(&connection);
 
     let shared = RfcMessageId::new("<shared@example.com>");
-    let mut first = a_message(inbox, account.id, 40).await;
+    let mut first = a_message(inbox, account.id, 40);
     first.rfc_message_id = Some(shared.clone());
-    let mut second = a_message(inbox, account.id, 41).await;
+    let mut second = a_message(inbox, account.id, 41);
     second.rfc_message_id = Some(shared.clone());
     let first_id = messages.create(&mut first).await.expect("create");
     let second_id = messages.create(&mut second).await.expect("create");
@@ -650,7 +663,7 @@ async fn a_local_flag_change_marks_the_row_dirty_and_a_server_one_does_not() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 50).await;
+    let mut message = a_message(inbox, account.id, 50);
     let id = messages.create(&mut message).await.expect("create");
 
     let mut flags = FlagSet::new();
@@ -691,7 +704,7 @@ async fn moving_a_message_drops_the_uid_it_had_in_the_old_mailbox() {
     let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 60).await;
+    let mut message = a_message(inbox, account.id, 60);
     let id = messages.create(&mut message).await.expect("create");
 
     assert_eq!(messages.move_to(&[id], archive.id).await.expect("move"), 1);
@@ -716,7 +729,7 @@ async fn a_locally_deleted_message_is_hidden_from_the_list_but_still_there() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70).await;
+    let mut message = a_message(inbox, account.id, 70);
     let id = messages.create(&mut message).await.expect("create");
 
     assert_eq!(messages.set_deleted_locally(&[id], true).await.expect("hide"), 1);
@@ -751,7 +764,7 @@ async fn a_snoozed_message_leaves_every_ordinary_scope_and_appears_in_snoozed() 
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70).await;
+    let mut message = a_message(inbox, account.id, 70);
     let id = messages.create(&mut message).await.expect("create");
     let until = Utc::now() + Duration::from_secs(3600);
 
@@ -796,9 +809,9 @@ async fn waking_due_snoozes_clears_only_what_is_due_and_says_which_mailboxes_cha
     let archive = test_support::mailbox(&connection, &account, "Archive").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut due = a_message(inbox, account.id, 70).await;
+    let mut due = a_message(inbox, account.id, 70);
     let due_id = messages.create(&mut due).await.expect("create due");
-    let mut not_due = a_message(archive.id, account.id, 71).await;
+    let mut not_due = a_message(archive.id, account.id, 71);
     let not_due_id = messages.create(&mut not_due).await.expect("create not due");
 
     let now = Utc::now();
@@ -856,9 +869,9 @@ async fn waking_due_snoozes_never_touches_another_accounts_rows() {
     let (account_b, inbox_b) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message_a = a_message(inbox_a, account_a.id, 70).await;
+    let mut message_a = a_message(inbox_a, account_a.id, 70);
     let id_a = messages.create(&mut message_a).await.expect("create a");
-    let mut message_b = a_message(inbox_b, account_b.id, 71).await;
+    let mut message_b = a_message(inbox_b, account_b.id, 71);
     let id_b = messages.create(&mut message_b).await.expect("create b");
 
     let now = Utc::now();
@@ -888,7 +901,7 @@ async fn unsnoozing_clears_it_immediately_without_waiting_for_wake_due() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 70).await;
+    let mut message = a_message(inbox, account.id, 70);
     let id = messages.create(&mut message).await.expect("create");
     messages
         .snooze(&[id], Utc::now() + Duration::from_secs(3600))
@@ -1030,7 +1043,7 @@ async fn a_message_arriving_mid_scroll_does_not_make_the_list_skip_a_row() {
     let cursor = first.last().expect("a row").cursor();
 
     // IDLE delivers a new message at the top while the user is still scrolling.
-    let mut arrival = a_message(inbox, account.id, 1_000_000).await;
+    let mut arrival = a_message(inbox, account.id, 1_000_000);
     messages.create(&mut arrival).await.expect("create");
 
     let second = messages
@@ -1121,7 +1134,7 @@ async fn a_thread_id_travels_on_the_list_row_so_the_list_can_group_without_a_sec
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 80).await;
+    let mut message = a_message(inbox, account.id, 80);
     let id = messages.create(&mut message).await.expect("create");
     connection
         .execute(
@@ -1169,7 +1182,7 @@ async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_fold
     // would be caught rather than passing by luck.
     let mut ours = Vec::new();
     for (mailbox, minute) in [(inbox, 10), (archive.id, 20), (inbox, 30), (archive.id, 40)] {
-        let mut message = a_message(mailbox, account.id, minute).await;
+        let mut message = a_message(mailbox, account.id, minute);
         let id = messages.create(&mut message).await.expect("create");
         messages
             .set_thread(id, Some(ThreadId::new(1)))
@@ -1177,7 +1190,7 @@ async fn a_thread_is_a_scope_of_its_own_so_a_drill_in_is_not_limited_to_one_fold
             .expect("assign");
         ours.push(id);
     }
-    let mut other = a_message(inbox, account.id, 50).await;
+    let mut other = a_message(inbox, account.id, 50);
     let elsewhere = messages.create(&mut other).await.expect("create");
     messages
         .set_thread(elsewhere, Some(ThreadId::new(2)))
@@ -1214,9 +1227,8 @@ async fn plan_of(connection: &Connection, sql: &str) -> String {
     // The list query is parameterised; the planner does not care what the
     // values are, only that there are the right number of them.
     let arguments = vec![1i64; statement.parameter_count()];
-    let rows = statement
-        .query_map(rusqlite::params_from_iter(arguments), |row| {
-            row.get::<_, String>(3)
+    let rows = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
+            postio_storage::sql::RowExt::col::<String>(row, 3)
         })
         .expect("plan")
         .collect::<Result<Vec<_>, _>>()
@@ -1248,7 +1260,7 @@ async fn the_message_list_plan_never_sorts() {
             (
                 "cursor page",
                 messages.explain(&query.clone().after(ListCursor {
-                    received_at: at(0).await,
+                    received_at: at(0),
                     id: MessageId::new(1),
                 })),
             ),
@@ -1279,7 +1291,7 @@ async fn paging_stays_flat_over_a_hundred_thousand_messages() {
     let messages = MessageRepository::new(&connection);
 
     let query = ListQuery::mailbox(inbox).limit(50);
-    let time = |query: &ListQuery| -> (Duration, Vec<_>) {
+    let time = async |query: &ListQuery| -> (Duration, Vec<_>) {
         let start = Instant::now();
         let page = messages.page(query).await.expect("page");
         (start.elapsed(), page)
@@ -1329,7 +1341,7 @@ async fn rows_for_answers_in_the_order_it_was_asked() {
     // rather than a coincidence of how SQLite walked the table.
     let mut ids = Vec::new();
     for step in 0..5 {
-        let mut message = a_message(inbox, account.id, step * 10).await;
+        let mut message = a_message(inbox, account.id, step * 10);
         messages.create(&mut message).await.expect("create");
         ids.push(message.id);
     }
@@ -1362,7 +1374,7 @@ async fn rows_for_drops_what_the_store_no_longer_holds() {
 
     let mut ids = Vec::new();
     for step in 0..3 {
-        let mut message = a_message(inbox, account.id, step * 10).await;
+        let mut message = a_message(inbox, account.id, step * 10);
         messages.create(&mut message).await.expect("create");
         ids.push(message.id);
     }
@@ -1419,7 +1431,7 @@ async fn enqueue_and_move_locally(
             account,
             postio_model::OperationTarget::Message(message),
             operation,
-            at(0).await,
+            at(0),
         )
         .await
         .expect("enqueue");
@@ -1440,7 +1452,7 @@ fn rows_in(connection: &Connection, mailbox: MailboxId) -> usize {
         .query_row(
             "SELECT COUNT(*) FROM messages WHERE mailbox_id = ?1",
             [mailbox.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
         .expect("count") as usize
 }
@@ -1454,7 +1466,7 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
     let messages = MessageRepository::new(&connection);
 
     // A message the server has in INBOX, synced normally.
-    let mut batch = vec![a_message(inbox, account.id, 40).await];
+    let mut batch = vec![a_message(inbox, account.id, 40)];
     messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
@@ -1482,7 +1494,7 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_move() {
 
     // Now an INBOX resync runs before the queue drains. The server still
     // lists the message in INBOX, so this is exactly what it hands back.
-    let mut resynced = vec![a_message(inbox, account.id, 40).await];
+    let mut resynced = vec![a_message(inbox, account.id, 40)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
@@ -1514,7 +1526,7 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
     let trash = test_support::mailbox(&connection, &account, "Trash").await;
     let messages = MessageRepository::new(&connection);
 
-    let mut batch = vec![a_message(inbox, account.id, 41).await];
+    let mut batch = vec![a_message(inbox, account.id, 41)];
     messages.upsert_batch(&mut batch).await.expect("first sync");
     let message = batch[0].id;
     let (uid, validity) = (
@@ -1533,7 +1545,7 @@ async fn a_resync_does_not_resurrect_a_message_with_an_undrained_delete() {
         trash.id,
     ).await;
 
-    let mut resynced = vec![a_message(inbox, account.id, 41).await];
+    let mut resynced = vec![a_message(inbox, account.id, 41)];
     resynced[0].server.uid = Some(uid);
     resynced[0].server.uid_validity = Some(validity);
     resynced[0].server.remote_id = Some(postio_model::RemoteId::new(format!("{validity}:{uid}")));
@@ -1560,7 +1572,7 @@ async fn the_shadow_lifts_once_the_operation_settles() {
         let archive = test_support::mailbox(&connection, &account, "Archive").await;
         let messages = MessageRepository::new(&connection);
 
-        let mut batch = vec![a_message(inbox, account.id, 42).await];
+        let mut batch = vec![a_message(inbox, account.id, 42)];
         messages.upsert_batch(&mut batch).await.expect("first sync");
         let message = batch[0].id;
         let (uid, validity) = (
@@ -1581,12 +1593,12 @@ async fn the_shadow_lifts_once_the_operation_settles() {
 
         // The queue row settles, one way or the other.
         let queue = OperationQueueRepository::new(&connection);
-        let pending = queue.pending(account.id, at(0).await).await.expect("pending");
+        let pending = queue.pending(account.id, at(0)).await.expect("pending");
         let id = pending.first().expect("one queued row").id;
         match settled {
-            OperationState::Done => queue.mark_done(id, at(1).await).await.expect("done"),
+            OperationState::Done => queue.mark_done(id, at(1)).await.expect("done"),
             _ => queue
-                .mark_failed(id, at(1).await, "server said no")
+                .mark_failed(id, at(1), "server said no")
                 .await
                 .expect("failed"),
         }
@@ -1596,7 +1608,7 @@ async fn the_shadow_lifts_once_the_operation_settles() {
         // it happened and this is a genuinely different message at that UID.
         // Either way the shadow must be gone, or a failed move hides a
         // message for ever.
-        let mut resynced = vec![a_message(inbox, account.id, 42).await];
+        let mut resynced = vec![a_message(inbox, account.id, 42)];
         resynced[0].server.uid = Some(uid);
         resynced[0].server.uid_validity = Some(validity);
         messages.upsert_batch(&mut resynced).await.expect("resync upsert");
@@ -1621,7 +1633,7 @@ async fn the_sections_holding_a_message_s_text_round_trip() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 202).await;
+    let mut message = a_message(inbox, account.id, 202);
     message.text_part_id = Some("1.1".to_owned());
     message.html_part_id = Some("1.2".to_owned());
     let id = messages.create(&mut message).await.expect("create");
@@ -1643,7 +1655,7 @@ async fn a_message_synced_before_the_text_sections_existed_reads_back_as_none() 
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 203).await;
+    let mut message = a_message(inbox, account.id, 203);
     assert_eq!(message.text_part_id, None);
     assert_eq!(message.html_part_id, None);
     let id = messages.create(&mut message).await.expect("create");
@@ -1669,11 +1681,11 @@ async fn a_message_whose_text_is_local_is_not_queued_for_backfill_again() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut settled = a_message(inbox, account.id, 300).await;
+    let mut settled = a_message(inbox, account.id, 300);
     settled.sync.body_state = BodyState::Partial;
     messages.create(&mut settled).await.expect("create");
 
-    let mut wanted = a_message(inbox, account.id, 301).await;
+    let mut wanted = a_message(inbox, account.id, 301);
     wanted.sync.body_state = BodyState::HeadersOnly;
     let wanted_id = messages.create(&mut wanted).await.expect("create");
 
@@ -1700,7 +1712,7 @@ async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 302).await;
+    let mut message = a_message(inbox, account.id, 302);
     message.sync.body_state = BodyState::Partial;
     let id = messages.create(&mut message).await.expect("create");
 
@@ -1715,8 +1727,8 @@ async fn a_partial_message_is_still_reachable_by_the_interactive_lane() {
 // ---------------------------------------------------------------------------
 
 /// A message carrying one named payload part, text already local.
-async fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
-    let mut message = a_message(mailbox, account, seconds).await;
+fn with_a_payload(mailbox: MailboxId, account: postio_model::AccountId, seconds: i64) -> Message {
+    let mut message = a_message(mailbox, account, seconds);
     message.sync.body_state = BodyState::Partial;
     message.content_type = Some("multipart/mixed".to_owned());
     let mut part = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 1_024);
@@ -1811,7 +1823,7 @@ async fn the_payload_backlog_is_the_partial_messages_still_missing_bytes() {
     done.attachments[0].blob_id = Some(postio_model::BlobId::new("c".repeat(64)));
     messages.create(&mut done).await.expect("create");
 
-    let mut no_text_yet = a_message(inbox, account.id, 405).await;
+    let mut no_text_yet = a_message(inbox, account.id, 405);
     no_text_yet.sync.body_state = BodyState::HeadersOnly;
     messages.create(&mut no_text_yet).await.expect("create");
 
@@ -1870,7 +1882,7 @@ async fn two_messages_from_the_same_sender_share_one_address_row() {
     let messages = MessageRepository::new(&connection);
 
     for uid in [400, 401, 402] {
-        let mut message = a_message(inbox, account.id, uid).await;
+        let mut message = a_message(inbox, account.id, uid);
         // Exactly two correspondents, the same two every time -- the shape a
         // real mailbox has at scale, where a few thousand people account for
         // hundreds of thousands of header rows.
@@ -1886,12 +1898,22 @@ async fn two_messages_from_the_same_sender_share_one_address_row() {
         messages.create(&mut message).await.expect("create");
     }
 
-    let addresses: i64 = connection
-        .query_row("SELECT count(*) FROM addresses", [], |row| row.get(0))
-        .expect("count");
-    let recipients: i64 = connection
-        .query_row("SELECT count(*) FROM recipients", [], |row| row.get(0))
-        .expect("count");
+    let addresses: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM addresses",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
+    let recipients: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM recipients",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
 
     assert_eq!(recipients, 6, "three messages, two addresses each");
     assert_eq!(addresses, 2, "but only two distinct addresses stored");
@@ -1909,31 +1931,33 @@ async fn an_address_is_shared_case_insensitively() {
     let messages = MessageRepository::new(&connection);
 
     for (uid, spelling) in [(410, "Ada@Example.com"), (411, "ada@example.com")] {
-        let mut message = a_message(inbox, account.id, uid).await;
+        let mut message = a_message(inbox, account.id, uid);
         message.from = vec![postio_model::EmailAddress::new(None::<String>, spelling)];
         message.to.clear();
         message.cc.clear();
         messages.create(&mut message).await.expect("create");
     }
 
-    let addresses: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM addresses WHERE address_normalized = 'ada@example.com'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count");
+    let addresses: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM addresses WHERE address_normalized = 'ada@example.com'",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(addresses, 1, "one correspondent, however it was spelled");
 
     // And the row that exists keeps the first spelling seen, rather than
     // flip-flopping as later mail arrives.
-    let stored: String = connection
-        .query_row(
-            "SELECT address FROM addresses WHERE address_normalized = 'ada@example.com'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("the row");
+    let stored: String = postio_storage::sql::one(
+        &connection,
+        "SELECT address FROM addresses WHERE address_normalized = 'ada@example.com'",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the row");
     assert_eq!(stored, "Ada@Example.com");
 }
 
@@ -1947,7 +1971,7 @@ async fn a_message_still_reads_back_the_addresses_it_was_given() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut message = a_message(inbox, account.id, 420).await;
+    let mut message = a_message(inbox, account.id, 420);
     message.from = vec![postio_model::EmailAddress::new(
         Some("Ada Lovelace"),
         "Ada@Example.com",
@@ -1976,12 +2000,12 @@ async fn a_message_still_reads_back_the_addresses_it_was_given() {
 
 /// The shared fixture, but unread — which is the state a message the cursor
 /// has not rested on is in, and the one these tests are about.
-async fn an_unread_message(
+fn an_unread_message(
     mailbox: MailboxId,
     account: postio_model::AccountId,
     seconds: i64,
 ) -> Message {
-    let mut message = a_message(mailbox, account, seconds).await;
+    let mut message = a_message(mailbox, account, seconds);
     message.flags.remove(&postio_model::Flag::Seen);
     message
 }
@@ -2005,7 +2029,7 @@ async fn read_locally_and_enqueue(
             account,
             postio_model::OperationTarget::Message(message),
             &postio_model::Operation::SetFlags { flags },
-            at(0).await,
+            at(0),
         )
         .await
         .expect("enqueue");
@@ -2126,9 +2150,9 @@ async fn a_drained_flag_stops_being_protected() {
     {
         use postio_storage::repository::OperationQueueRepository;
         let queue = OperationQueueRepository::new(&connection);
-        let pending = queue.pending(account.id, at(1).await).await.expect("pending");
+        let pending = queue.pending(account.id, at(1)).await.expect("pending");
         for row in pending {
-            queue.mark_done(row.id, at(2).await).await.expect("settle");
+            queue.mark_done(row.id, at(2)).await.expect("settle");
         }
     }
 
@@ -2158,11 +2182,11 @@ async fn upsert_matches_a_row_by_identity_before_the_wire_pair() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut batch = vec![a_message(inbox, account.id, 40).await];
+    let mut batch = vec![a_message(inbox, account.id, 40)];
     messages.upsert_batch(&mut batch).await.expect("first sync");
     let id = batch[0].id;
 
-    let mut shifted = vec![a_message(inbox, account.id, 40).await];
+    let mut shifted = vec![a_message(inbox, account.id, 40)];
     shifted[0].server.uid = Some(Uid::new(999));
     let report = messages.upsert_batch(&mut shifted).await.expect("second pass");
 
@@ -2382,54 +2406,29 @@ async fn a_fetched_message_with_no_stored_block_is_offered_for_repair() {
 
 #[tokio::test]
 async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
-    // The hazard in repairing one column of three: the row carries a single
-    // `body_dictionary_id` for `body_text`, `body_html` and `body_headers`
-    // together. A repair that compressed the block against a newer dictionary
-    // and updated that id would make the text and html beside it unreadable --
-    // ADR 0020's frames can only be read with the dictionary they were written
-    // against. Losing a message's text to a pass that was only supposed to add
-    // its headers would be the worst possible trade.
-    let database = test_support::memory().await;
-    let connection = database.connect().await.expect("a connection");
+    // The hazard this was written for is gone, and the claim it protects is
+    // not. `body_text`, `body_html` and `body_headers` shared one
+    // `body_dictionary_id`, so a repair that compressed the block against a
+    // newer dictionary made the text and html beside it unreadable -- ADR
+    // 0020's frames can only be read with the dictionary they were written
+    // against. Losing a message's words to a pass that was only supposed to
+    // add its headers is the shape of it.
+    //
+    // The columns are plain TEXT now (`specs/004-turso-store`), so there is
+    // no dictionary to get wrong. What survives is the simpler half:
+    // `set_headers` writes one column and must not touch the other two. That
+    // is still a real way to lose mail -- routing the repair through
+    // `set_body`, which replaces every part, would clear both -- and it is
+    // what this now holds down.
+    let store = test_support::memory().await;
+    let connection = store.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    // A corpus, so that a dictionary exists and the row under test actually
-    // names one. Without this the whole store has `body_dictionary_id` NULL,
-    // the two code paths agree by accident, and this test cannot fail for the
-    // reason it is about.
-    for seed in 0..64 {
-        let mut filler = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
-        let filler_id = messages.create(&mut filler).await.expect("create");
-        messages
-            .set_body(
-                filler_id,
-                &StoredBody {
-                    // 64 messages of real size: `train_dictionary` wants
-                    // MIN_SAMPLES rows and MIN_SAMPLE_BYTES between them, and
-                    // a corpus under either threshold trains nothing at all.
-                    text: Some(
-                        format!(
-                            "On Tuesday the {seed}th, Ada wrote about invoice {seed} and \
-                             the quarterly reconciliation that nobody has finished \
-                             reading yet.\n"
-                        )
-                        .repeat(40),
-                    ),
-                    ..StoredBody::default()
-                },
-                BodyState::Full,
-            )
-            .await
-            .expect("set");
-    }
-    postio_storage::body::train_dictionary(&connection)
-        .expect("train")
-        .expect("a corpus this size trains");
-
     let mut message = postio_model::Message::new(account.id, inbox, chrono::Utc::now());
     let id = messages.create(&mut message).await.expect("create");
-    let words = "the text nobody may lose to a header repair".repeat(20);
+
+    let words = "the difference engine's seventh column".to_owned();
     messages
         .set_body(
             id,
@@ -2440,31 +2439,10 @@ async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
                 headers_truncated: false,
                 encoding_problems: false,
             },
-            BodyState::Full,
+            postio_model::BodyState::Full,
         )
         .await
-        .expect("set");
-
-    // A second dictionary, so "the newest" and "the one this row names" are
-    // different answers. With only one trained they coincide and a repair that
-    // reached for the newest would look correct -- which is the whole failure
-    // this test exists to catch, and it happens in real stores every time the
-    // corpus grows enough to retrain.
-    let second = postio_storage::body::train_dictionary(&connection)
-        .expect("train")
-        .expect("a second dictionary");
-    let named: Option<i64> = connection
-        .query_row(
-            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )
-        .expect("the row");
-    assert_ne!(
-        named,
-        Some(second.get()),
-        "the row must still name the older dictionary, or there is no hazard here"
-    );
+        .expect("store the body");
 
     messages
         .set_headers(
@@ -2477,20 +2455,12 @@ async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
         .await
         .expect("repair");
 
-    let dictionary: Option<i64> = connection
-        .query_row(
-            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )
-        .expect("the row");
-    assert!(
-        dictionary.is_some(),
-        "the row names no dictionary, so this test cannot see the hazard it is about"
-    );
-
     let stored = messages.body(id).await.expect("body").expect("the row");
-    assert_eq!(stored.text.as_deref(), Some(words.as_str()));
+    assert_eq!(
+        stored.text.as_deref(),
+        Some(words.as_str()),
+        "the repair took the message's words with it"
+    );
     assert_eq!(stored.html.as_deref(), Some("<p>and the html</p>"));
     assert_eq!(stored.headers.as_deref(), Some("X-Mailer: mutt"));
     assert!(stored.headers_truncated);
@@ -2517,7 +2487,7 @@ async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_
     let messages = MessageRepository::new(&connection);
 
     let reserved = RfcMessageId::new("<reserved.once@example.com>");
-    let mut ours = a_message(sent, account.id, 20).await;
+    let mut ours = a_message(sent, account.id, 20);
     ours.rfc_message_id = Some(reserved.clone());
     ours.server = Default::default();
     messages.create(&mut ours).await.expect("the local copy");
@@ -2525,7 +2495,7 @@ async fn a_fetched_message_adopts_the_local_copy_we_wrote_before_the_server_had_
 
     // The server's copy of the same message, arriving through an ordinary
     // sync of the Sent folder.
-    let mut fetched = a_message(sent, account.id, 21).await;
+    let mut fetched = a_message(sent, account.id, 21);
     fetched.rfc_message_id = Some(reserved.clone());
     let report = messages
         .upsert_batch(&mut vec![fetched.clone()])
@@ -2580,12 +2550,12 @@ async fn a_fetched_message_does_not_adopt_a_local_row_that_already_has_an_identi
     let messages = MessageRepository::new(&connection);
 
     let shared = RfcMessageId::new("<shared@example.com>");
-    let mut existing = a_message(inbox, account.id, 30).await;
+    let mut existing = a_message(inbox, account.id, 30);
     existing.rfc_message_id = Some(shared.clone());
     messages.create(&mut existing).await.expect("an ordinary message");
     assert!(existing.server.remote_id.is_some());
 
-    let mut fetched = a_message(inbox, account.id, 31).await;
+    let mut fetched = a_message(inbox, account.id, 31);
     fetched.rfc_message_id = Some(shared);
     let report = messages
         .upsert_batch(&mut vec![fetched])

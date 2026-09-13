@@ -374,7 +374,7 @@ async fn the_planner_does_not_use_a_partial_index() {
                 &connection,
                 &format!("EXPLAIN QUERY PLAN SELECT b FROM {table} WHERE a = 1 AND b = 'z'"),
                 (),
-                |row| row.col(3),
+                |row| postio_storage::sql::RowExt::col(row, 3),
             )
             .await
             .expect("explain");

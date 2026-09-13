@@ -40,8 +40,7 @@ fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
               WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
         )
         .expect("prepare");
-    statement
-        .query_map([query], |row| row.get(0))
+    postio_storage::sql::mapped(&mut statement, [query], |row| postio_storage::sql::RowExt::col(row, 0))
         .expect("query")
         .collect::<Result<_>>()
         .expect("rows")
@@ -50,7 +49,7 @@ fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
 fn rows_in(connection: &Connection, table: &str) -> i64 {
     connection
         .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-            row.get(0)
+            postio_storage::sql::RowExt::col(row, 0)
         })
         .expect("count")
 }

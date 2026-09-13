@@ -20,7 +20,7 @@
 use postio_storage::Connection;
 
 
-async fn migrated() -> (postio_storage::Store, Connection) {
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     let store = postio_storage::test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
     (store, connection)
@@ -32,7 +32,7 @@ fn definition(connection: &Connection, index: &str) -> String {
         .query_row(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
             [index],
-            |row| row.get::<_, String>(0),
+            |row| postio_storage::sql::RowExt::col::<String>(row, 0),
         )
         .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
@@ -43,8 +43,8 @@ async fn plan(connection: &Connection, query: &str) -> String {
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
         .await
         .expect("a query plan");
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(3))
+    let rows = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col::<String>(row, 3))
+        .await
         .expect("plan rows")
         .collect::<Result<Vec<_>, _>>()
         .expect("plan rows");

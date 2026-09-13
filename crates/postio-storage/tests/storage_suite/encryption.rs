@@ -102,7 +102,7 @@ async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
     let connection = database.connect().await.expect("checkout");
     let (id, subject): (i64, Option<String>) = connection
         .query_row("SELECT id, subject FROM messages", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))
         })
         .expect("the message written before the store was closed");
     assert_eq!(subject.as_deref(), Some(SECRET_SUBJECT));
@@ -151,9 +151,14 @@ async fn a_wrong_key_never_destroys_what_it_could_not_read() {
 
     let database = Store::open(&path, &key(5)).await.expect("the right key still opens it");
     let connection = database.connect().await.expect("checkout");
-    let count: i64 = connection
-        .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
-        .expect("count");
+    let count: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM messages",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(count, 1, "the mail survived a failed open");
 }
 

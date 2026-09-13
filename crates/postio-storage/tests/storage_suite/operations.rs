@@ -11,11 +11,11 @@ use postio_model::{
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::test_support;
 
-async fn at(hour: u32) -> DateTime<Utc> {
+fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
 }
 
-async fn flags(raw: &str) -> FlagSet {
+fn flags(raw: &str) -> FlagSet {
     raw.split_whitespace().map(Flag::parse).collect()
 }
 
@@ -43,23 +43,23 @@ async fn set_seen(connection: &Connection, message: MessageId) {
         .expect("flag the message locally");
 }
 
-async fn is_seen(connection: &Connection, message: MessageId) -> bool {
+fn is_seen(connection: &Connection, message: MessageId) -> bool {
     connection
         .query_row(
             "SELECT seen FROM messages WHERE id = ?1",
             [message.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
         .expect("read the message")
         == 1
 }
 
-async fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
+fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
     connection
         .query_row(
             "SELECT has_pending_operations FROM messages WHERE id = ?1",
             [message.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
         .expect("read the message")
         == 1
@@ -106,7 +106,7 @@ async fn an_enqueued_operation_round_trips_with_its_inverse() {
             fixture.account.id,
             OperationTarget::Message(message),
             &archive,
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -139,10 +139,10 @@ async fn every_operation_type_survives_the_round_trip() {
 
     let operations = [
         Operation::SetFlags {
-            flags: flags("\\Seen").await,
+            flags: flags("\\Seen"),
         },
         Operation::ClearFlags {
-            flags: flags("\\Seen \\Flagged").await,
+            flags: flags("\\Seen \\Flagged"),
         },
         Operation::Move {
             from: fixture.inbox,
@@ -158,7 +158,7 @@ async fn every_operation_type_survives_the_round_trip() {
         Operation::Append {
             mailbox: fixture.archive,
             blob: BlobId::new("abc123"),
-            flags: flags("\\Seen").await,
+            flags: flags("\\Seen"),
         },
         Operation::Send {
             draft: DraftId::new(1),
@@ -171,7 +171,7 @@ async fn every_operation_type_survives_the_round_trip() {
                 fixture.account.id,
                 OperationTarget::Message(message),
                 operation,
-                at(9).await,
+                at(9),
             )
             .await
             .expect("enqueue");
@@ -188,7 +188,7 @@ async fn every_operation_type_survives_the_round_trip() {
 
     assert_eq!(
         queue
-            .pending(fixture.account.id, at(9).await)
+            .pending(fixture.account.id, at(9))
             .await
             .expect("pending")
             .len(),
@@ -210,7 +210,7 @@ async fn an_irreversible_operation_stores_no_inverse() {
             &Operation::Expunge {
                 mailbox: fixture.trash,
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -235,12 +235,12 @@ async fn undoing_enqueues_the_inverse_down_the_same_path() {
                 from: fixture.inbox,
                 to: fixture.archive,
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
 
-    let undo = queue.enqueue_inverse(&archived, at(10).await).await.expect("undo");
+    let undo = queue.enqueue_inverse(&archived, at(10)).await.expect("undo");
 
     assert_eq!(
         undo.operation,
@@ -268,13 +268,13 @@ async fn there_is_no_inverse_to_enqueue_for_an_irreversible_operation() {
             &Operation::Expunge {
                 mailbox: fixture.trash,
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
 
     assert!(matches!(
-        queue.enqueue_inverse(&expunge, at(10).await).await,
+        queue.enqueue_inverse(&expunge, at(10)).await,
         Err(postio_storage::Error::NotUndoable { op_type }) if op_type == "expunge"
     ));
 }
@@ -297,9 +297,9 @@ async fn the_local_write_and_the_enqueue_commit_together() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -308,7 +308,7 @@ async fn the_local_write_and_the_enqueue_commit_together() {
     assert!(is_seen(&connection, message));
     assert_eq!(
         OperationQueueRepository::new(&connection)
-            .pending(fixture.account.id, at(9).await)
+            .pending(fixture.account.id, at(9))
             .await
             .expect("pending")
             .len(),
@@ -330,9 +330,9 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -341,7 +341,7 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
     assert!(!is_seen(&connection, message), "the local write is gone");
     assert!(
         OperationQueueRepository::new(&connection)
-            .pending(fixture.account.id, at(9).await)
+            .pending(fixture.account.id, at(9))
             .await
             .expect("pending")
             .is_empty(),
@@ -365,9 +365,9 @@ async fn enqueueing_marks_the_message_as_having_work_outstanding() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -397,9 +397,10 @@ async fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let fixture = fixture(&connection).await;
-    let messages: Vec<MessageId> = (0..5)
-        .map(|_| insert_message(&connection, fixture.inbox).await)
-        .collect();
+    let mut messages: Vec<MessageId> = Vec::new();
+    for _ in (0..5) {
+        messages.push(insert_message(&connection, fixture.inbox).await);
+    }
     let queue = OperationQueueRepository::new(&connection);
     let archive = Operation::Move {
         from: fixture.inbox,
@@ -407,11 +408,11 @@ async fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
     };
 
     queue
-        .enqueue_many(fixture.account.id, &messages, &archive, at(9).await)
+        .enqueue_many(fixture.account.id, &messages, &archive, at(9))
         .await
         .expect("enqueue many");
 
-    let rows = queue.pending(fixture.account.id, at(9).await).await.expect("pending");
+    let rows = queue.pending(fixture.account.id, at(9)).await.expect("pending");
     assert_eq!(
         rows.iter().map(|row| row.target).collect::<Vec<_>>(),
         messages
@@ -437,9 +438,10 @@ async fn enqueueing_many_marks_every_message_as_having_work_outstanding() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let fixture = fixture(&connection).await;
-    let messages: Vec<MessageId> = (0..3)
-        .map(|_| insert_message(&connection, fixture.inbox).await)
-        .collect();
+    let mut messages: Vec<MessageId> = Vec::new();
+    for _ in (0..3) {
+        messages.push(insert_message(&connection, fixture.inbox).await);
+    }
     let queue = OperationQueueRepository::new(&connection);
 
     for message in &messages {
@@ -451,9 +453,9 @@ async fn enqueueing_many_marks_every_message_as_having_work_outstanding() {
             fixture.account.id,
             &messages,
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue many");
@@ -478,16 +480,16 @@ async fn enqueueing_many_with_no_ids_writes_nothing() {
             fixture.account.id,
             &[],
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue many, of nothing");
 
     assert!(
         queue
-            .pending(fixture.account.id, at(9).await)
+            .pending(fixture.account.id, at(9))
             .await
             .expect("pending")
             .is_empty()
@@ -513,14 +515,14 @@ async fn the_queue_survives_a_restart_in_enqueue_order() {
 
         expected = vec![
             Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
             Operation::Move {
                 from: fixture.inbox,
                 to: fixture.archive,
             },
             Operation::ClearFlags {
-                flags: flags("\\Flagged").await,
+                flags: flags("\\Flagged"),
             },
             Operation::Delete {
                 from: fixture.archive,
@@ -533,7 +535,7 @@ async fn the_queue_survives_a_restart_in_enqueue_order() {
                     account_id,
                     OperationTarget::Message(message),
                     operation,
-                    at(9 + index as u32).await,
+                    at(9 + index as u32),
                 )
                 .await
                 .expect("enqueue");
@@ -549,7 +551,7 @@ async fn the_queue_survives_a_restart_in_enqueue_order() {
     .expect("reopen");
     let connection = reopened.connect().await.expect("checkout");
     let drained: Vec<Operation> = OperationQueueRepository::new(&connection)
-        .pending(account_id, at(20).await)
+        .pending(account_id, at(20))
         .await
         .expect("pending")
         .into_iter()
@@ -575,9 +577,9 @@ async fn a_backed_off_operation_is_skipped_until_its_time() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -586,26 +588,26 @@ async fn a_backed_off_operation_is_skipped_until_its_time() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::ClearFlags {
-                flags: flags("\\Flagged").await,
+                flags: flags("\\Flagged"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
 
     queue
-        .defer(first.id, at(12).await, "connection reset")
+        .defer(first.id, at(12), "connection reset")
         .await
         .expect("defer");
 
-    let ready = queue.pending(fixture.account.id, at(10).await).await.expect("pending");
+    let ready = queue.pending(fixture.account.id, at(10)).await.expect("pending");
     assert_eq!(
         ready.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![second.id],
         "the deferred row is not due yet"
     );
 
-    let later = queue.pending(fixture.account.id, at(13).await).await.expect("pending");
+    let later = queue.pending(fixture.account.id, at(13)).await.expect("pending");
     assert_eq!(
         later.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![first.id, second.id],
@@ -632,9 +634,9 @@ async fn a_scheduled_operation_is_skipped_until_its_send_time() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -643,7 +645,7 @@ async fn a_scheduled_operation_is_skipped_until_its_send_time() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::ClearFlags {
-                flags: flags("\\Flagged").await,
+                flags: flags("\\Flagged"),
             },
             at(9),
             at(15),
@@ -651,14 +653,14 @@ async fn a_scheduled_operation_is_skipped_until_its_send_time() {
         .await
         .expect("enqueue_not_before");
 
-    let too_early = queue.pending(fixture.account.id, at(12).await).await.expect("pending");
+    let too_early = queue.pending(fixture.account.id, at(12)).await.expect("pending");
     assert_eq!(
         too_early.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![immediate.id],
         "the scheduled row is not due yet"
     );
 
-    let due = queue.pending(fixture.account.id, at(15).await).await.expect("pending");
+    let due = queue.pending(fixture.account.id, at(15)).await.expect("pending");
     assert_eq!(
         due.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![immediate.id, scheduled.id],
@@ -668,7 +670,7 @@ async fn a_scheduled_operation_is_skipped_until_its_send_time() {
     let row = queue.get(scheduled.id).await.expect("get").expect("the row");
     assert_eq!(
         row.next_attempt_at,
-        Some(at(15)).await,
+        Some(at(15)),
         "the not-before time is stored verbatim, restart-safe in the row itself"
     );
     assert_eq!(row.attempts, 0, "no attempt has been made yet");
@@ -689,17 +691,17 @@ async fn an_operation_left_in_flight_by_a_crash_is_retried_rather_than_dropped()
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
-    queue.mark_in_flight(queued.id, at(9).await).await.expect("in flight");
+    queue.mark_in_flight(queued.id, at(9)).await.expect("in flight");
 
     assert!(
         queue
-            .pending(fixture.account.id, at(10).await)
+            .pending(fixture.account.id, at(10))
             .await
             .expect("pending")
             .is_empty(),
@@ -708,14 +710,14 @@ async fn an_operation_left_in_flight_by_a_crash_is_retried_rather_than_dropped()
 
     // The crash, and the next start.
     let recovered = queue
-        .requeue_in_flight(fixture.account.id, at(11).await)
+        .requeue_in_flight(fixture.account.id, at(11))
         .await
         .expect("requeue");
 
     assert_eq!(recovered, 1);
     assert_eq!(
         queue
-            .pending(fixture.account.id, at(11).await)
+            .pending(fixture.account.id, at(11))
             .await
             .expect("pending")
             .len(),
@@ -737,9 +739,9 @@ async fn a_settled_operation_stops_appearing_in_the_queue() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::SetFlags {
-                flags: flags("\\Seen").await,
+                flags: flags("\\Seen"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -748,28 +750,28 @@ async fn a_settled_operation_stops_appearing_in_the_queue() {
             fixture.account.id,
             OperationTarget::Message(message),
             &Operation::ClearFlags {
-                flags: flags("\\Flagged").await,
+                flags: flags("\\Flagged"),
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
 
-    queue.mark_done(done.id, at(10).await).await.expect("done");
+    queue.mark_done(done.id, at(10)).await.expect("done");
     queue
-        .mark_failed(failed.id, at(10).await, "no such mailbox")
+        .mark_failed(failed.id, at(10), "no such mailbox")
         .await
         .expect("failed");
 
     assert!(
         queue
-            .pending(fixture.account.id, at(11).await)
+            .pending(fixture.account.id, at(11))
             .await
             .expect("pending")
             .is_empty()
     );
     assert!(
-        !has_pending_column(&connection, message).await,
+        !has_pending_column(&connection, message),
         "and the message stops advertising outstanding work"
     );
     assert_eq!(
@@ -794,14 +796,14 @@ async fn operations_for_another_account_are_never_drained_together() {
             &Operation::Expunge {
                 mailbox: first.inbox,
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
 
     assert_eq!(
         queue
-            .pending(first.account.id, at(9).await)
+            .pending(first.account.id, at(9))
             .await
             .expect("pending")
             .len(),
@@ -809,7 +811,7 @@ async fn operations_for_another_account_are_never_drained_together() {
     );
     assert!(
         queue
-            .pending(second.account.id, at(9).await)
+            .pending(second.account.id, at(9))
             .await
             .expect("pending")
             .is_empty()
@@ -839,7 +841,7 @@ async fn deleting_an_account_takes_its_queue_with_it() {
             &Operation::Expunge {
                 mailbox: fixture.inbox,
             },
-            at(9).await,
+            at(9),
         )
         .await
         .expect("enqueue");
@@ -854,7 +856,7 @@ async fn deleting_an_account_takes_its_queue_with_it() {
 
     assert!(
         queue
-            .pending(fixture.account.id, at(9).await)
+            .pending(fixture.account.id, at(9))
             .await
             .expect("pending")
             .is_empty()

@@ -63,7 +63,7 @@ fn dictionaries(database: &postio_storage::test_support::TempStore) -> i64 {
     let connection = database.connection().expect("checkout");
     connection
         .query_row("SELECT count(*) FROM body_dictionaries", [], |row| {
-            row.get(0)
+            postio_storage::sql::RowExt::col(row, 0)
         })
         .expect("count dictionaries")
 }
@@ -114,7 +114,7 @@ fn bodies_written_before_the_dictionary_still_read_after_it() {
     let before: Vec<(i64, String)> = connection
         .prepare("SELECT id FROM messages ORDER BY id")
         .expect("prepare")
-        .query_map([], |row| row.get::<_, i64>(0))
+        .query_map([], |row| postio_storage::sql::RowExt::col::<i64>(row, 0))
         .expect("query")
         .map(|id| {
             let id = postio_model::MessageId::new(id.expect("an id"));
@@ -170,13 +170,14 @@ fn a_body_written_after_the_pass_uses_the_dictionary_and_reads_back() {
         )
         .expect("store a body");
 
-    let named: Option<i64> = connection
-        .query_row(
-            "SELECT body_dictionary_id FROM messages WHERE id = ?1",
-            [id.get()],
-            |row| row.get(0),
-        )
-        .expect("the column");
+    let named: Option<i64> = postio_storage::sql::one(
+        &connection,
+        "SELECT body_dictionary_id FROM messages WHERE id = ?1",
+        [id.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the column");
     assert!(
         named.is_some(),
         "a write after the pass must use the dictionary the pass trained"

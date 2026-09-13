@@ -87,7 +87,7 @@ pub fn clicking_a_message_fills_the_reading_pane() {
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 [],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a count")
     };

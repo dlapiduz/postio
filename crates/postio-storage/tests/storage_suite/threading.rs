@@ -4,7 +4,6 @@
 //! The linkage *rule* is unit-tested in `postio-model`; what is tested here is
 //! that the index answering it is the one the schema can serve cheaply.
 
-use std::cell::Cell;
 
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_storage::Connection;
@@ -19,7 +18,7 @@ async fn at(minute: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + TimeDelta::minutes(minute)
 }
 
-async fn id(raw: &str) -> RfcMessageId {
+fn id(raw: &str) -> RfcMessageId {
     RfcMessageId::new(raw)
 }
 
@@ -34,7 +33,7 @@ async fn file(
     subject: &str,
 ) -> (MessageId, ThreadId) {
     let mut message = Message::new(account, mailbox, at(minute).await);
-    message.rfc_message_id = Some(id(message_id).await);
+    message.rfc_message_id = Some(id(message_id));
     message.references = references.iter().map(|r| id(r)).collect();
     message.subject = Some(subject.to_owned());
     let message_id = MessageRepository::new(connection)
@@ -219,8 +218,8 @@ async fn a_late_message_that_links_two_threads_merges_them() {
 
     // The message that references both turns up.
     let mut linker = Message::new(account.id, inbox, at(3).await);
-    linker.rfc_message_id = Some(id("<a@example.com>").await);
-    linker.references = vec![id("<x@example.com>").await];
+    linker.rfc_message_id = Some(id("<a@example.com>"));
+    linker.references = vec![id("<x@example.com>")];
     linker.subject = Some("Contract and notes".to_owned());
     let linker_id = MessageRepository::new(&connection)
         .create(&mut linker)
@@ -276,8 +275,8 @@ async fn a_merge_moves_the_claimed_ids_onto_the_surviving_thread() {
     ).await;
 
     let mut linker = Message::new(account.id, inbox, at(3).await);
-    linker.rfc_message_id = Some(id("<a@example.com>").await);
-    linker.references = vec![id("<x@example.com>").await];
+    linker.rfc_message_id = Some(id("<a@example.com>"));
+    linker.references = vec![id("<x@example.com>")];
     linker.subject = Some("A and X".to_owned());
     MessageRepository::new(&connection)
         .create(&mut linker)
@@ -474,7 +473,7 @@ async fn filing_the_same_message_twice_changes_nothing() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mut message = Message::new(account.id, inbox, at(0).await);
-    message.rfc_message_id = Some(id("<a@example.com>").await);
+    message.rfc_message_id = Some(id("<a@example.com>"));
     message.subject = Some("Contract".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
@@ -493,19 +492,6 @@ async fn filing_the_same_message_twice_changes_nothing() {
 // ---------------------------------------------------------------------------
 // Cost — the acceptance criterion
 // ---------------------------------------------------------------------------
-
-thread_local! {
-    static STATEMENTS: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Counts every statement SQLite starts running.
-///
-/// A plain `fn`, not a closure: that is what `trace_v2` takes.
-async fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
-    if matches!(event, rusqlite::trace::TraceEvent::Stmt(..)) {
-        STATEMENTS.with(|count| count.set(count.get() + 1));
-    }
-}
 
 /// Fills a mailbox with `threads` separate conversations of three messages each,
 /// then measures what it costs to file one more message into a new thread.
@@ -539,26 +525,25 @@ async fn cost_of_one_more(threads: i64) -> usize {
     }
 
     let mut message = Message::new(account.id, inbox, at(100_000).await);
-    message.rfc_message_id = Some(id("<new@example.com>").await);
-    message.references = vec![id("<gone-a@example.com>").await, id("<gone-b@example.com>").await];
+    message.rfc_message_id = Some(id("<new@example.com>"));
+    message.references = vec![id("<gone-a@example.com>"), id("<gone-b@example.com>")];
     message.subject = Some("Something else".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
         .await
         .expect("create");
 
-    STATEMENTS.with(|count| count.set(0));
-    connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_statement),
-    );
+    // Counted through `test_support::counting` rather than a trace hook of
+    // this file's own: there is no trace hook to install any more, and the
+    // shared instrument counts at the seam every read goes through. See its
+    // documentation for what that can and cannot see -- statements, which is
+    // exactly what this test is written in.
+    postio_storage::test_support::counting::reset();
     ThreadingRepository::new(&connection, account.id)
         .thread(&message)
         .await
         .expect("thread");
-    connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-
-    STATEMENTS.with(Cell::get)
+    postio_storage::test_support::counting::here().statements
 }
 
 #[tokio::test]
@@ -589,7 +574,7 @@ async fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
     let borrowed: Vec<&str> = references.iter().map(String::as_str).collect();
 
     let mut message = Message::new(account.id, inbox, at(0).await);
-    message.rfc_message_id = Some(id("<deep@example.com>").await);
+    message.rfc_message_id = Some(id("<deep@example.com>"));
     message.references = borrowed.iter().map(|r| id(r)).collect();
     message.subject = Some("Re: Long".to_owned());
     MessageRepository::new(&connection)
@@ -597,17 +582,12 @@ async fn a_long_reference_chain_costs_a_lookup_per_reference_and_no_more() {
         .await
         .expect("create");
 
-    STATEMENTS.with(|count| count.set(0));
-    connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_statement),
-    );
+    postio_storage::test_support::counting::reset();
     ThreadingRepository::new(&connection, account.id)
         .thread(&message)
         .await
         .expect("thread");
-    connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-    let statements = STATEMENTS.with(Cell::get);
+    let statements = postio_storage::test_support::counting::here().statements;
 
     // One lookup and one claim per reference, plus the handful for the thread
     // itself. Linear in the conversation, which is what O(thread) means.
@@ -663,11 +643,12 @@ async fn the_corpus_mailing_list_threads_as_one_conversation() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threads: Vec<ThreadId> = LIST_THREAD
-        .iter()
-        .enumerate()
-        .map(|(index, name)| file_fixture(&connection, account.id, inbox, index as i64, name).await)
-        .collect();
+    // A loop rather than `map().collect()`: the write awaits, and a closure
+    // cannot.
+    let mut threads: Vec<ThreadId> = Vec::new();
+    for (index, name) in LIST_THREAD.iter().enumerate() {
+        threads.push(file_fixture(&connection, account.id, inbox, index as i64, name).await);
+    }
 
     let first = threads[0];
     for (name, thread) in LIST_THREAD.iter().zip(&threads) {
@@ -816,7 +797,7 @@ async fn rethreading_never_moves_a_message_out_of_a_thread_it_shares_with_others
     // A third message with no reference at all, but the same subject as the
     // thread above -- it must not drag `root_thread`'s other member along.
     let mut orphan = Message::new(account.id, inbox, at(2).await);
-    orphan.rfc_message_id = Some(id("<orphan@example.net>").await);
+    orphan.rfc_message_id = Some(id("<orphan@example.net>"));
     orphan.subject = Some("Re: Quarterly numbers".to_owned());
     let orphan_id = MessageRepository::new(&connection)
         .create(&mut orphan)

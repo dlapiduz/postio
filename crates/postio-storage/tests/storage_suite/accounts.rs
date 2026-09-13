@@ -92,7 +92,7 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
         .query_row(
             "SELECT incoming_security, outgoing_security, auth_method FROM accounts",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?)),
         )
         .expect("read the raw row");
 
@@ -244,9 +244,14 @@ async fn updating_reconciles_the_identity_list() {
     assert_eq!(stored.identities[1].display_name, "Renamed");
     assert!(stored.identities[0].is_default);
 
-    let orphans: i64 = connection
-        .query_row("SELECT count(*) FROM identities", [], |row| row.get(0))
-        .expect("count");
+    let orphans: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM identities",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(orphans, 2, "the removed identity's row is gone");
 }
 
@@ -376,11 +381,14 @@ async fn deleting_an_account_takes_everything_that_hangs_off_it() {
         "threads",
         "operation_queue",
     ] {
-        let remaining: i64 = connection
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .expect("count");
+        let remaining: i64 = postio_storage::sql::one(
+            &connection,
+            &format!("SELECT count(*) FROM {table}"),
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("count");
         assert_eq!(remaining, 0, "{table} should have been cascaded away");
     }
 
@@ -514,9 +522,14 @@ async fn reaping_cascades_exactly_like_an_ordinary_delete() {
 
     accounts.reap_pending_deletions().await.expect("reap");
 
-    let remaining: i64 = connection
-        .query_row("SELECT count(*) FROM mailboxes", [], |row| row.get(0))
-        .expect("count");
+    let remaining: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM mailboxes",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(remaining, 0, "reaping did not cascade");
 }
 

@@ -42,13 +42,14 @@ const ONLY_IN_THE_SECOND: &str = "photogrammetry";
 /// Put a message carrying [`ONLY_IN_THE_SECOND`] in `account`'s first mailbox.
 fn plant(database: &Database, account: postio_model::AccountId) -> postio_model::MessageId {
     let connection = database.connection().expect("a connection");
-    let mailbox: i64 = connection
-        .query_row(
-            "SELECT id FROM mailboxes WHERE account_id = ?1 ORDER BY id LIMIT 1",
-            [account.get()],
-            |row| row.get(0),
-        )
-        .expect("the seeded account has a mailbox");
+    let mailbox: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT id FROM mailboxes WHERE account_id = ?1 ORDER BY id LIMIT 1",
+        [account.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the seeded account has a mailbox");
     let mut message = Message::new(
         account,
         postio_model::MailboxId::new(mailbox),

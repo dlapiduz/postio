@@ -35,10 +35,10 @@ async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns()
     let _ = messages.page(&page(1)).await.expect("a first read");
 
     let mut one_row = 0;
-    let one = counted(|| one_row = messages.page(&page(1)).await.expect("one row").len());
+    let one = counted_async(|| async { one_row = messages.page(&page(1)).await.expect("one row").len() }).await;
 
     let mut many_rows = 0;
-    let many = counted(|| many_rows = messages.page(&page(25)).await.expect("a page").len());
+    let many = counted_async(|| async { many_rows = messages.page(&page(25)).await.expect("a page").len() }).await;
 
     assert_eq!(one_row, 1, "a page of one should return one row");
     assert!(
@@ -88,7 +88,7 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     };
 
     let mut rows = Vec::new();
-    let first = counted(|| rows = messages.page(&query).await.expect("a first page"));
+    let first = counted_async(|| async { rows = messages.page(&query).await.expect("a first page") }).await;
     assert_eq!(
         rows.len(),
         limit as usize,
@@ -108,7 +108,7 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     // deliberately broken" — this demonstrates that without ever breaking the
     // code under test, and it keeps demonstrating it. Raise `ceiling` above
     // what a full read costs and this is what stops passing.
-    let whole = counted(|| {
+    let whole = counted_async(|| async {
         let _ = messages
             .page(&ListQuery {
                 scope: ListScope::Mailbox(inbox),
@@ -117,7 +117,8 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
             })
             .await
             .expect("the folder read whole");
-    });
+    })
+    .await;
     assert!(
         whole.rows > ceiling,
         "reading the whole folder produced {} rows, which is inside the \
@@ -140,7 +141,7 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     let mut cursor = rows.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
-        deep = counted(|| {
+        deep = counted_async(|| async {
             rows = messages
                 .page(&ListQuery {
                     scope: ListScope::Mailbox(inbox),
@@ -149,7 +150,8 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
                 })
                 .await
                 .expect("a deep page");
-        });
+        })
+        .await;
         assert_eq!(rows.len(), limit as usize);
         cursor = rows.last().expect("a last row").cursor();
     }
@@ -198,7 +200,7 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
     let _ = messages.page(&query).await.expect("a first read");
 
     let mut returned = 0;
-    let counts = counted(|| returned = messages.page(&query).await.expect("a page").len());
+    let counts = counted_async(|| async { returned = messages.page(&query).await.expect("a page").len() }).await;
 
     assert_eq!(returned, 20, "the seed should fill the page");
     assert_eq!(

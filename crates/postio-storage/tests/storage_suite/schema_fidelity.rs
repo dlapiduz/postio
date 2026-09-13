@@ -20,7 +20,7 @@ use postio_model::{
     EmailAddress, Flag, FlagSet, Label, Mailbox, MailboxRole, Message, RfcMessageId, Thread,
 };
 
-async fn migrated() -> (postio_storage::Store, Connection) {
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     let store = postio_storage::test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
     (store, connection)
@@ -261,29 +261,27 @@ async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
         .query_row(
             "SELECT id FROM addresses WHERE address_normalized = ?1",
             [address.normalized()],
-            |row| row.get(0),
+            |row| postio_storage::sql::RowExt::col(row, 0),
         )
         .expect("the address row")
 }
 
 async fn read_addresses(connection: &Connection, message_id: i64, kind: &str) -> Vec<EmailAddress> {
-    connection
-        .prepare(
-            "SELECT r.name, a.address FROM recipients r
-               JOIN addresses a ON a.id = r.address_id
-             WHERE message_id = ?1 AND kind = ?2 ORDER BY position",
-        )
-        .await
-        .expect("prepare")
-        .query_map(bind![message_id, kind], |row| {
+    postio_storage::sql::all(
+        connection,
+        "SELECT r.name, a.address FROM recipients r
+           JOIN addresses a ON a.id = r.address_id
+         WHERE message_id = ?1 AND kind = ?2 ORDER BY position",
+        bind![message_id, kind],
+        |row| {
             Ok(EmailAddress {
-                name: row.get(0)?,
-                address: row.get(1)?,
+                name: postio_storage::sql::RowExt::col(row, 0)?,
+                address: postio_storage::sql::RowExt::col(row, 1)?,
             })
-        })
-        .expect("query")
-        .collect::<Result<_, _>>()
-        .expect("collect")
+        },
+    )
+    .await
+    .expect("query")
 }
 
 /// The columns of a `messages` row this test reads back, so the round trip is
@@ -320,15 +318,15 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
             [message_id],
             |row| {
                 Ok(StoredMessage {
-                    subject: row.get(0)?,
-                    date: row.get(1)?,
-                    received_at: row.get(2)?,
-                    size: row.get(3)?,
-                    preview: row.get(4)?,
-                    flags: row.get(5)?,
-                    body_state: row.get(6)?,
-                    remote_id: row.get(7)?,
-                    raw_blob_id: row.get(8)?,
+                    subject: postio_storage::sql::RowExt::col(row, 0)?,
+                    date: postio_storage::sql::RowExt::col(row, 1)?,
+                    received_at: postio_storage::sql::RowExt::col(row, 2)?,
+                    size: postio_storage::sql::RowExt::col(row, 3)?,
+                    preview: postio_storage::sql::RowExt::col(row, 4)?,
+                    flags: postio_storage::sql::RowExt::col(row, 5)?,
+                    body_state: postio_storage::sql::RowExt::col(row, 6)?,
+                    remote_id: postio_storage::sql::RowExt::col(row, 7)?,
+                    raw_blob_id: postio_storage::sql::RowExt::col(row, 8)?,
                 })
             },
         )
@@ -368,13 +366,14 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
     assert_eq!(read_addresses(&connection, message_id, "bcc").await, message.bcc);
 
     // The reference chain that JWZ threading walks survives verbatim, in order.
-    let references: String = connection
-        .query_row(
-            "SELECT reference_ids FROM messages WHERE id = ?1",
-            [message_id],
-            |row| row.get(0),
-        )
-        .expect("references");
+    let references: String = postio_storage::sql::one(
+        &connection,
+        "SELECT reference_ids FROM messages WHERE id = ?1",
+        [message_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("references");
     let restored: Vec<RfcMessageId> = references
         .split_whitespace()
         .map(RfcMessageId::new)
@@ -484,11 +483,11 @@ async fn attachment_metadata_round_trips_without_the_bytes() {
             [],
             |row| {
                 Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
+                    postio_storage::sql::RowExt::col(row, 0)?,
+                    postio_storage::sql::RowExt::col(row, 1)?,
+                    postio_storage::sql::RowExt::col(row, 2)?,
+                    postio_storage::sql::RowExt::col(row, 3)?,
+                    postio_storage::sql::RowExt::col(row, 4)?,
                 ))
             },
         )
@@ -567,13 +566,14 @@ async fn a_draft_and_its_recipients_are_storable() {
             .expect("insert draft recipient");
     }
 
-    let count: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM recipients WHERE draft_id = ?1",
-            [draft_id],
-            |row| row.get(0),
-        )
-        .expect("count");
+    let count: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM recipients WHERE draft_id = ?1",
+        [draft_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(count, 2);
 }
 
@@ -648,13 +648,14 @@ async fn a_thread_and_its_membership_are_storable() {
             .await
             .expect("insert thread member");
     }
-    let members: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM messages WHERE thread_id = ?1",
-            [thread_id],
-            |row| row.get(0),
-        )
-        .expect("count members");
+    let members: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM messages WHERE thread_id = ?1",
+        [thread_id],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count members");
     assert_eq!(members, 2);
 }
 
@@ -703,9 +704,14 @@ async fn labels_apply_to_many_messages_and_cascade() {
         .execute("DELETE FROM labels WHERE id = ?1", [label_id])
         .await
         .expect("delete label");
-    let remaining: i64 = connection
-        .query_row("SELECT count(*) FROM message_labels", [], |row| row.get(0))
-        .expect("count");
+    let remaining: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM message_labels",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(remaining, 0, "deleting a label unapplies it");
 }
 
@@ -736,7 +742,7 @@ async fn a_contact_accumulates_sightings() {
         .query_row(
             "SELECT address_normalized, times_seen FROM contacts",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
         )
         .expect("read contact");
     assert_eq!(normalized, "alice@example.com");

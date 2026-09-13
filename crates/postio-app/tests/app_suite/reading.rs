@@ -100,7 +100,7 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 [],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a count")
     };

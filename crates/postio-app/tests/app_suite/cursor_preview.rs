@@ -106,7 +106,7 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 [],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a count")
     };

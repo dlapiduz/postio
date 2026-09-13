@@ -141,7 +141,7 @@ async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
 
     let threads: Vec<_> = (0..8)
         .map(|n| {
-            let gate = gate.await.clone();
+            let gate = gate.clone();
             let holders = Arc::clone(&holders);
             let peak = Arc::clone(&peak);
             let priority = if n % 2 == 0 {
