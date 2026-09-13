@@ -100,7 +100,7 @@ fn wait(time: Duration) {
     let context = gtk::glib::MainContext::default();
     while std::time::Instant::now() < deadline {
         while context.iteration(false) {}
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     pump();
 }

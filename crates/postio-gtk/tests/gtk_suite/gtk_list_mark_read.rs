@@ -256,9 +256,9 @@ fn pump_until(done: impl Fn() -> bool) {
         std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
     while std::time::Instant::now() < deadline {
         pump();
-        if done().await {
+        if done() {
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

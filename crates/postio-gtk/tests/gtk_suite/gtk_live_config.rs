@@ -37,7 +37,7 @@ fn settle_for(grace: Duration) {
     let deadline = Instant::now() + grace;
     while Instant::now() < deadline {
         settle();
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     settle();
 }

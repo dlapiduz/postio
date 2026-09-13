@@ -180,7 +180,7 @@ fn wait_for(flag: &Rc<RefCell<bool>>, timeout: Duration) {
     let deadline = Instant::now() + postio_test_support::scaled(timeout);
     while !*flag.borrow() && Instant::now() < deadline {
         while glib::MainContext::default().iteration(false) {}
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(*flag.borrow(), "the WebView never finished loading");
 }
@@ -195,6 +195,6 @@ fn pump_for(duration: Duration) {
     let deadline = Instant::now() + duration;
     while Instant::now() < deadline {
         glib::MainContext::default().iteration(false);
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
