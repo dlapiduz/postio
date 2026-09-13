@@ -323,6 +323,42 @@ pub fn typing_a_mode_prefix_does_not_warn_gtk() {
         warnings.lock().unwrap()
     );
 
+    // ── backing out of a mode, under the same watch ──────────────────────
+    // The gesture the ⌫ cap now advertises, so it is pressed far more often
+    // than when it was folklore. `set_query` replaces the whole text through
+    // `set_text`, which opens an irreversible action of its own -- the same
+    // nesting #758 fixed in `retype`, reached by a different door.
+    for prefix in ["#", ">", "@"] {
+        window.close_finder();
+        window.open_finder(Mode::Search);
+        pump();
+        field(&window).emit_by_name::<()>("insert-at-cursor", &[&prefix]);
+        pump();
+        field(&window).emit_by_name::<()>("insert-at-cursor", &[&"ada"]);
+        pump();
+        field(&window).set_position(0);
+        assert!(
+            finder.press_backspace(),
+            "`{prefix}` put the box in a mode, so there is one to back out of"
+        );
+        pump();
+        assert_eq!(
+            finder.mode(),
+            Mode::Search,
+            "backing out of `{prefix}` returns to search"
+        );
+        assert_eq!(
+            finder.query().text,
+            "ada",
+            "and keeps what was typed, which is why it is worth advertising"
+        );
+    }
+    assert!(
+        warnings.lock().unwrap().is_empty(),
+        "backing out of a mode should not warn GTK: {:?}",
+        warnings.lock().unwrap()
+    );
+
     window.destroy();
 }
 
