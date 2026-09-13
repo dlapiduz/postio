@@ -26,7 +26,7 @@ use postio_storage::{BlobStore, test_support};
 /// File a message carrying one inline part with `content_id`, and hand back
 /// the message's id.
 fn message_with_part(
-    connection: &postio_storage::PooledConnection,
+    connection: &postio_storage::Checkout,
     blobs: &BlobStore,
     account: postio_model::ids::AccountId,
     mailbox: postio_model::ids::MailboxId,

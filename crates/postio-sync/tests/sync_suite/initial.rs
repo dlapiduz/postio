@@ -34,31 +34,60 @@ async fn server_with_messages(count: u32) -> MockBackend {
 }
 
 /// An account with an empty local `INBOX` — nothing synced yet.
-fn local(connection: &Connection) -> (AccountId, Mailbox) {
+async fn local(connection: &Connection) -> (AccountId, Mailbox) {
     let account = test_support::account(connection).await;
     let inbox = test_support::mailbox(connection, &account, INBOX).await;
     (account.id, inbox)
 }
 
-fn known_uids(
+/// The UIDs a reader would see in `mailbox_id`, right now, from a sync
+/// context.
+///
+/// The progress callback is `FnMut(Progress)` and is called from inside the
+/// sync pass, which is what makes this awkward: the assertion these tests want
+/// is about *committed state at each checkpoint*, and reading it means
+/// awaiting from a place that cannot await.
+///
+/// `block_in_place` is the answer, and the two conditions that make it sound
+/// are both met here. The runtime must be `multi_thread`, so the worker this
+/// blocks is handed back to the pool — every test using this says so in its
+/// attribute. And the probe must use a **connection of its own**, never the
+/// one the pass is holding: an in-flight statement owns its connection
+/// exclusively, and re-entering it here is a deadlock rather than a read.
+///
+/// Asserting on what a reader sees rather than on what `Progress` reports is
+/// the point. `Progress` is what the layer was handed; this is what the
+/// mailbox looks like.
+fn uids_at_checkpoint(
+    probe: &Connection,
+    mailbox_id: MailboxId,
+    generation: postio_model::Generation,
+) -> BTreeSet<u32> {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(known_uids(probe, mailbox_id, generation))
+    })
+}
+
+async fn known_uids(
     connection: &Connection,
     mailbox_id: MailboxId,
     generation: postio_model::Generation,
 ) -> BTreeSet<u32> {
     MessageRepository::new(connection)
         .uids_in(mailbox_id, generation)
-        .expect("uids_in")
+        .await.expect("uids_in")
         .into_iter()
         .map(Uid::get)
         .collect()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn the_newest_batch_lands_before_the_oldest_one() {
     let backend = server_with_messages(5).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let probe = database.connect().await.expect("a probe connection");
+    let (_account, inbox) = local(&connection).await;
 
     let mut batches: Vec<BTreeSet<u32>> = Vec::new();
     let uid_validity = postio_model::Generation::new(1);
@@ -69,7 +98,7 @@ async fn the_newest_batch_lands_before_the_oldest_one() {
         2,
         &CancelToken::new(),
         |_progress: Progress| {
-            batches.push(known_uids(&connection, inbox.id, uid_validity));
+            batches.push(uids_at_checkpoint(&probe, inbox.id, uid_validity));
         },
     )
     .await
@@ -91,7 +120,7 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     let backend = server_with_messages(5).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let (_account, inbox) = local(&connection).await;
 
     let cancel = CancelToken::new();
     let mut batches_seen = 0;
@@ -117,14 +146,14 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
         "a cancelled pass must not silently succeed"
     );
     assert_eq!(
-        known_uids(&connection, inbox.id, postio_model::Generation::new(1)),
+        known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await,
         BTreeSet::from([4, 5]),
         "only the first batch should have committed"
     );
     assert!(
         !SyncStateRepository::new(&connection)
             .require(inbox.id)
-            .expect("sync state")
+            .await.expect("sync state")
             .has_synced(),
         "an interrupted pass must not be marked complete"
     );
@@ -145,13 +174,13 @@ async fn interrupting_and_restarting_does_not_refetch_completed_ranges() {
     assert_eq!(resumed.inserted, 3);
     assert_eq!(resumed.updated, 0);
     assert_eq!(
-        known_uids(&connection, inbox.id, postio_model::Generation::new(1)),
+        known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await,
         BTreeSet::from([1, 2, 3, 4, 5])
     );
     assert!(
         SyncStateRepository::new(&connection)
             .require(inbox.id)
-            .expect("sync state")
+            .await.expect("sync state")
             .has_synced()
     );
 }
@@ -185,7 +214,7 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let (_account, inbox) = local(&connection).await;
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
@@ -194,11 +223,11 @@ async fn a_reply_arriving_before_its_parent_still_finds_its_thread() {
     let messages = MessageRepository::new(&connection);
     let parent = messages
         .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(1))
-        .expect("look up parent")
+        .await.expect("look up parent")
         .expect("parent stored");
     let reply = messages
         .by_uid(inbox.id, postio_model::Generation::new(1), Uid::new(2))
-        .expect("look up reply")
+        .await.expect("look up reply")
         .expect("reply stored");
 
     assert!(parent.thread_id.is_some());
@@ -219,7 +248,7 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
     let backend = server_with_messages(3).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account_id, inbox) = local(&connection);
+    let (account_id, inbox) = local(&connection).await;
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
@@ -227,7 +256,7 @@ async fn a_full_sync_records_every_correspondent_as_a_contact() {
 
     let contacts = ContactRepository::new(&connection)
         .list(Some(account_id))
-        .expect("list contacts");
+        .await.expect("list contacts");
     let ada = contacts
         .iter()
         .find(|contact| contact.address.normalized() == "ada@example.com")
@@ -267,7 +296,7 @@ async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account_id, inbox) = local(&connection);
+    let (_account_id, inbox) = local(&connection).await;
 
     let mut reports: Vec<Progress> = Vec::new();
     sync_mailbox(
@@ -298,7 +327,7 @@ async fn progress_is_a_fraction_of_the_mail_not_of_the_uid_space() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
     // #77: within one mailbox the pass used to be strictly request/response —
     // ask, wait, commit, ask again — so the connection sat idle for the whole
@@ -311,7 +340,7 @@ async fn the_next_batch_is_asked_for_before_this_one_is_committed() {
     let backend = server_with_messages(6).await;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let (_account, inbox) = local(&connection).await;
 
     let mut served_at_commit: Vec<usize> = Vec::new();
     sync_mailbox_with_batch_size(
@@ -345,7 +374,8 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
     backend.set_latency(std::time::Duration::from_millis(5));
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let probe = database.connect().await.expect("a probe connection");
+    let (_account, inbox) = local(&connection).await;
 
     let uid_validity = postio_model::Generation::new(1);
     let mut batches: Vec<BTreeSet<u32>> = Vec::new();
@@ -355,7 +385,7 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
         &inbox,
         3,
         &CancelToken::new(),
-        |_progress: Progress| batches.push(known_uids(&connection, inbox.id, uid_validity)),
+        |_progress: Progress| batches.push(uids_at_checkpoint(&probe, inbox.id, uid_validity)),
     )
     .await
     .expect("initial sync");
@@ -367,7 +397,7 @@ async fn running_ahead_never_reorders_or_loses_a_batch() {
         "the newest three still land first"
     );
     assert_eq!(
-        known_uids(&connection, inbox.id, uid_validity),
+        known_uids(&connection, inbox.id, uid_validity).await,
         (1..=7).collect::<BTreeSet<u32>>(),
         "every UID exactly once"
     );
@@ -411,7 +441,7 @@ async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let (_account, inbox) = local(&connection).await;
 
     sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
@@ -426,7 +456,7 @@ async fn a_sparse_uid_space_costs_one_fetch_not_one_per_two_hundred_uids() {
     );
 
     // Still correct, not merely cheap: the one message that exists is stored.
-    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1));
+    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await;
     assert_eq!(
         stored.iter().copied().collect::<Vec<u32>>(),
         vec![50_000],
@@ -451,14 +481,14 @@ async fn a_server_that_refuses_to_list_uids_still_syncs() {
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (_account, inbox) = local(&connection);
+    let (_account, inbox) = local(&connection).await;
 
     let report = sync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
         .await
         .expect("a refused UID listing must not fail the pass");
 
     assert_eq!(report.inserted, 5, "every message still synced");
-    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1));
+    let stored = known_uids(&connection, inbox.id, postio_model::Generation::new(1)).await;
     assert_eq!(
         stored.iter().copied().collect::<Vec<u32>>(),
         vec![1, 2, 3, 4, 5],

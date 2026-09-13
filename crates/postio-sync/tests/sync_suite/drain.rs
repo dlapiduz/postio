@@ -59,7 +59,7 @@ struct Local {
     message: MessageId,
 }
 
-fn local(connection: &Connection) -> Local {
+async fn local(connection: &Connection) -> Local {
     let account = test_support::account(connection).await;
     let inbox = test_support::mailbox(connection, &account, INBOX).await.id;
     let archive = test_support::mailbox(connection, &account, ARCHIVE).await.id;
@@ -71,7 +71,7 @@ fn local(connection: &Connection) -> Local {
     message.server.remote_id = Some(postio_model::RemoteId::new("1707000000:1"));
     let message = MessageRepository::new(connection)
         .create(&mut message)
-        .expect("create the message");
+        .await.expect("create the message");
 
     Local {
         account: account.id,
@@ -82,7 +82,7 @@ fn local(connection: &Connection) -> Local {
     }
 }
 
-fn enqueue(connection: &Connection, local: &Local, operation: Operation, when: DateTime<Utc>) {
+async fn enqueue(connection: &Connection, local: &Local, operation: Operation, when: DateTime<Utc>) {
     OperationQueueRepository::new(connection)
         .enqueue(
             local.account,
@@ -90,14 +90,14 @@ fn enqueue(connection: &Connection, local: &Local, operation: Operation, when: D
             &operation,
             when,
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 }
 
-fn rows(connection: &Connection, account: AccountId) -> Vec<QueuedOperation> {
+async fn rows(connection: &Connection, account: AccountId) -> Vec<QueuedOperation> {
     let queue = OperationQueueRepository::new(connection);
     let mut all = Vec::new();
     let mut id = 1;
-    while let Some(row) = queue.get(postio_model::OperationId::new(id)).expect("get") {
+    while let Some(row) = queue.get(postio_model::OperationId::new(id)).await.expect("get") {
         all.push(row);
         id += 1;
     }
@@ -132,7 +132,7 @@ async fn count(backend: &MockBackend, mailbox: &str) -> usize {
 async fn an_empty_queue_is_an_idle_pass() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     let report = Drainer::new(&backend)
@@ -148,7 +148,7 @@ async fn an_empty_queue_is_an_idle_pass() {
 async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -158,7 +158,7 @@ async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -168,13 +168,13 @@ async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
     assert_eq!(report.applied, 1);
     assert!(report.failed.is_empty());
     assert!(
-        server_flags(&backend, INBOX, 1)
-            .await
+        server_flags(&backend, INBOX, 1).await
+            
             .expect("the message")
             .is_seen()
     );
     assert_eq!(
-        rows(&connection, local.account)[0].state,
+        rows(&connection, local.account).await[0].state,
         OperationState::Done
     );
 }
@@ -183,7 +183,7 @@ async fn a_flag_change_queued_offline_reaches_the_server_on_the_next_pass() {
 async fn a_queue_of_offline_actions_applies_in_order() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     // Read it, flag it, then archive it — a minute of work with no connection.
@@ -194,7 +194,7 @@ async fn a_queue_of_offline_actions_applies_in_order() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
     enqueue(
         &connection,
         &local,
@@ -202,7 +202,7 @@ async fn a_queue_of_offline_actions_applies_in_order() {
             flags: flags("\\Flagged"),
         },
         at(9),
-    );
+    ).await;
     enqueue(
         &connection,
         &local,
@@ -211,7 +211,7 @@ async fn a_queue_of_offline_actions_applies_in_order() {
             to: local.archive,
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -223,8 +223,8 @@ async fn a_queue_of_offline_actions_applies_in_order() {
     assert_eq!(count(&backend, INBOX).await, 0);
     assert_eq!(count(&backend, ARCHIVE).await, 1);
 
-    let archived = server_flags(&backend, ARCHIVE, 1)
-        .await
+    let archived = server_flags(&backend, ARCHIVE, 1).await
+        
         .expect("the message");
     assert!(
         archived.is_seen() && archived.is_flagged(),
@@ -236,7 +236,7 @@ async fn a_queue_of_offline_actions_applies_in_order() {
 async fn redundant_work_never_reaches_the_server() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     // Archived, then undone, while offline.
@@ -248,7 +248,7 @@ async fn redundant_work_never_reaches_the_server() {
             to: local.archive,
         },
         at(9),
-    );
+    ).await;
     enqueue(
         &connection,
         &local,
@@ -257,7 +257,7 @@ async fn redundant_work_never_reaches_the_server() {
             to: local.inbox,
         },
         at(9),
-    );
+    ).await;
 
     let before = backend.calls();
     let report = Drainer::new(&backend)
@@ -276,7 +276,7 @@ async fn redundant_work_never_reaches_the_server() {
         backend.calls() - before <= 2,
         "one CAPABILITY and one STATUS, no MOVE"
     );
-    for row in rows(&connection, local.account) {
+    for row in rows(&connection, local.account).await {
         assert_eq!(row.state, OperationState::Done, "and both rows are settled");
     }
 }
@@ -285,7 +285,7 @@ async fn redundant_work_never_reaches_the_server() {
 async fn a_delete_moves_the_message_to_the_trash() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -296,7 +296,7 @@ async fn a_delete_moves_the_message_to_the_trash() {
             trash: local.trash,
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -316,7 +316,7 @@ async fn a_delete_moves_the_message_to_the_trash() {
 async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     // Another client archived it while we were offline. Our queue still holds
@@ -337,7 +337,7 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -356,7 +356,7 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
         "the local row disagrees with the server, so the mailbox is stale"
     );
 
-    let row = &rows(&connection, local.account)[0];
+    let row = &rows(&connection, local.account).await[0];
     assert_eq!(row.state, OperationState::Done);
     assert!(
         row.last_error
@@ -371,7 +371,7 @@ async fn a_message_deleted_remotely_settles_the_operation_and_asks_for_a_resync(
 async fn a_message_moved_on_both_sides_does_not_move_twice() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     // The server moved it to the archive already; we queued the same move.
@@ -392,7 +392,7 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
             to: local.archive,
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -412,7 +412,7 @@ async fn a_message_moved_on_both_sides_does_not_move_twice() {
 async fn a_renumbered_mailbox_fails_the_operation_rather_than_acting_on_the_wrong_message() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     backend.change_uid_validity(INBOX, UidValidity::new(1_900_000_000));
@@ -424,7 +424,7 @@ async fn a_renumbered_mailbox_fails_the_operation_rather_than_acting_on_the_wron
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -449,13 +449,13 @@ async fn a_renumbered_mailbox_fails_the_operation_rather_than_acting_on_the_wron
 async fn a_message_that_was_never_uploaded_has_nothing_to_send() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     let mut composed = Message::new(local.account, local.inbox, at(8));
     let composed = MessageRepository::new(&connection)
         .create(&mut composed)
-        .expect("create");
+        .await.expect("create");
 
     OperationQueueRepository::new(&connection)
         .enqueue(
@@ -466,7 +466,7 @@ async fn a_message_that_was_never_uploaded_has_nothing_to_send() {
             },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -485,7 +485,7 @@ async fn a_message_that_was_never_uploaded_has_nothing_to_send() {
 async fn a_missing_destination_mailbox_is_a_permanent_failure() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -496,10 +496,10 @@ async fn a_missing_destination_mailbox_is_a_permanent_failure() {
             to: local.archive,
         },
         at(9),
-    );
+    ).await;
     MailboxRepository::new(&connection)
         .delete(local.archive)
-        .expect("delete the destination");
+        .await.expect("delete the destination");
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))
@@ -519,7 +519,7 @@ async fn a_missing_destination_mailbox_is_a_permanent_failure() {
 async fn a_transient_failure_comes_back_with_a_backoff() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -529,7 +529,7 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
     // The CAPABILITY the pass opens with succeeds; the STORE does not.
     backend.inject_after(1, Fault::Io("network is unreachable".to_owned()));
 
@@ -541,7 +541,7 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
     assert_eq!(report.deferred, 1);
     assert!(report.failed.is_empty(), "one failure is not a lost cause");
 
-    let row = &rows(&connection, local.account)[0];
+    let row = &rows(&connection, local.account).await[0];
     assert_eq!(row.state, OperationState::Pending, "still queued");
     assert_eq!(row.attempts, 1);
     assert_eq!(
@@ -564,8 +564,8 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
         .expect("drain");
     assert_eq!(recovered.applied, 1);
     assert!(
-        server_flags(&backend, INBOX, 1)
-            .await
+        server_flags(&backend, INBOX, 1).await
+            
             .expect("the message")
             .is_seen()
     );
@@ -575,7 +575,7 @@ async fn a_transient_failure_comes_back_with_a_backoff() {
 async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -585,7 +585,7 @@ async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
     backend.inject_after(
         1,
         Fault::RateLimited(Some(std::time::Duration::from_secs(600))),
@@ -598,7 +598,7 @@ async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
 
     assert_eq!(report.deferred, 1);
     assert_eq!(
-        rows(&connection, local.account)[0].next_attempt_at,
+        rows(&connection, local.account).await[0].next_attempt_at,
         Some(at(10) + TimeDelta::seconds(600)),
         "ten minutes, because that is what the server asked for"
     );
@@ -608,7 +608,7 @@ async fn a_server_that_asks_us_to_slow_down_is_obeyed() {
 async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -618,7 +618,7 @@ async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
 
     let policy = RetryPolicy {
         max_attempts: 3,
@@ -647,7 +647,7 @@ async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever
         OperationTarget::Message(local.message)
     );
 
-    let row = &rows(&connection, local.account)[0];
+    let row = &rows(&connection, local.account).await[0];
     assert_eq!(
         row.state,
         OperationState::Failed,
@@ -669,7 +669,7 @@ async fn an_operation_that_keeps_failing_is_reported_rather_than_retried_forever
 async fn a_permanent_refusal_is_not_retried() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -679,7 +679,7 @@ async fn a_permanent_refusal_is_not_retried() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
     backend.inject_after(1, Fault::Rejected("permission denied".to_owned()));
 
     let report = Drainer::new(&backend)
@@ -696,7 +696,7 @@ async fn a_permanent_refusal_is_not_retried() {
 async fn a_folded_step_defers_every_row_behind_it_together() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     enqueue(
@@ -706,7 +706,7 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
             flags: flags("\\Seen"),
         },
         at(9),
-    );
+    ).await;
     enqueue(
         &connection,
         &local,
@@ -714,7 +714,7 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
             flags: flags("\\Flagged"),
         },
         at(9),
-    );
+    ).await;
     backend.inject_after(1, Fault::Io("network is unreachable".to_owned()));
 
     let report = Drainer::new(&backend)
@@ -723,7 +723,7 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
         .expect("drain");
 
     assert_eq!(report.deferred, 2, "both rows, not just the one that led");
-    for row in rows(&connection, local.account) {
+    for row in rows(&connection, local.account).await {
         assert_eq!(row.state, OperationState::Pending);
         assert_eq!(row.attempts, 1);
     }
@@ -749,7 +749,7 @@ async fn a_folded_step_defers_every_row_behind_it_together() {
 async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let local = local(&connection);
+    let local = local(&connection).await;
     let backend = server().await;
 
     OperationQueueRepository::new(&connection)
@@ -761,7 +761,7 @@ async fn a_queued_send_is_reported_rather_than_left_pending_forever() {
             },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let report = Drainer::new(&backend)
         .drain(&connection, local.account, at(10))

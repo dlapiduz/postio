@@ -57,7 +57,7 @@ fn uuid_ish() -> String {
 }
 
 /// An account with one identity and a Sent mailbox, ready to send from.
-fn account_with_sent(connection: &Connection) -> (Account, MailboxId) {
+async fn account_with_sent(connection: &Connection) -> (Account, MailboxId) {
     let mut account = Account::new(
         "Test",
         EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
@@ -76,7 +76,7 @@ fn account_with_sent(connection: &Connection) -> (Account, MailboxId) {
 
     AccountRepository::new(connection)
         .create(&mut account)
-        .expect("create account");
+        .await.expect("create account");
     let sent = test_support::mailbox(connection, &account, "Sent").await;
     (account, sent.id)
 }
@@ -144,12 +144,12 @@ async fn drain_one(
 async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent_mailbox) = account_with_sent(&connection);
+    let (account, sent_mailbox) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -157,7 +157,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -177,8 +177,8 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 1, "{report:?}");
     assert!(report.failed.is_empty());
@@ -186,7 +186,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
     assert!(
         DraftRepository::new(&connection)
             .get(draft_id)
-            .expect("get")
+            .await.expect("get")
             .is_none(),
         "the draft is gone once it is sent"
     );
@@ -196,7 +196,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
 
     let local_sent = MailboxRepository::new(&connection)
         .get(sent_mailbox)
-        .expect("get")
+        .await.expect("get")
         .expect("the sent mailbox");
     assert_eq!(
         local_sent.counts.total, 1,
@@ -217,7 +217,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
     let status = backend.status("Sent").await.expect("status again");
     let filed = repository
         .by_uid(sent_mailbox, status.generation, Uid::new(1))
-        .expect("look up the filed copy")
+        .await.expect("look up the filed copy")
         .expect("the filed copy has its wire identity");
     assert_eq!(
         filed
@@ -239,7 +239,7 @@ async fn sending_a_draft_delivers_it_and_files_a_sent_copy() {
             limit: 10,
             after: None,
         })
-        .expect("a page of Sent");
+        .await.expect("a page of Sent");
     assert_eq!(
         page.len(),
         1,
@@ -259,16 +259,16 @@ async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
     // the regression this guards.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (mut account, _sent) = account_with_sent(&connection);
+    let (mut account, _sent) = account_with_sent(&connection).await;
     account.auth = postio_model::account::AuthMethod::XOAuth2;
     postio_storage::repository::AccountRepository::new(&connection)
         .update(&mut account)
-        .expect("store the mechanism");
+        .await.expect("store the mechanism");
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -276,7 +276,7 @@ async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -307,8 +307,8 @@ async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 1, "{report:?}");
     let commands = connector.log().commands();
@@ -322,12 +322,12 @@ async fn an_xoauth2_account_sends_with_xoauth2_not_a_password_login() {
 async fn a_permanent_rejection_fails_without_filing_anything() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent_mailbox) = account_with_sent(&connection);
+    let (account, sent_mailbox) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -335,7 +335,7 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -356,8 +356,8 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 0);
     assert_eq!(report.failed.len(), 1);
@@ -379,6 +379,7 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
 
     let kept = DraftRepository::new(&connection)
         .get(draft_id)
+        .await
         .expect("get")
         .expect("a message never delivered keeps its draft");
     // **And it stops claiming to be on its way.** The operation is `failed`
@@ -401,7 +402,7 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
     assert_eq!(status.exists, 0, "nothing was ever appended");
     let local_sent = MailboxRepository::new(&connection)
         .get(sent_mailbox)
-        .expect("get")
+        .await.expect("get")
         .expect("the sent mailbox");
     assert_eq!(local_sent.counts.total, 0);
 }
@@ -410,12 +411,12 @@ async fn a_permanent_rejection_fails_without_filing_anything() {
 async fn a_transient_rejection_is_deferred_rather_than_failed() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _sent_mailbox) = account_with_sent(&connection);
+    let (account, _sent_mailbox) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -423,7 +424,7 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -444,8 +445,8 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 0);
     assert!(report.failed.is_empty(), "{report:?}");
@@ -453,7 +454,7 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
     assert!(
         DraftRepository::new(&connection)
             .get(draft_id)
-            .expect("get")
+            .await.expect("get")
             .is_some()
     );
 }
@@ -462,13 +463,13 @@ async fn a_transient_rejection_is_deferred_rather_than_failed() {
 async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _sent_mailbox) = account_with_sent(&connection);
+    let (account, _sent_mailbox) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.com")];
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -476,7 +477,7 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -496,8 +497,8 @@ async fn bcc_recipients_reach_the_envelope_but_never_the_wire_content() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 1, "{report:?}");
 
@@ -522,13 +523,13 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
     // about what happened.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _sent_mailbox) = account_with_sent(&connection);
+    let (account, _sent_mailbox) = account_with_sent(&connection).await;
     test_support::mailbox(&connection, &account, "Drafts").await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save_and_sync(&mut draft, at(8))
-        .map(|_| draft.id)
+        .await.map(|_| draft.id)
         .expect("save and queue the draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
@@ -537,7 +538,7 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue the send");
+        .await.expect("enqueue the send");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -560,8 +561,8 @@ async fn sending_a_draft_takes_its_copy_out_of_the_drafts_mailbox() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 2, "{report:?}");
     assert_eq!(
@@ -648,12 +649,12 @@ async fn send_with(
 ) -> postio_sync::DrainReport {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _sent) = account_with_sent(&connection);
+    let (account, _sent) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -661,7 +662,7 @@ async fn send_with(
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -678,8 +679,8 @@ async fn send_with(
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await
+    ).await
+    
 }
 
 #[tokio::test]
@@ -742,7 +743,7 @@ async fn a_rejected_send_credential_is_invalidated_once_and_retried_once() {
 
 /// Queues a `Send` for `draft_id` without going through `queue_send`, so a
 /// test can put the draft in whatever state it wants to drain from.
-fn enqueue_send(connection: &Connection, account: postio_model::AccountId, draft_id: DraftId) {
+async fn enqueue_send(connection: &Connection, account: postio_model::AccountId, draft_id: DraftId) {
     OperationQueueRepository::new(connection)
         .enqueue(
             account,
@@ -750,7 +751,7 @@ fn enqueue_send(connection: &Connection, account: postio_model::AccountId, draft
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 }
 
 /// The crash case, from the side that decides it.
@@ -768,18 +769,18 @@ fn enqueue_send(connection: &Connection, account: postio_model::AccountId, draft
 async fn a_draft_already_accepted_is_never_submitted_again() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _) = account_with_sent(&connection);
+    let (account, _) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    let draft_id = drafts.save(&mut draft).expect("save draft");
-    enqueue_send(&connection, account.id, draft_id);
+    let draft_id = drafts.save(&mut draft).await.expect("save draft");
+    enqueue_send(&connection, account.id, draft_id).await;
     // Exactly the state a crash between SMTP accepting and the `APPEND`
     // leaves behind: the mark is committed, the filing never finished, and
     // the row and its queued operation are both still here.
     drafts
         .set_state(draft_id, postio_model::DraftState::Sent)
-        .expect("the drainer's post-acceptance commit");
+        .await.expect("the drainer's post-acceptance commit");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -801,8 +802,8 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(
         report.obsolete, 1,
@@ -840,15 +841,15 @@ async fn a_draft_already_accepted_is_never_submitted_again() {
 async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _) = account_with_sent(&connection);
+    let (account, _) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    let draft_id = drafts.save(&mut draft).expect("save draft");
-    enqueue_send(&connection, account.id, draft_id);
+    let draft_id = drafts.save(&mut draft).await.expect("save draft");
+    enqueue_send(&connection, account.id, draft_id).await;
     drafts
         .set_state(draft_id, postio_model::DraftState::Sending)
-        .expect("the mark taken before the transaction opened");
+        .await.expect("the mark taken before the transaction opened");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -867,8 +868,8 @@ async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back(
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     let log = connector.log();
     assert!(
@@ -894,7 +895,7 @@ async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back(
     assert_eq!(
         drafts
             .get(draft_id)
-            .expect("read")
+            .await.expect("read")
             .expect("the draft is still there")
             .state,
         postio_model::DraftState::Unconfirmed,
@@ -909,14 +910,14 @@ async fn a_send_interrupted_mid_submission_is_not_retried_behind_the_users_back(
 async fn the_submitted_message_carries_the_reserved_id() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _) = account_with_sent(&connection);
+    let (account, _) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    drafts.save(&mut draft).expect("save draft");
+    drafts.save(&mut draft).await.expect("save draft");
     drafts
         .queue_send(&mut draft, at(9))
-        .expect("queue the send");
+        .await.expect("queue the send");
     let reserved = draft.rfc_message_id.clone().expect("a reservation");
 
     let backend = MockBackend::builder()
@@ -936,8 +937,8 @@ async fn the_submitted_message_carries_the_reserved_id() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
     assert_eq!(report.applied, 1, "{report:?}");
 
     let written = String::from_utf8_lossy(&connector.log().written).to_lowercase();
@@ -961,14 +962,14 @@ async fn the_submitted_message_carries_the_reserved_id() {
 async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, _) = account_with_sent(&connection);
+    let (account, _) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    drafts.save(&mut draft).expect("save draft");
+    drafts.save(&mut draft).await.expect("save draft");
     drafts
         .queue_send(&mut draft, at(9))
-        .expect("queue the send");
+        .await.expect("queue the send");
     let reserved = draft.rfc_message_id.clone().expect("a reservation");
 
     let backend = MockBackend::builder()
@@ -989,10 +990,10 @@ async fn a_deferred_send_goes_out_under_the_id_the_first_attempt_reserved() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
     assert_eq!(report.deferred, 1, "{report:?}");
-    let after_refusal = drafts.get(draft.id).expect("get").expect("still here");
+    let after_refusal = drafts.get(draft.id).await.expect("get").expect("still here");
     assert_eq!(
         after_refusal.rfc_message_id,
         Some(reserved.clone()),
@@ -1041,12 +1042,12 @@ async fn drain_a_send_over(
     connection: &Connection,
     connector: &ScriptedConnector,
 ) -> (postio_sync::DrainReport, postio_model::DraftId) {
-    let (account, _sent_mailbox) = account_with_sent(connection);
+    let (account, _sent_mailbox) = account_with_sent(connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(connection)
         .enqueue(
             account.id,
@@ -1054,7 +1055,7 @@ async fn drain_a_send_over(
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -1073,8 +1074,8 @@ async fn drain_a_send_over(
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
     (report, draft_id)
 }
 
@@ -1107,7 +1108,7 @@ async fn a_send_interrupted_once_the_payload_was_on_the_wire_is_not_retried() {
 
     let draft = DraftRepository::new(&connection)
         .get(draft_id)
-        .expect("get")
+        .await.expect("get")
         .expect("a draft that may have been sent is not deleted");
     assert_eq!(
         draft.state,
@@ -1142,7 +1143,7 @@ async fn a_send_interrupted_before_the_payload_is_queued_again() {
 
     let draft = DraftRepository::new(&connection)
         .get(draft_id)
-        .expect("get")
+        .await.expect("get")
         .expect("still a draft");
     assert_eq!(
         draft.state,
@@ -1165,35 +1166,35 @@ async fn a_send_interrupted_before_the_payload_is_queued_again() {
 async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent) = account_with_sent(&connection);
+    let (account, sent) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    drafts.save(&mut draft).expect("save draft");
+    drafts.save(&mut draft).await.expect("save draft");
     drafts
         .queue_send(&mut draft, at(9))
-        .expect("queue the send");
+        .await.expect("queue the send");
     let reserved = draft.rfc_message_id.clone().expect("a reservation");
     drafts
         .set_state(draft.id, postio_model::DraftState::Unconfirmed)
-        .expect("the state an interrupted submission leaves");
+        .await.expect("the state an interrupted submission leaves");
 
     // The copy the server filed, arriving in an ordinary sync.
     let mut message = postio_model::Message::new(account.id, sent, at(10));
     message.rfc_message_id = Some(reserved.clone());
     let message_id = MessageRepository::new(&connection)
         .create(&mut message)
-        .expect("the synced copy");
+        .await.expect("the synced copy");
 
     let resolved = postio_sync::send::confirm_unconfirmed(&connection, account.id)
-        .expect("confirming reads the store and nothing else");
+        .await.expect("confirming reads the store and nothing else");
 
     assert_eq!(
         resolved,
         vec![(draft.id, message_id)],
         "the draft and the message it turned out to be"
     );
-    let after = drafts.get(draft.id).expect("read").expect("still there");
+    let after = drafts.get(draft.id).await.expect("read").expect("still there");
     assert_eq!(
         after.state,
         postio_model::DraftState::Sent,
@@ -1202,7 +1203,7 @@ async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
     assert_eq!(
         drafts
             .by_message(message_id)
-            .expect("read")
+            .await.expect("read")
             .map(|found| found.id),
         Some(draft.id),
         "and the two are linked, so the surfaces that open one reach the other"
@@ -1219,17 +1220,17 @@ async fn an_unconfirmed_send_resolves_when_its_message_turns_up() {
 async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent) = account_with_sent(&connection);
+    let (account, sent) = account_with_sent(&connection).await;
     let drafts = DraftRepository::new(&connection);
 
     let mut draft = a_draft(&account, "grace@example.net");
-    drafts.save(&mut draft).expect("save draft");
+    drafts.save(&mut draft).await.expect("save draft");
     drafts
         .queue_send(&mut draft, at(9))
-        .expect("queue the send");
+        .await.expect("queue the send");
     drafts
         .set_state(draft.id, postio_model::DraftState::Unconfirmed)
-        .expect("the state an interrupted submission leaves");
+        .await.expect("the state an interrupted submission leaves");
 
     // Same folder, same account, same everything but the id.
     let mut other = postio_model::Message::new(account.id, sent, at(10));
@@ -1238,10 +1239,10 @@ async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
     ));
     MessageRepository::new(&connection)
         .create(&mut other)
-        .expect("an unrelated message");
+        .await.expect("an unrelated message");
 
     let resolved =
-        postio_sync::send::confirm_unconfirmed(&connection, account.id).expect("confirm");
+        postio_sync::send::confirm_unconfirmed(&connection, account.id).await.expect("confirm");
 
     assert!(
         resolved.is_empty(),
@@ -1250,7 +1251,7 @@ async fn an_unconfirmed_send_is_not_resolved_by_a_different_message() {
     assert_eq!(
         drafts
             .get(draft.id)
-            .expect("read")
+            .await.expect("read")
             .expect("still there")
             .state,
         postio_model::DraftState::Unconfirmed,
@@ -1274,12 +1275,12 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
     // is still in flight and the row is the honest thing to show.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent_mailbox) = account_with_sent(&connection);
+    let (account, sent_mailbox) = account_with_sent(&connection).await;
 
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -1287,7 +1288,7 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -1307,8 +1308,8 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     assert_eq!(report.applied, 0, "nothing was delivered");
     assert!(
@@ -1323,7 +1324,7 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
 
     let local_sent = MailboxRepository::new(&connection)
         .get(sent_mailbox)
-        .expect("get")
+        .await.expect("get")
         .expect("the sent mailbox");
     assert_eq!(
         local_sent.counts.total, 1,
@@ -1338,7 +1339,7 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
             limit: 10,
             after: None,
         })
-        .expect("a page of Sent");
+        .await.expect("a page of Sent");
     assert_eq!(page.len(), 1);
     assert!(
         page[0]
@@ -1354,7 +1355,7 @@ async fn a_send_that_never_reaches_the_server_is_already_in_sent() {
     assert!(
         DraftRepository::new(&connection)
             .get(draft_id)
-            .expect("get")
+            .await.expect("get")
             .is_some(),
         "a send still in flight keeps its draft"
     );
@@ -1369,14 +1370,14 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
     // refusal is dropped on the floor, and a local row pretends otherwise.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, stale_sent) = account_with_sent(&connection);
+    let (account, stale_sent) = account_with_sent(&connection).await;
     let mailboxes = MailboxRepository::new(&connection);
     let mut retired = mailboxes
         .get(stale_sent)
-        .expect("get")
+        .await.expect("get")
         .expect("the stale row");
     retired.selectable = false;
-    mailboxes.update(&retired).expect("retire it");
+    mailboxes.update(&retired).await.expect("retire it");
     let live = test_support::mailbox(&connection, &account, "Sent Items").await;
     assert_eq!(
         live.role,
@@ -1387,7 +1388,7 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
     let mut draft = a_draft(&account, "grace@example.net");
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -1395,7 +1396,7 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent Items"))
@@ -1414,8 +1415,8 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
     assert_eq!(report.applied, 1, "{report:?}");
 
     let status = backend.status("Sent Items").await.expect("status");
@@ -1423,14 +1424,14 @@ async fn the_sent_copy_lands_in_the_folder_the_server_actually_has() {
         status.exists, 1,
         "the sent copy is filed in the Sent folder the server has"
     );
-    let counts = |id| mailboxes.get(id).expect("get").expect("row").counts.total;
+    let counts = async |id| mailboxes.get(id).await.expect("get").expect("row").counts.total;
     assert_eq!(
-        counts(live.id),
+        counts(live.id).await,
         1,
         "and the local row for that folder holds it"
     );
     assert_eq!(
-        counts(stale_sent),
+        counts(stale_sent).await,
         0,
         "nothing is filed into a folder the server no longer has"
     );
@@ -1450,18 +1451,18 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     // against is the parent that was in the store before any of this began.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let (account, sent) = account_with_sent(&connection);
+    let (account, sent) = account_with_sent(&connection).await;
     let messages = MessageRepository::new(&connection);
 
     // The message being answered, already in the store and already threaded.
     let mut parent = postio_model::Message::new(account.id, sent, at(8));
     parent.subject = Some("Analytical engine".to_owned());
     parent.rfc_message_id = Some(postio_model::RfcMessageId::new("parent@example.invalid"));
-    let parent_id = messages.create(&mut parent).expect("the parent");
+    let parent_id = messages.create(&mut parent).await.expect("the parent");
     postio_storage::repository::ThreadingRepository::new(&connection, account.id)
-        .thread(&messages.get(parent_id).expect("get").expect("there"))
-        .expect("thread the parent");
-    let parent = messages.get(parent_id).expect("get").expect("there");
+        .thread(&messages.get(parent_id).await.expect("get").expect("there"))
+        .await.expect("thread the parent");
+    let parent = messages.get(parent_id).await.expect("get").expect("there");
     let conversation = parent.thread_id.expect("the parent is in a thread");
 
     let mut draft = a_draft(&account, "grace@example.net");
@@ -1469,7 +1470,7 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     draft.thread_id = Some(conversation);
     let draft_id = DraftRepository::new(&connection)
         .save(&mut draft)
-        .expect("save draft");
+        .await.expect("save draft");
     OperationQueueRepository::new(&connection)
         .enqueue(
             account.id,
@@ -1477,7 +1478,7 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
             &Operation::Send { draft: draft_id },
             at(9),
         )
-        .expect("enqueue");
+        .await.expect("enqueue");
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Sent"))
@@ -1496,8 +1497,8 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
             blobs: &blobs.store,
         },
         account.id,
-    )
-    .await;
+    ).await
+    ;
 
     let filed: Vec<_> = messages
         .page(&postio_storage::repository::ListQuery {
@@ -1505,7 +1506,7 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
             limit: 10,
             after: None,
         })
-        .expect("a page of Sent")
+        .await.expect("a page of Sent")
         .into_iter()
         .filter(|message| message.id != parent_id)
         .collect();
@@ -1516,7 +1517,7 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
     // ── The half that works: it is filed, and before the network ────────
     // Reached by paging the Sent mailbox, so being here *is* being filed in
     // it -- before the network, which is the promise.
-    let full = messages.get(reply.id).expect("get").expect("there");
+    let full = messages.get(reply.id).await.expect("get").expect("there");
     assert_eq!(
         full.mailbox_id, sent,
         "the reply was not filed in Sent, so nothing is visible while it is \

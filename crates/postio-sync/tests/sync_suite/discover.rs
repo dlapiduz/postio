@@ -13,14 +13,14 @@ use postio_storage::test_support;
 use postio_sync::discover::discover;
 use postio_storage::Connection;
 
-fn an_account(connection: &Connection) -> Account {
+async fn an_account(connection: &Connection) -> Account {
     let mut account = Account::new(
         "Test",
         EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
     );
     AccountRepository::new(connection)
         .create(&mut account)
-        .expect("create account");
+        .await.expect("create account");
     account
 }
 
@@ -37,10 +37,10 @@ async fn a_server() -> MockBackend {
     backend
 }
 
-fn paths(connection: &Connection, account: &Account) -> Vec<String> {
+async fn paths(connection: &Connection, account: &Account) -> Vec<String> {
     let mut paths: Vec<String> = MailboxRepository::new(connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .map(|mailbox| mailbox.path)
         .collect();
@@ -52,7 +52,7 @@ fn paths(connection: &Connection, account: &Account) -> Vec<String> {
 async fn discovery_writes_the_servers_folders_into_the_local_table() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     let report = discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -63,7 +63,7 @@ async fn discovery_writes_the_servers_folders_into_the_local_table() {
     // them new to this account.
     assert_eq!(report.added, 6, "{report:?}");
     assert_eq!(
-        paths(&connection, &account),
+        paths(&connection, &account).await,
         // The four the server lists, plus the two it does not have. Every
         // account ends a pass with a folder for all six reserved roles, so a
         // server with no Drafts and no Junk gets them created (spec 003
@@ -89,7 +89,7 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
     // folder on every account that does not speak English.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -105,7 +105,7 @@ async fn a_folders_role_comes_from_the_servers_attributes_not_its_name() {
     ] {
         let found = mailboxes
             .by_role(account.id, role)
-            .expect("by role")
+            .await.expect("by role")
             .unwrap_or_else(|| panic!("no folder resolved to {role:?}"));
         assert_eq!(found.path, path);
     }
@@ -117,7 +117,7 @@ async fn discovering_twice_keeps_the_same_rows() {
     // A discovery that reinserted would orphan every one of them.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -125,7 +125,7 @@ async fn discovering_twice_keeps_the_same_rows() {
         .expect("first pass");
     let before: Vec<_> = MailboxRepository::new(&connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .map(|mailbox| (mailbox.path, mailbox.id))
         .collect();
@@ -136,7 +136,7 @@ async fn discovering_twice_keeps_the_same_rows() {
 
     let after: Vec<_> = MailboxRepository::new(&connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .map(|mailbox| (mailbox.path, mailbox.id))
         .collect();
@@ -163,7 +163,7 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
     // folder.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -173,17 +173,17 @@ async fn discovery_preserves_what_a_sync_pass_recorded() {
     let mailboxes = MailboxRepository::new(&connection);
     let mut inbox = mailboxes
         .by_role(account.id, MailboxRole::Inbox)
-        .expect("by role")
+        .await.expect("by role")
         .expect("an inbox");
     inbox.generation = Some(postio_model::Generation::new(42));
     inbox.highest_mod_seq = Some(postio_model::ModSeq::new(900));
-    mailboxes.update(&inbox).expect("record a synced inbox");
+    mailboxes.update(&inbox).await.expect("record a synced inbox");
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("second pass");
 
-    let after = mailboxes.get(inbox.id).expect("get").expect("still there");
+    let after = mailboxes.get(inbox.id).await.expect("get").expect("still there");
     assert_eq!(after.generation, Some(postio_model::Generation::new(42)));
     assert_eq!(after.highest_mod_seq, Some(postio_model::ModSeq::new(900)));
 }
@@ -196,7 +196,7 @@ async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
     // re-include a folder the user deliberately excluded.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -206,18 +206,18 @@ async fn discovery_does_not_reset_a_folders_backfill_exclusion() {
     let mailboxes = MailboxRepository::new(&connection);
     let inbox = mailboxes
         .by_role(account.id, MailboxRole::Inbox)
-        .expect("by role")
+        .await.expect("by role")
         .expect("an inbox");
     mailboxes
         .set_backfill_excluded(inbox.id, true)
-        .expect("exclude the inbox");
+        .await.expect("exclude the inbox");
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
         .expect("second pass");
 
     assert!(
-        mailboxes.backfill_excluded(inbox.id).expect("read"),
+        mailboxes.backfill_excluded(inbox.id).await.expect("read"),
         "a resync must not reach a decision the server was never asked about"
     );
 }
@@ -228,7 +228,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     // folder because one LIST did not mention it would delete the user's mail.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -237,14 +237,14 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     let mailboxes = MailboxRepository::new(&connection);
     let archive = mailboxes
         .by_role(account.id, MailboxRole::Archive)
-        .expect("by role")
+        .await.expect("by role")
         .expect("an archive");
 
     let mut message = Message::new(account.id, archive.id, chrono::Utc::now());
     message.subject = Some("Filed away years ago".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
-        .expect("file a message in it");
+        .await.expect("file a message in it");
 
     // The folder is renamed or removed on the server.
     let smaller = MockBackend::builder()
@@ -266,7 +266,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     assert_eq!(report.vanished, 4, "{report:?}");
     let after = mailboxes
         .get(archive.id)
-        .expect("get")
+        .await.expect("get")
         .expect("the row is still there");
     assert!(
         !after.selectable,
@@ -276,7 +276,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
     assert!(
         MessageRepository::new(&connection)
             .get(message.id)
-            .expect("get")
+            .await.expect("get")
             .is_some(),
         "and the mail in it survives"
     );
@@ -286,7 +286,7 @@ async fn a_folder_the_server_no_longer_lists_keeps_its_mail() {
 async fn a_folder_that_comes_back_is_usable_again() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let smaller = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -303,7 +303,7 @@ async fn a_folder_that_comes_back_is_usable_again() {
 
     let inbox = MailboxRepository::new(&connection)
         .by_role(account.id, MailboxRole::Inbox)
-        .expect("by role")
+        .await.expect("by role")
         .expect("an inbox");
     assert!(inbox.selectable);
 }
@@ -314,7 +314,7 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
     // way, must not empty the sidebar. Nothing is evidence of nothing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -333,14 +333,14 @@ async fn an_empty_listing_is_not_read_as_every_folder_being_gone() {
     // point of this test is the *empty* listing changing nothing, which is
     // what `vanished` above asserts; this line says the sidebar still has
     // everything it had.
-    assert_eq!(paths(&connection, &account).len(), 6);
+    assert_eq!(paths(&connection, &account).await.len(), 6);
 }
 
 #[tokio::test]
 async fn a_child_folder_is_linked_to_its_parent() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX").delimiter('/'))
@@ -355,11 +355,11 @@ async fn a_child_folder_is_linked_to_its_parent() {
     let mailboxes = MailboxRepository::new(&connection);
     let inbox = mailboxes
         .by_path(account.id, "INBOX")
-        .expect("by path")
+        .await.expect("by path")
         .expect("an inbox");
     let child = mailboxes
         .by_path(account.id, "INBOX/Receipts")
-        .expect("by path")
+        .await.expect("by path")
         .expect("the child");
 
     assert_eq!(child.parent_id, Some(inbox.id));
@@ -372,7 +372,7 @@ async fn a_child_folder_is_linked_to_its_parent() {
         .expect("a second discovery");
     let child_again = mailboxes
         .by_path(account.id, "INBOX/Receipts")
-        .expect("by path")
+        .await.expect("by path")
         .expect("the child");
     assert_eq!(
         child_again.id, child.id,
@@ -390,7 +390,7 @@ async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
     // under, so it sits at the top rather than failing discovery outright.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX").delimiter('/'))
@@ -405,7 +405,7 @@ async fn a_missing_intermediate_level_still_leaves_the_leaf_usable() {
     let mailboxes = MailboxRepository::new(&connection);
     let leaf = mailboxes
         .by_path(account.id, "INBOX/Archive/2026")
-        .expect("by path")
+        .await.expect("by path")
         .expect("the leaf, listed even though its parent was never named");
     assert_eq!(
         leaf.parent_id, None,
@@ -420,7 +420,7 @@ async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
     // hierarchy". Selecting one is an error, so the engine must not try.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -434,7 +434,7 @@ async fn a_folder_that_cannot_hold_messages_is_recorded_as_such() {
 
     let lists = MailboxRepository::new(&connection)
         .by_path(account.id, "Lists")
-        .expect("by path")
+        .await.expect("by path")
         .expect("the folder");
     assert!(!lists.selectable);
 }
@@ -454,10 +454,10 @@ async fn an_unhelpful_server() -> MockBackend {
     backend
 }
 
-fn role_of(connection: &Connection, account: &Account, path: &str) -> Option<MailboxRole> {
+async fn role_of(connection: &Connection, account: &Account, path: &str) -> Option<MailboxRole> {
     MailboxRepository::new(connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .find(|mailbox| mailbox.path == path)
         .map(|mailbox| mailbox.role)
@@ -467,7 +467,7 @@ fn role_of(connection: &Connection, account: &Account, path: &str) -> Option<Mai
 async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = an_unhelpful_server().await;
 
     // Without one, exactly the state the issue describes: no archive folder,
@@ -476,7 +476,7 @@ async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
         .await
         .expect("discover");
     assert_eq!(
-        role_of(&connection, &account, "Vecchia Posta"),
+        role_of(&connection, &account, "Vecchia Posta").await,
         Some(MailboxRole::Regular),
         "nothing about this folder is guessable, which is the premise"
     );
@@ -490,15 +490,15 @@ async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
         .expect("discover");
 
     assert_eq!(
-        role_of(&connection, &account, "Vecchia Posta"),
+        role_of(&connection, &account, "Vecchia Posta").await,
         Some(MailboxRole::Archive)
     );
     assert_eq!(
-        role_of(&connection, &account, "Cestino"),
+        role_of(&connection, &account, "Cestino").await,
         Some(MailboxRole::Trash)
     );
     assert_eq!(
-        role_of(&connection, &account, "INBOX"),
+        role_of(&connection, &account, "INBOX").await,
         Some(MailboxRole::Inbox),
         "the inbox is still the inbox; an override elsewhere does not disturb it"
     );
@@ -508,7 +508,7 @@ async fn an_override_gives_a_role_to_a_folder_nothing_else_could_name() {
 async fn an_override_outranks_what_the_server_said() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_server().await;
 
     // This server advertises `\Archive` on the folder called Archive. The
@@ -520,7 +520,7 @@ async fn an_override_outranks_what_the_server_said() {
         .expect("discover");
 
     assert_eq!(
-        role_of(&connection, &account, "Archive"),
+        role_of(&connection, &account, "Archive").await,
         Some(MailboxRole::Junk)
     );
 }
@@ -540,7 +540,7 @@ async fn an_override_outranks_what_the_server_said() {
 async fn remapping_a_role_moves_the_label_and_never_the_mail() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
         .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
@@ -555,7 +555,7 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
     // Put a message in the folder that is the archive today.
     let archive = MailboxRepository::new(&connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .find(|mailbox| mailbox.path == "Archive")
         .expect("an Archive row");
@@ -563,7 +563,7 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
     message.subject = Some("filed under the old archive".to_owned());
     MessageRepository::new(&connection)
         .create(&mut message)
-        .expect("create message");
+        .await.expect("create message");
 
     // Now point `archive` somewhere else.
     let overrides = RoleOverrides::from_pairs([(MailboxRole::Archive, "Vecchia Posta")]);
@@ -572,12 +572,12 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
         .expect("discover");
 
     assert_eq!(
-        role_of(&connection, &account, "Vecchia Posta"),
+        role_of(&connection, &account, "Vecchia Posta").await,
         Some(MailboxRole::Archive),
         "the new folder wears the role"
     );
     assert_eq!(
-        role_of(&connection, &account, "Archive"),
+        role_of(&connection, &account, "Archive").await,
         Some(MailboxRole::Regular),
         "and the old one gives it up — two folders cannot both be the archive, \
          because `by_role` returns one"
@@ -585,7 +585,7 @@ async fn remapping_a_role_moves_the_label_and_never_the_mail() {
 
     let still_there = MessageRepository::new(&connection)
         .get(message.id)
-        .expect("read");
+        .await.expect("read");
     assert_eq!(
         still_there.map(|m| m.mailbox_id),
         Some(archive.id),
@@ -604,7 +604,7 @@ async fn a_role_follows_the_folder_when_the_server_renames_it() {
     // here on is filed into a folder the server no longer has.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let before = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -626,7 +626,7 @@ async fn a_role_follows_the_folder_when_the_server_renames_it() {
 
     let sent = MailboxRepository::new(&connection)
         .by_role(account.id, MailboxRole::Sent)
-        .expect("by role")
+        .await.expect("by role")
         .expect("the account still has a Sent folder");
     assert_eq!(
         sent.path, "Sent Items",
@@ -648,7 +648,7 @@ async fn one_folder_per_role_survives_discovery() {
     // them by path order, and "Sent" sorts before "Sent Messages".
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
 
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
@@ -663,7 +663,7 @@ async fn one_folder_per_role_survives_discovery() {
     let mailboxes = MailboxRepository::new(&connection);
     let sent: Vec<String> = mailboxes
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .filter(|mailbox| mailbox.role == MailboxRole::Sent)
         .map(|mailbox| mailbox.path)
@@ -687,10 +687,10 @@ async fn a_silent_server_with_two_sent_folders() -> MockBackend {
     backend
 }
 
-fn sent_path(connection: &Connection, account: &Account) -> Option<String> {
+async fn sent_path(connection: &Connection, account: &Account) -> Option<String> {
     MailboxRepository::new(connection)
         .by_role(account.id, MailboxRole::Sent)
-        .expect("by role")
+        .await.expect("by role")
         .map(|mailbox| mailbox.path)
 }
 
@@ -700,26 +700,26 @@ async fn an_accounts_own_map_outranks_the_configuration() {
     // own map, in the store, is what the user said about *this* server.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_silent_server_with_two_sent_folders().await;
 
     let configured = RoleOverrides::from_pairs([(MailboxRole::Sent, "Sent")]);
     MailboxRoleRepository::new(&connection)
         .set(account.id, MailboxRole::Sent, "Sent Messages")
-        .expect("the account's own choice");
+        .await.expect("the account's own choice");
 
     discover(&connection, &backend, account.id, &configured)
         .await
         .expect("discover");
 
     assert_eq!(
-        sent_path(&connection, &account).as_deref(),
+        sent_path(&connection, &account).await.as_deref(),
         Some("Sent Messages"),
         "the account's map wins over [mailboxes]"
     );
     let look_alike = MailboxRepository::new(&connection)
         .by_path(account.id, "Sent")
-        .expect("by path")
+        .await.expect("by path")
         .expect("the row");
     assert_eq!(
         look_alike.role,
@@ -732,19 +732,19 @@ async fn an_accounts_own_map_outranks_the_configuration() {
 async fn an_accounts_map_says_nothing_about_another_account() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let icloud = an_account(&connection);
+    let icloud = an_account(&connection).await;
     let mut other = Account::new(
         "Other",
         EmailAddress::new(Some("Ada Lovelace"), "ada@example.net"),
     );
     AccountRepository::new(&connection)
         .create(&mut other)
-        .expect("create account");
+        .await.expect("create account");
     let backend = a_silent_server_with_two_sent_folders().await;
 
     MailboxRoleRepository::new(&connection)
         .set(icloud.id, MailboxRole::Sent, "Sent Messages")
-        .expect("map one account");
+        .await.expect("map one account");
 
     for account in [&icloud, &other] {
         discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -753,11 +753,11 @@ async fn an_accounts_map_says_nothing_about_another_account() {
     }
 
     assert_eq!(
-        sent_path(&connection, &icloud).as_deref(),
+        sent_path(&connection, &icloud).await.as_deref(),
         Some("Sent Messages")
     );
     assert_eq!(
-        sent_path(&connection, &other).as_deref(),
+        sent_path(&connection, &other).await.as_deref(),
         Some("Sent"),
         "the other account resolves on its own, by the automatic rule"
     );
@@ -770,30 +770,30 @@ async fn a_map_changed_between_passes_takes_effect_on_the_next() {
     // in settings needs no restart to be honoured by discovery.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_silent_server_with_two_sent_folders().await;
     let configured = RoleOverrides::default();
 
     discover(&connection, &backend, account.id, &configured)
         .await
         .expect("first pass");
-    assert_eq!(sent_path(&connection, &account).as_deref(), Some("Sent"));
+    assert_eq!(sent_path(&connection, &account).await.as_deref(), Some("Sent"));
 
     MailboxRoleRepository::new(&connection)
         .set(account.id, MailboxRole::Sent, "Sent Messages")
-        .expect("choose in settings");
+        .await.expect("choose in settings");
     discover(&connection, &backend, account.id, &configured)
         .await
         .expect("second pass");
 
     assert_eq!(
-        sent_path(&connection, &account).as_deref(),
+        sent_path(&connection, &account).await.as_deref(),
         Some("Sent Messages"),
         "the second pass honours the choice with the engine untouched"
     );
     let roles: Vec<String> = MailboxRepository::new(&connection)
         .list_for_account(account.id)
-        .expect("list")
+        .await.expect("list")
         .into_iter()
         .filter(|mailbox| mailbox.role == MailboxRole::Sent)
         .map(|mailbox| mailbox.path)
@@ -817,24 +817,27 @@ async fn a_bare_server() -> MockBackend {
 }
 
 /// Which reserved roles the account has a selectable folder for.
-fn roles_with_a_folder(connection: &Connection, account: &Account) -> Vec<MailboxRole> {
+async fn roles_with_a_folder(connection: &Connection, account: &Account) -> Vec<MailboxRole> {
     let mailboxes = MailboxRepository::new(connection);
-    MailboxRole::RESERVED
-        .into_iter()
-        .filter(|role| {
-            mailboxes
-                .by_role(account.id, *role)
-                .expect("by_role")
-                .is_some()
-        })
-        .collect()
+    let mut found = Vec::new();
+    for role in MailboxRole::RESERVED {
+        if mailboxes
+            .by_role(account.id, role)
+            .await
+            .expect("by_role")
+            .is_some()
+        {
+            found.push(role);
+        }
+    }
+    found
 }
 
 #[tokio::test]
 async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -842,7 +845,7 @@ async fn a_server_with_only_an_inbox_gets_a_folder_for_every_reserved_role() {
         .expect("discover");
 
     assert_eq!(
-        roles_with_a_folder(&connection, &account),
+        roles_with_a_folder(&connection, &account).await,
         MailboxRole::RESERVED.to_vec(),
         "an account whose server lists only INBOX still has to have somewhere \
          to archive, send, draft, delete and junk to"
@@ -860,7 +863,7 @@ async fn a_second_pass_creates_nothing() {
     // per pass, against the user's real server, forever.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
@@ -883,7 +886,7 @@ async fn a_second_pass_creates_nothing() {
 async fn a_server_that_already_has_everything_is_never_asked_to_create() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("INBOX"))
         .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
@@ -911,7 +914,7 @@ async fn the_inbox_is_never_created_even_when_the_server_does_not_list_one() {
     // over, and creating one would be Postio disagreeing with RFC 3501.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = MockBackend::builder()
         .mailbox(MockMailbox::new("Archive").attributes(["\\Archive"]))
         .build();
@@ -934,7 +937,7 @@ async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
     // permission -- so the server's own words are kept for the settings pane.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
     backend.refuse_creates("Permission denied");
 
@@ -943,7 +946,7 @@ async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
         .expect("a refusal is not fatal to the pass");
 
     assert_eq!(
-        roles_with_a_folder(&connection, &account),
+        roles_with_a_folder(&connection, &account).await,
         vec![MailboxRole::Inbox],
         "nothing was created, so only the folder the server actually has resolves"
     );
@@ -954,7 +957,7 @@ async fn a_server_that_refuses_leaves_the_role_unmapped_and_says_why() {
 
     let refusals = MailboxRoleRepository::new(&connection)
         .refusals(account.id)
-        .expect("refusals");
+        .await.expect("refusals");
     let roles: Vec<MailboxRole> = refusals.iter().map(|(role, _)| *role).collect();
     assert_eq!(
         roles,
@@ -981,7 +984,7 @@ async fn a_refusal_is_not_retried_on_the_next_pass() {
     // against the user's real server, forever.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
     backend.refuse_creates("Permission denied");
 
@@ -1007,14 +1010,14 @@ async fn a_refusal_for_one_role_does_not_stop_the_others() {
     // A single awkward folder must not cost the account every other role.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
     // Junk alone is already known to be refused -- the state the pass after a
     // refusal starts in.
     MailboxRoleRepository::new(&connection)
         .refuse(account.id, MailboxRole::Junk, "Permission denied")
-        .expect("record a standing refusal for Junk alone");
+        .await.expect("record a standing refusal for Junk alone");
 
     discover(&connection, &backend, account.id, &RoleOverrides::default())
         .await
@@ -1024,7 +1027,7 @@ async fn a_refusal_for_one_role_does_not_stop_the_others() {
     // and Junk must *not*, which a containment check would let slide either
     // way round.
     assert_eq!(
-        roles_with_a_folder(&connection, &account),
+        roles_with_a_folder(&connection, &account).await,
         vec![
             MailboxRole::Inbox,
             MailboxRole::Archive,
@@ -1049,7 +1052,7 @@ async fn a_mailbox_that_already_exists_is_not_an_error() {
     // What the caller wants is the folder to exist, not to have made it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    let account = an_account(&connection);
+    let account = an_account(&connection).await;
     let backend = a_bare_server().await;
 
     // The server gains the folder between the listing and the create.
@@ -1063,13 +1066,13 @@ async fn a_mailbox_that_already_exists_is_not_an_error() {
         .expect("an existing folder is not a failure");
 
     assert_eq!(
-        roles_with_a_folder(&connection, &account),
+        roles_with_a_folder(&connection, &account).await,
         MailboxRole::RESERVED.to_vec()
     );
     assert!(
         MailboxRoleRepository::new(&connection)
             .refusals(account.id)
-            .expect("refusals")
+            .await.expect("refusals")
             .is_empty(),
         "nothing was refused"
     );
@@ -1089,7 +1092,7 @@ async fn a_created_folder_is_named_after_its_role_whatever_the_provider() {
     let names_for = |host: &'static str| async move {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
-        let account = an_account(&connection);
+        let account = an_account(&connection).await;
         let backend = MockBackend::builder()
             .host(host)
             .mailbox(MockMailbox::new("INBOX"))

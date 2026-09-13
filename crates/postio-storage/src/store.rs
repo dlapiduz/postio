@@ -10,7 +10,7 @@
 //! # What replaced the pool
 //!
 //! There was a hand-written connection pool here, with a maximum, a checkout
-//! path, an idle list and a `PooledConnection` guard that returned its
+//! path, an idle list and a `Checkout` guard that returned its
 //! connection on drop. It is gone: the engine keeps its own pool behind
 //! [`turso::Database::connect`], which is why that call is cheap, infallible
 //! in practice, and not `async`. A `Connection` is `Clone`, `Send` and `Sync`,
@@ -454,7 +454,7 @@ impl Store {
 /// # Why the gate travels with the connection
 ///
 /// Because the alternative is remembering to fetch it. This is what
-/// `PooledConnection` was, minus the pooling the engine now does itself:
+/// `Checkout` was, minus the pooling the engine now does itself:
 /// [`Deref`] to the connection, so it is used exactly like one, with
 /// [`write_gate`](Self::write_gate) beside it for the callers that are about
 /// to write and have to say on whose behalf.

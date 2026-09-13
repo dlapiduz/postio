@@ -63,7 +63,7 @@ const MESSAGES: u32 = 120;
 /// of it. Fewer than the core count, so the sync thread is never starved.
 const WRITERS: usize = 3;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
     // File-backed: see the module docs on why in-memory proves something else.
     let database = test_support::temp().await;
@@ -79,7 +79,7 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
         message.subject = Some("Being typed".into());
         let id = MessageRepository::new(&connection)
             .create(&mut message)
-            .expect("the fixture writes");
+            .await.expect("the fixture writes");
         (account, inbox, id)
     };
     let _ = account;
@@ -104,15 +104,15 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
     // Without it the pass can be most of the way through its 120 batches
     // before a thread has finished checking a connection out of the pool, and
     // a green run then means "nothing was writing", which proves nothing.
-    let ready = Arc::new(std::sync::Barrier::new(WRITERS + 1));
+    let ready = Arc::new(tokio::sync::Barrier::new(WRITERS + 1));
     let writers: Vec<_> = (0..WRITERS)
         .map(|_| {
             let database = database.clone();
             let stop = Arc::clone(&stop);
             let commits = Arc::clone(&commits);
             let ready = Arc::clone(&ready);
-            std::thread::spawn(move || -> Result<(), String> {
-                let connection = database.connection().map_err(|e| e.to_string())?;
+            tokio::spawn(async move {
+                let connection = database.connect().await.map_err(|e| e.to_string())?;
                 let messages = MessageRepository::new(&connection);
                 let mut flagged = false;
                 // Everything expensive — the pool checkout, the first
@@ -127,8 +127,8 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
                 };
                 messages
                     .set_flags(scratch, &warm(false), FlagSource::Local)
-                    .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
-                ready.wait();
+                    .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                ready.wait().await;
                 while !stop.load(Ordering::Relaxed) {
                     flagged = !flagged;
                     // One statement, one commit — exactly what `f` on a
@@ -136,17 +136,17 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
                     // WAL under whatever the sync pass is holding.
                     messages
                         .set_flags(scratch, &warm(flagged), FlagSource::Local)
-                        .map_err(|error| format!("the UI thread's own write failed: {error}"))?;
+                        .await.map_err(|error| format!("the UI thread's own write failed: {error}"))?;
                     commits.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(())
+                Ok::<(), String>(())
             })
         })
         .collect();
 
     // -- a sync pass, batch by batch ---------------------------------------
     let connection = database.connect().await.expect("checkout");
-    ready.wait();
+    ready.wait().await;
     let outcome = sync_mailbox_with_batch_size(
         &connection,
         &backend,
@@ -162,8 +162,8 @@ async fn a_sync_batch_survives_the_ui_thread_writing_underneath_it() {
     stop.store(true, Ordering::Relaxed);
     for writer in writers {
         writer
-            .join()
-            .expect("a writer thread panicked")
+            .await
+            .expect("a writer task panicked")
             .expect("the writers must succeed too");
     }
 
