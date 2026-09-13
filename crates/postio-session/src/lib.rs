@@ -279,19 +279,11 @@ async fn mint(
 pub fn store_key_blocking(
     secrets: &dyn postio_account::secret::SecretStore,
 ) -> Result<postio_storage::key::StoreKey, postio_account::secret::SecretError> {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            return Err(postio_account::secret::SecretError::Backend {
-                account: STORE_KEY_ENTRY.to_owned(),
-                reason: format!("no runtime to read the keyring with: {error}"),
-            });
-        }
-    };
-    runtime.block_on(store_key(secrets))
+    // Through `blocking::now` rather than a runtime built here: this is
+    // reachable from a caller that is already on one -- the FFI's `Session`
+    // opens a store from wherever its host called it -- and a runtime started
+    // inside a runtime panics outright rather than failing.
+    crate::blocking::now(store_key(secrets))
 }
 
 /// What the frontend needs, once there is a store to give it.

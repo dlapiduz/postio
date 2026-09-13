@@ -891,8 +891,7 @@ impl Session {
                         tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
                             message: error.to_string(),
                         })?;
-                    let store = runtime
-                        .block_on(postio_storage::Store::open(
+                    let store = blocking(postio_storage::Store::open(
                             scratch.path().join("postio.db"),
                             &key,
                         ))
@@ -985,8 +984,7 @@ impl Session {
         // blocks. That is what the sentence above about the keyring is
         // already telling a Swift caller -- do not invoke this on the main
         // actor -- and it covers the store open for exactly the same reason.
-        let (database, blobs) = runtime
-            .block_on(postio_session::open_store_at(path, &key))
+        let (database, blobs) = blocking(postio_session::open_store_at(path, &key))
             .map_err(|message| SessionError::StoreUnavailable { message })?;
 
         let config = load_config(&source);
@@ -1048,7 +1046,7 @@ impl Session {
         let Some((store, runtime)) = self.reader() else {
             return 0;
         };
-        let total = runtime.block_on(store.list_count(listed)).unwrap_or(0);
+        let total = blocking(store.list_count(listed)).unwrap_or(0);
         *self.scope.lock().expect("scope lock") = Some(listed);
         // "These twelve" means something else the moment the list does, and an
         // action carrying a selection across would land on mail the user
@@ -1824,7 +1822,7 @@ impl Session {
         // visible — a claim the application should be willing to make on
         // screen rather than only in a note.
         let started = std::time::Instant::now();
-        let found = runtime.block_on(async {
+        let found = blocking(async {
             let connection = database.connect().await.ok()?;
             postio_session::search::execute(
                 &connection,
@@ -2117,7 +2115,7 @@ impl Session {
             return folders;
         };
         for account in accounts {
-            if let Ok(mut found) = runtime.block_on(store.mailboxes(account.id)) {
+            if let Ok(mut found) = blocking(store.mailboxes(account.id)) {
                 // The rows that are views rather than folders -- Flagged,
                 // Snoozed, and the Outbox when it holds something. Built by
                 // the same shared layer the GTK feed asks, which is the whole
@@ -2511,7 +2509,7 @@ impl Session {
         let Some((store, runtime)) = self.reader() else {
             return;
         };
-        let total = runtime.block_on(store.list_count(scope)).unwrap_or(0);
+        let total = blocking(store.list_count(scope)).unwrap_or(0);
         let mut list = self.list.lock().expect("list lock");
         if list.total() != total {
             list.reset(total);
@@ -2567,18 +2565,14 @@ impl Session {
 /// synchronous and these methods called it directly. What changed is the
 /// spelling. The contract on the surface is unchanged and is documented on
 /// `Session::open`: a caller must not invoke these on the main actor.
+///
+/// # One implementation, in `postio-session`
+///
+/// This used to be a fourth copy of the same four lines, and it was the copy
+/// that had only half of them: a runtime built here and blocked on panics
+/// outright when the caller is already on one. `postio_session::blocking::now`
+/// is the whole of it, and the reason it is shared is that every crate that
+/// has needed this has got it wrong once.
 fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
-    use std::cell::OnceCell;
-    thread_local! {
-        static BRIDGE: OnceCell<tokio::runtime::Runtime> = const { OnceCell::new() };
-    }
-    BRIDGE.with(|cell| {
-        cell.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("a current-thread runtime for synchronous store reads")
-        })
-        .block_on(future)
-    })
+    postio_session::blocking::now(future)
 }

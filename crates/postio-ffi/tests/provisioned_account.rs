@@ -45,8 +45,8 @@ fn settings() -> AccountSettings {
     }
 }
 
-#[test]
-fn a_session_finds_the_account_the_provisioning_helper_wrote() {
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_finds_the_account_the_provisioning_helper_wrote() {
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let path = scratch.path().join("postio.db");
     let keyring = Arc::new(MemorySecretStore::new());
@@ -58,7 +58,7 @@ fn a_session_finds_the_account_the_provisioning_helper_wrote() {
     let before = Session::open(SessionOptions::at(&path).with_secrets(secrets.clone()))
         .expect("a session over a fresh store");
     assert_eq!(
-        before.configured_accounts(),
+        before.configured_accounts().await,
         0,
         "a store nobody has provisioned has no accounts in it"
     );
@@ -72,16 +72,15 @@ fn a_session_finds_the_account_the_provisioning_helper_wrote() {
     let key = postio_session::store_key_blocking(secrets.as_ref())
         .expect("the key the first session minted");
     let (database, _blobs) =
-        postio_session::open_store_at(&path, &key).expect("the store the session just made");
-    let outcome = tokio::runtime::Runtime::new()
-        .expect("a runtime")
-        .block_on(provision(
-            &database,
-            secrets.as_ref(),
-            account_from(&settings()),
-            Password::new("an app-specific password"),
-        ))
-        .expect("provisioning succeeds");
+        postio_session::open_store_at(&path, &key).await.expect("the store the session just made");
+    let outcome = provision(
+        &database,
+        secrets.as_ref(),
+        account_from(&settings()),
+        Password::new("an app-specific password"),
+    )
+    .await
+    .expect("provisioning succeeds");
     assert!(matches!(outcome, Provisioned::Created(_)));
     drop(database);
 
@@ -90,7 +89,7 @@ fn a_session_finds_the_account_the_provisioning_helper_wrote() {
     let after = Session::open(SessionOptions::at(&path).with_secrets(secrets))
         .expect("a session over the provisioned store");
     assert_eq!(
-        after.configured_accounts(),
+        after.configured_accounts().await,
         1,
         "the helper wrote an account the frontend cannot see, which is the \
          whole failure mode this test exists for"
@@ -98,7 +97,7 @@ fn a_session_finds_the_account_the_provisioning_helper_wrote() {
 
     // The settings pane lists rows, not a count (#1206). Same failure mode
     // one level up: an account the store has and the pane cannot draw.
-    let listed = after.accounts();
+    let listed = after.accounts().await;
     assert_eq!(
         listed.len(),
         1,

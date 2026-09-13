@@ -16,16 +16,16 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
 /// Whether the store says `message` carries `\Seen`.
-fn is_read(database: &postio_storage::Store, message: i64) -> bool {
+async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(postio_model::ids::MessageId::new(message))
-        .expect("a read")
+        .await.expect("a read")
         .is_some_and(|message| message.flags.contains(&Flag::Seen))
 }
 
 /// A store with one unread message, and the session over it.
-fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
+async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     let database = test_support::memory().await;
     let (mailbox, message) = {
         let connection = database.connect().await.expect("a connection");
@@ -33,7 +33,7 @@ fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
         message.flags.remove(&Flag::Seen);
-        repository.create(&mut message).expect("a message");
+        repository.create(&mut message).await.expect("a message");
         (inbox, message.id.get())
     };
     // The real action handlers on the bus. An in-memory session's default
@@ -62,14 +62,14 @@ fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     (session, database, message)
 }
 
-#[test]
-fn a_dwell_marks_the_message_read() {
-    let (session, database, message) = one_unread();
-    assert!(!is_read(&database, message), "the fixture starts unread");
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dwell_marks_the_message_read() {
+    let (session, database, message) = one_unread().await;
+    assert!(!is_read(&database, message).await, "the fixture starts unread");
 
     session.mark_read_on_dwell(message);
     assert!(
-        settle_until(|| is_read(&database, message)),
+        settle_until(async || is_read(&database, message).await).await,
         "the cursor rested on a message and it was never marked read"
     );
     session.shutdown();
