@@ -136,3 +136,58 @@ pub fn a_presented_window_puts_the_keyboard_on_the_first_message() {
         "nothing has asked for the finder yet, so it stays shut"
     );
 }
+
+/// `/` opens the box and `Escape` puts it away again.
+///
+/// Reported from a live run alongside the blank plate: `/` focused the field
+/// and `Escape` did not get back out. Both halves are asserted here because
+/// the pair is the whole gesture -- a box that opens and will not close is
+/// worse than one that never opened, since every subsequent single key is
+/// typed into it rather than acting on the mail.
+///
+/// Driven through `handle_key`, which is the seam a real press arrives at,
+/// rather than by calling `open` and `press_escape` directly: what is in
+/// doubt is whether the key reaches the command at all while the keyboard is
+/// inside the entry, and calling the methods would assume the answer.
+pub fn slash_opens_the_box_and_escape_puts_it_away() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    settle_until(|| false_once());
+
+    window.handle_key(gdk::Key::from_name("slash").unwrap(), gdk::ModifierType::empty());
+    settle_until(|| window.finder().is_open());
+    assert!(
+        window.finder().is_open(),
+        "`/` opens the box -- it is the one key the whole search gesture starts with"
+    );
+
+    window.handle_key(
+        gdk::Key::from_name("Escape").unwrap(),
+        gdk::ModifierType::empty(),
+    );
+    settle_until(|| !window.finder().is_open());
+    assert!(
+        !window.finder().is_open(),
+        "`Escape` means get me out of here, and a box that will not close \
+         swallows every key pressed after it"
+    );
+}
+
+/// Pumps a few frames without waiting for anything in particular.
+fn false_once() -> bool {
+    use std::cell::Cell;
+    thread_local! { static SEEN: Cell<u8> = const { Cell::new(0) }; }
+    SEEN.with(|seen| {
+        let n = seen.get().saturating_add(1);
+        seen.set(n);
+        n > 3
+    })
+}

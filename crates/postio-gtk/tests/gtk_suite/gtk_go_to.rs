@@ -122,4 +122,41 @@ pub fn an_empty_box_at_startup_is_not_a_blank_plate() {
         finder.is_visible(),
         "the plate is up, and it has rows: {hints:?}"
     );
+
+    // On screen, not merely in the vector. This assertion used to stop at
+    // `mode_hints`, which is the list the widget was *handed* -- and it
+    // passed for weeks while the running app drew a blank plate, because
+    // `row_count` still answered 0 for Search and the scroller holding the
+    // rows was hidden on that count. A person sees the rows or does not.
+    let shown = visible_text(finder.upcast_ref::<gtk::Widget>());
+    for hint in &hints {
+        let purpose = hint.split(',').next().unwrap_or(hint).trim();
+        assert!(
+            shown.iter().any(|text| text.contains(purpose)),
+            "the plate is up but {purpose:?} is not on it -- drawn text was \
+             {shown:?}"
+        );
+    }
+}
+
+/// Every label a person can actually read in `root`'s tree.
+///
+/// Skips anything hidden, including a visible widget inside a hidden parent:
+/// the blank plate this guards against was a visible plate whose rows lived
+/// in a scroller that was not, so asking each label alone would have missed
+/// it exactly as `mode_hints` did.
+fn visible_text(root: &gtk::Widget) -> Vec<String> {
+    let mut found = Vec::new();
+    if !root.is_visible() {
+        return found;
+    }
+    if let Some(label) = root.downcast_ref::<gtk::Label>() {
+        found.push(label.text().to_string());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        found.extend(visible_text(&widget));
+        child = widget.next_sibling();
+    }
+    found
 }

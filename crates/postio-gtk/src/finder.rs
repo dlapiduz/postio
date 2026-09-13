@@ -1100,7 +1100,12 @@ impl Finder {
     fn row_count(&self) -> usize {
         let imp = self.imp();
         match self.mode() {
-            Mode::Search => 0,
+            // Search answers in the message list, so it has no *results* on
+            // the plate -- but an empty box offers the modes, and those are
+            // rows. Answering 0 for them hid the scroller they live in
+            // (`listing && count > 0`) and suppressed the empty line too
+            // (`!hinting`), which is a plate that is up with nothing on it.
+            Mode::Search => imp.hints.borrow().len(),
             Mode::Command => imp.commands.borrow().len(),
             Mode::Mailbox => imp.folders.borrow().len(),
             Mode::Contact => imp.matched.borrow().len(),

@@ -456,6 +456,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_startup_focus::a_presented_window_puts_the_keyboard_on_the_first_message as fn(),
     ),
     (
+        "gtk_startup_focus::slash_opens_the_box_and_escape_puts_it_away",
+        gtk_startup_focus::slash_opens_the_box_and_escape_puts_it_away as fn(),
+    ),
+    (
         "gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate",
         gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate as fn(),
     ),
