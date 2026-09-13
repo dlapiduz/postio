@@ -44,90 +44,90 @@ use postio_storage::{BlobStore, test_support};
 
 pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
     crate::gtk_case(async {
-    let state_dir = tempfile::tempdir().expect("a state directory");
-    // SAFETY: first statement of a single-threaded test.
-    unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
+        let state_dir = tempfile::tempdir().expect("a state directory");
+        // SAFETY: first statement of a single-threaded test.
+        unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
-    let display = gdk::Display::default().unwrap();
-    fonts::install().expect("the embedded fonts should install");
-    style::install(&display);
-    app::install_icons(&display);
+        if adw::init().is_err() || gdk::Display::default().is_none() {
+            eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+            return;
+        }
+        let display = gdk::Display::default().unwrap();
+        fonts::install().expect("the embedded fonts should install");
+        style::install(&display);
+        app::install_icons(&display);
 
-    let database = test_support::memory().await;
-    let report = seed_small(&database, 9).await;
-    let account = report.account.id;
-    let directory = tempfile::tempdir().expect("a blob directory");
-    let blobs = BlobStore::open(
-        directory.path().to_path_buf(),
-        &postio_storage::test_support::blob_keys(),
-    )
-    .expect("a blob store");
+        let database = test_support::memory().await;
+        let report = seed_small(&database, 9).await;
+        let account = report.account.id;
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = BlobStore::open(
+            directory.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
 
-    // A draft exactly as it opened: no recipient, no subject, no body. This
-    // is what a recovered-then-killed composer leaves behind, and what every
-    // launch after the first one was finding.
-    {
-        let connection = database.connect().await.expect("a connection");
-        let mut draft = Draft::new(account);
-        DraftRepository::new(&connection)
-            .save(&mut draft)
-            .await
-            .expect("save the draft");
-    }
-
-    // The crash. After this the marker says `open`, so the `begin_session`
-    // inside `compose::install` reports one.
-    postio_session::begin_session(&database).await;
-
-    let state = SharedState::default();
-    let bus = actions::wire(
-        postio_core::dispatch::DispatcherBuilder::new(),
-        actions::Actions::new(database.clone(), state.clone()),
-    )
-    .build();
-    let wired: Vec<CommandId> = bus.wired().collect();
-    let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
-    let (sink, _events) = event_channel();
-    let wiring = Wiring::new(
-        database.clone(),
-        blobs.clone(),
-        bridge.handle(),
-        sink,
-        bridge.commands(),
-    );
-
-    let window = Window::default();
-    window.present();
-    while glib::MainContext::default().iteration(false) {}
-
-    let feeds = feed_the_window(&window, &wiring)
-        .await
-        .expect("the seeded store has an account")
-        .feeds;
-    commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
-    compose::install(
-        &window,
-        account,
-        database.clone(),
-        blobs,
-        bridge.handle(),
-        postio_app::reading::Showing::default(),
+        // A draft exactly as it opened: no recipient, no subject, no body. This
+        // is what a recovered-then-killed composer leaves behind, and what every
+        // launch after the first one was finding.
         {
-            let feeds = feeds.clone();
-            std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
-        },
-    )
-    .await;
-    while glib::MainContext::default().iteration(false) {}
+            let connection = database.connect().await.expect("a connection");
+            let mut draft = Draft::new(account);
+            DraftRepository::new(&connection)
+                .save(&mut draft)
+                .await
+                .expect("save the draft");
+        }
 
-    assert!(
-        !window.composer().is_open(),
-        "an untouched compose buffer is not work worth restoring, and \
+        // The crash. After this the marker says `open`, so the `begin_session`
+        // inside `compose::install` reports one.
+        postio_session::begin_session(&database).await;
+
+        let state = SharedState::default();
+        let bus = actions::wire(
+            postio_core::dispatch::DispatcherBuilder::new(),
+            actions::Actions::new(database.clone(), state.clone()),
+        )
+        .build();
+        let wired: Vec<CommandId> = bus.wired().collect();
+        let (bridge, _replies) = Bridge::new(bus).expect("a runtime");
+        let (sink, _events) = event_channel();
+        let wiring = Wiring::new(
+            database.clone(),
+            blobs.clone(),
+            bridge.handle(),
+            sink,
+            bridge.commands(),
+        );
+
+        let window = Window::default();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        let feeds = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account")
+            .feeds;
+        commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
+        compose::install(
+            &window,
+            account,
+            database.clone(),
+            blobs,
+            bridge.handle(),
+            postio_app::reading::Showing::default(),
+            {
+                let feeds = feeds.clone();
+                std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
+            },
+        )
+        .await;
+        while glib::MainContext::default().iteration(false) {}
+
+        assert!(
+            !window.composer().is_open(),
+            "an untouched compose buffer is not work worth restoring, and \
          reopening it takes the keyboard from the inbox at every launch"
-    );
+        );
     })
 }

@@ -48,7 +48,7 @@ fn press(window: &Window, keys: &[&str]) {
 
 pub fn pressing_g_i_shows_the_inbox() {
     crate::gtk_case(async {
-            let state_dir = tempfile::tempdir().expect("a state directory");
+        let state_dir = tempfile::tempdir().expect("a state directory");
         // SAFETY: first statement of a single-threaded test.
         unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
 
