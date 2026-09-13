@@ -54,7 +54,7 @@ answers.** Neither is allowed to end in a guess: each writes its result into
 - [x] T006 Write `crates/postio-storage/src/schema.rs`: the head schema as one constant, with the four changes data-model.md names — bodies as TEXT, `body_search` added, `WITHOUT ROWID` dropped from `thread_links`/`message_labels`/`message_headers`, the two FTS5 virtual tables replaced by fts indexes. Test first: a test that every table, index and trigger the old schema declared is present, so nothing is lost by transcription
 - [x] T007 Write `crates/postio-storage/src/store.rs` replacing `db.rs`: `Store::open(path, key)` over Turso with encryption on, schema at head on a new file. Test first: opening a fresh path yields a store whose schema is at head
 - [x] T008 Delete `crates/postio-storage/src/db.rs`, `encrypt.rs` and `body.rs`, and the tests that assert SQLCipher's own behaviour (`encrypt_migration`, `page_mac`, `key_pragma_failure`, `hmac_cost`, the `cipher_*` pragma cases in `concurrent_open`). Each deletion says in one line which engine behaviour it was about — a deleted test with no explanation is indistinguishable from a lost one
-- [ ] T009 Port `crates/postio-storage/src/test_support.rs` to file-backed Turso stores only, per research Q6 — the engine refuses to key an in-memory database
+- [x] T009 Port `crates/postio-storage/src/test_support.rs` to file-backed Turso stores only, per research Q6 — the engine refuses to key an in-memory database
 
 **Checkpoint**: the crate does not compile yet and is not expected to. Nothing below starts until T004 and T005 have written their answers down.
 
@@ -70,15 +70,15 @@ text in the clear, another key refused.
 
 ### Tests first
 
-- [ ] T010 [P] [US1] `crates/postio-storage/tests/storage_suite/encryption.rs` — a store created through `Store::open` holds no table name and no message text in its raw bytes, and a second key is refused. Rewritten rather than ported: it currently asserts SQLCipher's pragmas
-- [ ] T011 [P] [US1] `crates/postio-storage/tests/storage_suite/schema_fidelity.rs` — every object the schema declares exists after an open, and a database this build did not write is refused rather than opened partly (FR-003)
+- [x] T010 [P] [US1] `crates/postio-storage/tests/storage_suite/encryption.rs` — a store created through `Store::open` holds no table name and no message text in its raw bytes, and a second key is refused. Rewritten rather than ported: it currently asserts SQLCipher's pragmas
+- [x] T011 [P] [US1] `crates/postio-storage/tests/storage_suite/schema_fidelity.rs` — every object the schema declares exists after an open, and a database this build did not write is refused rather than opened partly (FR-003)
 
 ### Implementation
 
-- [ ] T012 [US1] Make `Store::open` refuse a foreign or unreadable database with a sentence meant for a person, in `crates/postio-storage/src/store.rs` — ADR 0014 Q3's rule is unchanged, only the engine is
-- [ ] T013 [US1] Port `crates/postio-session/src/lib.rs`'s `open_store_at` to `Store`, dropping the ADR 0014 Q4 plaintext migration entirely (spec: no migration, by instruction) and the `store_key` path unchanged — keyring, raw key, no passphrase KDF
-- [ ] T014 [US1] Keep or drop `WriteGate` and `Pool` in `crates/postio-storage/src/store.rs` **according to T005's answer**, and say which in the commit body
-- [ ] T015 [US1] `crates/postio-session/examples/prove_cipher.rs` — the quickstart's US1 command, reporting cipher, schema object count, header bytes, a plaintext scan and a wrong-key refusal
+- [x] T012 [US1] Make `Store::open` refuse a foreign or unreadable database with a sentence meant for a person, in `crates/postio-storage/src/store.rs` — ADR 0014 Q3's rule is unchanged, only the engine is
+- [x] T013 [US1] Port `crates/postio-session/src/lib.rs`'s `open_store_at` to `Store`, dropping the ADR 0014 Q4 plaintext migration entirely (spec: no migration, by instruction) and the `store_key` path unchanged — keyring, raw key, no passphrase KDF
+- [x] T014 [US1] Keep or drop `WriteGate` and `Pool` in `crates/postio-storage/src/store.rs` **according to T005's answer**, and say which in the commit body
+- [x] T015 [US1] `crates/postio-session/examples/prove_cipher.rs` — the quickstart's US1 command, reporting cipher, schema object count, header bytes, a plaintext scan and a wrong-key refusal
 
 **Checkpoint**: `cargo run -p postio-session --example prove_cipher` passes. The store is real and encrypted; nothing reads or writes mail yet.
 
@@ -100,25 +100,25 @@ it fail, port the repository until it passes. The suites are the specification
 and **must not be weakened to fit** — a suite that needed changing is a finding
 for the commit body.
 
-- [ ] T016 [P] [US2] `accounts` — `crates/postio-storage/src/repository/accounts.rs`, suite `tests/storage_suite/accounts.rs`
-- [ ] T017 [P] [US2] `mailboxes` + the count triggers — `repository/mailboxes.rs`, suites `mailboxes.rs`, `mailbox_counts.rs`, `mailbox_size.rs`
-- [ ] T018 [US2] `messages` — `repository/messages.rs`, suite `messages.rs`. Not [P]: the largest repository, and bodies change shape here (TEXT, and `body_search` written when folding changes the text)
-- [ ] T019 [P] [US2] `threads` + `threading` — `repository/threads.rs`, `repository/threading.rs`, suite `threads.rs`
-- [ ] T020 [P] [US2] `drafts` — `repository/drafts.rs`, suites `drafts.rs`, `draft_indexes.rs`
-- [ ] T021 [P] [US2] `contacts` + `contact_groups` — suites `contacts.rs`, `contact_groups.rs`, `contact_rank_index.rs`
-- [ ] T022 [P] [US2] `labels` — `repository/labels.rs`, suite `labels.rs`
-- [ ] T023 [P] [US2] `operations` — `repository/operations.rs`, suite `operations.rs`
-- [ ] T024 [P] [US2] `settings`, `sync_state`, `egress`, `unsubscribe`, `mailbox_roles`, `cross_account` — the small ones, one commit each
-- [ ] T025 [P] [US2] `actions.rs` and `bulk` — `repository/mod.rs`'s bulk paths, suites `actions.rs`, `bulk.rs`
-- [ ] T026 [P] [US2] `seed.rs` — the seeded-store helper every measurement depends on, suite `seed_is_honest.rs`
+- [x] T016 [P] [US2] `accounts` — `crates/postio-storage/src/repository/accounts.rs`, suite `tests/storage_suite/accounts.rs`
+- [x] T017 [P] [US2] `mailboxes` + the count triggers — `repository/mailboxes.rs`, suites `mailboxes.rs`, `mailbox_counts.rs`, `mailbox_size.rs`
+- [x] T018 [US2] `messages` — `repository/messages.rs`, suite `messages.rs`. Not [P]: the largest repository, and bodies change shape here (TEXT, and `body_search` written when folding changes the text)
+- [x] T019 [P] [US2] `threads` + `threading` — `repository/threads.rs`, `repository/threading.rs`, suite `threads.rs`
+- [x] T020 [P] [US2] `drafts` — `repository/drafts.rs`, suites `drafts.rs`, `draft_indexes.rs`
+- [x] T021 [P] [US2] `contacts` + `contact_groups` — suites `contacts.rs`, `contact_groups.rs`, `contact_rank_index.rs`
+- [x] T022 [P] [US2] `labels` — `repository/labels.rs`, suite `labels.rs`
+- [x] T023 [P] [US2] `operations` — `repository/operations.rs`, suite `operations.rs`
+- [x] T024 [P] [US2] `settings`, `sync_state`, `egress`, `unsubscribe`, `mailbox_roles`, `cross_account` — the small ones, one commit each
+- [x] T025 [P] [US2] `actions.rs` and `bulk` — `repository/mod.rs`'s bulk paths, suites `actions.rs`, `bulk.rs`
+- [x] T026 [P] [US2] `seed.rs` — the seeded-store helper every measurement depends on, suite `seed_is_honest.rs`
 
 ### The layers above
 
-- [ ] T027 [US2] `crates/postio-runtime/src/store/sqlite.rs` → a thin async adapter, keeping every `MailStore` method and signature exactly (contract 2). Test first: `postio-runtime`'s own suite
-- [ ] T028 [US2] `crates/postio-sync` — the write paths become awaits rather than `spawn_blocking` closures. Test first: its suite, against the mock backend
-- [ ] T029 [US2] `crates/postio-session` — `Wiring`, the housekeeping passes, `begin_session`. Test first: `session_suite`
-- [ ] T030 [US2] `crates/postio-app` — the composition root follows; `feed_the_window` and the settings panels. Test first: `app_suite`
-- [ ] T031 [US2] Confirm the boundary held: `git diff --stat origin/main -- crates/postio-gtk crates/postio-search` is empty, and T002's check passes
+- [x] T027 [US2] `crates/postio-runtime/src/store/sqlite.rs` → a thin async adapter, keeping every `MailStore` method and signature exactly (contract 2). Test first: `postio-runtime`'s own suite
+- [x] T028 [US2] `crates/postio-sync` — the write paths become awaits rather than `spawn_blocking` closures. Test first: its suite, against the mock backend
+- [x] T029 [US2] `crates/postio-session` — `Wiring`, the housekeeping passes, `begin_session`. Test first: `session_suite`
+- [x] T030 [US2] `crates/postio-app` — the composition root follows; `feed_the_window` and the settings panels. Test first: `app_suite`
+- [x] T031 [US2] Confirm the boundary held: `git diff --stat origin/main -- crates/postio-gtk crates/postio-search` is empty, and T002's check passes
 
 **Checkpoint**: `cargo nextest run -p postio-storage -p postio-sync -p postio-session -p postio-app` green. Mail syncs, lists and reads. Search does not work yet.
 
@@ -137,11 +137,11 @@ message today's search returns that the new one does not is a failure.
 
 ### Implementation
 
-- [ ] T033 [US3] Rewrite `crates/postio-index/src/index.rs`: the two fts indexes, the `message_bodies` table, and deletion that actually deletes (FR-011). Shape follows **T004's answer** — a generated column if it can be indexed, a plain folded column if not
-- [ ] T034 [US3] Folding, in `crates/postio-index/src/index.rs`: NFKD, drop combining marks, lowercase — applied identically on the way into the index and into a query. Test first: `José` is found by `jose` and `Jose` by `josé`, both directions
-- [ ] T035 [US3] Rewrite `crates/postio-index/src/executor.rs`: `MATCH`/`bm25()` → `fts_match`/`fts_score`, the two result sets merged as today
+- [x] T033 [US3] Rewrite `crates/postio-index/src/index.rs`: the two fts indexes, the `message_bodies` table, and deletion that actually deletes (FR-011). Shape follows **T004's answer** — a generated column if it can be indexed, a plain folded column if not
+- [x] T034 [US3] Folding, in `crates/postio-index/src/index.rs`: NFKD, drop combining marks, lowercase — applied identically on the way into the index and into a query. Test first: `José` is found by `jose` and `Jose` by `josé`, both directions
+- [x] T035 [US3] Rewrite `crates/postio-index/src/executor.rs`: `MATCH`/`bm25()` → `fts_match`/`fts_score`, the two result sets merged as today
 - [ ] T036 [US3] Re-derive the ranking weights in `executor.rs`'s `rank_score`: the relevance term's scale changes with the engine, so `RECENCY_WEIGHT` and `SENDER_WEIGHT` are re-measured against it rather than carried over. Test first: a more recent message outranks an older one of equal textual relevance, and a frequent correspondent outranks a stranger
-- [ ] T037 [US3] Highlighting via `fts_highlight`, or the existing `postio-search::highlight` if it is engine-independent — check before replacing
+- [x] T037 [US3] Highlighting via `fts_highlight`, or the existing `postio-search::highlight` if it is engine-independent — check before replacing
 
 **Checkpoint**: `search_equivalence` reports no missing messages, diacritics included.
 
@@ -155,9 +155,9 @@ any machine.
 **Independent test**: a gate that fails when a read becomes proportional to
 the mailbox, over two stores an order of magnitude apart.
 
-- [ ] T038 [US4] Replace `crates/postio-storage/src/test_support/counting.rs`: count at the storage seam — statements issued and rows returned — since Turso exposes no trace hook (research Q5). Its docs **must** state plainly what it can no longer see: rows *examined*, which is the count that caught #1479
-- [ ] T039 [US4] Port `crates/postio-app/tests/app_suite/startup_reads.rs` to the new counter, keeping its claim exactly: opening a window costs the same over two stores an order of magnitude apart
-- [ ] T040 [US4] Port `crates/postio-storage/tests/storage_suite/list_statement_count.rs` and `threads.rs`'s flat-paging case to the new counter
+- [x] T038 [US4] Replace `crates/postio-storage/src/test_support/counting.rs`: count at the storage seam — statements issued and rows returned — since Turso exposes no trace hook (research Q5). Its docs **must** state plainly what it can no longer see: rows *examined*, which is the count that caught #1479
+- [x] T039 [US4] Port `crates/postio-app/tests/app_suite/startup_reads.rs` to the new counter, keeping its claim exactly: opening a window costs the same over two stores an order of magnitude apart
+- [x] T040 [US4] Port `crates/postio-storage/tests/storage_suite/list_statement_count.rs` and `threads.rs`'s flat-paging case to the new counter
 - [ ] T041 [US4] Make an unbounded read visible (FR-017): a debug assertion, or a repository API that cannot express a query without a limit. Decide which in the commit body — this is the property §18 rests on and convention is not enough
 - [ ] T042 [US4] Measure the real numbers and record them in `docs/PERFORMANCE.md`: startup on the reference mailbox, a page read, a search, and the store's size against the old one — the size regression is expected and must be stated rather than discovered
 
@@ -167,7 +167,7 @@ the mailbox, over two stores an order of magnitude apart.
 
 - [ ] T043 [P] Update `docs/ARCHITECTURE.md` and `docs/PRODUCT.md` where they name SQLCipher, FTS5 or compression
 - [ ] T044 [P] A note under `docs/notes/` on what the engine swap cost and what it could not keep — the diacritics fold moving into the application, and the cost gate's lost sight of rows examined
-- [ ] T045 Run `scripts/check.sh` and the full workspace suite; fix what the port left
+- [x] T045 Run `scripts/check.sh` and the full workspace suite; fix what the port left
 - [ ] T046 The quickstart's end-to-end run against a real account, on a **fresh store, never the live one** — the acceptance for SC-001, and the one a test cannot give
 
 ---

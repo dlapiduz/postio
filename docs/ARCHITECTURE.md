@@ -27,7 +27,7 @@ graph TD
         imap["<b>postio-account</b><br/>io-imap behind MailBackend"]
         smtp["<b>postio-smtp</b><br/>io-smtp"]
         storage["<b>postio-storage</b><br/>SQLite · migrations · blob store"]
-        index["<b>postio-index</b><br/>FTS5 index · executor"]
+        index["<b>postio-index</b><br/>full-text index · executor"]
     end
 
     subgraph contract ["contract"]
@@ -242,7 +242,7 @@ bug surfaces, and a rule that does not agree with the search bar about what
 **The boundary that keeps this honest:** parsing lives in `postio-search`,
 which is pure — no SQL, no toolkit, `postio-model` only. `postio-config` keeps
 queries as *text* and does not parse them. `postio-index` executes a parsed
-query against FTS5. So the same string means the same thing whether it was
+query against the engine's full-text index. So the same string means the same thing whether it was
 typed in the search bar, saved to the sidebar, or written into `config.toml` in
 `$EDITOR`.
 
@@ -287,14 +287,15 @@ hide inside the thing meant to catch it.
 
 - **`postio-core` must not depend on `gtk4`/`libadwaita`.** It is the
   UI-agnostic contract; this is what keeps a second frontend possible.
-- **`postio-gtk` must not depend on `rusqlite`/`io-imap`.** The view layer does
-  no SQL and speaks no protocol.
+- **`postio-gtk` must not depend on `turso`/`io-imap`.** The view layer does
+  no SQL and speaks no protocol. (`rusqlite` is banned in the same place and
+  for the same reason; it is simply no longer in the graph to ban.)
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
 graph**, not source text, so a violation arriving transitively through an
 innocent-looking intermediate is caught, and a string in a comment cannot fool
 it. It counts the guarded crate's own dev-dependencies too — a test that pulls
-`rusqlite` into `postio-gtk` violates the invariant just as much as the library
+`turso` into `postio-gtk` violates the invariant just as much as the library
 would.
 
 **This is also why `postio-runtime` and `postio-app` are separate crates rather
@@ -449,5 +450,5 @@ alongside it without stealing a repaint.
 | Gap | Effect | Issue |
 |---|---|---|
 | ~2,850 lines of toolkit-free logic live in `postio-gtk` — keymap, selection, tokens | A second frontend must reimplement, fork, or link GTK to borrow them. Smaller than it once measured: `postio-body` (ADR 0004) already pulled the sanitizer and the quote folder out. | — |
-| Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring `rusqlite` and undoing the index split | — |
+| Boundary rules guard two crates, not the graph | Nothing stops `postio-search` re-acquiring the database crate and undoing the index split | — |
 | `first_account()` in `postio-app/src/lib.rs` | Single account, though model/storage/engine are all account-aware. An appropriate MVP cut. | [#1](https://github.com/dlapiduz/postio/issues/1) |

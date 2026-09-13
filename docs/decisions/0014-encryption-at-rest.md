@@ -1,6 +1,11 @@
 # ADR 0014 — The local store encrypts itself
 
-- **Status:** Accepted — **GO** (2026-08-25)
+- **Status:** Accepted — **GO** (2026-08-25). **Mechanism amended** by
+  [ADR 0037](0037-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
+  database engine is Turso with its own AES-256-GCM page encryption rather
+  than SQLCipher, and there is no migration path. Everything below about the
+  threat model, the key hierarchy and the no-plaintext-fallback rule is
+  unchanged and still in force.
 - **Date:** 2026-08-25
 - **Issue:** [#143](https://github.com/dlapiduz/postio/issues/143), decided by
   the maintainer: Postio encrypts at rest itself — relying on OS disk
