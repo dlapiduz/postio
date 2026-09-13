@@ -2,23 +2,25 @@
 //! `UIDVALIDITY`, or the one before it?
 //!
 //! A real account on 2026-09-13 produced a whole mailbox list of
-//! `UidValidityChanged`, and the numbers gave the shape away: what each
-//! mailbox believed it had seen was the value of the mailbox synced *before*
-//! it. A `UIDVALIDITY` misattributed this way is not cosmetic -- it is what
-//! tells Postio to throw a folder's UID space away and resync it whole.
+//! `UidValidityChanged`, and a crossing was the first reading of it (#1538).
+//! That reading was wrong: a debug run showed the server handing **one
+//! UIDVALIDITY to several different folders**, which RFC 3501 permits -- it
+//! requires uniqueness for a mailbox over time, not across mailboxes -- so
+//! values that looked passed along between folders were merely shared.
+//!
+//! The invariant is still worth holding, because a misattributed
+//! `UIDVALIDITY` is not cosmetic: it is what tells Postio to throw a folder's
+//! UID space away and resync it whole.
 //!
 //! Every value below is a distinct, recognisable number, so a crossed pair
 //! names itself in the failure.
 //!
-//! **Both cases pass, and that is the finding they record** (#1538). They were
-//! written from a field failure and did not reproduce it, so what they pin
-//! down is the ground already eliminated: sequential selects on one pooled
-//! connection, and the engine's real two-at-a-time shape, both attribute
-//! correctly. The structural difference left over is the watcher -- fifteen
-//! folders on the watch lane, sharing one `Arc<Generations>` with the general
-//! lane -- which is where #1538 says to look next. Kept as regression cover
-//! either way: this is an invariant worth holding whatever turns out to break
-//! it.
+//! **Both cases pass**, and with the correction above that is expected rather
+//! than mysterious: there may be no client-side crossing to reproduce. What
+//! they still pin down is real -- sequential selects on one pooled
+//! connection, and the engine's two-at-a-time shape, both attribute
+//! correctly -- so they are kept as the record of ground eliminated and as
+//! cover for an invariant nothing else guards.
 
 use std::sync::Arc;
 
