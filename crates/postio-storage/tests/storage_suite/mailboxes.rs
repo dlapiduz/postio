@@ -1,8 +1,8 @@
 //! Mailboxes: CRUD, special-use roles, sync state, and the sidebar's counts.
 
-use postio_storage::sql::bind;
 use chrono::{TimeZone, Utc};
 use postio_storage::Connection;
+use postio_storage::sql::bind;
 
 use postio_model::{
     Account, AccountId, EmailAddress, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole,
@@ -145,7 +145,12 @@ async fn roles_are_stored_with_the_spelling_the_model_documents() {
         .expect("read the raw role");
         assert_eq!(raw, expected.as_str(), "{path}");
         assert_eq!(
-            mailboxes.get(id).await.expect("get").expect("the mailbox").role,
+            mailboxes
+                .get(id)
+                .await
+                .expect("get")
+                .expect("the mailbox")
+                .role,
             expected,
             "{path}"
         );
@@ -391,7 +396,12 @@ async fn recounting_fills_in_the_sidebars_numbers() {
         }
     );
     assert_eq!(
-        mailboxes.get(id).await.expect("get").expect("the mailbox").counts,
+        mailboxes
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the mailbox")
+            .counts,
         counts,
         "the numbers are cached on the row, so the sidebar never counts rows"
     );
@@ -472,7 +482,10 @@ async fn every_mailbox_in_an_account_can_be_recounted_at_once() {
     insert_message(&connection, archive_id, "\\Seen").await;
     insert_message(&connection, archive_id, "\\Seen").await;
 
-    mailboxes.recount_account(account_id).await.expect("recount all");
+    mailboxes
+        .recount_account(account_id)
+        .await
+        .expect("recount all");
 
     let listed = mailboxes.list_for_account(account_id).await.expect("list");
     let archive = listed.iter().find(|m| m.id == archive_id).expect("archive");
@@ -516,10 +529,18 @@ async fn counts_can_be_written_directly_for_a_server_reported_status() {
         snoozed: 0,
         attention: 0,
     };
-    mailboxes.set_counts(id, reported).await.expect("set counts");
+    mailboxes
+        .set_counts(id, reported)
+        .await
+        .expect("set counts");
 
     assert_eq!(
-        mailboxes.get(id).await.expect("get").expect("the mailbox").counts,
+        mailboxes
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the mailbox")
+            .counts,
         reported
     );
 }
@@ -530,7 +551,13 @@ async fn reading_a_mailbox_that_is_not_there_is_none() {
     let connection = database.connect().await.expect("checkout");
     let mailboxes = MailboxRepository::new(&connection);
 
-    assert!(mailboxes.get(MailboxId::new(404)).await.expect("get").is_none());
+    assert!(
+        mailboxes
+            .get(MailboxId::new(404))
+            .await
+            .expect("get")
+            .is_none()
+    );
     assert!(
         mailboxes
             .list_for_account(AccountId::new(404))

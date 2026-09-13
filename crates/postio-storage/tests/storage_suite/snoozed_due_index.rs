@@ -48,7 +48,6 @@
 
 use postio_storage::Connection;
 
-
 /// Enough mail that a walk over all of it is a real cost, and enough that
 /// SQLite would not simply scan a tiny table whatever the index says.
 const MESSAGES: usize = 20_000;
@@ -173,9 +172,11 @@ async fn the_index_does_not_change_which_messages_wake() {
     // in. An index the planner declines to use would still return these, by
     // scanning, which is why the plan is asserted above as well.
     let mut statement = connection.prepare(DUE).await.expect("prepare");
-    let woken: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col(row, 0))
-        .await
-        .expect("rows");
+    let woken: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
+    .await
+    .expect("rows");
 
     let expected: Vec<i64> = postio_storage::sql::all(
         &connection,

@@ -10,10 +10,10 @@ use postio_model::ids::{AccountId, UnsubscribeActivationId};
 
 use super::{from_millis, to_millis};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::Result;
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Read and write the unsubscribe-activation log on one connection.
 pub struct UnsubscribeRepository<'a> {
@@ -33,15 +33,17 @@ impl<'a> UnsubscribeRepository<'a> {
         &self,
         activation: &mut UnsubscribeActivation,
     ) -> Result<UnsubscribeActivationId> {
-        self.connection.execute(
-            "INSERT INTO unsubscribe_activations (account_id, list_identifier, activated_at)
+        self.connection
+            .execute(
+                "INSERT INTO unsubscribe_activations (account_id, list_identifier, activated_at)
              VALUES (?1, ?2, ?3)",
-            bind![
-                activation.account_id.get(),
-                activation.list_identifier,
-                to_millis(activation.activated_at),
-            ],
-        ).await?;
+                bind![
+                    activation.account_id.get(),
+                    activation.list_identifier,
+                    to_millis(activation.activated_at),
+                ],
+            )
+            .await?;
         let id = UnsubscribeActivationId::new(self.connection.last_insert_rowid());
         activation.id = id;
         Ok(id)
@@ -53,14 +55,15 @@ impl<'a> UnsubscribeRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT {COLUMNS} FROM unsubscribe_activations
+                "SELECT {COLUMNS} FROM unsubscribe_activations
               WHERE account_id = ?1
               ORDER BY activated_at DESC, id DESC"
-        ),
+            ),
             [account_id.get()],
             read_activation,
         )
-        .await}
+        .await
+    }
 }
 
 fn read_activation(row: &Row) -> Result<UnsubscribeActivation> {

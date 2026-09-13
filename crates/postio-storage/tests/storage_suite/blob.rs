@@ -764,11 +764,7 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 // ---------------------------------------------------------------------------
 
 /// A message received `received_at`, holding the raw `.eml` blob if it has one.
-async fn insert_message_at(
-    connection: &Connection,
-    received_at: i64,
-    raw: Option<&BlobId>,
-) -> i64 {
+async fn insert_message_at(connection: &Connection, received_at: i64, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id, body_state)
@@ -808,7 +804,10 @@ async fn eviction_takes_raw_source_before_it_takes_a_payload() {
 
     // A budget that only one of the two big blobs can fit under.
     let budget = store.len_of(&payload).expect("len") + 16;
-    let report = store.evict_to_fit(&connection, budget).await.expect("evict");
+    let report = store
+        .evict_to_fit(&connection, budget)
+        .await
+        .expect("evict");
 
     assert!(report.removed >= 1);
     assert!(!store.contains(&raw), "raw source goes first");
@@ -859,7 +858,12 @@ async fn eviction_cannot_reach_the_text_that_search_is_made_of() {
     assert_eq!(report.removed, 0);
 
     assert_eq!(
-        messages.body(id).await.expect("body").expect("the row").text,
+        messages
+            .body(id)
+            .await
+            .expect("body")
+            .expect("the row")
+            .text,
         Some(words),
         "no eviction budget can reach a body: it is not in the blob store"
     );
@@ -884,7 +888,10 @@ async fn eviction_takes_the_oldest_mail_first() {
     insert_message_at(&connection, 9_000, Some(&new)).await;
 
     let budget = store.len_of(&new).expect("len") + 16;
-    store.evict_to_fit(&connection, budget).await.expect("evict");
+    store
+        .evict_to_fit(&connection, budget)
+        .await
+        .expect("evict");
 
     assert!(!store.contains(&old), "the mail nobody has opened in years");
     assert!(store.contains(&new), "not this week's");

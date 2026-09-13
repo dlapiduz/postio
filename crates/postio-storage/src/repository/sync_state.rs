@@ -14,10 +14,10 @@ use postio_model::{
 
 use super::{from_millis, require_persisted, to_millis};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`SyncState`] rows.
 ///
@@ -74,13 +74,12 @@ impl<'a> SyncStateRepository<'a> {
     pub async fn get(&self, mailbox_id: MailboxId) -> Result<Option<SyncState>> {
         sql::first(
             self.connection,
-            &format!(
-            "SELECT {COLUMNS} FROM sync_state WHERE mailbox_id = ?1"
-        ),
+            &format!("SELECT {COLUMNS} FROM sync_state WHERE mailbox_id = ?1"),
             [mailbox_id.get()],
             read_state,
         )
-        .await}
+        .await
+    }
 
     /// One mailbox's state, failing when the mailbox is not there.
     pub async fn require(&self, mailbox_id: MailboxId) -> Result<SyncState> {
@@ -94,13 +93,12 @@ impl<'a> SyncStateRepository<'a> {
     pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<SyncState>> {
         sql::all(
             self.connection,
-            &format!(
-            "SELECT {COLUMNS} FROM sync_state WHERE account_id = ?1 ORDER BY mailbox_id"
-        ),
+            &format!("SELECT {COLUMNS} FROM sync_state WHERE account_id = ?1 ORDER BY mailbox_id"),
             [account_id.get()],
             read_state,
         )
-        .await}
+        .await
+    }
 
     /// Writes a whole state back, creating the row if it is somehow missing.
     ///
@@ -110,8 +108,9 @@ impl<'a> SyncStateRepository<'a> {
         let mailbox_id = require_persisted(state.mailbox_id.get(), "mailbox")?;
         let account_id = require_persisted(state.account_id.get(), "account")?;
 
-        self.connection.execute(
-            "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next,
+        self.connection
+            .execute(
+                "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next,
                                      highest_mod_seq, last_full_sync_at, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (mailbox_id) DO UPDATE
@@ -121,16 +120,17 @@ impl<'a> SyncStateRepository<'a> {
                     highest_mod_seq = excluded.highest_mod_seq,
                     last_full_sync_at = excluded.last_full_sync_at,
                     last_seen_at = excluded.last_seen_at",
-            bind![
-                mailbox_id,
-                account_id,
-                state.generation.map(|value| i64::from(value.get())),
-                state.uid_next.map(|value| i64::from(value.get())),
-                state.highest_mod_seq.map(|value| value.get() as i64),
-                state.last_full_sync_at.map(to_millis),
-                state.last_seen_at.map(to_millis),
-            ],
-        ).await?;
+                bind![
+                    mailbox_id,
+                    account_id,
+                    state.generation.map(|value| i64::from(value.get())),
+                    state.uid_next.map(|value| i64::from(value.get())),
+                    state.highest_mod_seq.map(|value| value.get() as i64),
+                    state.last_full_sync_at.map(to_millis),
+                    state.last_seen_at.map(to_millis),
+                ],
+            )
+            .await?;
         Ok(())
     }
 

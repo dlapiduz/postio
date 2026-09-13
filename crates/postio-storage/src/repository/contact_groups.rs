@@ -7,10 +7,10 @@ use postio_model::{AccountId, Contact, ContactGroup, ContactGroupId, ContactId};
 use super::contacts::{CONTACT_COLUMNS, read_contact};
 use super::{from_millis, to_millis};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`ContactGroup`] rows and their membership.
 #[derive(Debug)]
@@ -28,16 +28,18 @@ impl<'a> ContactGroupRepository<'a> {
 
     /// Inserts a group, assigning its id.
     pub async fn create(&self, group: &mut ContactGroup) -> Result<ContactGroupId> {
-        self.connection.execute(
-            "INSERT INTO contact_groups (account_id, name, uid, created_at)
+        self.connection
+            .execute(
+                "INSERT INTO contact_groups (account_id, name, uid, created_at)
              VALUES (?1, ?2, ?3, ?4)",
-            bind![
-                group.account_id.map(AccountId::get),
-                group.name,
-                group.uid,
-                to_millis(group.created_at),
-            ],
-        ).await?;
+                bind![
+                    group.account_id.map(AccountId::get),
+                    group.name,
+                    group.uid,
+                    to_millis(group.created_at),
+                ],
+            )
+            .await?;
         let id = ContactGroupId::new(self.connection.last_insert_rowid());
         group.id = id;
         Ok(id)
@@ -47,13 +49,12 @@ impl<'a> ContactGroupRepository<'a> {
     pub async fn get(&self, id: ContactGroupId) -> Result<Option<ContactGroup>> {
         sql::first(
             self.connection,
-            &format!(
-            "SELECT {GROUP_COLUMNS} FROM contact_groups WHERE id = ?1"
-        ),
+            &format!("SELECT {GROUP_COLUMNS} FROM contact_groups WHERE id = ?1"),
             [id.get()],
             read_group,
         )
-        .await}
+        .await
+    }
 
     /// Every group visible to `account_id` -- shared groups when `None`,
     /// exactly the same matching `ContactRepository::list` uses for
@@ -74,10 +75,13 @@ impl<'a> ContactGroupRepository<'a> {
 
     /// Renames a group.
     pub async fn set_name(&self, id: ContactGroupId, name: &str) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE contact_groups SET name = ?2 WHERE id = ?1",
-            bind![id.get(), name],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE contact_groups SET name = ?2 WHERE id = ?1",
+                bind![id.get(), name],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "contact_group",
@@ -93,7 +97,10 @@ impl<'a> ContactGroupRepository<'a> {
     /// to the contacts themselves -- a group is a way of naming people, not
     /// a place they live.
     pub async fn delete(&self, id: ContactGroupId) -> Result<bool> {
-        let deleted = self.connection.execute("DELETE FROM contact_groups WHERE id = ?1", [id.get()]).await?;
+        let deleted = self
+            .connection
+            .execute("DELETE FROM contact_groups WHERE id = ?1", [id.get()])
+            .await?;
         Ok(deleted > 0)
     }
 
@@ -101,21 +108,29 @@ impl<'a> ContactGroupRepository<'a> {
     /// not an error -- the membership either exists afterwards or it does
     /// not, and both calls asked for the same thing.
     pub async fn add_member(&self, group_id: ContactGroupId, contact_id: ContactId) -> Result<()> {
-        self.connection.execute(
-            "INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
+        self.connection
+            .execute(
+                "INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
              VALUES (?1, ?2)",
-            bind![group_id.get(), contact_id.get()],
-        ).await?;
+                bind![group_id.get(), contact_id.get()],
+            )
+            .await?;
         Ok(())
     }
 
     /// Removes a contact from a group. Removing one that was never a
     /// member is a no-op for the same reason adding twice is.
-    pub async fn remove_member(&self, group_id: ContactGroupId, contact_id: ContactId) -> Result<()> {
-        self.connection.execute(
-            "DELETE FROM contact_group_members WHERE group_id = ?1 AND contact_id = ?2",
-            bind![group_id.get(), contact_id.get()],
-        ).await?;
+    pub async fn remove_member(
+        &self,
+        group_id: ContactGroupId,
+        contact_id: ContactId,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM contact_group_members WHERE group_id = ?1 AND contact_id = ?2",
+                bind![group_id.get(), contact_id.get()],
+            )
+            .await?;
         Ok(())
     }
 
@@ -132,16 +147,17 @@ impl<'a> ContactGroupRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT {} FROM contact_group_members m
+                "SELECT {} FROM contact_group_members m
               JOIN contacts c ON c.id = m.contact_id
               WHERE m.group_id = ?1
               ORDER BY c.id",
-            columns.join(", ")
-        ),
+                columns.join(", ")
+            ),
             [group_id.get()],
             read_contact,
         )
-        .await}
+        .await
+    }
 }
 
 /// The account predicate, matching `ContactRepository`'s own -- see that

@@ -59,7 +59,11 @@ async fn an_account_round_trips_through_the_database() {
     assert!(id.is_assigned(), "the database hands out the id");
     assert_eq!(account.id, id, "and it is written back into the value");
 
-    let stored = accounts.get(id).await.expect("get").expect("the account exists");
+    let stored = accounts
+        .get(id)
+        .await
+        .expect("get")
+        .expect("the account exists");
     assert_eq!(
         stored, account,
         "everything comes back exactly as it went in"
@@ -88,10 +92,20 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     account.auth = AuthMethod::XOAuth2;
     accounts.create(&mut account).await.expect("create");
 
-    let (incoming, outgoing, auth): (String, String, String) = postio_storage::sql::one(&*connection, 
-            "SELECT incoming_security, outgoing_security, auth_method FROM accounts",(),
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))).await
-        .expect("read the raw row");
+    let (incoming, outgoing, auth): (String, String, String) = postio_storage::sql::one(
+        &*connection,
+        "SELECT incoming_security, outgoing_security, auth_method FROM accounts",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+                postio_storage::sql::RowExt::col(row, 2)?,
+            ))
+        },
+    )
+    .await
+    .expect("read the raw row");
 
     assert_eq!(incoming, TransportSecurity::StartTls.as_str());
     assert_eq!(outgoing, TransportSecurity::None.as_str());
@@ -149,7 +163,13 @@ async fn reading_an_account_that_is_not_there_is_none_rather_than_an_error() {
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
 
-    assert!(accounts.get(AccountId::new(404)).await.expect("get").is_none());
+    assert!(
+        accounts
+            .get(AccountId::new(404))
+            .await
+            .expect("get")
+            .is_none()
+    );
     assert!(accounts.list().await.expect("list").is_empty());
 }
 
@@ -241,14 +261,12 @@ async fn updating_reconciles_the_identity_list() {
     assert_eq!(stored.identities[1].display_name, "Renamed");
     assert!(stored.identities[0].is_default);
 
-    let orphans: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM identities",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let orphans: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM identities", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
     assert_eq!(orphans, 2, "the removed identity's row is gone");
 }
 
@@ -280,7 +298,11 @@ async fn identities_can_be_managed_without_rewriting_the_account() {
     identity.reply_to = Some(EmailAddress::new(None::<String>, "replies@example.com"));
     let id = identities.create(&mut identity).await.expect("create");
 
-    let stored = identities.get(id).await.expect("get").expect("the identity");
+    let stored = identities
+        .get(id)
+        .await
+        .expect("get")
+        .expect("the identity");
     assert_eq!(stored, identity);
     assert_eq!(stored.effective_reply_to().address, "replies@example.com");
 
@@ -297,7 +319,11 @@ async fn identities_can_be_managed_without_rewriting_the_account() {
     );
 
     assert_eq!(
-        identities.list_for_account(account_id).await.expect("list").len(),
+        identities
+            .list_for_account(account_id)
+            .await
+            .expect("list")
+            .len(),
         1
     );
     assert!(identities.delete(id).await.expect("delete"));
@@ -327,7 +353,11 @@ async fn an_account_has_at_most_one_default_identity() {
         .await
         .expect("move the default");
 
-    let stored = accounts.get(account_id).await.expect("get").expect("the account");
+    let stored = accounts
+        .get(account_id)
+        .await
+        .expect("get")
+        .expect("the account");
     let defaults: Vec<IdentityId> = stored
         .identities
         .iter()
@@ -428,7 +458,12 @@ async fn set_enabled_on_a_missing_account_is_false_not_an_error() {
     let connection = database.connect().await.expect("checkout");
     let accounts = AccountRepository::new(&connection);
 
-    assert!(!accounts.set_enabled(AccountId::new(404), false).await.unwrap());
+    assert!(
+        !accounts
+            .set_enabled(AccountId::new(404), false)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -467,7 +502,10 @@ async fn a_marked_account_is_excluded_from_the_enabled_list_even_before_it_is_re
         EmailAddress::new(None::<String>, "b@example.com"),
     );
     let leaving_id = accounts.create(&mut leaving).await.expect("create");
-    accounts.mark_pending_deletion(leaving_id).await.expect("mark");
+    accounts
+        .mark_pending_deletion(leaving_id)
+        .await
+        .expect("mark");
 
     let enabled = accounts.list_enabled().await.expect("list enabled");
     assert_eq!(
@@ -491,7 +529,10 @@ async fn reaping_deletes_every_marked_account_and_leaves_the_rest() {
         EmailAddress::new(None::<String>, "b@example.com"),
     );
     let leaving_id = accounts.create(&mut leaving).await.expect("create");
-    accounts.mark_pending_deletion(leaving_id).await.expect("mark");
+    accounts
+        .mark_pending_deletion(leaving_id)
+        .await
+        .expect("mark");
 
     let reaped = accounts.reap_pending_deletions().await.expect("reap");
     assert_eq!(reaped, vec![leaving_id]);
@@ -519,14 +560,12 @@ async fn reaping_cascades_exactly_like_an_ordinary_delete() {
 
     accounts.reap_pending_deletions().await.expect("reap");
 
-    let remaining: i64 = postio_storage::sql::one(
-        &connection,
-        "SELECT count(*) FROM mailboxes",
-        (),
-        |row| postio_storage::sql::RowExt::col(row, 0),
-    )
-    .await
-    .expect("count");
+    let remaining: i64 =
+        postio_storage::sql::one(&connection, "SELECT count(*) FROM mailboxes", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("count");
     assert_eq!(remaining, 0, "reaping did not cascade");
 }
 
@@ -539,7 +578,10 @@ async fn reaping_with_nothing_marked_deletes_nothing() {
     let mut account = an_account();
     accounts.create(&mut account).await.expect("create");
 
-    assert_eq!(accounts.reap_pending_deletions().await.expect("reap"), vec![]);
+    assert_eq!(
+        accounts.reap_pending_deletions().await.expect("reap"),
+        vec![]
+    );
     assert!(accounts.get(account.id).await.expect("get").is_some());
 }
 
@@ -557,8 +599,14 @@ async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
     let mut long = Signature::new("Long", "Lena Tomlin\nPostio")
         .with_html("<p><strong>Lena Tomlin</strong><br>Postio</p>");
     let mut short = Signature::new("Short", "— Lena");
-    signatures.create(account.id, &mut long).await.expect("create");
-    signatures.create(account.id, &mut short).await.expect("create");
+    signatures
+        .create(account.id, &mut long)
+        .await
+        .expect("create");
+    signatures
+        .create(account.id, &mut short)
+        .await
+        .expect("create");
     assert!(long.id.is_assigned());
 
     // They arrive with the account, in picker order.
@@ -585,14 +633,22 @@ async fn an_accounts_named_signatures_round_trip_and_arrive_with_it() {
     long.name = "Full".to_owned();
     long.text = "Lena Tomlin".to_owned();
     signatures.update(&long).await.expect("update");
-    let loaded = accounts.get(account.id).await.expect("get").expect("still there");
+    let loaded = accounts
+        .get(account.id)
+        .await
+        .expect("get")
+        .expect("still there");
     assert_eq!(loaded.signatures.len(), 2);
     assert_eq!(loaded.signatures[0].name, "Full");
     assert_eq!(loaded.signatures[0].text, "Lena Tomlin");
 
     // And deleting one leaves the other.
     assert!(signatures.delete(short.id).await.expect("delete"));
-    let loaded = accounts.get(account.id).await.expect("get").expect("still there");
+    let loaded = accounts
+        .get(account.id)
+        .await
+        .expect("get")
+        .expect("still there");
     assert_eq!(loaded.signatures.len(), 1);
 }
 
@@ -770,7 +826,10 @@ async fn two_signatures_in_one_account_cannot_share_a_name() {
 
     let signatures = SignatureRepository::new(&connection);
     let mut first = Signature::new("Work", "— Lena");
-    signatures.create(account.id, &mut first).await.expect("create");
+    signatures
+        .create(account.id, &mut first)
+        .await
+        .expect("create");
 
     let mut clash = Signature::new("Work", "— Lena Tomlin");
     signatures
@@ -827,8 +886,14 @@ async fn deleting_the_default_signature_leaves_no_dangling_reference() {
     let signatures = SignatureRepository::new(&connection);
     let mut work = Signature::new("Work", "— Lena");
     let mut brief = Signature::new("Brief", "— L");
-    signatures.create(account.id, &mut work).await.expect("create");
-    signatures.create(account.id, &mut brief).await.expect("create");
+    signatures
+        .create(account.id, &mut work)
+        .await
+        .expect("create");
+    signatures
+        .create(account.id, &mut brief)
+        .await
+        .expect("create");
 
     account.default_signature_id = Some(work.id);
     accounts.update(&mut account).await.expect("update");
@@ -880,7 +945,10 @@ async fn at_most_one_account_is_the_default_and_setting_it_moves_the_marker() {
     let mut second = another_account();
     let second_id = accounts.create(&mut second).await.expect("create");
 
-    accounts.set_default(first_id).await.expect("mark the first");
+    accounts
+        .set_default(first_id)
+        .await
+        .expect("mark the first");
     accounts.set_default(second_id).await.expect("move it");
 
     let marked: Vec<AccountId> = accounts
@@ -1016,7 +1084,10 @@ async fn reaping_a_removed_account_takes_its_default_marker_with_it() {
     );
 
     accounts.reap_pending_deletions().await.expect("reap");
-    assert!(accounts.get(id).await.expect("get").is_none(), "the row is gone");
+    assert!(
+        accounts.get(id).await.expect("get").is_none(),
+        "the row is gone"
+    );
     assert!(
         accounts
             .list()

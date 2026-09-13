@@ -39,7 +39,6 @@
 use postio_storage::Connection;
 use postio_storage::bind;
 
-
 /// Enough contacts that a sort over all of them is a real cost, and enough
 /// that SQLite would not simply scan a tiny table whatever the index says.
 const CONTACTS: usize = 20_000;
@@ -51,10 +50,14 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
 }
 
 async fn definition(connection: &Connection, index: &str) -> String {
-    postio_storage::sql::one(&*connection, 
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",bind![index],
-            |row| postio_storage::sql::RowExt::col::<String>(row, 0)).await
-        .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        bind![index],
+        |row| postio_storage::sql::RowExt::col::<String>(row, 0),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
 
 async fn plan(connection: &Connection, query: &str) -> String {
@@ -142,9 +145,11 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     fill(&connection).await;
 
     let mut statement = connection.prepare(SEARCH).await.expect("prepare");
-    let ids: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col(row, 0))
-        .await
-        .expect("query");
+    let ids: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col(row, 0)
+    })
+    .await
+    .expect("query");
 
     assert_eq!(ids.len(), 20);
     let source_of = async |id: i64| -> String {

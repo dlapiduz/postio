@@ -5,16 +5,16 @@
 //! `executor.rs` — nothing here needs to reproduce those, only confirm the
 //! executor calls through to it and returns results in that order.
 
-use postio_storage::sql::bind;
 use chrono::{TimeZone, Utc};
 use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
 use postio_model::{Attachment, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
-use postio_storage::repository::MessageRepository;
-use postio_storage::test_support;
 use postio_storage::Connection;
+use postio_storage::repository::MessageRepository;
+use postio_storage::sql::bind;
+use postio_storage::test_support;
 
 fn at(hour: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 20, hour, 0, 0).unwrap()
@@ -42,7 +42,9 @@ async fn message(
 async fn a_composed_operator_and_free_text_query_narrows_correctly() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let matching = message(
@@ -52,7 +54,8 @@ async fn a_composed_operator_and_free_text_query_narrows_correctly() {
         "ada",
         "Quarterly report",
         at(9),
-    ).await;
+    )
+    .await;
     let _wrong_sender = message(
         &connection,
         &account,
@@ -60,7 +63,8 @@ async fn a_composed_operator_and_free_text_query_narrows_correctly() {
         "bob",
         "Quarterly report",
         at(8),
-    ).await;
+    )
+    .await;
     let _wrong_text = message(&connection, &account, mailbox, "ada", "Lunch plans", at(10)).await;
 
     let query = parse("report from:ada", at(12).date_naive());
@@ -82,7 +86,9 @@ async fn a_composed_operator_and_free_text_query_narrows_correctly() {
 async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mut on_list = message(
@@ -92,7 +98,8 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
         "ada",
         "Tuesday walkthrough",
         at(9),
-    ).await;
+    )
+    .await;
     on_list.list_id = Some("harbour-dev.lists.example.org".to_string());
     MessageRepository::new(&connection)
         .update(&mut on_list)
@@ -109,7 +116,8 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
         "bob",
         "Fwd: for your files",
         at(10),
-    ).await;
+    )
+    .await;
     off_list.to = vec![EmailAddress::new(
         None::<String>,
         "harbour-dev@lists.example.org",
@@ -137,7 +145,9 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
 async fn negated_only_free_text_excludes_without_a_positive_match_expression() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let clean = message(&connection, &account, mailbox, "ada", "Weekly sync", at(9)).await;
@@ -167,7 +177,9 @@ async fn negated_only_free_text_excludes_without_a_positive_match_expression() {
 async fn total_hits_counts_every_match_regardless_of_the_page_limit() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     for hour in 0..5 {
@@ -178,7 +190,8 @@ async fn total_hits_counts_every_match_regardless_of_the_page_limit() {
             "ada",
             "Standup notes",
             at(hour),
-        ).await;
+        )
+        .await;
     }
 
     let query = parse("standup", at(12).date_naive());
@@ -202,7 +215,9 @@ async fn total_hits_stops_counting_at_the_cap() {
 
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     connection
@@ -235,7 +250,9 @@ async fn total_hits_stops_counting_at_the_cap() {
 async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let older = message(&connection, &account, mailbox, "ada", "One", at(8)).await;
@@ -261,10 +278,14 @@ async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
 async fn search_never_crosses_accounts() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account_a, mailbox_a) = test_support::account_with_inbox(&connection).await;
     let account_b = test_support::account(&connection).await;
-    let mailbox_b = test_support::mailbox(&connection, &account_b, "INBOX").await.id;
+    let mailbox_b = test_support::mailbox(&connection, &account_b, "INBOX")
+        .await
+        .id;
 
     let mine = message(
         &connection,
@@ -273,7 +294,8 @@ async fn search_never_crosses_accounts() {
         "ada",
         "Shared subject",
         at(9),
-    ).await;
+    )
+    .await;
     let _theirs = message(
         &connection,
         &account_b,
@@ -281,7 +303,8 @@ async fn search_never_crosses_accounts() {
         "ada",
         "Shared subject",
         at(9),
-    ).await;
+    )
+    .await;
 
     let query = parse("shared", at(12).date_naive());
     let request = SearchRequest {
@@ -309,7 +332,9 @@ async fn search_never_crosses_accounts() {
 async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let found = message(
@@ -319,7 +344,8 @@ async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() 
         "ada",
         "Rebuild status",
         at(9),
-    ).await;
+    )
+    .await;
     postio_index::index::index_body(
         &connection,
         found.id.get(),
@@ -354,7 +380,9 @@ async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() 
 async fn filename_and_has_attachment_operators_filter_correctly() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mut with_attachment = Message::new(account.id, mailbox, at(9));
@@ -405,7 +433,8 @@ async fn split_across_scopes(connection: &Connection) -> (postio_model::Account,
         "ada",
         "Quarterly report",
         at(9),
-    ).await;
+    )
+    .await;
     message(
         connection,
         &account,
@@ -413,7 +442,8 @@ async fn split_across_scopes(connection: &Connection) -> (postio_model::Account,
         "bob",
         "Quarterly figures",
         at(10),
-    ).await;
+    )
+    .await;
     message(
         connection,
         &account,
@@ -421,7 +451,8 @@ async fn split_across_scopes(connection: &Connection) -> (postio_model::Account,
         "lkml",
         "Quarterly patch queue",
         at(11),
-    ).await;
+    )
+    .await;
     (account, 3)
 }
 
@@ -429,7 +460,9 @@ async fn split_across_scopes(connection: &Connection) -> (postio_model::Account,
 async fn a_scope_narrows_the_search_without_touching_the_query() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, total) = split_across_scopes(&connection).await;
 
     let query = parse("quarterly", at(12).date_naive());
@@ -461,7 +494,9 @@ async fn a_scope_narrows_the_search_without_touching_the_query() {
 async fn the_scope_column_counts_what_switching_would_find() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, total) = split_across_scopes(&connection).await;
 
     let query = parse("quarterly", at(12).date_naive());
@@ -474,7 +509,9 @@ async fn the_scope_column_counts_what_switching_would_find() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let facets = postio_index::executor::facets(&connection, &request).await.expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
 
     assert_eq!(facets.hits(Scope::AllMail), total);
     assert_eq!(facets.hits(Scope::Inbox), 2);
@@ -485,7 +522,9 @@ async fn the_scope_column_counts_what_switching_would_find() {
 async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     // Two hits, one of them unread; and an unread message the query misses,
@@ -512,7 +551,9 @@ async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let facets = postio_index::executor::facets(&connection, &request).await.expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
 
     let unread = facets
         .refinements
@@ -538,7 +579,9 @@ async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
 async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, _) = split_across_scopes(&connection).await;
 
     let query = parse("quarterly", at(12).date_naive());
@@ -549,7 +592,9 @@ async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let facets = postio_index::executor::facets(&connection, &request).await.expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
 
     let folder = facets
         .refinements
@@ -576,7 +621,9 @@ async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
 async fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let mut big = Message::new(account.id, inbox, at(9));
@@ -600,7 +647,9 @@ async fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let facets = postio_index::executor::facets(&connection, &request).await.expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
 
     let large = facets
         .refinements
@@ -633,7 +682,9 @@ async fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
 async fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, _) = split_across_scopes(&connection).await;
 
     let query = parse("nothingmatchesthis", at(12).date_naive());
@@ -644,7 +695,9 @@ async fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let facets = postio_index::executor::facets(&connection, &request).await.expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
 
     assert_eq!(facets.hits(Scope::AllMail), 0);
     assert!(facets.suggested(0).is_empty());
@@ -664,7 +717,9 @@ async fn with_body(
     received_at: chrono::DateTime<Utc>,
 ) -> Message {
     let created = message(connection, account, mailbox, "ada", subject, received_at).await;
-    postio_index::index::index_body(connection, created.id.get(), Some(body)).await.expect("index body");
+    postio_index::index::index_body(connection, created.id.get(), Some(body))
+        .await
+        .expect("index body");
     created
 }
 
@@ -697,7 +752,9 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
     // may be lost.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let in_subject = with_body(
@@ -707,7 +764,8 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
         "The maildir plan",
         "nothing of note here",
         at(9),
-    ).await;
+    )
+    .await;
     let in_body = with_body(
         &connection,
         &account,
@@ -715,7 +773,8 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
         "Nothing of note",
         "the maildir rebuild finished overnight",
         at(8),
-    ).await;
+    )
+    .await;
 
     let mut ids = found(&connection, account.id, "maildir").await;
     ids.sort_by_key(|id| id.get());
@@ -734,7 +793,9 @@ async fn a_subject_match_outranks_a_body_match() {
     // normalisation. Two scores means saying it on purpose.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     // Same age, so recency cannot be what decides it.
@@ -745,7 +806,8 @@ async fn a_subject_match_outranks_a_body_match() {
         "Weekly notes",
         "the invoice was mentioned again",
         at(9),
-    ).await;
+    )
+    .await;
     let about_it = with_body(
         &connection,
         &account,
@@ -753,7 +815,8 @@ async fn a_subject_match_outranks_a_body_match() {
         "Invoice for August",
         "attached, as agreed",
         at(9),
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         found(&connection, account.id, "invoice").await,
@@ -768,7 +831,9 @@ async fn matching_in_both_indexes_beats_matching_in_either() {
     // relevant thing there is.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let subject_only = with_body(
@@ -778,7 +843,8 @@ async fn matching_in_both_indexes_beats_matching_in_either() {
         "Invoice for August",
         "attached, as agreed",
         at(9),
-    ).await;
+    )
+    .await;
     let both = with_body(
         &connection,
         &account,
@@ -786,7 +852,8 @@ async fn matching_in_both_indexes_beats_matching_in_either() {
         "Invoice for August",
         "the invoice is attached",
         at(9),
-    ).await;
+    )
+    .await;
 
     let ranked = found(&connection, account.id, "invoice").await;
     assert_eq!(ranked.first(), Some(&both.id), "{ranked:?}");
@@ -800,7 +867,9 @@ async fn a_negated_term_excludes_a_body_match_too() {
     // back from a query that had explicitly refused it.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let clean = with_body(
@@ -810,7 +879,8 @@ async fn a_negated_term_excludes_a_body_match_too() {
         "Quarterly report",
         "the numbers are attached",
         at(9),
-    ).await;
+    )
+    .await;
     let _spam_in_body = with_body(
         &connection,
         &account,
@@ -818,7 +888,8 @@ async fn a_negated_term_excludes_a_body_match_too() {
         "Quarterly report",
         "this is spam, frankly",
         at(8),
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         found(&connection, account.id, "report -spam").await,
@@ -833,7 +904,9 @@ async fn only_negated_free_text_still_excludes_a_body_match() {
     // that half had to learn about the body index as well.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let clean = with_body(
@@ -843,7 +916,8 @@ async fn only_negated_free_text_still_excludes_a_body_match() {
         "Quarterly report",
         "the numbers are attached",
         at(9),
-    ).await;
+    )
+    .await;
     let _spam_in_body = with_body(
         &connection,
         &account,
@@ -851,9 +925,13 @@ async fn only_negated_free_text_still_excludes_a_body_match() {
         "Lunch plans",
         "this is spam, frankly",
         at(8),
-    ).await;
+    )
+    .await;
 
-    assert_eq!(found(&connection, account.id, "-spam").await, vec![clean.id]);
+    assert_eq!(
+        found(&connection, account.id, "-spam").await,
+        vec![clean.id]
+    );
 }
 
 #[tokio::test]
@@ -863,7 +941,9 @@ async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
     // returning a message for words it no longer contains.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let changed = with_body(
@@ -873,12 +953,16 @@ async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
         "Draft",
         "the first draft",
         at(9),
-    ).await;
+    )
+    .await;
     postio_index::index::index_body(&connection, changed.id.get(), Some("the second draft"))
         .await
         .expect("re-index");
 
-    assert_eq!(found(&connection, account.id, "second").await, vec![changed.id]);
+    assert_eq!(
+        found(&connection, account.id, "second").await,
+        vec![changed.id]
+    );
     assert!(found(&connection, account.id, "first").await.is_empty());
 }
 
@@ -890,7 +974,9 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     // denser match first.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     // Enough non-matching mail that "report" is worth something: bm25's
@@ -904,7 +990,8 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
             "carol",
             &format!("Entirely unrelated subject {i}"),
             at(7),
-        ).await;
+        )
+        .await;
     }
 
     // Older, but saturated with the term: the far better bm25 match.
@@ -915,7 +1002,8 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         "ada",
         "report report report report report",
         at(6),
-    ).await;
+    )
+    .await;
     // Newer, and a glancing match.
     let recent = message(
         &connection,
@@ -924,7 +1012,8 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         "bob",
         "One report among other things entirely",
         at(11),
-    ).await;
+    )
+    .await;
 
     let query = parse("report", at(12).date_naive());
     let ranked = search(
@@ -1035,7 +1124,9 @@ async fn search_for(
 async fn a_search_over_a_corpus_still_filling_reports_it() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let here = message(&connection, &account, mailbox, "ada", "Quarterly", at(9)).await;
@@ -1045,7 +1136,9 @@ async fn a_search_over_a_corpus_still_filling_reports_it() {
     body_here(&connection, &here).await;
 
     assert!(
-        search_for(&connection, &account, "quarterly").await.corpus_complete,
+        search_for(&connection, &account, "quarterly")
+            .await
+            .corpus_complete,
         "every message here has a body, so there is nothing to caveat"
     );
 
@@ -1063,7 +1156,11 @@ async fn a_search_over_a_corpus_still_filling_reports_it() {
 
     // And the caveat is about the corpus, not about this query: a search that
     // matches nothing is just as incomplete as one that matches everything.
-    assert!(!search_for(&connection, &account, "nothingmatchesthis").await.corpus_complete);
+    assert!(
+        !search_for(&connection, &account, "nothingmatchesthis")
+            .await
+            .corpus_complete
+    );
 }
 
 #[tokio::test]
@@ -1072,12 +1169,18 @@ async fn the_caveat_goes_away_when_the_bodies_arrive() {
     // furniture. Under ADR 0016 every account ends up here.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let message = message(&connection, &account, mailbox, "ada", "Quarterly", at(9)).await;
     body_not_here(&connection, &message).await;
-    assert!(!search_for(&connection, &account, "quarterly").await.corpus_complete);
+    assert!(
+        !search_for(&connection, &account, "quarterly")
+            .await
+            .corpus_complete
+    );
 
     connection
         .execute(
@@ -1088,7 +1191,9 @@ async fn the_caveat_goes_away_when_the_bodies_arrive() {
         .expect("the body arrives");
 
     assert!(
-        search_for(&connection, &account, "quarterly").await.corpus_complete,
+        search_for(&connection, &account, "quarterly")
+            .await
+            .corpus_complete,
         "a fully backfilled account must not carry a permanent caveat"
     );
 }
@@ -1100,9 +1205,13 @@ async fn the_caveat_is_about_the_scope_that_was_searched() {
     // the claim on screen is about the search that was just run.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let read = message(&connection, &account, inbox, "ada", "Quarterly", at(9)).await;
     postio_index::index::index_body(&connection, read.id.get(), Some("the figures"))
@@ -1154,7 +1263,9 @@ async fn the_caveat_is_about_the_scope_that_was_searched() {
 async fn sender_affinity_from_contacts_reaches_the_ranking() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let from_regular = message(
@@ -1164,7 +1275,8 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
         "ada",
         "Quarterly report",
         at(9),
-    ).await;
+    )
+    .await;
     let _from_stranger = message(
         &connection,
         &account,
@@ -1172,7 +1284,8 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
         "bob",
         "Quarterly report",
         at(10),
-    ).await;
+    )
+    .await;
     connection
         .execute(
             "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
@@ -1223,7 +1336,9 @@ async fn with_headers(
 async fn header_finds_a_message_by_a_field_it_carries() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mutt = with_headers(
@@ -1232,7 +1347,8 @@ async fn header_finds_a_message_by_a_field_it_carries() {
         mailbox,
         "Sent with mutt",
         &[("X-Mailer", "Mutt 1.5.24 (2015-08-30)")],
-    ).await;
+    )
+    .await;
     let _plain = with_headers(&connection, &account, mailbox, "Sent plainly", &[]).await;
 
     assert_eq!(
@@ -1255,7 +1371,9 @@ async fn a_header_value_is_matched_as_a_substring_case_insensitively() {
     // `Mutt 1.5.24 (2015-08-30)`, so an equality match would never fire.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mutt = with_headers(
@@ -1264,21 +1382,25 @@ async fn a_header_value_is_matched_as_a_substring_case_insensitively() {
         mailbox,
         "Sent with mutt",
         &[("X-Mailer", "Mutt 1.5.24 (2015-08-30)")],
-    ).await;
+    )
+    .await;
     let _other = with_headers(
         &connection,
         &account,
         mailbox,
         "Sent with something else",
         &[("X-Mailer", "Thunderbird 128.0")],
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         found(&connection, account.id, "header:x-mailer=mutt").await,
         vec![mutt.id]
     );
     assert!(
-        found(&connection, account.id, "header:x-mailer=pine").await.is_empty(),
+        found(&connection, account.id, "header:x-mailer=pine")
+            .await
+            .is_empty(),
         "a value nothing carries matches nothing"
     );
 }
@@ -1292,7 +1414,9 @@ async fn a_name_from_one_header_never_pairs_with_a_value_from_another() {
     // structural rather than something a test has to hope for.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let _crossed = with_headers(
@@ -1301,18 +1425,25 @@ async fn a_name_from_one_header_never_pairs_with_a_value_from_another() {
         mailbox,
         "Two headers, no pairing",
         &[("X-Mailer", "Mutt 1.5.24"), ("Precedence", "bulk")],
-    ).await;
+    )
+    .await;
 
     assert!(
-        found(&connection, account.id, "header:x-mailer=bulk").await.is_empty(),
+        found(&connection, account.id, "header:x-mailer=bulk")
+            .await
+            .is_empty(),
         "`bulk` is the Precedence value; pairing it with X-Mailer is the bug"
     );
     assert!(
-        found(&connection, account.id, "header:precedence=mutt").await.is_empty(),
+        found(&connection, account.id, "header:precedence=mutt")
+            .await
+            .is_empty(),
         "and the same crossing the other way"
     );
     assert_eq!(
-        found(&connection, account.id, "header:precedence=bulk").await.len(),
+        found(&connection, account.id, "header:precedence=bulk")
+            .await
+            .len(),
         1,
         "while each name still pairs with its own value"
     );
@@ -1322,7 +1453,9 @@ async fn a_name_from_one_header_never_pairs_with_a_value_from_another() {
 async fn a_header_name_is_matched_exactly_and_never_as_a_substring() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let _mailer = with_headers(
@@ -1331,14 +1464,19 @@ async fn a_header_name_is_matched_exactly_and_never_as_a_substring() {
         mailbox,
         "Has X-Mailer",
         &[("X-Mailer", "Mutt")],
-    ).await;
+    )
+    .await;
 
     assert!(
-        found(&connection, account.id, "header:x-mail").await.is_empty(),
+        found(&connection, account.id, "header:x-mail")
+            .await
+            .is_empty(),
         "`header:x-mail` must not find `X-Mailer` -- a prefix is a different field"
     );
     assert!(
-        found(&connection, account.id, "header:mailer").await.is_empty(),
+        found(&connection, account.id, "header:mailer")
+            .await
+            .is_empty(),
         "nor a suffix"
     );
 }
@@ -1349,7 +1487,9 @@ async fn any_occurrence_of_a_repeated_header_can_match() {
     // has an `ordinal`. ADR 0025 Q6: any of them matching is a match.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let relayed = with_headers(
@@ -1362,7 +1502,8 @@ async fn any_occurrence_of_a_repeated_header_can_match() {
             ("Received", "from second.example.com"),
             ("Received", "from third.example.com"),
         ],
-    ).await;
+    )
+    .await;
 
     for hop in ["first", "second", "third"] {
         assert_eq!(
@@ -1377,7 +1518,9 @@ async fn any_occurrence_of_a_repeated_header_can_match() {
 async fn a_negated_header_excludes_and_composes_with_other_operators() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let _bulk = with_headers(
@@ -1386,21 +1529,24 @@ async fn a_negated_header_excludes_and_composes_with_other_operators() {
         mailbox,
         "Quarterly report",
         &[("Precedence", "bulk")],
-    ).await;
+    )
+    .await;
     let personal = with_headers(
         &connection,
         &account,
         mailbox,
         "Quarterly report",
         &[("X-Mailer", "Mutt")],
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         found(
             &connection,
             account.id,
             "subject:quarterly -header:precedence"
-        ).await,
+        )
+        .await,
         vec![personal.id],
         "`-header:` excludes exactly the messages that carry the field"
     );
@@ -1414,7 +1560,9 @@ async fn a_wildcard_in_a_header_value_is_matched_literally() {
     // `X-Spam-Status` at all -- a wrong answer that reads like a right one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let scored = with_headers(
@@ -1423,14 +1571,16 @@ async fn a_wildcard_in_a_header_value_is_matched_literally() {
         mailbox,
         "Scored",
         &[("X-Spam-Status", "No, score=0.1 confidence=100%")],
-    ).await;
+    )
+    .await;
     let _unscored = with_headers(
         &connection,
         &account,
         mailbox,
         "Also scored",
         &[("X-Spam-Status", "No, score=0.1")],
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         found(&connection, account.id, "header:x-spam-status=100%").await,
@@ -1438,7 +1588,9 @@ async fn a_wildcard_in_a_header_value_is_matched_literally() {
         "the `%` is part of what was asked for, not a wildcard"
     );
     assert!(
-        found(&connection, account.id, "header:x-spam-status=score_0.1").await.is_empty(),
+        found(&connection, account.id, "header:x-spam-status=score_0.1")
+            .await
+            .is_empty(),
         "and `_` matches an underscore, not any character"
     );
 }
@@ -1453,12 +1605,18 @@ async fn a_message_whose_headers_are_not_indexed_yet_is_not_a_false_negative_for
     // turns it into one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let unindexed = message(&connection, &account, mailbox, "ada", "Not indexed", at(9)).await;
 
-    assert!(found(&connection, account.id, "header:x-mailer").await.is_empty());
+    assert!(
+        found(&connection, account.id, "header:x-mailer")
+            .await
+            .is_empty()
+    );
 
     let headers: postio_model::Headers = [("X-Mailer", "Mutt")].into_iter().collect();
     postio_index::index::index_headers(&connection, unindexed.id.get(), &headers)

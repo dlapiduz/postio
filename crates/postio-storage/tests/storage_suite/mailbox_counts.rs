@@ -66,7 +66,12 @@ async fn write(
     let mut written = Vec::new();
     for (index, flags) in flags.iter().enumerate() {
         let mut message = a_message(account, mailbox, index as u32 + 1, flags).await;
-        written.push(messages.create(&mut message).await.expect("write a message"));
+        written.push(
+            messages
+                .create(&mut message)
+                .await
+                .expect("write a message"),
+        );
     }
     written
 }
@@ -90,7 +95,8 @@ async fn writing_messages_moves_the_counts_without_anyone_recounting() {
         &account,
         inbox,
         &[&[], &[Flag::Seen], &[Flag::Seen, Flag::Flagged]],
-    ).await;
+    )
+    .await;
 
     assert_eq!(
         cached(&connection, inbox).await,
@@ -121,7 +127,10 @@ async fn a_batch_upsert_counts_each_row_once() {
     for uid in 1..=4 {
         again.push(a_message(&account, inbox, uid, &[Flag::Seen]).await);
     }
-    messages.upsert_batch(&mut again).await.expect("second pass");
+    messages
+        .upsert_batch(&mut again)
+        .await
+        .expect("second pass");
     assert_eq!(
         cached(&connection, inbox).await,
         (4, 0, 0),
@@ -158,7 +167,9 @@ async fn moving_a_message_moves_its_count_with_it() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
 
     let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]).await;
     assert_eq!(cached(&connection, inbox).await, (2, 2, 1));
@@ -168,7 +179,11 @@ async fn moving_a_message_moves_its_count_with_it() {
         .await
         .expect("archive it");
 
-    assert_eq!(cached(&connection, inbox).await, (1, 1, 0), "the folder it left");
+    assert_eq!(
+        cached(&connection, inbox).await,
+        (1, 1, 0),
+        "the folder it left"
+    );
     assert_eq!(
         cached(&connection, archive).await,
         (1, 1, 1),
@@ -188,14 +203,21 @@ async fn a_message_hidden_locally_leaves_the_counts_and_comes_back() {
     let ids = write(&connection, &account, inbox, &[&[], &[Flag::Flagged]]).await;
     let messages = MessageRepository::new(&connection);
 
-    messages.set_deleted_locally(&ids[1..], true).await.expect("hide");
+    messages
+        .set_deleted_locally(&ids[1..], true)
+        .await
+        .expect("hide");
     assert_eq!(cached(&connection, inbox).await, (1, 1, 0));
 
     messages
         .set_deleted_locally(&ids[1..], false)
         .await
         .expect("undo");
-    assert_eq!(cached(&connection, inbox).await, (2, 2, 1), "undo restores it");
+    assert_eq!(
+        cached(&connection, inbox).await,
+        (2, 2, 1),
+        "undo restores it"
+    );
 }
 
 #[tokio::test]
@@ -223,7 +245,10 @@ async fn hiding_a_message_twice_does_not_take_it_out_twice() {
     let ids = write(&connection, &account, inbox, &[&[], &[]]).await;
     let messages = MessageRepository::new(&connection);
 
-    messages.set_deleted_locally(&ids[..1], true).await.expect("hide");
+    messages
+        .set_deleted_locally(&ids[..1], true)
+        .await
+        .expect("hide");
     messages
         .set_deleted_locally(&ids[..1], true)
         .await
@@ -261,7 +286,8 @@ async fn counts_that_have_drifted_to_zero_are_repairable_without_a_sync() {
         &account,
         inbox,
         &[&[], &[], &[], &[Flag::Seen], &[Flag::Seen, Flag::Flagged]],
-    ).await;
+    )
+    .await;
     assert_eq!(cached(&connection, inbox).await, (5, 3, 1));
 
     // Drift, spelled out: the rows are all there and the column is a lie.
@@ -401,7 +427,12 @@ async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let account = an_account_mid_send(&connection).await;
-    let inbox = test_support::mailbox(&connection, &test_support::account(&connection).await, "INBOX").await;
+    let inbox = test_support::mailbox(
+        &connection,
+        &test_support::account(&connection).await,
+        "INBOX",
+    )
+    .await;
     install(&connection);
 
     let mailboxes = MailboxRepository::new(&connection);
@@ -461,7 +492,11 @@ async fn retrying_a_failed_draft_moves_it_to_the_outbox_and_lowers_what_needs_yo
         .into_iter()
         .next()
         .expect("one failed draft");
-    let mut failed = drafts.get(failed.id).await.expect("get").expect("the draft");
+    let mut failed = drafts
+        .get(failed.id)
+        .await
+        .expect("get")
+        .expect("the draft");
     drafts
         .queue_send(&mut failed, chrono::Utc::now())
         .await

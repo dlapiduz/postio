@@ -38,10 +38,10 @@ pub use postio_model::ListScope;
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// How many rows a page holds when the caller does not say.
 ///
@@ -680,9 +680,7 @@ messages.size, messages.send_state, messages.send_at,
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
-        Self {
-            connection,
-        }
+        Self { connection }
     }
 
     /// Inserts a message with its recipients, attachments and labels.
@@ -776,7 +774,9 @@ impl<'a> MessageRepository<'a> {
             let mine = own_draft_copies(&transaction).await?;
             let before = batch.len();
             batch.retain(|message| match &message.server.remote_id {
-                Some(remote_id) => !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned())),
+                Some(remote_id) => {
+                    !mine.contains(&(message.mailbox_id, remote_id.as_str().to_owned()))
+                }
                 // Nowhere to have landed, so nothing to be a second copy of.
                 None => true,
             });
@@ -807,17 +807,23 @@ impl<'a> MessageRepository<'a> {
                 // enumeration hints (#544) insert a second copy of a message it
                 // already holds.
                 let by_identity = match &message.server.remote_id {
-                    Some(remote_id) => find_by_remote_id(&transaction, message.mailbox_id, remote_id).await?,
+                    Some(remote_id) => {
+                        find_by_remote_id(&transaction, message.mailbox_id, remote_id).await?
+                    }
                     None => None,
                 };
-                let existing = match (by_identity, message.server.uid, message.server.uid_validity) {
+                let existing = match (by_identity, message.server.uid, message.server.uid_validity)
+                {
                     (Some(id), _, _) => Some(id),
-                    (None, Some(uid), Some(validity)) => find_by_generation_uid(
-                        &transaction,
-                        message.mailbox_id,
-                        Generation::new(validity.get()),
-                        uid,
-                    ).await?,
+                    (None, Some(uid), Some(validity)) => {
+                        find_by_generation_uid(
+                            &transaction,
+                            message.mailbox_id,
+                            Generation::new(validity.get()),
+                            uid,
+                        )
+                        .await?
+                    }
                     _ => None,
                 };
                 // Last, and only for a row with no server coordinates to match
@@ -908,9 +914,12 @@ impl<'a> MessageRepository<'a> {
     /// The body and headers are empty: those bytes are in the blob store. See
     /// [`MessageRepository::body`].
     pub async fn get(&self, id: MessageId) -> Result<Option<Message>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
-        )).await?;
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {MESSAGE_COLUMNS} FROM messages WHERE id = ?1"
+            ))
+            .await?;
         let found = crate::sql::first_of(&mut statement, [id.get()], read_message).await?;
         let Some(mut message) = found else {
             return Ok(None);
@@ -926,13 +935,8 @@ impl<'a> MessageRepository<'a> {
     /// One window of the message list, newest first.
     pub async fn page(&self, query: &ListQuery) -> Result<Vec<MessageListRow>> {
         let sql = self.explain(query);
-        sql::all(
-            self.connection,
-            &sql,
-            page_arguments(query),
-            read_list_row,
-        )
-        .await}
+        sql::all(self.connection, &sql, page_arguments(query), read_list_row).await
+    }
 
     /// One window at a row offset, for a list model that scrolls by index.
     ///
@@ -941,13 +945,8 @@ impl<'a> MessageRepository<'a> {
     /// every row down and this window silently skips one.
     pub async fn page_at(&self, query: &ListQuery, offset: u32) -> Result<Vec<MessageListRow>> {
         let sql = format!("{} OFFSET {offset}", self.explain(query));
-        sql::all(
-            self.connection,
-            &sql,
-            page_arguments(query),
-            read_list_row,
-        )
-        .await}
+        sql::all(self.connection, &sql, page_arguments(query), read_list_row).await
+    }
 
     /// The list rows for `ids`, in the order given.
     ///
@@ -978,10 +977,12 @@ impl<'a> MessageRepository<'a> {
                 "SELECT {LIST_COLUMNS} FROM messages WHERE messages.id IN ({placeholders})"
             );
             let mut statement = self.connection.prepare(&sql).await?;
-            let rows = sql::mapped(&mut statement, 
+            let rows = sql::mapped(
+                &mut statement,
                 chunk.iter().map(|id| id.get()).collect::<Vec<_>>(),
                 read_list_row,
-            ).await?;
+            )
+            .await?;
             for row in rows {
                 found.insert(row.id, row);
             }
@@ -997,16 +998,7 @@ impl<'a> MessageRepository<'a> {
             where_clause(query, false)
         );
         let arguments = scope_arguments(&query.scope);
-        let count: i64 =
-            sql::one(
-                self.connection,
-                &sql,
-                arguments,
-                |row| {
-                    row.col(0)
-                },
-            )
-            .await?;
+        let count: i64 = sql::one(self.connection, &sql, arguments, |row| row.col(0)).await?;
         Ok(count as u32)
     }
 
@@ -1025,24 +1017,32 @@ impl<'a> MessageRepository<'a> {
     }
 
     /// Replaces a message's flags.
-    pub async fn set_flags(&self, id: MessageId, flags: &FlagSet, source: FlagSource) -> Result<()> {
+    pub async fn set_flags(
+        &self,
+        id: MessageId,
+        flags: &FlagSet,
+        source: FlagSource,
+    ) -> Result<()> {
         let flags = flags.persistable();
-        let changed = self.connection.execute(
-            "UPDATE messages
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages
                 SET flags = ?2, seen = ?3, flagged = ?4, answered = ?5, draft = ?6,
                     deleted = ?7, flags_dirty = ?8
               WHERE id = ?1",
-            bind![
-                id.get(),
-                flag_text(&flags),
-                flags.is_seen(),
-                flags.is_flagged(),
-                flags.is_answered(),
-                flags.is_draft(),
-                flags.is_deleted(),
-                source == FlagSource::Local,
-            ],
-        ).await?;
+                bind![
+                    id.get(),
+                    flag_text(&flags),
+                    flags.is_seen(),
+                    flags.is_flagged(),
+                    flags.is_answered(),
+                    flags.is_draft(),
+                    flags.is_deleted(),
+                    source == FlagSource::Local,
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1092,7 +1092,8 @@ impl<'a> MessageRepository<'a> {
         let mut statement = self.connection.prepare(&sql).await?;
         let rows = sql::mapped(&mut statement, arguments, |row| {
             row.col::<i64>(0).map(MailboxId::new)
-        }).await?;
+        })
+        .await?;
         Ok(rows)
     }
 
@@ -1129,13 +1130,7 @@ impl<'a> MessageRepository<'a> {
     pub async fn count_set(&self, set: &MessageSet) -> Result<u32> {
         let (predicate, arguments) = set.predicate(1);
         let sql = format!("SELECT count(*) FROM messages WHERE {predicate}");
-        let count: i64 = sql::one(
-            self.connection,
-            &sql,
-            arguments,
-            |row| row.col(0),
-        )
-        .await?;
+        let count: i64 = sql::one(self.connection, &sql, arguments, |row| row.col(0)).await?;
         Ok(count as u32)
     }
 
@@ -1237,7 +1232,10 @@ impl<'a> MessageRepository<'a> {
             "UPDATE messages SET snoozed_until = NULL WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self.connection.execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>()).await? as usize)
+        Ok(self
+            .connection
+            .execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
+            .await? as usize)
     }
 
     /// Clears every snooze whose time has passed as of `now` in `account`,
@@ -1273,21 +1271,28 @@ impl<'a> MessageRepository<'a> {
         // five seconds for the life of the process. The order still matters
         // (a caller repainting in a stable order), so it is done in Rust over
         // a list that cannot be longer than the account's mailbox count.
-        let mut statement = self.connection.prepare_cached(
-            "SELECT DISTINCT mailbox_id FROM messages
+        let mut statement = self
+            .connection
+            .prepare_cached(
+                "SELECT DISTINCT mailbox_id FROM messages
               WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
-        ).await?;
-        let mut woken: Vec<MailboxId> = sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
+            )
+            .await?;
+        let mut woken: Vec<MailboxId> =
+            sql::mapped(&mut statement, bind![account.get(), now_millis], |row| {
                 Ok(MailboxId::new(row.col(0)?))
-            }).await?;
+            })
+            .await?;
         woken.sort_unstable();
 
         if !woken.is_empty() {
-            self.connection.execute(
-                "UPDATE messages SET snoozed_until = NULL
+            self.connection
+                .execute(
+                    "UPDATE messages SET snoozed_until = NULL
                   WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
-                bind![account.get(), now_millis],
-            ).await?;
+                    bind![account.get(), now_millis],
+                )
+                .await?;
         }
         Ok(woken)
     }
@@ -1304,15 +1309,21 @@ impl<'a> MessageRepository<'a> {
             "DELETE FROM messages WHERE id IN ({})",
             placeholders(ids.len(), 1)
         );
-        Ok(self.connection.execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>()).await? as usize)
+        Ok(self
+            .connection
+            .execute(&sql, ids.iter().map(|id| id.get()).collect::<Vec<_>>())
+            .await? as usize)
     }
 
     /// Puts a message in a thread, or takes it out of one.
     pub async fn set_thread(&self, id: MessageId, thread_id: Option<ThreadId>) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
-            bind![id.get(), thread_id.map(ThreadId::get)],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
+                bind![id.get(), thread_id.map(ThreadId::get)],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1347,7 +1358,8 @@ impl<'a> MessageRepository<'a> {
             bind![mailbox_id.get(), i64::from(generation.get())],
             |row| Ok(Uid::new(row.col::<i64>(0)? as u32)),
         )
-        .await}
+        .await
+    }
 
     /// Every message in an account carrying this `Message-ID`.
     ///
@@ -1365,11 +1377,10 @@ impl<'a> MessageRepository<'a> {
               WHERE account_id = ?1 AND rfc_message_id = ?2 COLLATE NOCASE
               ORDER BY id",
             bind![account_id.get(), rfc_message_id.as_str()],
-            |row| {
-                Ok(MessageId::new(row.col(0)?))
-            },
+            |row| Ok(MessageId::new(row.col(0)?)),
         )
-        .await}
+        .await
+    }
 
     /// A message's decoded text, HTML and header block.
     ///
@@ -1486,13 +1497,14 @@ impl<'a> MessageRepository<'a> {
               LIMIT ?1",
             [limit],
             |row| {
-            Ok(HeaderRepair {
-                message_id: MessageId::new(row.col(0)?),
-                raw_blob_id: row.col::<Option<String>>(1)?.map(BlobId::new),
-            })
-        },
+                Ok(HeaderRepair {
+                    message_id: MessageId::new(row.col(0)?),
+                    raw_blob_id: row.col::<Option<String>>(1)?.map(BlobId::new),
+                })
+            },
         )
-        .await}
+        .await
+    }
 
     /// Messages whose block can only be had from the server.
     ///
@@ -1525,11 +1537,10 @@ impl<'a> MessageRepository<'a> {
               ORDER BY messages.received_at DESC
               LIMIT ?2",
             bind![mailbox_id.get(), limit],
-            |row| {
-            read_backfill_candidate(row, mailbox_id)
-        },
+            |row| read_backfill_candidate(row, mailbox_id),
         )
-        .await}
+        .await
+    }
 
     /// Writes just the header block, leaving the body beside it alone.
     ///
@@ -1547,16 +1558,19 @@ impl<'a> MessageRepository<'a> {
         block: Option<&postio_model::headers::Block>,
     ) -> Result<()> {
         let encoded = block.map(|block| block.text.clone());
-        let changed = self.connection.execute(
-            "UPDATE messages
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages
                 SET body_headers = ?2, body_headers_truncated = ?3
               WHERE id = ?1",
-            bind![
-                id.get(),
-                encoded,
-                block.is_some_and(|block| block.truncated),
-            ],
-        ).await?;
+                bind![
+                    id.get(),
+                    encoded,
+                    block.is_some_and(|block| block.truncated),
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1585,26 +1599,34 @@ impl<'a> MessageRepository<'a> {
     /// # Errors
     ///
     /// [`Error::NotFound`] if no such message.
-    pub async fn set_body(&self, id: MessageId, body: &StoredBody, body_state: BodyState) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE messages
+    pub async fn set_body(
+        &self,
+        id: MessageId,
+        body: &StoredBody,
+        body_state: BodyState,
+    ) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages
                 SET body_text = ?2, body_html = ?3, body_headers = ?4,
                     body_search = ?5, body_state = ?6,
                     body_headers_truncated = ?7, body_encoding_problems = ?8,
                     body_line_count = ?9
               WHERE id = ?1",
-            bind![
-                id.get(),
-                body.text,
-                body.html,
-                body.headers,
-                body.text.as_deref().map(postio_model::fold::fold),
-                body_state.as_str(),
-                body.headers_truncated,
-                body.encoding_problems,
-                body.text.as_deref().map(line_count),
-            ],
-        ).await?;
+                bind![
+                    id.get(),
+                    body.text,
+                    body.html,
+                    body.headers,
+                    body.text.as_deref().map(postio_model::fold::fold),
+                    body_state.as_str(),
+                    body.headers_truncated,
+                    body.encoding_problems,
+                    body.text.as_deref().map(line_count),
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1622,10 +1644,13 @@ impl<'a> MessageRepository<'a> {
     /// because reading the blob keys back only to write them again is how a
     /// concurrent text fetch gets clobbered by a payload fetch.
     pub async fn set_body_state(&self, id: MessageId, body_state: BodyState) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE messages SET body_state = ?2 WHERE id = ?1",
-            bind![id.get(), body_state.as_str()],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE messages SET body_state = ?2 WHERE id = ?1",
+                bind![id.get(), body_state.as_str()],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "message",
@@ -1654,11 +1679,14 @@ impl<'a> MessageRepository<'a> {
         part_id: &str,
         blob_id: &BlobId,
     ) -> Result<bool> {
-        let changed = self.connection.execute(
-            "UPDATE attachments SET blob_id = ?3
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE attachments SET blob_id = ?3
               WHERE message_id = ?1 AND part_id = ?2",
-            bind![message_id.get(), part_id, blob_id.as_str()],
-        ).await?;
+                bind![message_id.get(), part_id, blob_id.as_str()],
+            )
+            .await?;
         Ok(changed > 0)
     }
 
@@ -1695,11 +1723,10 @@ impl<'a> MessageRepository<'a> {
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
             bind![mailbox_id.get(), limit, offset],
-            |row| {
-            read_backfill_candidate(row, mailbox_id)
-        },
+            |row| read_backfill_candidate(row, mailbox_id),
         )
-        .await}
+        .await
+    }
 
     /// Messages in `mailbox_id` still missing all or part of their body,
     /// newest first and windowed to `limit` — what a cold start, or a resync
@@ -1717,8 +1744,7 @@ impl<'a> MessageRepository<'a> {
         mailbox_id: MailboxId,
         limit: u32,
     ) -> Result<Vec<BackfillCandidate>> {
-        self.needing_backfill_from(mailbox_id, limit, 0)
-            .await
+        self.needing_backfill_from(mailbox_id, limit, 0).await
     }
 
     /// As [`needing_backfill`](Self::needing_backfill), skipping the newest
@@ -1754,11 +1780,10 @@ impl<'a> MessageRepository<'a> {
               ORDER BY messages.received_at DESC
               LIMIT ?2 OFFSET ?3",
             bind![mailbox_id.get(), limit, offset],
-            |row| {
-            read_backfill_candidate(row, mailbox_id)
-        },
+            |row| read_backfill_candidate(row, mailbox_id),
         )
-        .await}
+        .await
+    }
 
     /// One message's backfill candidate, if it still needs (part of) its body.
     ///
@@ -1861,9 +1886,14 @@ impl<'a> MessageRepository<'a> {
     /// this looks both up rather than asking the caller to already know them.
     /// `None` covers both "already has a full body" and "not there any more" —
     /// either way there is nothing to fetch.
-    pub async fn backfill_candidate(&self, message_id: MessageId) -> Result<Option<BackfillCandidate>> {
-        let mut statement = self.connection.prepare(
-            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
+    pub async fn backfill_candidate(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<BackfillCandidate>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id, messages.mailbox_id
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.id = ?1
@@ -1871,7 +1901,8 @@ impl<'a> MessageRepository<'a> {
                 AND messages.uid IS NOT NULL
                 AND messages.remote_id IS NOT NULL
                 AND messages.deleted_locally = 0",
-        ).await?;
+            )
+            .await?;
         crate::sql::first_of(&mut statement, [message_id.get()], |row| {
             let mailbox_id = MailboxId::new(row.col(6)?);
             read_backfill_candidate(row, mailbox_id)
@@ -1887,15 +1918,20 @@ impl<'a> MessageRepository<'a> {
     /// that names an ancestor either already found it or is waiting to, so
     /// only silence at insertion time is worth asking about again.
     pub async fn subject_only_orphans(&self, mailbox_id: MailboxId) -> Result<Vec<MessageId>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id FROM messages
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id FROM messages
               WHERE mailbox_id = ?1
                 AND thread_id IS NOT NULL
                 AND in_reply_to IS NULL
                 AND reference_ids = ''",
-        ).await?;
-        let rows =
-            sql::mapped(&mut statement, [mailbox_id.get()], |row| Ok(MessageId::new(row.col(0)?))).await?;
+            )
+            .await?;
+        let rows = sql::mapped(&mut statement, [mailbox_id.get()], |row| {
+            Ok(MessageId::new(row.col(0)?))
+        })
+        .await?;
         Ok(rows)
     }
 }
@@ -2063,8 +2099,9 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
 async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
-    let changed = connection.execute(
-        "UPDATE messages
+    let changed = connection
+        .execute(
+            "UPDATE messages
             SET account_id = ?2, mailbox_id = ?3, thread_id = ?4, rfc_message_id = ?5,
                 in_reply_to = ?6, reference_ids = ?7, subject = ?8,
                 normalized_subject = ?9, date = ?10, received_at = ?11, preview = ?12,
@@ -2077,8 +2114,9 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
                 read_receipt_requested = ?38
           WHERE id = ?1",
-        row_values(id, message),
-    ).await?;
+            row_values(id, message),
+        )
+        .await?;
     if changed == 0 {
         return Err(Error::NotFound {
             entity: "message",
@@ -2086,9 +2124,15 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
         });
     }
 
-    connection.execute("DELETE FROM recipients WHERE message_id = ?1", [id]).await?;
-    connection.execute("DELETE FROM attachments WHERE message_id = ?1", [id]).await?;
-    connection.execute("DELETE FROM message_labels WHERE message_id = ?1", [id]).await?;
+    connection
+        .execute("DELETE FROM recipients WHERE message_id = ?1", [id])
+        .await?;
+    connection
+        .execute("DELETE FROM attachments WHERE message_id = ?1", [id])
+        .await?;
+    connection
+        .execute("DELETE FROM message_labels WHERE message_id = ?1", [id])
+        .await?;
     write_children(connection, message).await?;
     Ok(())
 }
@@ -2096,7 +2140,8 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
 async fn insert(connection: &Connection, message: &Message) -> Result<MessageId> {
     // Cached: the widest statement in the write path and the one a first sync
     // runs most -- once per new message (#728).
-    connection.prepare_cached(
+    connection
+        .prepare_cached(
             "INSERT INTO messages (id, account_id, mailbox_id, thread_id, rfc_message_id,
                                in_reply_to, reference_ids, subject, normalized_subject, date,
                                received_at, preview, size, flags, seen, flagged, answered,
@@ -2109,8 +2154,10 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
                  ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
-        ).await?
-        .execute(row_values(0, message)).await?;
+        )
+        .await?
+        .execute(row_values(0, message))
+        .await?;
     Ok(MessageId::new(connection.last_insert_rowid()))
 }
 
@@ -2229,49 +2276,55 @@ async fn write_children(connection: &Connection, message: &mut Message) -> Resul
         ("bcc", message.bcc.clone()),
     ] {
         for (position, address) in addresses.iter().enumerate() {
-            connection.execute(
-                "INSERT INTO recipients (message_id, kind, position, name, address_id)
+            connection
+                .execute(
+                    "INSERT INTO recipients (message_id, kind, position, name, address_id)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                bind![
-                    id,
-                    kind,
-                    position as i64,
-                    address.name,
-                    address_id(connection, address).await?,
-                ],
-            ).await?;
+                    bind![
+                        id,
+                        kind,
+                        position as i64,
+                        address.name,
+                        address_id(connection, address).await?,
+                    ],
+                )
+                .await?;
         }
     }
 
     for (position, attachment) in message.attachments.iter_mut().enumerate() {
-        connection.execute(
-            "INSERT INTO attachments (message_id, position, filename, mime_type, size,
+        connection
+            .execute(
+                "INSERT INTO attachments (message_id, position, filename, mime_type, size,
                                       content_id, disposition, disposition_raw, part_id,
                                       part_headers, blob_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            bind![
-                id,
-                position as i64,
-                attachment.filename,
-                attachment.mime_type,
-                attachment.size as i64,
-                attachment.content_id,
-                attachment.disposition.as_str(),
-                attachment.disposition.raw(),
-                attachment.part_id,
-                attachment.part_headers,
-                attachment.blob_id.as_ref().map(BlobId::as_str),
-            ],
-        ).await?;
+                bind![
+                    id,
+                    position as i64,
+                    attachment.filename,
+                    attachment.mime_type,
+                    attachment.size as i64,
+                    attachment.content_id,
+                    attachment.disposition.as_str(),
+                    attachment.disposition.raw(),
+                    attachment.part_id,
+                    attachment.part_headers,
+                    attachment.blob_id.as_ref().map(BlobId::as_str),
+                ],
+            )
+            .await?;
         attachment.id = postio_model::AttachmentId::new(connection.last_insert_rowid());
         attachment.message_id = message.id;
     }
 
     for label in &message.labels {
-        connection.execute(
-            "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-            bind![id, label.get()],
-        ).await?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
+                bind![id, label.get()],
+            )
+            .await?;
     }
 
     Ok(())
@@ -2284,7 +2337,9 @@ async fn find_by_remote_id(
     remote_id: &RemoteId,
 ) -> Result<Option<MessageId>> {
     // Cached: once per message on every batch a sync pass writes (#728).
-    let mut statement = connection.prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2").await?;
+    let mut statement = connection
+        .prepare_cached("SELECT id FROM messages WHERE mailbox_id = ?1 AND remote_id = ?2")
+        .await?;
     crate::sql::first_of(
         &mut statement,
         bind![mailbox_id.get(), remote_id.as_str()],
@@ -2303,10 +2358,12 @@ async fn find_by_generation_uid(
 ) -> Result<Option<MessageId>> {
     // Cached, for the same reason as `find_by_remote_id`: the fallback
     // lookup runs per message for any row synced before `remote_id` existed.
-    let mut statement = connection.prepare_cached(
-        "SELECT id FROM messages
+    let mut statement = connection
+        .prepare_cached(
+            "SELECT id FROM messages
           WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid = ?3",
-    ).await?;
+        )
+        .await?;
     crate::sql::first_of(
         &mut statement,
         bind![
@@ -2323,10 +2380,7 @@ async fn find_by_generation_uid(
 /// mailbox_path)`, in that order — the shared column shape of
 /// [`MessageRepository::needing_backfill`] and
 /// [`MessageRepository::backfill_candidate`].
-fn read_backfill_candidate(
-    row: &Row,
-    mailbox_id: MailboxId,
-) -> Result<BackfillCandidate> {
+fn read_backfill_candidate(row: &Row, mailbox_id: MailboxId) -> Result<BackfillCandidate> {
     Ok(BackfillCandidate {
         message_id: MessageId::new(row.col(0)?),
         mailbox_id,
@@ -2370,9 +2424,7 @@ fn read_message(row: &Row) -> Result<Message> {
         size: row.col::<i64>(11)? as u64,
         headers: postio_model::Headers::new(),
         server: ServerIdentifiers {
-            uid: row
-                .col::<Option<i64>>(14)?
-                .map(|uid| Uid::new(uid as u32)),
+            uid: row.col::<Option<i64>>(14)?.map(|uid| Uid::new(uid as u32)),
             uid_validity: row
                 .col::<Option<i64>>(15)?
                 .map(|validity| UidValidity::new(validity as u32)),
@@ -2382,9 +2434,8 @@ fn read_message(row: &Row) -> Result<Message> {
             remote_id: row.col::<Option<String>>(17)?.map(RemoteId::new),
         },
         sync: LocalSyncState {
-            body_state: BodyState::from_name(&body_state).ok_or_else(|| {
-                unknown_enum("messages.body_state", body_state)
-            })?,
+            body_state: BodyState::from_name(&body_state)
+                .ok_or_else(|| unknown_enum("messages.body_state", body_state))?,
             flags_dirty: row.col(19)?,
             has_pending_operations: row.col(20)?,
             deleted_locally: row.col(21)?,
@@ -2410,10 +2461,7 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
         thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
-                Ok::<_, Error>(EmailAddress::new(
-                    row.col::<Option<String>>(13)?,
-                    address,
-                ))
+                Ok::<_, Error>(EmailAddress::new(row.col::<Option<String>>(13)?, address))
             })
             .transpose()?,
         subject: row.col(2)?,
@@ -2443,11 +2491,13 @@ pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
 /// would churn an id they all point at to rewrite a column with the same value.
 pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) -> Result<i64> {
     let normalized = address.normalized();
-    connection.execute(
-        "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
+    connection
+        .execute(
+            "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?2)
          ON CONFLICT (address_normalized) DO NOTHING",
-        bind![address.address, normalized],
-    ).await?;
+            bind![address.address, normalized],
+        )
+        .await?;
     Ok(sql::one(
         connection,
         "SELECT id FROM addresses WHERE address_normalized = ?1",
@@ -2458,17 +2508,20 @@ pub(crate) async fn address_id(connection: &Connection, address: &EmailAddress) 
 }
 
 async fn read_recipients(connection: &Connection, message: &mut Message) -> Result<()> {
-    let mut statement = connection.prepare(
-        "SELECT r.kind, r.name, a.address FROM recipients r
+    let mut statement = connection
+        .prepare(
+            "SELECT r.kind, r.name, a.address FROM recipients r
            JOIN addresses a ON a.id = r.address_id
           WHERE r.message_id = ?1 ORDER BY r.kind, r.position, r.id",
-    ).await?;
+        )
+        .await?;
     let rows = sql::mapped(&mut statement, [message.id.get()], |row| {
         Ok((
             row.col::<String>(0)?,
             EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
         ))
-    }).await?;
+    })
+    .await?;
 
     for (kind, address) in rows {
         match kind.as_str() {
@@ -2492,27 +2545,25 @@ async fn read_attachments(connection: &Connection, id: MessageId) -> Result<Vec<
            FROM attachments WHERE message_id = ?1 ORDER BY position, id",
         [id.get()],
         |row| {
-        let disposition: String = row.col(5)?;
-        let raw: Option<String> = row.col(6)?;
-        Ok(Attachment {
-            id: postio_model::AttachmentId::new(row.col(0)?),
-            message_id: id,
-            filename: row.col(1)?,
-            mime_type: row.col(2)?,
-            size: row.col::<i64>(3)? as u64,
-            content_id: row.col(4)?,
-            disposition: Disposition::from_parts(&disposition, raw.as_deref()).ok_or_else(
-                || {
-                    unknown_enum("attachments.disposition", disposition)
-                },
-            )?,
-            part_id: row.col(7)?,
-            blob_id: row.col::<Option<String>>(8)?.map(BlobId::new),
-            part_headers: row.col(9)?,
-        })
-    },
+            let disposition: String = row.col(5)?;
+            let raw: Option<String> = row.col(6)?;
+            Ok(Attachment {
+                id: postio_model::AttachmentId::new(row.col(0)?),
+                message_id: id,
+                filename: row.col(1)?,
+                mime_type: row.col(2)?,
+                size: row.col::<i64>(3)? as u64,
+                content_id: row.col(4)?,
+                disposition: Disposition::from_parts(&disposition, raw.as_deref())
+                    .ok_or_else(|| unknown_enum("attachments.disposition", disposition))?,
+                part_id: row.col(7)?,
+                blob_id: row.col::<Option<String>>(8)?.map(BlobId::new),
+                part_headers: row.col(9)?,
+            })
+        },
     )
-    .await}
+    .await
+}
 
 async fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<LabelId>> {
     sql::all(
@@ -2521,7 +2572,8 @@ async fn read_labels(connection: &Connection, id: MessageId) -> Result<Vec<Label
         [id.get()],
         |row| Ok(LabelId::new(row.col(0)?)),
     )
-    .await}
+    .await
+}
 
 /// Flags as the schema stores them: canonical spellings, space separated, in
 /// [`FlagSet`] order, with `\Recent` already gone.
@@ -2564,18 +2616,20 @@ fn flags_expression(seen: &str, flagged: &str) -> String {
 /// the folder for a resync instead of guessing which message is the one it
 /// just wrote.
 async fn own_draft_copies(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
-    let mut statement = connection.prepare(
-        "SELECT mailboxes.id, drafts.remote_id
+    let mut statement = connection
+        .prepare(
+            "SELECT mailboxes.id, drafts.remote_id
            FROM drafts
            JOIN mailboxes ON mailboxes.account_id = drafts.account_id
                          AND mailboxes.role = 'drafts'
           WHERE drafts.remote_id IS NOT NULL",
-    ).await?;
+        )
+        .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
-    }).await?;
-    Ok::<_, Error>(rows.into_iter().collect())
-        .map_err(Into::into)
+    })
+    .await?;
+    Ok::<_, Error>(rows.into_iter().collect()).map_err(Into::into)
 }
 
 /// Rows this client wrote that the server has not named yet, by `Message-ID`.
@@ -2609,14 +2663,11 @@ async fn local_copies_awaiting_identity(
             AND deleted_locally = 0",
         (),
         |row| {
-        Ok((
-            (
-                MailboxId::new(row.col::<i64>(0)?),
-                row.col::<String>(1)?,
-            ),
-            MessageId::new(row.col(2)?),
-        ))
-    },
+            Ok((
+                (MailboxId::new(row.col::<i64>(0)?), row.col::<String>(1)?),
+                MessageId::new(row.col(2)?),
+            ))
+        },
     )
     .await
     .map(|rows| rows.into_iter().collect())
@@ -2641,20 +2692,24 @@ async fn local_copies_awaiting_identity(
 /// local half of the move nulls the row's `uid`/`uid_validity` in the same
 /// transaction that enqueues (#289): by the time a resync runs, this row is
 /// the only thing that still remembers where the server has it.
-async fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeSet<(MailboxId, String)>> {
-    let mut statement = connection.prepare(
-        "SELECT mailbox_id, source_remote_id
+async fn shadowed_by_pending_operation(
+    connection: &Connection,
+) -> Result<BTreeSet<(MailboxId, String)>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT mailbox_id, source_remote_id
            FROM operation_queue
           WHERE state IN ('pending', 'in_flight')
             AND op_type IN ('move', 'delete')
             AND mailbox_id IS NOT NULL
             AND source_remote_id IS NOT NULL",
-    ).await?;
+        )
+        .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((MailboxId::new(row.col::<i64>(0)?), row.col(1)?))
-    }).await?;
-    Ok::<_, Error>(rows.into_iter().collect())
-        .map_err(Into::into)
+    })
+    .await?;
+    Ok::<_, Error>(rows.into_iter().collect()).map_err(Into::into)
 }
 
 /// The flag changes the queue is still holding for each message, in the order
@@ -2674,21 +2729,24 @@ async fn shadowed_by_pending_operation(connection: &Connection) -> Result<BTreeS
 async fn unacknowledged_flag_changes(
     connection: &Connection,
 ) -> Result<BTreeMap<MessageId, Vec<(bool, FlagSet)>>> {
-    let mut statement = connection.prepare(
-        "SELECT target_id, op_type, payload
+    let mut statement = connection
+        .prepare(
+            "SELECT target_id, op_type, payload
            FROM operation_queue
           WHERE state IN ('pending', 'in_flight')
             AND op_type IN ('set_flags', 'clear_flags')
             AND target_kind = 'message'
           ORDER BY id",
-    ).await?;
+        )
+        .await?;
     let rows = sql::mapped(&mut statement, (), |row| {
         Ok((
             row.col::<i64>(0)?,
             row.col::<String>(1)?,
             row.col::<String>(2)?,
         ))
-    }).await?;
+    })
+    .await?;
 
     let mut changes: BTreeMap<MessageId, Vec<(bool, FlagSet)>> = BTreeMap::new();
     for (target, op_type, payload) in rows {

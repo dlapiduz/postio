@@ -59,7 +59,9 @@ async fn today() -> chrono::NaiveDate {
 async fn a_search_costs_the_same_queries_however_much_it_matches() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).await.expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     // Every message carries "quarterly"; each also carries its own number, so
@@ -104,7 +106,8 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
                 .expect("a page of results")
                 .hits
                 .len();
-        }).await;
+        })
+        .await;
         (counts, hits)
     };
 
@@ -139,15 +142,15 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
             limit: 25,
             order: postio_search::ResultOrder::Relevance,
         };
-        let _ = search(&connection, &request, now).await.expect("a page of results");
-        let _: i64 = postio_storage::sql::one(
-            &connection,
-            "SELECT count(*) FROM messages",
-            (),
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
-        .await
-        .expect("one more query, standing in for a per-hit lookup");
+        let _ = search(&connection, &request, now)
+            .await
+            .expect("a page of results");
+        let _: i64 =
+            postio_storage::sql::one(&connection, "SELECT count(*) FROM messages", (), |row| {
+                postio_storage::sql::RowExt::col(row, 0)
+            })
+            .await
+            .expect("one more query, standing in for a per-hit lookup");
     });
     assert_eq!(
         with_one_more.await.statements,

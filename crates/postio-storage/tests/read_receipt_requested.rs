@@ -82,7 +82,9 @@ async fn the_count_is_scoped_to_its_own_account_and_ignores_ones_that_never_aske
         .create(&mut theirs_owner)
         .await
         .expect("second account");
-    let theirs_inbox = test_support::mailbox(&connection, &theirs_owner, "INBOX").await.id;
+    let theirs_inbox = test_support::mailbox(&connection, &theirs_owner, "INBOX")
+        .await
+        .id;
 
     for _ in 0..2 {
         let mut asked =

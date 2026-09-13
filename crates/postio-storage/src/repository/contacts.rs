@@ -15,10 +15,10 @@ use postio_model::{AccountId, Contact, ContactId, ContactSource, EmailAddress, M
 
 use super::{from_millis, to_millis};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`Contact`] rows.
 #[derive(Debug)]
@@ -94,13 +94,12 @@ impl<'a> ContactRepository<'a> {
     pub async fn get(&self, id: ContactId) -> Result<Option<Contact>> {
         sql::first(
             self.connection,
-            &format!(
-            "SELECT {CONTACT_COLUMNS} FROM contacts WHERE id = ?1"
-        ),
+            &format!("SELECT {CONTACT_COLUMNS} FROM contacts WHERE id = ?1"),
             [id.get()],
             read_contact,
         )
-        .await}
+        .await
+    }
 
     /// The contact for an address, matched case-insensitively.
     pub async fn by_address(
@@ -108,12 +107,15 @@ impl<'a> ContactRepository<'a> {
         account_id: Option<AccountId>,
         address: &str,
     ) -> Result<Option<Contact>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {CONTACT_COLUMNS} FROM contacts
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {CONTACT_COLUMNS} FROM contacts
               WHERE {} AND address_normalized = ?{}",
-            account_filter(account_id),
-            first_free(account_id)
-        )).await?;
+                account_filter(account_id),
+                first_free(account_id)
+            ))
+            .await?;
         let mut arguments = account_argument(account_id);
         arguments.push(turso::Value::Text(address.to_lowercase()));
         crate::sql::first_of(&mut statement, arguments, |row| read_contact(row)).await
@@ -161,8 +163,10 @@ impl<'a> ContactRepository<'a> {
         let prefix = prefix.trim().to_lowercase();
         let text = first_free(account_id);
         let limit_index = text + 1;
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT {CONTACT_COLUMNS} FROM contacts
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {CONTACT_COLUMNS} FROM contacts
               WHERE {} AND suppressed = 0 AND (
                     ?{text} = ''
                  OR address_normalized LIKE ?{text} || '%'
@@ -174,8 +178,9 @@ impl<'a> ContactRepository<'a> {
               ORDER BY CASE WHEN source = 'mail' THEN 1 ELSE 0 END,
                        last_seen_at DESC, times_seen DESC, id
               LIMIT ?{limit_index}",
-            account_filter(account_id)
-        )).await?;
+                account_filter(account_id)
+            ))
+            .await?;
 
         let mut arguments = account_argument(account_id);
         arguments.push(turso::Value::Text(prefix));
@@ -202,10 +207,10 @@ impl<'a> ContactRepository<'a> {
         let existing: Option<i64> = sql::first(
             self.connection,
             &format!(
-                    "SELECT id FROM contacts WHERE {} AND address_normalized = ?{}",
-                    account_filter(account_id),
-                    first_free(account_id)
-                ),
+                "SELECT id FROM contacts WHERE {} AND address_normalized = ?{}",
+                account_filter(account_id),
+                first_free(account_id)
+            ),
             arguments,
             |row| row.col(0),
         )
@@ -213,28 +218,32 @@ impl<'a> ContactRepository<'a> {
 
         match existing {
             Some(id) => {
-                self.connection.execute(
-                    "UPDATE contacts
+                self.connection
+                    .execute(
+                        "UPDATE contacts
                         SET source = 'user', suppressed = 0,
                             name = coalesce(?2, name)
                       WHERE id = ?1",
-                    bind![id, name],
-                ).await?;
+                        bind![id, name],
+                    )
+                    .await?;
                 Ok(ContactId::new(id))
             }
             None => {
-                self.connection.execute(
-                    "INSERT INTO contacts (account_id, name, address, address_name,
+                self.connection
+                    .execute(
+                        "INSERT INTO contacts (account_id, name, address, address_name,
                                            address_normalized, source)
                      VALUES (?1, ?2, ?3, ?4, ?5, 'user')",
-                    bind![
-                        account_id.map(AccountId::get),
-                        name,
-                        address.address,
-                        address.name,
-                        normalized,
-                    ],
-                ).await?;
+                        bind![
+                            account_id.map(AccountId::get),
+                            name,
+                            address.address,
+                            address.name,
+                            normalized,
+                        ],
+                    )
+                    .await?;
                 Ok(ContactId::new(self.connection.last_insert_rowid()))
             }
         }
@@ -245,13 +254,16 @@ impl<'a> ContactRepository<'a> {
     /// A deliberate edit is the promotion ADR 0007 Q1 describes: a `mail`
     /// row the user touches becomes `source = 'user'` on the same row.
     pub async fn set_name(&self, id: ContactId, name: Option<&str>) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE contacts
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE contacts
                 SET name = ?2,
                     source = CASE WHEN source = 'mail' THEN 'user' ELSE source END
               WHERE id = ?1",
-            bind![id.get(), name],
-        ).await?;
+                bind![id.get(), name],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "contact",
@@ -281,14 +293,20 @@ impl<'a> ContactRepository<'a> {
         match source.as_deref() {
             None => Ok(false),
             Some("user") => {
-                let deleted = self.connection.execute("DELETE FROM contacts WHERE id = ?1", [id.get()]).await?;
+                let deleted = self
+                    .connection
+                    .execute("DELETE FROM contacts WHERE id = ?1", [id.get()])
+                    .await?;
                 Ok(deleted > 0)
             }
             Some(_) => {
-                let changed = self.connection.execute(
-                    "UPDATE contacts SET suppressed = 1 WHERE id = ?1",
-                    [id.get()],
-                ).await?;
+                let changed = self
+                    .connection
+                    .execute(
+                        "UPDATE contacts SET suppressed = 1 WHERE id = ?1",
+                        [id.get()],
+                    )
+                    .await?;
                 Ok(changed > 0)
             }
         }
@@ -333,28 +351,33 @@ async fn record_in(
 
     match existing {
         Some(id) => {
-            connection.prepare_cached(
+            connection
+                .prepare_cached(
                     "UPDATE contacts
                     SET address = ?2, address_name = ?3, times_seen = times_seen + 1,
                         last_seen_at = max(coalesce(last_seen_at, ?4), ?4)
                   WHERE id = ?1",
-                ).await?
-                .execute(bind![id, address.address, address.name, to_millis(at)]).await?;
+                )
+                .await?
+                .execute(bind![id, address.address, address.name, to_millis(at)])
+                .await?;
             Ok(ContactId::new(id))
         }
         None => {
-            connection.execute(
-                "INSERT INTO contacts (account_id, name, address, address_name,
+            connection
+                .execute(
+                    "INSERT INTO contacts (account_id, name, address, address_name,
                                        address_normalized, times_seen, last_seen_at)
                  VALUES (?1, NULL, ?2, ?3, ?4, 1, ?5)",
-                bind![
-                    account_id.map(AccountId::get),
-                    address.address,
-                    address.name,
-                    normalized,
-                    to_millis(at),
-                ],
-            ).await?;
+                    bind![
+                        account_id.map(AccountId::get),
+                        address.address,
+                        address.name,
+                        normalized,
+                        to_millis(at),
+                    ],
+                )
+                .await?;
             Ok(ContactId::new(connection.last_insert_rowid()))
         }
     }

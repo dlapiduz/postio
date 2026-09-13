@@ -50,17 +50,17 @@ pub mod blob;
 pub mod error;
 pub mod key;
 mod perm;
+pub mod repository;
+pub mod schema;
+#[cfg(feature = "test-support")]
+pub mod seed;
 /// Reading rows and opening transactions, for the other crate that speaks SQL.
 ///
 /// `postio-index` maintains the search index over these same tables and needs
 /// the same accessors; everything else above this layer goes through the
 /// repositories. Public for that one caller rather than as an invitation.
 pub mod sql;
-pub mod repository;
-pub mod schema;
 pub mod store;
-#[cfg(feature = "test-support")]
-pub mod seed;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 

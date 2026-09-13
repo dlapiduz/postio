@@ -35,10 +35,15 @@ async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns()
     let _ = messages.page(&page(1)).await.expect("a first read");
 
     let mut one_row = 0;
-    let one = counted_async(|| async { one_row = messages.page(&page(1)).await.expect("one row").len() }).await;
+    let one =
+        counted_async(|| async { one_row = messages.page(&page(1)).await.expect("one row").len() })
+            .await;
 
     let mut many_rows = 0;
-    let many = counted_async(|| async { many_rows = messages.page(&page(25)).await.expect("a page").len() }).await;
+    let many = counted_async(|| async {
+        many_rows = messages.page(&page(25)).await.expect("a page").len()
+    })
+    .await;
 
     assert_eq!(one_row, 1, "a page of one should return one row");
     assert!(
@@ -88,7 +93,8 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     };
 
     let mut rows = Vec::new();
-    let first = counted_async(|| async { rows = messages.page(&query).await.expect("a first page") }).await;
+    let first =
+        counted_async(|| async { rows = messages.page(&query).await.expect("a first page") }).await;
     assert_eq!(
         rows.len(),
         limit as usize,
@@ -200,7 +206,9 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
     let _ = messages.page(&query).await.expect("a first read");
 
     let mut returned = 0;
-    let counts = counted_async(|| async { returned = messages.page(&query).await.expect("a page").len() }).await;
+    let counts =
+        counted_async(|| async { returned = messages.page(&query).await.expect("a page").len() })
+            .await;
 
     assert_eq!(returned, 20, "the seed should fill the page");
     assert_eq!(

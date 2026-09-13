@@ -36,7 +36,11 @@ fn a_key() -> postio_storage::key::Subkey {
 async fn count(connection: &postio_storage::Connection, sql: &str) -> i64 {
     let mut rows = connection.query(sql, ()).await.expect("query");
     let row = rows.next().await.expect("row").expect("a count row");
-    let value = *row.get_value(0).expect("column").as_integer().expect("integer");
+    let value = *row
+        .get_value(0)
+        .expect("column")
+        .as_integer()
+        .expect("integer");
     drop(rows);
     value
 }
@@ -58,14 +62,26 @@ async fn opening_a_fresh_path_puts_the_schema_at_head() {
 
     let mut found = Vec::new();
     while let Some(row) = rows.next().await.expect("row") {
-        found.push(row.get_value(0).expect("name").as_text().expect("text").clone());
+        found.push(
+            row.get_value(0)
+                .expect("name")
+                .as_text()
+                .expect("text")
+                .clone(),
+        );
     }
     found.sort();
 
     // The tables the application cannot start without, not the whole list:
     // `schema.rs`'s own test is what proves nothing was lost. This one proves
     // the constant reached the engine.
-    for expected in ["accounts", "mailboxes", "messages", "threads", "operation_queue"] {
+    for expected in [
+        "accounts",
+        "mailboxes",
+        "messages",
+        "threads",
+        "operation_queue",
+    ] {
         assert!(
             found.iter().any(|name| name == expected),
             "the store opened without `{expected}`; it has {found:?}",
@@ -97,7 +113,10 @@ async fn the_store_keeps_no_plaintext_on_disk() {
         .expect("write the probe");
     // A query, not an `execute`: the pragma answers with a row, and the engine
     // refuses a statement whose rows nobody reads.
-    if let Ok(mut rows) = connection.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await {
+    if let Ok(mut rows) = connection
+        .query("PRAGMA wal_checkpoint(TRUNCATE)", ())
+        .await
+    {
         let _ = rows.next().await;
     }
     drop(connection);
@@ -198,7 +217,12 @@ async fn fold_cannot_be_expressed_in_sql() {
     let store = Store::open(&path, &a_key()).await.expect("open");
     let connection = store.connect().await.expect("connect");
 
-    for spelling in ["nfd(?1)", "unaccent(?1)", "normalize(?1, 'NFD')", "icu_fold(?1)"] {
+    for spelling in [
+        "nfd(?1)",
+        "unaccent(?1)",
+        "normalize(?1, 'NFD')",
+        "icu_fold(?1)",
+    ] {
         let outcome = connection
             .query(&format!("SELECT {spelling}"), turso::params!["café"])
             .await;
@@ -231,7 +255,10 @@ async fn the_engine_folds_case_but_not_diacritics() {
         .await
         .expect("create");
     connection
-        .execute("INSERT INTO accents (body) VALUES ('un café très noir')", ())
+        .execute(
+            "INSERT INTO accents (body) VALUES ('un café très noir')",
+            (),
+        )
         .await
         .expect("insert");
 

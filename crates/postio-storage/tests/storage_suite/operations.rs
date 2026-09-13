@@ -8,9 +8,9 @@ use postio_model::{
     Account, BlobId, DraftId, Flag, FlagSet, MailboxId, MessageId, Operation, OperationId,
     OperationState, OperationTarget,
 };
+use postio_storage::bind;
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::test_support;
-use postio_storage::bind;
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
@@ -45,18 +45,26 @@ async fn set_seen(connection: &Connection, message: MessageId) {
 }
 
 async fn is_seen(connection: &Connection, message: MessageId) -> bool {
-    postio_storage::sql::one(&*connection, 
-            "SELECT seen FROM messages WHERE id = ?1",bind![message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
-        .expect("read the message")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT seen FROM messages WHERE id = ?1",
+        bind![message.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .expect("read the message")
         == 1
 }
 
 async fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
-    postio_storage::sql::one(&*connection, 
-            "SELECT has_pending_operations FROM messages WHERE id = ?1",bind![message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
-        .expect("read the message")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT has_pending_operations FROM messages WHERE id = ?1",
+        bind![message.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+    )
+    .await
+    .expect("read the message")
         == 1
 }
 
@@ -69,9 +77,15 @@ struct Fixture {
 
 async fn fixture(connection: &Connection) -> Fixture {
     let account = test_support::account(connection).await;
-    let inbox = test_support::mailbox(connection, &account, "INBOX").await.id;
-    let archive = test_support::mailbox(connection, &account, "Archive").await.id;
-    let trash = test_support::mailbox(connection, &account, "Deleted Messages").await.id;
+    let inbox = test_support::mailbox(connection, &account, "INBOX")
+        .await
+        .id;
+    let archive = test_support::mailbox(connection, &account, "Archive")
+        .await
+        .id;
+    let trash = test_support::mailbox(connection, &account, "Deleted Messages")
+        .await
+        .id;
     Fixture {
         account,
         inbox,
@@ -235,7 +249,10 @@ async fn undoing_enqueues_the_inverse_down_the_same_path() {
         .await
         .expect("enqueue");
 
-    let undo = queue.enqueue_inverse(&archived, at(10)).await.expect("undo");
+    let undo = queue
+        .enqueue_inverse(&archived, at(10))
+        .await
+        .expect("undo");
 
     assert_eq!(
         undo.operation,
@@ -333,7 +350,10 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
         .expect("enqueue");
     drop(transaction);
 
-    assert!(!is_seen(&connection, message).await, "the local write is gone");
+    assert!(
+        !is_seen(&connection, message).await,
+        "the local write is gone"
+    );
     assert!(
         OperationQueueRepository::new(&connection)
             .pending(fixture.account.id, at(9))
@@ -407,7 +427,10 @@ async fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
         .await
         .expect("enqueue many");
 
-    let rows = queue.pending(fixture.account.id, at(9)).await.expect("pending");
+    let rows = queue
+        .pending(fixture.account.id, at(9))
+        .await
+        .expect("pending");
     assert_eq!(
         rows.iter().map(|row| row.target).collect::<Vec<_>>(),
         messages
@@ -595,14 +618,20 @@ async fn a_backed_off_operation_is_skipped_until_its_time() {
         .await
         .expect("defer");
 
-    let ready = queue.pending(fixture.account.id, at(10)).await.expect("pending");
+    let ready = queue
+        .pending(fixture.account.id, at(10))
+        .await
+        .expect("pending");
     assert_eq!(
         ready.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![second.id],
         "the deferred row is not due yet"
     );
 
-    let later = queue.pending(fixture.account.id, at(13)).await.expect("pending");
+    let later = queue
+        .pending(fixture.account.id, at(13))
+        .await
+        .expect("pending");
     assert_eq!(
         later.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![first.id, second.id],
@@ -648,21 +677,31 @@ async fn a_scheduled_operation_is_skipped_until_its_send_time() {
         .await
         .expect("enqueue_not_before");
 
-    let too_early = queue.pending(fixture.account.id, at(12)).await.expect("pending");
+    let too_early = queue
+        .pending(fixture.account.id, at(12))
+        .await
+        .expect("pending");
     assert_eq!(
         too_early.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![immediate.id],
         "the scheduled row is not due yet"
     );
 
-    let due = queue.pending(fixture.account.id, at(15)).await.expect("pending");
+    let due = queue
+        .pending(fixture.account.id, at(15))
+        .await
+        .expect("pending");
     assert_eq!(
         due.iter().map(|queued| queued.id).collect::<Vec<_>>(),
         vec![immediate.id, scheduled.id],
         "and once its time arrives it drains in its enqueue-order place"
     );
 
-    let row = queue.get(scheduled.id).await.expect("get").expect("the row");
+    let row = queue
+        .get(scheduled.id)
+        .await
+        .expect("get")
+        .expect("the row");
     assert_eq!(
         row.next_attempt_at,
         Some(at(15)),
@@ -692,7 +731,10 @@ async fn an_operation_left_in_flight_by_a_crash_is_retried_rather_than_dropped()
         )
         .await
         .expect("enqueue");
-    queue.mark_in_flight(queued.id, at(9)).await.expect("in flight");
+    queue
+        .mark_in_flight(queued.id, at(9))
+        .await
+        .expect("in flight");
 
     assert!(
         queue
@@ -770,7 +812,12 @@ async fn a_settled_operation_stops_appearing_in_the_queue() {
         "and the message stops advertising outstanding work"
     );
     assert_eq!(
-        queue.get(failed.id).await.expect("get").expect("the row").state,
+        queue
+            .get(failed.id)
+            .await
+            .expect("get")
+            .expect("the row")
+            .state,
         OperationState::Failed,
         "a failure is kept so the user can be told about it"
     );

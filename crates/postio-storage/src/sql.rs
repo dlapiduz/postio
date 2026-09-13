@@ -252,6 +252,61 @@ fn count(rows: usize) {
     let _ = rows;
 }
 
+/// Run a batch of `;`-separated statements, counted.
+///
+/// `Connection::execute_batch` directly is the same call and is *not* counted,
+/// which is why this exists. A schema batch is real work — the whole of #1113
+/// was one `CREATE TRIGGER IF NOT EXISTS` costing 160–230 ms on a populated
+/// store, on every start — and a startup budget that cannot see it is a
+/// budget that passes while startup gets slower.
+///
+/// The count is how many statements the batch contains, scanned for `;`
+/// outside string literals and `--` comments. Approximate in the way a
+/// statement count always is, and exact for the DDL batches that use it.
+pub async fn batch(connection: &Connection, sql: &str) -> Result<()> {
+    connection.execute_batch(sql).await?;
+    count_statements(statements_in(sql));
+    Ok(())
+}
+
+/// How many `;`-terminated statements `sql` holds.
+fn statements_in(sql: &str) -> usize {
+    let mut found = 0;
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+            }
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b';' => found += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    found
+}
+
+/// Add `n` to the statement counter without touching the row counter.
+#[inline]
+fn count_statements(n: usize) {
+    #[cfg(feature = "test-support")]
+    for _ in 0..n {
+        crate::test_support::counting::statement();
+    }
+    #[cfg(not(feature = "test-support"))]
+    let _ = n;
+}
+
 /// Every row the query returns, mapped.
 ///
 /// Collects before returning, so the `Rows` is dropped and the connection is
@@ -376,11 +431,7 @@ where
 ///
 /// Returns `0` when the query produced no row at all, which `count(*)` never
 /// does and `max()` over an empty table does.
-pub async fn scalar(
-    connection: &Connection,
-    sql: &str,
-    params: impl IntoParams,
-) -> Result<i64> {
+pub async fn scalar(connection: &Connection, sql: &str, params: impl IntoParams) -> Result<i64> {
     Ok(first(connection, sql, params, |row| row.opt_int(0))
         .await?
         .flatten()
@@ -388,11 +439,7 @@ pub async fn scalar(
 }
 
 /// Whether the query matched anything.
-pub async fn exists(
-    connection: &Connection,
-    sql: &str,
-    params: impl IntoParams,
-) -> Result<bool> {
+pub async fn exists(connection: &Connection, sql: &str, params: impl IntoParams) -> Result<bool> {
     Ok(first(connection, sql, params, |_| Ok(())).await?.is_some())
 }
 
@@ -435,10 +482,7 @@ const SAVEPOINT: &str = "postio_scope";
 ///
 /// A nested scope stays a plain `SAVEPOINT`: the transaction enclosing it has
 /// already answered the question, and asking again would be a second `BEGIN`.
-pub async fn in_scope<T, E, F, Fut>(
-    connection: &Connection,
-    work: F,
-) -> std::result::Result<T, E>
+pub async fn in_scope<T, E, F, Fut>(connection: &Connection, work: F) -> std::result::Result<T, E>
 where
     E: From<Error>,
     F: FnOnce(Connection) -> Fut,

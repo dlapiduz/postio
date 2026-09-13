@@ -14,11 +14,10 @@
 
 use postio_model::{AccountId, Label, LabelId, MessageId};
 
-
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::Result;
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`Label`] rows and their attachment to messages.
 #[derive(Debug)]
@@ -42,10 +41,12 @@ impl<'a> LabelRepository<'a> {
     /// (`idx_labels_account_name`), so a second `work` beside a `Work` is
     /// refused here rather than becoming two rows a person would read as one.
     pub async fn create(&self, label: &mut Label) -> Result<LabelId> {
-        self.connection.execute(
-            "INSERT INTO labels (account_id, name, color) VALUES (?1, ?2, ?3)",
-            bind![label.account_id.get(), label.name, label.color],
-        ).await?;
+        self.connection
+            .execute(
+                "INSERT INTO labels (account_id, name, color) VALUES (?1, ?2, ?3)",
+                bind![label.account_id.get(), label.name, label.color],
+            )
+            .await?;
         let id = LabelId::new(self.connection.last_insert_rowid());
         label.id = id;
         Ok(id)
@@ -59,7 +60,8 @@ impl<'a> LabelRepository<'a> {
             [id.get()],
             read_label,
         )
-        .await}
+        .await
+    }
 
     /// Every label `account_id` owns, by name.
     ///
@@ -70,13 +72,14 @@ impl<'a> LabelRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT {LABEL_COLUMNS} FROM labels WHERE account_id = ?1
+                "SELECT {LABEL_COLUMNS} FROM labels WHERE account_id = ?1
               ORDER BY name COLLATE NOCASE"
-        ),
+            ),
             [account_id.get()],
             read_label,
         )
-        .await}
+        .await
+    }
 
     /// Puts `label` on `message`. Answers whether that changed anything.
     ///
@@ -84,10 +87,13 @@ impl<'a> LabelRepository<'a> {
     /// is harmless — which a queued command has to be, because a drain that
     /// is retried after an uncertain failure runs it again.
     pub async fn attach(&self, message: MessageId, label: LabelId) -> Result<bool> {
-        let changed = self.connection.execute(
-            "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
-            bind![message.get(), label.get()],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?1, ?2)",
+                bind![message.get(), label.get()],
+            )
+            .await?;
         Ok(changed > 0)
     }
 
@@ -96,10 +102,13 @@ impl<'a> LabelRepository<'a> {
     /// `false` for a label that was not there, so an undo that runs twice
     /// does not report having removed something.
     pub async fn detach(&self, message: MessageId, label: LabelId) -> Result<bool> {
-        let changed = self.connection.execute(
-            "DELETE FROM message_labels WHERE message_id = ?1 AND label_id = ?2",
-            bind![message.get(), label.get()],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "DELETE FROM message_labels WHERE message_id = ?1 AND label_id = ?2",
+                bind![message.get(), label.get()],
+            )
+            .await?;
         Ok(changed > 0)
     }
 
@@ -111,14 +120,18 @@ impl<'a> LabelRepository<'a> {
             [message.get()],
             |row| Ok(LabelId::new(row.col(0)?)),
         )
-        .await}
+        .await
+    }
 
     /// Removes a label entirely. Answers whether there was one.
     ///
     /// `message_labels` cascades, so this takes it off every message carrying
     /// it rather than leaving rows pointing at a label that is gone.
     pub async fn delete(&self, id: LabelId) -> Result<bool> {
-        let changed = self.connection.execute("DELETE FROM labels WHERE id = ?1", [id.get()]).await?;
+        let changed = self
+            .connection
+            .execute("DELETE FROM labels WHERE id = ?1", [id.get()])
+            .await?;
         Ok(changed > 0)
     }
 }

@@ -257,10 +257,14 @@ async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
         )
         .await
         .expect("insert address");
-    postio_storage::sql::one(&*connection, 
-            "SELECT id FROM addresses WHERE address_normalized = ?1",bind![address.normalized()],
-            |row| postio_storage::sql::RowExt::col(row, 0)).await
-        .expect("the address row")
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT id FROM addresses WHERE address_normalized = ?1",
+        bind![address.normalized()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the address row")
 }
 
 async fn read_addresses(connection: &Connection, message_id: i64, kind: &str) -> Vec<EmailAddress> {
@@ -307,24 +311,28 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
     let message_id = insert_message(&connection, &message).await;
     insert_recipients(&connection, message_id, &message).await;
 
-    let stored = postio_storage::sql::one(&*connection, 
-            "SELECT subject, date, received_at, size, preview, flags, body_state,
+    let stored = postio_storage::sql::one(
+        &*connection,
+        "SELECT subject, date, received_at, size, preview, flags, body_state,
                     remote_id, raw_blob_id
-             FROM messages WHERE id = ?1",bind![message_id],
-            |row| {
-                Ok(StoredMessage {
-                    subject: postio_storage::sql::RowExt::col(row, 0)?,
-                    date: postio_storage::sql::RowExt::col(row, 1)?,
-                    received_at: postio_storage::sql::RowExt::col(row, 2)?,
-                    size: postio_storage::sql::RowExt::col(row, 3)?,
-                    preview: postio_storage::sql::RowExt::col(row, 4)?,
-                    flags: postio_storage::sql::RowExt::col(row, 5)?,
-                    body_state: postio_storage::sql::RowExt::col(row, 6)?,
-                    remote_id: postio_storage::sql::RowExt::col(row, 7)?,
-                    raw_blob_id: postio_storage::sql::RowExt::col(row, 8)?,
-                })
-            }).await
-        .expect("read message back");
+             FROM messages WHERE id = ?1",
+        bind![message_id],
+        |row| {
+            Ok(StoredMessage {
+                subject: postio_storage::sql::RowExt::col(row, 0)?,
+                date: postio_storage::sql::RowExt::col(row, 1)?,
+                received_at: postio_storage::sql::RowExt::col(row, 2)?,
+                size: postio_storage::sql::RowExt::col(row, 3)?,
+                preview: postio_storage::sql::RowExt::col(row, 4)?,
+                flags: postio_storage::sql::RowExt::col(row, 5)?,
+                body_state: postio_storage::sql::RowExt::col(row, 6)?,
+                remote_id: postio_storage::sql::RowExt::col(row, 7)?,
+                raw_blob_id: postio_storage::sql::RowExt::col(row, 8)?,
+            })
+        },
+    )
+    .await
+    .expect("read message back");
 
     assert_eq!(stored.subject, message.subject);
     assert_eq!(stored.date, message.date.map(millis));
@@ -355,9 +363,18 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
         read_addresses(&connection, message_id, "reply_to").await,
         message.reply_to
     );
-    assert_eq!(read_addresses(&connection, message_id, "to").await, message.to);
-    assert_eq!(read_addresses(&connection, message_id, "cc").await, message.cc);
-    assert_eq!(read_addresses(&connection, message_id, "bcc").await, message.bcc);
+    assert_eq!(
+        read_addresses(&connection, message_id, "to").await,
+        message.to
+    );
+    assert_eq!(
+        read_addresses(&connection, message_id, "cc").await,
+        message.cc
+    );
+    assert_eq!(
+        read_addresses(&connection, message_id, "bcc").await,
+        message.bcc
+    );
 
     // The reference chain that JWZ threading walks survives verbatim, in order.
     let references: String = postio_storage::sql::one(
@@ -471,18 +488,22 @@ async fn attachment_metadata_round_trips_without_the_bytes() {
         i64,
         Option<String>,
         Option<String>,
-    ) = postio_storage::sql::one(&*connection, 
-            "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",(),
-            |row| {
-                Ok((
-                    postio_storage::sql::RowExt::col(row, 0)?,
-                    postio_storage::sql::RowExt::col(row, 1)?,
-                    postio_storage::sql::RowExt::col(row, 2)?,
-                    postio_storage::sql::RowExt::col(row, 3)?,
-                    postio_storage::sql::RowExt::col(row, 4)?,
-                ))
-            }).await
-        .expect("read attachment");
+    ) = postio_storage::sql::one(
+        &*connection,
+        "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+                postio_storage::sql::RowExt::col(row, 2)?,
+                postio_storage::sql::RowExt::col(row, 3)?,
+                postio_storage::sql::RowExt::col(row, 4)?,
+            ))
+        },
+    )
+    .await
+    .expect("read attachment");
 
     assert_eq!(filename, attachment.filename);
     assert_eq!(mime_type, attachment.mime_type);
@@ -729,10 +750,19 @@ async fn a_contact_accumulates_sightings() {
         .await
         .expect("insert contact");
 
-    let (normalized, times_seen): (String, i64) = postio_storage::sql::one(&*connection, 
-            "SELECT address_normalized, times_seen FROM contacts",(),
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
-        .expect("read contact");
+    let (normalized, times_seen): (String, i64) = postio_storage::sql::one(
+        &*connection,
+        "SELECT address_normalized, times_seen FROM contacts",
+        (),
+        |row| {
+            Ok((
+                postio_storage::sql::RowExt::col(row, 0)?,
+                postio_storage::sql::RowExt::col(row, 1)?,
+            ))
+        },
+    )
+    .await
+    .expect("read contact");
     assert_eq!(normalized, "alice@example.com");
     assert_eq!(times_seen, 1);
 }

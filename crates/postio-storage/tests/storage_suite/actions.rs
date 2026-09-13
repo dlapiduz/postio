@@ -13,9 +13,9 @@
 //! opened its own transaction would pass every outcome assertion in this file
 //! and still be unusable by the caller it exists for.
 
+use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 use postio_storage::sql::bind;
-use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{Flag, MailboxId, Message, MessageId, Operation};
 use postio_storage::actions::{Relocation, relocate, set_flag};
@@ -39,7 +39,9 @@ async fn two_relocations_share_one_caller_owned_transaction() {
     let database = test_support::memory().await;
     let mut connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
     let first = a_message(&connection, inbox, "uid-1").await;
     let second = a_message(&connection, inbox, "uid-2").await;
 
@@ -68,7 +70,11 @@ async fn two_relocations_share_one_caller_owned_transaction() {
 
     let messages = MessageRepository::new(&connection);
     for id in [first, second] {
-        let row = messages.get(id).await.expect("read back").expect("still there");
+        let row = messages
+            .get(id)
+            .await
+            .expect("read back")
+            .expect("still there");
         assert_eq!(
             row.mailbox_id, archive,
             "both relocations should have landed once the caller committed"
@@ -94,7 +100,9 @@ async fn the_queue_row_carries_the_messages_server_identity() {
     let database = test_support::memory().await;
     let mut connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
     let message = a_message(&connection, inbox, "uid-9").await;
 
     let transaction = connection.transaction().await.expect("open a transaction");
@@ -144,7 +152,9 @@ async fn a_trash_relocation_enqueues_a_delete() {
     let database = test_support::memory().await;
     let mut connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let trash = test_support::mailbox(&connection, &account, "Trash").await.id;
+    let trash = test_support::mailbox(&connection, &account, "Trash")
+        .await
+        .id;
     let message = a_message(&connection, inbox, "uid-9").await;
 
     let transaction = connection.transaction().await.expect("open a transaction");
@@ -191,7 +201,9 @@ async fn a_rolled_back_transaction_relocates_nothing() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    let archive = test_support::mailbox(&connection, &account, "Archive").await.id;
+    let archive = test_support::mailbox(&connection, &account, "Archive")
+        .await
+        .id;
     let message = a_message(&connection, inbox, "uid-9").await;
 
     let rolled_back: Result<(), postio_storage::Error> =

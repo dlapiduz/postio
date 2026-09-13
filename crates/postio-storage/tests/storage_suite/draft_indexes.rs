@@ -28,7 +28,6 @@
 use postio_storage::Connection;
 use postio_storage::bind;
 
-
 async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     let store = postio_storage::test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
@@ -37,10 +36,14 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
 
 /// The `CREATE INDEX` statement the database is actually carrying.
 async fn definition(connection: &Connection, index: &str) -> String {
-    postio_storage::sql::one(&*connection, 
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",bind![index],
-            |row| postio_storage::sql::RowExt::col::<String>(row, 0)).await
-        .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
+    postio_storage::sql::one(
+        &*connection,
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        bind![index],
+        |row| postio_storage::sql::RowExt::col::<String>(row, 0),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
 
 /// How SQLite says it would answer `query`.
@@ -77,7 +80,8 @@ async fn a_drafts_own_rows_are_still_found_through_them() {
         "SELECT r.kind, r.name, a.address FROM recipients r
            JOIN addresses a ON a.id = r.address_id
           WHERE r.draft_id = 1 ORDER BY r.kind, r.position, r.id",
-    ).await;
+    )
+    .await;
     assert!(
         recipients.contains("idx_recipients_draft"),
         "a draft's recipients no longer reach their index:\n{recipients}"
@@ -86,7 +90,8 @@ async fn a_drafts_own_rows_are_still_found_through_them() {
     let attachments = plan(
         &connection,
         "SELECT id, filename FROM attachments WHERE draft_id = 1 ORDER BY position, id",
-    ).await;
+    )
+    .await;
     assert!(
         attachments.contains("idx_attachments_draft"),
         "a draft's attachments no longer reach their index:\n{attachments}"

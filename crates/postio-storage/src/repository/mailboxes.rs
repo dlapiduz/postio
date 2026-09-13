@@ -7,10 +7,10 @@ use postio_model::{
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 
-use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::store::Connection;
 use crate::error::{Error, Result};
+use crate::sql::{self, RowExt as _, bind};
+use crate::store::Connection;
+use turso::Row;
 
 /// Reads and writes [`Mailbox`] rows.
 ///
@@ -95,38 +95,40 @@ impl<'a> MailboxRepository<'a> {
         refuse_a_view(mailbox.role)?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         sql::in_scope(self.connection, |transaction| async move {
-        transaction.execute(
-            "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
+            transaction
+                .execute(
+                    "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
                                     flagged_count, last_synced_at, signature_id,
                                     backfill_excluded)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            bind![
-                account_id,
-                optional_id(mailbox.parent_id),
-                mailbox.name,
-                mailbox.path,
-                mailbox.delimiter.map(String::from),
-                mailbox.role.as_str(),
-                mailbox.selectable,
-                mailbox.subscribed,
-                mailbox.counts.total,
-                mailbox.counts.unread,
-                mailbox.counts.flagged,
-                mailbox.last_synced_at.map(to_millis),
-                optional_signature_id(mailbox.signature_id),
-                mailbox.backfill_excluded,
-            ],
-        ).await?;
-        let id = MailboxId::new(transaction.last_insert_rowid());
-        mailbox.id = id;
+                    bind![
+                        account_id,
+                        optional_id(mailbox.parent_id),
+                        mailbox.name,
+                        mailbox.path,
+                        mailbox.delimiter.map(String::from),
+                        mailbox.role.as_str(),
+                        mailbox.selectable,
+                        mailbox.subscribed,
+                        mailbox.counts.total,
+                        mailbox.counts.unread,
+                        mailbox.counts.flagged,
+                        mailbox.last_synced_at.map(to_millis),
+                        optional_signature_id(mailbox.signature_id),
+                        mailbox.backfill_excluded,
+                    ],
+                )
+                .await?;
+            let id = MailboxId::new(transaction.last_insert_rowid());
+            mailbox.id = id;
 
-        // Always written, even when every value is NULL: the sync engine can
-        // then UPDATE its state without first having to wonder whether the row
-        // exists, and "never synced" stays a readable, explicit state.
-        write_sync_state(&transaction, id, account_id, mailbox).await?;
+            // Always written, even when every value is NULL: the sync engine can
+            // then UPDATE its state without first having to wonder whether the row
+            // exists, and "never synced" stays a readable, explicit state.
+            write_sync_state(&transaction, id, account_id, mailbox).await?;
 
-        Ok(id)
+            Ok(id)
         })
         .await
     }
@@ -137,41 +139,43 @@ impl<'a> MailboxRepository<'a> {
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
         sql::in_scope(self.connection, |transaction| async move {
-        let changed = transaction.execute(
-            "UPDATE mailboxes
+            let changed = transaction
+                .execute(
+                    "UPDATE mailboxes
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
                     signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16
               WHERE id = ?1",
-            bind![
-                id,
-                account_id,
-                optional_id(mailbox.parent_id),
-                mailbox.name,
-                mailbox.path,
-                mailbox.delimiter.map(String::from),
-                mailbox.role.as_str(),
-                mailbox.selectable,
-                mailbox.subscribed,
-                mailbox.counts.total,
-                mailbox.counts.unread,
-                mailbox.counts.flagged,
-                mailbox.last_synced_at.map(to_millis),
-                optional_signature_id(mailbox.signature_id),
-                mailbox.backfill_excluded,
-                mailbox.counts.snoozed,
-            ],
-        ).await?;
-        if changed == 0 {
-            return Err(Error::NotFound {
-                entity: "mailbox",
-                id,
-            });
-        }
+                    bind![
+                        id,
+                        account_id,
+                        optional_id(mailbox.parent_id),
+                        mailbox.name,
+                        mailbox.path,
+                        mailbox.delimiter.map(String::from),
+                        mailbox.role.as_str(),
+                        mailbox.selectable,
+                        mailbox.subscribed,
+                        mailbox.counts.total,
+                        mailbox.counts.unread,
+                        mailbox.counts.flagged,
+                        mailbox.last_synced_at.map(to_millis),
+                        optional_signature_id(mailbox.signature_id),
+                        mailbox.backfill_excluded,
+                        mailbox.counts.snoozed,
+                    ],
+                )
+                .await?;
+            if changed == 0 {
+                return Err(Error::NotFound {
+                    entity: "mailbox",
+                    id,
+                });
+            }
 
-        write_sync_state(&transaction, mailbox.id, account_id, mailbox).await?;
-        Ok(())
+            write_sync_state(&transaction, mailbox.id, account_id, mailbox).await?;
+            Ok(())
         })
         .await
     }
@@ -199,7 +203,7 @@ impl<'a> MailboxRepository<'a> {
             |row| row.col(0),
         )
         .await?
-            .unwrap_or(false))
+        .unwrap_or(false))
     }
 
     /// Flips whether `id` participates in background backfill — the
@@ -212,10 +216,13 @@ impl<'a> MailboxRepository<'a> {
     /// interactive, on-open fetch — only what [`MailboxRepository::backfill_excluded`]
     /// answers for the background lane's own seeding pass.
     pub async fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
-        let changed = self.connection.execute(
-            "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
-            bind![id.get(), excluded],
-        ).await?;
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE mailboxes SET backfill_excluded = ?2 WHERE id = ?1",
+                bind![id.get(), excluded],
+            )
+            .await?;
         Ok(changed > 0)
     }
 
@@ -224,12 +231,13 @@ impl<'a> MailboxRepository<'a> {
         sql::first(
             self.connection,
             &format!(
-            "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 AND m.path = ?2"
-        ),
+                "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 AND m.path = ?2"
+            ),
             bind![account_id.get(), path],
             read_mailbox,
         )
-        .await}
+        .await
+    }
 
     /// The account's mailbox for a special-use role.
     ///
@@ -241,18 +249,23 @@ impl<'a> MailboxRepository<'a> {
     /// Never a retired row. A folder the server no longer lists is one an
     /// APPEND or a MOVE will be refused for, so a role that only a retired row
     /// still wears is a role this account does not have (#943).
-    pub async fn by_role(&self, account_id: AccountId, role: MailboxRole) -> Result<Option<Mailbox>> {
+    pub async fn by_role(
+        &self,
+        account_id: AccountId,
+        role: MailboxRole,
+    ) -> Result<Option<Mailbox>> {
         sql::first(
             self.connection,
             &format!(
-            "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
+                "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
               WHERE m.account_id = ?1 AND m.role = ?2 AND m.selectable = 1
               ORDER BY m.path LIMIT 1"
-        ),
+            ),
             bind![account_id.get(), role.as_str()],
             read_mailbox,
         )
-        .await}
+        .await
+    }
 
     /// Every mailbox in an account, ordered by path.
     ///
@@ -262,25 +275,32 @@ impl<'a> MailboxRepository<'a> {
         sql::all(
             self.connection,
             &format!(
-            "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 ORDER BY m.path"
-        ),
+                "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES} WHERE m.account_id = ?1 ORDER BY m.path"
+            ),
             [account_id.get()],
             read_mailbox,
         )
-        .await}
+        .await
+    }
 
     /// Deletes a mailbox and its messages, returning whether there was one.
     pub async fn delete(&self, id: MailboxId) -> Result<bool> {
-        let deleted = self.connection.execute("DELETE FROM mailboxes WHERE id = ?1", [id.get()]).await?;
+        let deleted = self
+            .connection
+            .execute("DELETE FROM mailboxes WHERE id = ?1", [id.get()])
+            .await?;
         Ok(deleted > 0)
     }
 
     /// The cached counts on a mailbox row.
     pub async fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
-        let mut statement = self.connection.prepare(
-            "SELECT total_count, unread_count, flagged_count, snoozed_count
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT total_count, unread_count, flagged_count, snoozed_count
                FROM mailboxes WHERE id = ?1",
-        ).await?;
+            )
+            .await?;
         crate::sql::first_of(&mut statement, [id.get()], |row| {
             Ok(MailboxCounts {
                 total: row.col(0)?,
@@ -303,18 +323,21 @@ impl<'a> MailboxRepository<'a> {
     /// concept of it — so the only real caller is [`Self::recount`], whose
     /// own live scan computes a genuine value.
     pub async fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
-        let changed = self.connection.execute(
-            "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE mailboxes SET total_count = ?2, unread_count = ?3, flagged_count = ?4,
                 snoozed_count = ?5
               WHERE id = ?1",
-            bind![
-                id.get(),
-                counts.total,
-                counts.unread,
-                counts.flagged,
-                counts.snoozed
-            ],
-        ).await?;
+                bind![
+                    id.get(),
+                    counts.total,
+                    counts.unread,
+                    counts.flagged,
+                    counts.snoozed
+                ],
+            )
+            .await?;
         if changed == 0 {
             return Err(Error::NotFound {
                 entity: "mailbox",
@@ -423,12 +446,12 @@ impl<'a> MailboxRepository<'a> {
                     AND deleted_locally = 0",
             [account_id.get()],
             |row| {
-                    Ok(DraftCounts {
-                        outbox: row.col::<i64>(0)? as u32,
-                        attention: row.col::<i64>(1)? as u32,
-                        drafts: row.col::<i64>(2)? as u32,
-                    })
-                },
+                Ok(DraftCounts {
+                    outbox: row.col::<i64>(0)? as u32,
+                    attention: row.col::<i64>(1)? as u32,
+                    drafts: row.col::<i64>(2)? as u32,
+                })
+            },
         )
         .await
     }
@@ -445,15 +468,15 @@ impl<'a> MailboxRepository<'a> {
                FROM mailboxes WHERE account_id = ?1",
             [account_id.get()],
             |row| {
-                    Ok(MailboxCounts {
-                        total: row.col::<i64>(0)? as u32,
-                        unread: row.col::<i64>(1)? as u32,
-                        flagged: row.col::<i64>(2)? as u32,
-                        snoozed: row.col::<i64>(3)? as u32,
-                        // Not a message count: filled by the sidebar's feed.
-                        attention: 0,
-                    })
-                },
+                Ok(MailboxCounts {
+                    total: row.col::<i64>(0)? as u32,
+                    unread: row.col::<i64>(1)? as u32,
+                    flagged: row.col::<i64>(2)? as u32,
+                    snoozed: row.col::<i64>(3)? as u32,
+                    // Not a message count: filled by the sidebar's feed.
+                    attention: 0,
+                })
+            },
         )
         .await
     }
@@ -509,8 +532,7 @@ fn read_mailbox(row: &Row) -> Result<Mailbox> {
         name: row.col(3)?,
         path: row.col(4)?,
         delimiter: delimiter.and_then(|value| value.chars().next()),
-        role: MailboxRole::from_name(&role)
-            .ok_or_else(|| unknown_enum("mailboxes.role", role))?,
+        role: MailboxRole::from_name(&role).ok_or_else(|| unknown_enum("mailboxes.role", role))?,
         selectable: row.col(7)?,
         subscribed: row.col(8)?,
         counts: MailboxCounts {

@@ -95,7 +95,10 @@ async fn members_can_be_added_and_removed() {
     addresses.sort_unstable();
     assert_eq!(addresses, ["ada@example.com", "grace@example.com"]);
 
-    groups.remove_member(group_id, ada).await.expect("remove ada");
+    groups
+        .remove_member(group_id, ada)
+        .await
+        .expect("remove ada");
     let members = groups.members(group_id).await.expect("members");
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].id, grace);

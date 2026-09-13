@@ -30,8 +30,8 @@
 //! somebody adds a filter without widening the indexes or narrows an index
 //! back to what it was.
 
-use postio_storage::Connection;
 use postio_model::MailboxRole;
+use postio_storage::Connection;
 use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::seed_small;
 use postio_storage::test_support;
@@ -106,7 +106,9 @@ async fn a_narrow_list_index_is_reported_as_missing_its_filters() {
          column, so it cannot be what stands between this schema and #638"
     );
     assert!(
-        missing_from(&connection, "idx_messages_list").await.is_empty(),
+        missing_from(&connection, "idx_messages_list")
+            .await
+            .is_empty(),
         "and it must not report the migrated index, or it would fail for \
          every schema alike and mean nothing"
     );

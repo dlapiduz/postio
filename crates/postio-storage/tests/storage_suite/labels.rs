@@ -8,8 +8,8 @@
 //! `Flag` is, and rewriting a whole message row to add one label would race
 //! every other write to it.
 
-use postio_storage::Connection;
 use postio_model::{AccountId, Label, LabelId};
+use postio_storage::Connection;
 use postio_storage::repository::{LabelRepository, MessageRepository};
 use postio_storage::test_support;
 
@@ -115,7 +115,10 @@ async fn a_label_goes_on_and_off_one_message_without_rewriting_it() {
     let mut work = Label::new(account.id, "Work");
     labels.create(&mut work).await.expect("create");
 
-    assert!(labels.attach(message, work.id).await.expect("attach"), "newly on");
+    assert!(
+        labels.attach(message, work.id).await.expect("attach"),
+        "newly on"
+    );
     assert_eq!(
         labels.for_message(message).await.expect("read back"),
         vec![work.id]
@@ -138,10 +141,22 @@ async fn a_label_goes_on_and_off_one_message_without_rewriting_it() {
         !labels.attach(message, work.id).await.expect("attach again"),
         "the second attach reports that nothing changed"
     );
-    assert_eq!(labels.for_message(message).await.expect("read back").len(), 1);
+    assert_eq!(
+        labels.for_message(message).await.expect("read back").len(),
+        1
+    );
 
-    assert!(labels.detach(message, work.id).await.expect("detach"), "came off");
-    assert!(labels.for_message(message).await.expect("read back").is_empty());
+    assert!(
+        labels.detach(message, work.id).await.expect("detach"),
+        "came off"
+    );
+    assert!(
+        labels
+            .for_message(message)
+            .await
+            .expect("read back")
+            .is_empty()
+    );
     assert!(
         !labels.detach(message, work.id).await.expect("detach again"),
         "detaching what is not there reports that nothing changed, so an \
@@ -164,7 +179,13 @@ async fn deleting_a_label_takes_it_off_every_message_carrying_it() {
     labels.attach(message, work.id).await.expect("attach");
 
     assert!(labels.delete(work.id).await.expect("delete"));
-    assert!(labels.for_message(message).await.expect("read back").is_empty());
+    assert!(
+        labels
+            .for_message(message)
+            .await
+            .expect("read back")
+            .is_empty()
+    );
     assert!(labels.get(work.id).await.expect("get").is_none());
     assert!(
         !labels

@@ -43,11 +43,9 @@
 
 use postio_model::MessageBody;
 
-
+use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _, bind};
-use turso::Row;
-use crate::error::Result;
 
 /// Creates `search_documents`, `messages_fts` and every trigger that keeps
 /// them in sync, if they do not already exist.
@@ -67,12 +65,14 @@ use crate::error::Result;
 /// except message *bodies*: those live in the blob store, no trigger and no
 /// `SELECT` can reach them, and [`index_body`] is how they arrive.
 pub async fn ensure_schema(connection: &Connection) -> Result<()> {
-    connection.execute_batch(
+    postio_storage::sql::batch(
+        connection,
         "CREATE TABLE IF NOT EXISTS search_schema (
              half    TEXT PRIMARY KEY,
              version INTEGER NOT NULL
          );",
-    ).await?;
+    )
+    .await?;
 
     // `IF NOT EXISTS` adds new objects and cannot change an existing
     // table's columns, which is how `list_id` broke every store created
@@ -109,24 +109,28 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     }
 
     if metadata != METADATA_SCHEMA_VERSION {
-        connection.execute_batch(DROP_METADATA).await?;
+        postio_storage::sql::batch(connection, DROP_METADATA).await?;
     }
     if bodies != BODIES_SCHEMA_VERSION {
-        connection.execute_batch(
+        postio_storage::sql::batch(
+            connection,
             "DROP INDEX IF EXISTS messages_body_fts;
              UPDATE messages SET body_search = NULL;",
-        ).await?;
+        )
+        .await?;
     }
     if headers != HEADERS_SCHEMA_VERSION {
         // The index goes with the table; SQLite drops it either way, and
         // naming it is what stops a future rename from leaving one behind.
-        connection.execute_batch(
+        postio_storage::sql::batch(
+            connection,
             "DROP INDEX IF EXISTS idx_message_headers_name;
              DROP TABLE IF EXISTS message_headers;",
-        ).await?;
+        )
+        .await?;
     }
 
-    connection.execute_batch(SCHEMA).await?;
+    postio_storage::sql::batch(connection, SCHEMA).await?;
 
     set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION).await?;
     set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION).await?;
@@ -219,11 +223,13 @@ async fn half_version(connection: &Connection, half: &str) -> Result<i64> {
 }
 
 async fn set_half_version(connection: &Connection, half: &str, version: i64) -> Result<()> {
-    connection.execute(
-        "INSERT INTO search_schema (half, version) VALUES (?1, ?2)
+    connection
+        .execute(
+            "INSERT INTO search_schema (half, version) VALUES (?1, ?2)
          ON CONFLICT (half) DO UPDATE SET version = excluded.version",
-        bind![half, version],
-    ).await?;
+            bind![half, version],
+        )
+        .await?;
     Ok(())
 }
 
@@ -260,7 +266,8 @@ pub async fn index_body(
     // Folded on the way in, because the engine's tokenizer will not: see
     // [`postio_model::fold`], and note that the query path must apply the
     // same fold or the two stop meeting.
-    connection.execute(
+    connection
+        .execute(
             "UPDATE messages SET body_search = ?2 WHERE id = ?1",
             (message_id, postio_model::fold::fold(body.unwrap_or(""))),
         )
@@ -376,9 +383,7 @@ pub async fn messages_missing_body_text_for_account(
           ORDER BY m.received_at DESC
           LIMIT ?2",
         bind![account_id, limit],
-        |row| {
-        row.col::<i64>(0)
-    },
+        |row| row.col::<i64>(0),
     )
     .await
     .map_err(Into::into)
@@ -446,17 +451,21 @@ pub async fn index_headers(
     // Delete first: the pass is resumable and a version bump refills the whole
     // table, so re-indexing a message is the ordinary case. An upsert would
     // leave the rows of a message that has *lost* a header behind.
-    connection.execute(
-        "DELETE FROM message_headers WHERE message_id = ?1",
-        [message_id],
-    ).await?;
+    connection
+        .execute(
+            "DELETE FROM message_headers WHERE message_id = ?1",
+            [message_id],
+        )
+        .await?;
 
     let normalized = headers.normalized();
-    let mut statement = connection.prepare(
-        "INSERT INTO message_headers (message_id, name, value, ordinal)
+    let mut statement = connection
+        .prepare(
+            "INSERT INTO message_headers (message_id, name, value, ordinal)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT (message_id, name, ordinal) DO NOTHING",
-    ).await?;
+        )
+        .await?;
     let mut written = 0usize;
     for (ordinal, header) in normalized.iter().take(HEADER_ROWS_PER_MESSAGE).enumerate() {
         // `normalize_name` trims, so a field whose name was whitespace has
@@ -465,12 +474,9 @@ pub async fn index_headers(
         if header.name.is_empty() {
             continue;
         }
-        statement.execute(bind![
-            message_id,
-            header.name,
-            header.value,
-            ordinal as i64
-        ]).await?;
+        statement
+            .execute(bind![message_id, header.name, header.value, ordinal as i64])
+            .await?;
         written += 1;
     }
     if written == 0 {
@@ -547,9 +553,7 @@ pub async fn messages_missing_header_rows_for_account(
           ORDER BY m.received_at DESC
           LIMIT ?2",
         bind![account_id, limit],
-        |row| {
-        row.col::<i64>(0)
-    },
+        |row| row.col::<i64>(0),
     )
     .await
     .map_err(Into::into)
@@ -562,11 +566,13 @@ pub async fn messages_missing_header_rows_for_account(
 /// this is the same delete [`index_headers`] itself issues before replacing
 /// a message's rows, just for every message an account has rather than one.
 pub async fn clear_account_header_index(connection: &Connection, account_id: i64) -> Result<usize> {
-    Ok(connection.execute(
-        "DELETE FROM message_headers
+    Ok(connection
+        .execute(
+            "DELETE FROM message_headers
           WHERE message_id IN (SELECT id FROM messages WHERE account_id = ?1)",
-        [account_id],
-    ).await? as usize)
+            [account_id],
+        )
+        .await? as usize)
 }
 
 /// Rebuilds the metadata index from `search_documents`.
@@ -586,13 +592,13 @@ pub async fn clear_account_header_index(connection: &Connection, account_id: i64
 /// by the same writes. What catches a body up is
 /// [`messages_missing_body_text`] and the pass behind it.
 pub async fn rebuild(connection: &Connection) -> Result<()> {
-    connection
-        .execute_batch(
-            "DROP INDEX IF EXISTS search_documents_fts;
+    postio_storage::sql::batch(
+        connection,
+        "DROP INDEX IF EXISTS search_documents_fts;
              CREATE INDEX search_documents_fts ON search_documents
                  USING fts (sender, recipients, subject, filenames, list_id);",
-        )
-        .await?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -840,7 +846,10 @@ mod tests {
             .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "quarterly").await, vec![message.id.get()]);
+        assert_eq!(
+            matches(&connection, "quarterly").await,
+            vec![message.id.get()]
+        );
         assert!(matches(&connection, "unrelated").await.is_empty());
     }
 
@@ -882,7 +891,10 @@ mod tests {
             .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "lovelace").await, vec![message.id.get()]);
+        assert_eq!(
+            matches(&connection, "lovelace").await,
+            vec![message.id.get()]
+        );
         assert_eq!(matches(&connection, "bob").await, vec![message.id.get()]);
     }
 
@@ -902,7 +914,10 @@ mod tests {
             .await
             .expect("create message");
 
-        assert_eq!(matches(&connection, "invoice").await, vec![message.id.get()]);
+        assert_eq!(
+            matches(&connection, "invoice").await,
+            vec![message.id.get()]
+        );
     }
 
     /// Body matches, which are an index on `messages.body_search` now (#407,
@@ -935,9 +950,14 @@ mod tests {
             .await
             .expect("create message");
 
-        index_body(&connection, message.id.get(), Some("the rebuild is O(n^2)")).await.expect("index");
+        index_body(&connection, message.id.get(), Some("the rebuild is O(n^2)"))
+            .await
+            .expect("index");
 
-        assert_eq!(body_matches(&connection, "rebuild").await, vec![message.id.get()]);
+        assert_eq!(
+            body_matches(&connection, "rebuild").await,
+            vec![message.id.get()]
+        );
         assert!(
             matches(&connection, "rebuild").await.is_empty(),
             "and not in the metadata index, which no longer carries bodies"
@@ -954,10 +974,16 @@ mod tests {
         let mut message = Message::new(account.id, mailbox, Utc::now());
         message.subject = Some("Draft subject".to_string());
         let repository = MessageRepository::new(&connection);
-        repository.create(&mut message).await.expect("create message");
+        repository
+            .create(&mut message)
+            .await
+            .expect("create message");
 
         message.subject = Some("Final subject".to_string());
-        repository.update(&mut message).await.expect("update message");
+        repository
+            .update(&mut message)
+            .await
+            .expect("update message");
 
         assert!(matches(&connection, "draft").await.is_empty());
         assert_eq!(matches(&connection, "final").await, vec![message.id.get()]);
@@ -976,7 +1002,10 @@ mod tests {
             .create(&mut message)
             .await
             .expect("create message");
-        assert_eq!(matches(&connection, "ephemeral").await, vec![message.id.get()]);
+        assert_eq!(
+            matches(&connection, "ephemeral").await,
+            vec![message.id.get()]
+        );
 
         MessageRepository::new(&connection)
             .delete(&[message.id])
@@ -991,7 +1020,7 @@ mod tests {
             |row| row.col(0),
         )
         .await
-            .expect("count");
+        .expect("count");
         assert_eq!(count, 0, "the shadow row must be cleaned up too");
     }
 
@@ -1000,7 +1029,9 @@ mod tests {
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         ensure_schema(&connection).await.expect("first application");
-        ensure_schema(&connection).await.expect("second application must be a no-op, not an error");
+        ensure_schema(&connection)
+            .await
+            .expect("second application must be a no-op, not an error");
     }
 
     #[tokio::test]
@@ -1021,14 +1052,16 @@ mod tests {
         // index. There is no shadow table to empty -- which is itself the
         // point of the change, since the drift this test was written for
         // (#407) was a shadow table falling out of step with its content.
-        connection
-            .execute_batch("DROP INDEX search_documents_fts;")
+        postio_storage::sql::batch(&connection, "DROP INDEX search_documents_fts;")
             .await
             .expect("drop the index, simulating drift");
 
         rebuild(&connection).await.expect("rebuild");
 
-        assert_eq!(matches(&connection, "rebuildable").await, vec![message.id.get()]);
+        assert_eq!(
+            matches(&connection, "rebuildable").await,
+            vec![message.id.get()]
+        );
     }
 
     #[tokio::test]
@@ -1037,7 +1070,9 @@ mod tests {
         let connection = database.connect().await.expect("checkout");
         ensure_schema(&connection).await.expect("schema");
 
-        index_body(&connection, 999, Some("text")).await.expect("no-op, not an error");
+        index_body(&connection, 999, Some("text"))
+            .await
+            .expect("no-op, not an error");
     }
 
     /// A second account in the same store, for the scoping tests below.
@@ -1101,7 +1136,9 @@ mod tests {
                 .is_empty()
         );
 
-        let cleared = clear_account_body_index(&connection, first.id.get()).await.expect("clear");
+        let cleared = clear_account_body_index(&connection, first.id.get())
+            .await
+            .expect("clear");
         assert_eq!(cleared, 1, "only the first account's one message");
 
         assert_eq!(
@@ -1153,7 +1190,9 @@ mod tests {
             .await
             .expect("index b's headers");
 
-        let cleared = clear_account_header_index(&connection, first.id.get()).await.expect("clear");
+        let cleared = clear_account_header_index(&connection, first.id.get())
+            .await
+            .expect("clear");
         assert_eq!(cleared, 1, "only the first account's one message");
 
         assert_eq!(
