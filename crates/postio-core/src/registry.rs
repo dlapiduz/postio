@@ -315,6 +315,22 @@ const LIST_SURFACES: &[Context] = &[
     Context::Search,
 ];
 
+/// [`LIST_SURFACES`] plus the folder list: everywhere a person could want to
+/// be somewhere else.
+///
+/// The destinations use this rather than `LIST_SURFACES`, because standing in
+/// the folder list is the *most* likely moment to want another folder, and a
+/// `g i` that works in the message list and not beside it is a key that
+/// appears broken depending on where the keyboard happens to be. Not
+/// `ContextSet::ANY`: `g` is a letter in the composer.
+const GO_SURFACES: &[Context] = &[
+    Context::List,
+    Context::Conversation,
+    Context::Reader,
+    Context::Search,
+    Context::Sidebar,
+];
+
 /// The registry itself. Ordered like [`CommandId::ALL`]; the cheat sheet reads
 /// it top to bottom.
 static SPECS: &[CommandSpec] = &[
@@ -1095,8 +1111,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g i",
         alternate_bindings: &[],
         // The surfaces a person is standing on when they want to be somewhere
-        // else. Not the composer, where `g` is a letter being typed.
-        contexts: ctx(LIST_SURFACES),
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
@@ -1116,8 +1133,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g d",
         alternate_bindings: &[],
         // The surfaces a person is standing on when they want to be somewhere
-        // else. Not the composer, where `g` is a letter being typed.
-        contexts: ctx(LIST_SURFACES),
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
@@ -1137,8 +1155,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g t",
         alternate_bindings: &[],
         // The surfaces a person is standing on when they want to be somewhere
-        // else. Not the composer, where `g` is a letter being typed.
-        contexts: ctx(LIST_SURFACES),
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
@@ -1158,8 +1177,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "g s",
         alternate_bindings: &[],
         // The surfaces a person is standing on when they want to be somewhere
-        // else. Not the composer, where `g` is a letter being typed.
-        contexts: ctx(LIST_SURFACES),
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         // Going somewhere destroys nothing, so there is nothing to get back.
         recovery: Recovery::None,
