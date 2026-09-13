@@ -87,6 +87,17 @@ const REQUIRED_RAMPS: &[&str] = &[
 /// IBM Plex Mono. Kept here so it travels with the other font tokens.
 const FONT_MONO: &str = "\"IBM Plex Mono\", monospace";
 
+/// A text chip's fixed vertical metrics, Postio's own like the mono face.
+///
+/// One source for every pill-shaped control — search refinements, the
+/// did-you-mean offer, finder filter chips, the settings tag, the blocked
+/// count. A chip is sized by its content plus these, and never by a width:
+/// the two chip-sizing bugs already fixed were call sites owning their own
+/// geometry, and these tokens are the ownership moving to one place.
+const CHIP_HEIGHT: &str = "22px";
+const CHIP_PAD_X: &str = "7px";
+const CHIP_PAD_Y: &str = "2px";
+
 /// Something the parser or generator could not make sense of.
 #[derive(Debug)]
 pub struct TokenError(pub String);
@@ -274,6 +285,9 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     )
     .unwrap();
     writeln!(out, "  --postio-font-mono: {FONT_MONO};").unwrap();
+    writeln!(out, "  --postio-chip-height: {CHIP_HEIGHT};").unwrap();
+    writeln!(out, "  --postio-chip-pad-x: {CHIP_PAD_X};").unwrap();
+    writeln!(out, "  --postio-chip-pad-y: {CHIP_PAD_Y};").unwrap();
     writeln!(out, "}}\n").unwrap();
 
     // ── 2. semantic roles + Adwaita named colours, light ───────────────────

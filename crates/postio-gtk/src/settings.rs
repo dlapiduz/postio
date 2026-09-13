@@ -4573,6 +4573,9 @@ impl SettingsPanel {
         let editor_widget = editor.widget();
         let _ = imp.editor_button.set(editor);
 
+        // `postio-chip-base` carries the box; the tag class carries only its
+        // colours. See `widgets::chip` for why the metrics have one owner.
+        imp.tag.add_css_class("postio-chip-base");
         imp.tag.add_css_class("postio-settings-tag");
 
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 10);

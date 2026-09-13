@@ -945,6 +945,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_widgets::an_action_bar_dispatches_the_command_its_cap_advertises as fn(),
     ),
     (
+        "gtk_widgets::every_chip_measures_the_same_height",
+        gtk_widgets::every_chip_measures_the_same_height as fn(),
+    ),
+    (
         "gtk_widgets::a_notice_never_wraps_however_long_the_sentence",
         gtk_widgets::a_notice_never_wraps_however_long_the_sentence as fn(),
     ),
