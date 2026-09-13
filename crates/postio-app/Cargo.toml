@@ -20,8 +20,10 @@ async-channel = "2.5.0"
 # drainer replays them in the order they happened.
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+# The binary's allocator — see main.rs. Kept in step with the version the
+# turso crate's own (disabled) default would have used.
+mimalloc = "0.1"
 postio-config.workspace = true
-postio-test-support.workspace = true
 postio-core.workspace = true
 postio-gtk.workspace = true
 postio-account.workspace = true
@@ -45,6 +47,7 @@ tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
 
 [dev-dependencies]
+postio-test-support.workspace = true
 # Only the `e2e` test builds a subscriber; the application configures its
 # logging through postio-session. A [dependencies] entry is visible to
 # integration tests too, which is what hid this being test-only.
