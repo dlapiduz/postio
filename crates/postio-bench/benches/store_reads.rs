@@ -68,7 +68,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// A folder big enough that loading it would be the bug.
 const HUGE: usize = 100_000;
 
@@ -231,7 +230,11 @@ fn bench_thread_page(c: &mut Criterion) {
         let database = on_runtime(test_support::temp());
         let report = on_runtime(seed_large(&database, 7, messages));
         let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-        on_runtime(thread_seeded_messages(&database, report.account.id, PER_THREAD));
+        on_runtime(thread_seeded_messages(
+            &database,
+            report.account.id,
+            PER_THREAD,
+        ));
         (database, report.account.id, inbox)
     };
 
@@ -241,8 +244,7 @@ fn bench_thread_page(c: &mut Criterion) {
     let read = |database: &test_support::TempStore, query: &ThreadListQuery| {
         let connection = on_runtime(database.connect()).expect("a connection");
         black_box(
-            on_runtime(ThreadRepository::new(&connection).page(query))
-                .expect("a page of threads"),
+            on_runtime(ThreadRepository::new(&connection).page(query)).expect("a page of threads"),
         );
     };
 
@@ -298,7 +300,11 @@ fn bench_thread_page(c: &mut Criterion) {
 fn bench_unified_page(c: &mut Criterion) {
     let database = on_runtime(test_support::temp());
     let first = on_runtime(seed_large(&database, 7, HUGE / 2));
-    on_runtime(thread_seeded_messages(&database, first.account.id, PER_THREAD));
+    on_runtime(thread_seeded_messages(
+        &database,
+        first.account.id,
+        PER_THREAD,
+    ));
     // A second account of the same size: the unified list's whole point.
     let second = {
         let connection = on_runtime(database.connect()).expect("a connection");
@@ -307,8 +313,7 @@ fn bench_unified_page(c: &mut Criterion) {
             postio_model::EmailAddress::new(None::<String>, "grace@example.org"),
         );
         on_runtime(
-            postio_storage::repository::AccountRepository::new(&connection)
-                .create(&mut account),
+            postio_storage::repository::AccountRepository::new(&connection).create(&mut account),
         )
         .expect("second account");
         let inbox = on_runtime(test_support::mailbox(&connection, &account, "INBOX"));
@@ -335,9 +340,8 @@ fn bench_unified_page(c: &mut Criterion) {
     let read = |query: &UnifiedThreadListQuery| {
         let connection = on_runtime(database.connect()).expect("a connection");
         black_box(
-            on_runtime(ThreadRepository::new(&connection)
-                .unified_page(query)
-                ).expect("a unified page"),
+            on_runtime(ThreadRepository::new(&connection).unified_page(query))
+                .expect("a unified page"),
         );
     };
     let query = UnifiedThreadListQuery {

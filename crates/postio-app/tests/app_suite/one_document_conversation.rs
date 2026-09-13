@@ -71,13 +71,15 @@ async fn threaded_message(
     }
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("create the message");
+        .await
+        .expect("create the message");
     // Through the repository, which is what actually joins a message to a
     // thread -- setting `thread_id` on the struct leaves the thread with no
     // members and the conversation opens holding one row.
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .await.expect("join the message to the thread");
+        .await
+        .expect("join the message to the thread");
     MessageRepository::new(&connection)
         .set_body(
             id,
@@ -90,7 +92,8 @@ async fn threaded_message(
             },
             postio_model::BodyState::Full,
         )
-        .await.expect("store the body");
+        .await
+        .expect("store the body");
     id
 }
 
@@ -182,7 +185,8 @@ pub fn an_open_message_says_who_it_went_to() {
             let mut thread = postio_model::Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let seat = Seat {
             account: account.id,
@@ -197,7 +201,8 @@ pub fn an_open_message_says_who_it_went_to() {
                 &format!("message {index}"),
                 &body_of(index),
                 true,
-            ).await;
+            )
+            .await;
         }
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -207,7 +212,9 @@ pub fn an_open_message_says_who_it_went_to() {
         let window = Window::default();
         window.present();
         settle();
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(
@@ -228,7 +235,8 @@ pub fn an_open_message_says_who_it_went_to() {
             settle_until(async || window
                 .conversation()
                 .thread_document()
-                .is_some_and(|document| document.matches("<details").count() == 2)).await,
+                .is_some_and(|document| document.matches("<details").count() == 2))
+            .await,
             "the document never drew both messages"
         );
 
@@ -237,7 +245,8 @@ pub fn an_open_message_says_who_it_went_to() {
                 .conversation()
                 .thread_document()
                 .is_some_and(|document| document.contains("grace@example.com")
-                    && document.contains("bob@example.com"))).await,
+                    && document.contains("bob@example.com")))
+            .await,
             "the open message does not say who it went to. The stacked pane drew \
              To and Cc on every expanded message; one document drew the sender \
              and stopped (#1427)"
@@ -282,7 +291,8 @@ pub fn a_conversation_opens_as_one_document_without_being_asked() {
             let mut thread = postio_model::Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let seat = Seat {
             account: account.id,
@@ -297,7 +307,8 @@ pub fn a_conversation_opens_as_one_document_without_being_asked() {
                 &format!("message {index}"),
                 &body_of(index),
                 true,
-            ).await;
+            )
+            .await;
         }
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -307,7 +318,9 @@ pub fn a_conversation_opens_as_one_document_without_being_asked() {
         let window = Window::default();
         window.present();
         settle();
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         assert!(
             window.conversation().is_one_document(),
@@ -352,7 +365,8 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
             let mut thread = postio_model::Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         // All read but one in the middle, so "open" means something specific:
         // the unread one, and the newest. `UNREAD` is the message this test then
@@ -364,14 +378,17 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
         };
         let mut ids = Vec::new();
         for index in 0..MESSAGES {
-            ids.push(threaded_message(
-                &database,
-                &seat,
-                index as i64,
-                &format!("message {index}"),
-                &body_of(index),
-                index != UNREAD,
-            ).await);
+            ids.push(
+                threaded_message(
+                    &database,
+                    &seat,
+                    index as i64,
+                    &format!("message {index}"),
+                    &body_of(index),
+                    index != UNREAD,
+                )
+                .await,
+            );
         }
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -382,7 +399,9 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
         let window = Window::default();
         window.present();
         settle();
-        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(
@@ -413,7 +432,8 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
                     document.matches("<details").count() == MESSAGES
                         && (0..MESSAGES).all(|index| document.contains(&body_of(index)))
                 })
-        }).await;
+        })
+        .await;
         let document = window
             .conversation()
             .thread_document()
@@ -482,18 +502,22 @@ pub fn a_thread_opens_as_one_document_holding_every_message() {
                     &flags,
                     postio_storage::repository::FlagSource::Local,
                 )
-                .await.expect("mark it read");
+                .await
+                .expect("mark it read");
         }
 
         window.open_conversation(&cursor);
         assert!(
-            settle_until(async || window
-                .conversation()
-                .thread_document()
-                .is_some_and(|document| {
-                    document.matches("<details").count() == MESSAGES
-                        && (0..MESSAGES).all(|index| document.contains(&body_of(index)))
-                })).await,
+            settle_until(
+                async || window
+                    .conversation()
+                    .thread_document()
+                    .is_some_and(|document| {
+                        document.matches("<details").count() == MESSAGES
+                            && (0..MESSAGES).all(|index| document.contains(&body_of(index)))
+                    })
+            )
+            .await,
             "reopening the thread never refilled it"
         );
 
@@ -561,7 +585,8 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
             let mut thread = postio_model::Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let seat = Seat {
             account: account.id,
@@ -579,7 +604,9 @@ pub fn a_single_message_conversation_still_offers_its_verbs() {
         settle();
         // Held to the end of the test: dropping the wiring tears down the feeds
         // that keep the pane filled.
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(

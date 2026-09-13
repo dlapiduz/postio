@@ -45,7 +45,8 @@ async fn labels_of(database: &Store, message: MessageId) -> Vec<LabelId> {
     let connection = database.connect().await.expect("a connection");
     LabelRepository::new(&connection)
         .for_message(message)
-        .await.expect("a read")
+        .await
+        .expect("a read")
 }
 
 pub fn a_label_command_puts_a_label_on_the_message_it_names() {
@@ -79,7 +80,8 @@ pub fn a_label_command_puts_a_label_on_the_message_it_names() {
             let mut work = Label::new(report.account.id, "Work");
             LabelRepository::new(&connection)
                 .create(&mut work)
-                .await.expect("create a label");
+                .await
+                .expect("create a label");
             let inbox = report
                 .mailbox(postio_model::MailboxRole::Inbox)
                 .expect("an inbox");
@@ -89,7 +91,8 @@ pub fn a_label_command_puts_a_label_on_the_message_it_names() {
                     limit: 1,
                     after: None,
                 })
-                .await.expect("a page")
+                .await
+                .expect("a page")
                 .first()
                 .expect("the fixture seeded a message")
                 .id;
@@ -120,8 +123,9 @@ pub fn a_label_command_puts_a_label_on_the_message_it_names() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let Wired { feeds, .. } =
-            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let Wired { feeds, .. } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         commands::install(
             &window,
             &feeds,

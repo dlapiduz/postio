@@ -79,7 +79,8 @@ async fn give_body(database: &Store, id: MessageId, text: Option<&str>, html: Op
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
-        .await.expect("store the body");
+        .await
+        .expect("store the body");
 }
 
 /// Move the cursor one row down and answer which message it is on now.
@@ -128,10 +129,14 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
                 )
                 .await
                 .expect("the fixture writes");
-            postio_storage::sql::one(&*connection, 
-                    "SELECT COUNT(*) FROM messages WHERE flagged = 1",(),
-                    |row| postio_storage::sql::RowExt::col(row, 0)).await
-                .expect("a count")
+            postio_storage::sql::one(
+                &*connection,
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
+            )
+            .await
+            .expect("a count")
         };
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -157,7 +162,9 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
         settle();
 
         // ── the same call `run` makes ────────────────────────────────────────
-        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         // Into the Flagged view, the way the sidebar's row would take it — but
         // only after the sidebar's own default pick has landed: the folder list
@@ -217,7 +224,8 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
             activated,
             Some(&format!("{}\n", marker(activated))),
             None,
-        ).await;
+        )
+        .await;
         // Through `GtkListView`'s own `list.activate-item`, the way
         // `resume_draft.rs` does it: a key put through `Window::handle_key`
         // never reaches the widget, and the keyboard is not in the list in a
@@ -245,7 +253,8 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
             replied_to,
             Some(&format!("{}\n", marker(replied_to))),
             None,
-        ).await;
+        )
+        .await;
         assert!(
             settle_until(async || window.reading()).await,
             "the pane never filled, so this cannot be a test about what it shows"
@@ -290,7 +299,8 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
             replied_all_to,
             None,
             Some(&format!("<p>{}</p>", marker(replied_all_to))),
-        ).await;
+        )
+        .await;
         press(&window, "E", gdk::ModifierType::SHIFT_MASK);
         assert!(composer.is_open(), "`E` did not open a reply-all (#325)");
         let draft = composer.draft();
@@ -318,7 +328,8 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
             forwarded,
             Some(&format!("{}\n", marker(forwarded))),
             None,
-        ).await;
+        )
+        .await;
         press(&window, "f", gdk::ModifierType::empty());
         assert!(composer.is_open(), "`f` did not open a forward (#325)");
         let draft = composer.draft();

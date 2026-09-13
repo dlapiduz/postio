@@ -198,7 +198,9 @@ pub fn every_command_id_is_handled_locally_or_wired_to_the_bus() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         let list = window.list();
         assert!(

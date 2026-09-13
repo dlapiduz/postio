@@ -190,11 +190,7 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     // counts.
     let database = test_support::memory().await;
     let report = seed_small(&database, 3).await;
-    let inbox = report
-        .await
-        .mailbox(MailboxRole::Inbox)
-        .expect("an inbox")
-        .id;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     // A fresh store has no marks: every read walks.
     let walked = SqliteStore::new(&database);
@@ -231,11 +227,7 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     // fix it would mean a cache that has to be told about every write.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
-    let inbox = report
-        .await
-        .mailbox(MailboxRole::Inbox)
-        .expect("an inbox")
-        .id;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let store = SqliteStore::new(&database);
 
     // Read two pages, so there is a boundary to be wrong about.
@@ -280,11 +272,7 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     // stops: the read has to degrade to slow, not to invisible.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5).await;
-    let inbox = report
-        .await
-        .mailbox(MailboxRole::Inbox)
-        .expect("an inbox")
-        .id;
+    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
     {
         let connection = database.connect().await.expect("a connection");

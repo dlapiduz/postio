@@ -84,7 +84,9 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let sidebar = window.sidebar();
 
         assert!(
@@ -119,7 +121,8 @@ pub fn the_menu_persists_and_the_sidebar_reflects_it_without_a_sync() {
                 .mailboxes()
                 .iter()
                 .find(|m| m.id == inbox_id)
-                .is_some_and(|m| m.backfill_excluded)).await,
+                .is_some_and(|m| m.backfill_excluded))
+            .await,
             "the sidebar's own cached list should reflect the write immediately, \
              not wait for Event::MailboxesChanged from a sync pass that never runs here"
         );
@@ -132,5 +135,6 @@ async fn read_excluded(database: &postio_storage::Store, id: postio_model::ids::
     let connection = database.connect().await.expect("a connection");
     MailboxRepository::new(&connection)
         .backfill_excluded(id)
-        .await.expect("read")
+        .await
+        .expect("read")
 }

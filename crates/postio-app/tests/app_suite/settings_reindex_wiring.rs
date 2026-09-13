@@ -55,7 +55,9 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
         // A message with a local, indexed body -- the state a rebuild has
         // something real to clear and refill.
         let connection = database.connect().await.expect("a connection");
-        postio_index::index::ensure_schema(&connection).await.expect("schema");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
         let inbox = report
             .mailboxes
             .first()
@@ -65,7 +67,8 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
         message.sync.body_state = BodyState::Full;
         MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("create a message");
+            .await
+            .expect("create a message");
         postio_index::index::index_body_of(
             &connection,
             message.id.get(),
@@ -74,11 +77,17 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
                 html: None,
             },
         )
-        .await.expect("index its body the ordinary way");
+        .await
+        .expect("index its body the ordinary way");
         assert!(
-            postio_index::index::messages_missing_body_text_for_account(&connection, account.get(), 10)
-                .await.expect("candidates")
-                .is_empty(),
+            postio_index::index::messages_missing_body_text_for_account(
+                &connection,
+                account.get(),
+                10
+            )
+            .await
+            .expect("candidates")
+            .is_empty(),
             "indexed once already, so nothing should be missing yet"
         );
         drop(connection);
@@ -99,7 +108,9 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let panel = window.settings();
         assert!(settle_until(async || rows(&panel).len() == 1).await);
 
@@ -128,9 +139,11 @@ pub fn the_rows_own_action_clears_and_refills_its_accounts_local_index() {
                     account.get(),
                     10,
                 )
-                .await.expect("candidates")
+                .await
+                .expect("candidates")
                 .is_empty()
-            }).await,
+            })
+            .await,
             "the rebuild should have refilled the account's own index"
         );
         assert!(

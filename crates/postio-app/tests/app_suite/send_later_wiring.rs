@@ -81,7 +81,9 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
         settle();
 
         // ── the same call `run` makes: this is what wires the composer ───────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         settle();
 
         let composer = window.composer();
@@ -114,7 +116,8 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
         let queue = OperationQueueRepository::new(&connection);
         let all_pending = queue
             .pending(account, send_at + Duration::minutes(1))
-            .await.expect("read the queue");
+            .await
+            .expect("read the queue");
         let sent = all_pending
             .iter()
             .find_map(|row| match row.operation {
@@ -139,7 +142,8 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
         // ── and must not drain before that time, restart or not ──────────────
         let too_early = queue
             .pending(account, send_at - Duration::minutes(1))
-            .await.expect("read the queue");
+            .await
+            .expect("read the queue");
         assert!(
             too_early
                 .iter()
@@ -149,7 +153,8 @@ pub fn choosing_a_time_schedules_the_draft_for_sending() {
 
         let draft = DraftRepository::new(&connection)
             .get(sent.0)
-            .await.expect("read the draft")
+            .await
+            .expect("read the draft")
             .expect("the queued send names a draft that is not in the store");
         assert_eq!(draft.state, DraftState::Queued);
         assert_eq!(draft.subject, SUBJECT);

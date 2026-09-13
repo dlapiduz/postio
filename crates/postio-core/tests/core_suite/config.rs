@@ -423,7 +423,7 @@ fn a_save_in_an_external_editor_lands_without_a_restart() {
             continue;
         }
         assert!(Instant::now() < deadline, "no reload within {PATIENCE:?}");
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     assert_eq!(

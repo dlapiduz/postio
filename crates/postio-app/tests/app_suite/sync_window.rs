@@ -151,7 +151,8 @@ pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() 
             None,
             Arc::new(UnusedTransport) as Arc<dyn DiscoveryTransport>,
             Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-        ).await;
+        )
+        .await;
 
         let screen = window
             .content()
@@ -167,7 +168,8 @@ pub fn picking_a_sync_window_and_pressing_start_sync_writes_it_to_config_toml() 
         screen.start_sync();
 
         let written = std::fs::read_to_string(&config_path).expect("config.toml");
-        let config = postio_config::Config::from_toml_str(&written).expect("the write still parses");
+        let config =
+            postio_config::Config::from_toml_str(&written).expect("the write still parses");
         assert_eq!(
             config.sync.initial_sync_messages,
             SyncWindow::LastMonth.message_count(),

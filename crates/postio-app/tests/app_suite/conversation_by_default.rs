@@ -51,10 +51,12 @@ async fn threaded_message(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("create the threaded message");
+        .await
+        .expect("create the threaded message");
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .await.expect("join the message to the thread");
+        .await
+        .expect("join the message to the thread");
     id
 }
 
@@ -83,7 +85,8 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
             let mut thread = Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let oldest = threaded_message(
             &database,
@@ -92,7 +95,8 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
             thread,
             0,
             "the opening message",
-        ).await;
+        )
+        .await;
         let newest = threaded_message(&database, account.id, inbox, thread, 1, "the reply").await;
 
         let directory = tempfile::tempdir().expect("a blob directory");
@@ -118,7 +122,9 @@ pub fn landing_on_a_thread_row_opens_the_conversation() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let list = window.list();
         assert!(
             settle_until(async || list.model().n_items() >= 1).await,

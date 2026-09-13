@@ -112,7 +112,8 @@ pub fn an_account_with_no_credential_lands_on_the_repair_screen() {
             std::rc::Rc::new(std::cell::RefCell::new(Some(events))),
             notifier,
             std::rc::Rc::new(std::cell::Cell::new(false)),
-        ).await;
+        )
+        .await;
 
         let arrived = settle_until(async || screen(&window).is_some()).await;
         assert!(

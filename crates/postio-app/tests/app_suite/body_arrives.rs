@@ -157,7 +157,9 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes ────────────────────────────────────────
-        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let list = window.list();
         assert!(
@@ -247,7 +249,9 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
         );
 
         // ── 3. a payload arriving updates its chip ──────────────────────────
-        let chip = settle_for_chip(&window).await.expect("the message has a named attachment");
+        let chip = settle_for_chip(&window)
+            .await
+            .expect("the message has a named attachment");
         chip.emit_clicked();
         while glib::MainContext::default().iteration(false) {}
         assert!(
@@ -258,7 +262,8 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
         let panel = window.parts();
         while panel.cursor().map(|node| node.mime) != Some("text/csv".to_owned()) {
             assert!(
-                window.handle_key(gdk::Key::j, gdk::ModifierType::empty()) == glib::Propagation::Stop,
+                window.handle_key(gdk::Key::j, gdk::ModifierType::empty())
+                    == glib::Propagation::Stop,
                 "walked off the end of the tree before finding the attachment"
             );
         }
@@ -273,7 +278,8 @@ pub fn a_body_that_lands_repaints_the_pane_waiting_for_it_and_no_other() {
             let blob = blobs.put(b"one,two").expect("a blob");
             MessageRepository::new(&connection)
                 .set_attachment_blob(shown, "2", &blob)
-                .await.expect("the part's bytes are recorded");
+                .await
+                .expect("the part's bytes are recorded");
         }
         wired.feeds.apply(&Event::BodyLoaded {
             account,
@@ -311,7 +317,8 @@ async fn store_body(database: &Store, message: MessageId, text: &str) {
             },
             BodyState::Full,
         )
-        .await.expect("the body is stored");
+        .await
+        .expect("the body is stored");
 }
 
 fn chips(window: &Window) -> Vec<gtk::Button> {

@@ -16,7 +16,8 @@ async fn seeded() -> std::sync::Arc<Session> {
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("a message");
+            .await
+            .expect("a message");
     }
     Session::open(SessionOptions::in_memory_with(database)).expect("a session")
 }
@@ -82,7 +83,11 @@ async fn the_hierarchy_survives_the_crossing() {
         // Every folder either has no parent or names one that is also here.
         if let Some(parent) = folder.parent {
             assert!(
-                session.mailboxes().await.iter().any(|other| other.id == parent),
+                session
+                    .mailboxes()
+                    .await
+                    .iter()
+                    .any(|other| other.id == parent),
                 "{} names a parent that is not in the tree",
                 folder.name
             );

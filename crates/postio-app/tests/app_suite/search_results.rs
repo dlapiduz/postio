@@ -87,7 +87,9 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
             report.message_count > 0,
             "the fixture seeded no mail, so this test could not fail"
         );
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -117,7 +119,9 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         // views on the box's `connect_run` and the query answers into the one
         // this test cannot see — which is a way to write a test that fails
         // against a perfectly wired application.
-        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         let feeds = wired.feeds.clone();
         let view = wired
             .search
@@ -166,7 +170,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         // the timer rather than the wiring.
         live.flush();
 
-        let answered = settle_until(async || live.outcome().is_some_and(|outcome| outcome.hits > 0)).await;
+        let answered =
+            settle_until(async || live.outcome().is_some_and(|outcome| outcome.hits > 0)).await;
         let outcome = live.outcome().expect("the box answered");
         assert!(
             answered && outcome.hits > 0,
@@ -217,7 +222,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         // look right in every test that only checked membership, and be wrong
         // exactly where ranking is the thing the user searched for.
         let account = postio_app::first_account(&database)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .id;
         // The scope column starts on All Mail — `search_wiring.rs` asserts that —
         // so this is the question the box actually asked.
@@ -234,7 +240,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
             },
             chrono::Utc::now(),
         )
-        .await.expect("the index answers")
+        .await
+        .expect("the index answers")
         .hits
         .iter()
         .map(|hit| hit.message_id)
@@ -305,7 +312,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
             },
             chrono::Utc::now(),
         )
-        .await.expect("the index answers in date order")
+        .await
+        .expect("the index answers in date order")
         .hits
         .iter()
         .map(|hit| hit.message_id)
@@ -315,7 +323,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         let reordered = settle_until(async || {
             let rows = listed(&list, hits);
             !rows.is_empty() && rows == dated[..rows.len()]
-        }).await;
+        })
+        .await;
         assert!(
             reordered,
             "`o` over the results did not re-run the search in date order —          `CommandId::ToggleResultOrder` is answered in `search.rs::         install_order_toggle`, and the run reads the order it holds"
@@ -325,7 +334,8 @@ pub fn a_query_puts_the_matching_messages_in_the_list() {
         let ranked_again = settle_until(async || {
             let rows = listed(&list, hits);
             !rows.is_empty() && rows == expected[..rows.len()]
-        }).await;
+        })
+        .await;
         assert!(
             ranked_again,
             "a second `o` did not come back to the ranked order"

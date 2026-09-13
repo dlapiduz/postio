@@ -66,7 +66,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this —
 /// and "while the index is catching up" is not an exemption.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
@@ -153,13 +152,18 @@ async fn build_corpus() -> Corpus {
         )];
         message.subject = Some(format!("Weekly update {i}"));
         message.size = 1024 + rng.below(4096);
-        repository.create(&mut message).await.expect("create message");
-        on_runtime(postio_index::index::index_body(&connection, message.id.get(), Some(&body_text(i)))
-            ).expect("index body");
+        repository
+            .create(&mut message)
+            .await
+            .expect("create message");
+        on_runtime(postio_index::index::index_body(
+            &connection,
+            message.id.get(),
+            Some(&body_text(i)),
+        ))
+        .expect("index body");
     }
-    on_runtime(connection
-        .execute_batch("COMMIT")
-        ).expect("commit bulk load");
+    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load");
     drop(connection);
 
     Corpus {
@@ -190,14 +194,19 @@ async fn churn(database: Store, stop: &AtomicBool) {
     while !stop.load(Ordering::Relaxed) {
         let connection = database.connect().await.expect("writer checkout");
         {
-            let _permit = connection.write_gate().acquire(WritePriority::Background).await;
-            on_runtime(connection
-                .execute_batch("BEGIN IMMEDIATE")
-                ).expect("writer begin");
+            let _permit = connection
+                .write_gate()
+                .acquire(WritePriority::Background)
+                .await;
+            on_runtime(connection.execute_batch("BEGIN IMMEDIATE")).expect("writer begin");
             for _ in 0..WRITER_BATCH {
                 let id = rng.below(MESSAGE_COUNT) as i64 + 1;
-                on_runtime(postio_index::index::index_body(&connection, id, Some(&body_text(id as u64)))
-                    ).expect("writer index");
+                on_runtime(postio_index::index::index_body(
+                    &connection,
+                    id,
+                    Some(&body_text(id as u64)),
+                ))
+                .expect("writer index");
             }
             on_runtime(connection.execute_batch("COMMIT")).expect("writer commit");
         }

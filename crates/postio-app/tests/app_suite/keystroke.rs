@@ -47,7 +47,8 @@ async fn mailbox_of(database: &Store, message: MessageId) -> i64 {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .expect("the message is still there")
         .mailbox_id
         .get()
@@ -111,7 +112,8 @@ pub fn pressing_a_archives_the_row_in_the_database() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 

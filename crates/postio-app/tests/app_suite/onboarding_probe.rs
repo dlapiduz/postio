@@ -234,7 +234,8 @@ async fn onboard(
         None,
         transport,
         std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    ).await;
+    )
+    .await;
 
     let screen = window
         .content()

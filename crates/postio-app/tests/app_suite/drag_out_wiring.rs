@@ -79,7 +79,8 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
             message.raw_blob_id = Some(blobs.put(RAW).expect("a blob"));
             MessageRepository::new(&connection)
                 .create(&mut message)
-                .await.expect("a message")
+                .await
+                .expect("a message")
         };
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -91,7 +92,9 @@ pub fn a_message_in_the_list_can_be_dragged_out_as_a_file() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes ───────────────────────────────────────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         while glib::MainContext::default().iteration(false) {}
 
         // ── select the message, exactly as clicking it would ────────────────

@@ -43,14 +43,16 @@ async fn thread_mailboxes(database: &Store, thread: ThreadId) -> Vec<(MessageId,
     let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id, mailbox_id FROM messages WHERE thread_id = ?1 ORDER BY id")
-        .await.expect("prepare");
+        .await
+        .expect("prepare");
     let rows = postio_storage::sql::mapped(&mut statement, [thread.get()], |row| {
         Ok((
             MessageId::new(postio_storage::sql::RowExt::col(row, 0)?),
             postio_storage::sql::RowExt::col::<i64>(row, 1)?,
         ))
     })
-    .await.expect("read the conversation");
+    .await
+    .expect("read the conversation");
     rows
 }
 
@@ -105,7 +107,8 @@ pub fn pressing_a_on_a_thread_row_archives_the_whole_conversation() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
 
@@ -171,17 +174,20 @@ pub fn pressing_a_on_a_thread_row_archives_the_whole_conversation() {
         );
 
         let filed = settle_until(async || {
-            thread_mailboxes(&database, thread).await
+            thread_mailboxes(&database, thread)
+                .await
                 .iter()
                 .all(|(_, mailbox)| *mailbox == archive)
-        }).await;
+        })
+        .await;
 
         assert!(
             filed,
             "`a` on a thread row archived {:?} of the conversation's {} messages. \
              Acting on 'the row' and acting on 'one message of six' cannot both \
              be what the key means, and the row is a conversation.",
-            thread_mailboxes(&database, thread).await
+            thread_mailboxes(&database, thread)
+                .await
                 .iter()
                 .filter(|(_, mailbox)| *mailbox == archive)
                 .count(),

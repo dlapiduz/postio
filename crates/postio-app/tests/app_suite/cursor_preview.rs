@@ -104,10 +104,14 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
                 )
                 .await
                 .expect("the fixture writes");
-            postio_storage::sql::one(&*connection, 
-                    "SELECT COUNT(*) FROM messages WHERE flagged = 1",(),
-                    |row| postio_storage::sql::RowExt::col(row, 0)).await
-                .expect("a count")
+            postio_storage::sql::one(
+                &*connection,
+                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+                (),
+                |row| postio_storage::sql::RowExt::col(row, 0),
+            )
+            .await
+            .expect("a count")
         };
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -125,7 +129,9 @@ pub fn the_pane_follows_the_cursor_and_says_why_a_body_is_missing() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes ────────────────────────────────────────
-        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         // Into the Flagged view, the way the sidebar's row would take it — but
         // only after the sidebar's own default pick has landed: the folder list

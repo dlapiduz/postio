@@ -146,7 +146,8 @@ pub fn the_window_opens_with_the_keyboard_on_the_first_message() {
         while glib::MainContext::default().iteration(false) {}
 
         let _feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
 
         let list = window.list();

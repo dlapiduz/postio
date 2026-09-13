@@ -92,7 +92,9 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
         settle();
 
         // ── the same call `run` makes: this is what wires the composer ───────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         settle();
 
         let composer = window.composer();
@@ -117,7 +119,8 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
         let connection = database.connect().await.expect("a connection");
         let queued = OperationQueueRepository::new(&connection)
             .pending(account, chrono::Utc::now())
-            .await.expect("read the queue");
+            .await
+            .expect("read the queue");
         let sent = queued
             .iter()
             .find_map(|row| match row.operation {
@@ -136,7 +139,8 @@ pub fn ctrl_return_queues_the_draft_for_sending() {
 
         let draft = DraftRepository::new(&connection)
             .get(sent)
-            .await.expect("read the draft")
+            .await
+            .expect("read the draft")
             .expect(
                 "the queued send names a draft that is not in the store — the \
                  close path deleted the row the operation has to build its bytes \

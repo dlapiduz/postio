@@ -69,7 +69,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// The list's width in canvas 1b.
 const WIDTH: i32 = 404;
 

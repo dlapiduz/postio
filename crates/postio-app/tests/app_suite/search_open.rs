@@ -63,13 +63,16 @@ pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
             let connection = database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
                 .get(message)
-                .await.expect("a read")
+                .await
+                .expect("a read")
                 .expect("the previewed message is in the store")
                 .subject
                 .unwrap_or_default()
         };
         assert!(report.message_count > 0, "the fixture seeded no mail");
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -106,8 +109,9 @@ pub fn opening_a_previewed_result_shows_it_in_the_reading_pane() {
         // The same call `run` makes, and the `View` it returns rather than a
         // second `search::install` — two installs answer into a view the test
         // cannot see.
-        let Wired { feeds, search } =
-            feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let Wired { feeds, search } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         let view = search.expect("search installed");
         let notifier = notifications::Notifier::new(
             wiring.database.clone(),

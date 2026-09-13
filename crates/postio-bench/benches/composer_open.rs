@@ -59,7 +59,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// A window with a composer installed, mounted and settled.
 fn mounted() -> Option<(Window, Composer)> {
     if adw::init().is_err() {

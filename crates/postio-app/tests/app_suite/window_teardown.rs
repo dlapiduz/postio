@@ -59,7 +59,9 @@ pub fn a_window_the_composition_root_wired_still_frees_when_destroyed() {
 
         let database = test_support::memory().await;
         seed_small(&database, 11).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -78,7 +80,9 @@ pub fn a_window_the_composition_root_wired_still_frees_when_destroyed() {
 
             // The wiring is the point: `search::install` is what registers the
             // handlers on the finder, so a bare `Window` cannot show this.
-            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+            feed_the_window(&window, &wiring)
+                .await
+                .expect("the seeded store has an account");
 
             let weak = window.downgrade();
             window.destroy();

@@ -59,7 +59,8 @@ async fn plant(database: &Store, account: postio_model::AccountId) -> postio_mod
     message.sync.body_state = BodyState::NotFetched;
     MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("plant the message");
+        .await
+        .expect("plant the message");
     message.id
 }
 
@@ -105,7 +106,9 @@ pub fn a_unified_search_reaches_every_account() {
         let first = seed_small(&database, 11).await;
         let second = seed_extra_account(&database, "Second", "grace@example.org", 12).await;
         let planted = plant(&database, second.account.id).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -127,8 +130,9 @@ pub fn a_unified_search_reaches_every_account() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let Wired { feeds: _feeds, .. } =
-            feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let Wired { feeds: _feeds, .. } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         // The window opens on one account, which is the first one seeded — see
         // `feed_the_window`, which sets the scope to `first_account` rather than
@@ -180,7 +184,8 @@ pub fn a_unified_search_reaches_every_account() {
         let connection = database.connect().await.expect("a connection");
         let subject = MessageRepository::new(&connection)
             .get(planted)
-            .await.expect("a read")
+            .await
+            .expect("a read")
             .expect("the planted message is in the store")
             .subject
             .unwrap_or_default();
@@ -193,7 +198,8 @@ pub fn a_unified_search_reaches_every_account() {
         // ── and back again, because a scope switch has to work both ways ─────
         window.sidebar().test_click_account_row(1);
         assert!(
-            settle_until(async || window.scope() == postio_core::Scope::Account(first.account.id)).await,
+            settle_until(async || window.scope() == postio_core::Scope::Account(first.account.id))
+                .await,
             "clicking the first account's row did not narrow the window back"
         );
         assert!(

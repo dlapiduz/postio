@@ -69,7 +69,9 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
         let window = Window::default();
         window.present();
         settle();
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         settle();
 
         // ── 1. nothing left this machine ─────────────────────────────────────
@@ -78,7 +80,8 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
             assert_eq!(
                 EgressLogRepository::new(&connection)
                     .count()
-                    .await.expect("count"),
+                    .await
+                    .expect("count"),
                 0,
                 "feeding the whole window made an outbound connection — the \
                  privacy claim just became false in the default suite"
@@ -98,9 +101,11 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
             let connection = database.connect().await.expect("a connection");
             EgressLogRepository::new(&connection)
                 .count()
-                .await.expect("count")
+                .await
+                .expect("count")
                 == 1
-        }).await;
+        })
+        .await;
         assert!(
             landed,
             "the recorder's writer thread never persisted the event"
@@ -109,7 +114,8 @@ pub fn opening_the_app_costs_zero_connections_and_the_log_is_auditable() {
             let connection = database.connect().await.expect("a connection");
             let rows = EgressLogRepository::new(&connection)
                 .recent(10)
-                .await.expect("recent");
+                .await
+                .expect("recent");
             assert_eq!(rows[0].account, Some(account));
             assert_eq!(rows[0].host, "imap.example.com");
         }

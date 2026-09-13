@@ -93,7 +93,9 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
         let database = test_support::memory().await;
         let first = seed_small(&database, 11).await;
         let second = seed_extra_account(&database, "Second", "grace@example.org", 12).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
@@ -115,8 +117,9 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
         window.present();
         settle();
 
-        let Wired { feeds, .. } =
-            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let Wired { feeds, .. } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         // Every account reports in first. A tracker that has heard nothing is
         // *offline* — silence is not a claim that a server is reachable — so
@@ -158,7 +161,10 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
         // being on screen. Both accounts hold mail matching this query, so the
         // widening is the observable difference between the two searches.
         assert!(
-            settle_until(async || outcome(&window).is_some_and(|outcome| outcome.hits > one_account)).await,
+            settle_until(
+                async || outcome(&window).is_some_and(|outcome| outcome.hits > one_account)
+            )
+            .await,
             "the unified search did not widen the answer ({:?} against {one_account} \
              for one account), so there is nothing here for a caveat to be \
              attached to",
@@ -186,7 +192,8 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
 
         let named = settle_until(async || {
             outcome(&window).is_some_and(|outcome| outcome.unreachable == vec!["Second".to_owned()])
-        }).await;
+        })
+        .await;
         assert!(
             named,
             "an account went offline and a unified search still claims it \
@@ -212,7 +219,8 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
             outcome(&window).is_some_and(|outcome| {
                 outcome.hits == 0 && outcome.unreachable == vec!["Second".to_owned()]
             })
-        }).await;
+        })
+        .await;
         assert!(
             empty_and_short,
             "a unified search that matched nothing while an account was away \
@@ -237,7 +245,8 @@ pub fn a_unified_search_names_the_account_it_could_not_reach() {
             outcome(&window).is_some_and(|outcome| {
                 outcome.unreachable.is_empty() && outcome.hits == reached_everything
             })
-        }).await;
+        })
+        .await;
         assert!(
             cleared,
             "the account came back and the search still says it is away: {:?}",

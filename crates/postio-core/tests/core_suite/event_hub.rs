@@ -57,7 +57,7 @@ fn next_event(events: &EventStream) -> Event {
             Instant::now() < deadline,
             "no event arrived within {PATIENCE:?}"
         );
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }
 

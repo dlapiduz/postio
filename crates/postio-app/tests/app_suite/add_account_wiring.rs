@@ -131,7 +131,9 @@ async fn running_application() -> (
     let window = Window::default();
     window.present();
     settle();
-    feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+    feed_the_window(&window, &wiring)
+        .await
+        .expect("the seeded store has an account");
     (window, wiring, bridge, directory)
 }
 

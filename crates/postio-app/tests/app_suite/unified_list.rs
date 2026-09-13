@@ -75,7 +75,8 @@ pub fn picking_unified_lists_mail_from_every_account() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
 
         // ── it opens on one account's inbox, as it always has ───────────────
@@ -113,7 +114,8 @@ pub fn picking_unified_lists_mail_from_every_account() {
         );
         sidebar.test_click_account_row(0);
 
-        let switched = settle_until(async || feeds.messages.scope() == Some(ListScope::Unified)).await;
+        let switched =
+            settle_until(async || feeds.messages.scope() == Some(ListScope::Unified)).await;
         assert!(
             switched,
             "clicking Unified left the list on {:?}: the strip reported the \

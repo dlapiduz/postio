@@ -21,7 +21,8 @@ async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
     // screen for someone who has simply not finished setting up.
     let session = session();
     let started = session
-        .start_syncing().await
+        .start_syncing()
+        .await
         .expect("no accounts is not a failure");
     assert_eq!(
         started, 0,

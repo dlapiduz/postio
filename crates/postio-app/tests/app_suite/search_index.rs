@@ -35,7 +35,9 @@ pub fn a_store_the_application_opened_can_be_searched() {
         let report = seed_small(&database, 11).await;
         assert!(report.message_count > 0, "seeded nothing to find");
 
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
         let connection = database.connect().await.expect("a connection");
         // A word every fixture in the corpus has a sender for. Searching for the
@@ -53,7 +55,8 @@ pub fn a_store_the_application_opened_can_be_searched() {
             },
             Utc::now(),
         )
-        .await.expect("the search runs")
+        .await
+        .expect("the search runs")
         .hits;
 
         assert!(
@@ -71,11 +74,13 @@ async fn all_messages(database: &Store) -> Vec<MessageId> {
     let connection = database.connect().await.expect("a connection");
     let mut statement = connection
         .prepare("SELECT id FROM messages ORDER BY received_at DESC")
-        .await.expect("a statement");
+        .await
+        .expect("a statement");
     let rows = postio_storage::sql::mapped(&mut statement, (), |row| {
         postio_storage::sql::RowExt::col::<i64>(row, 0)
     })
-    .await.expect("query");
+    .await
+    .expect("query");
     rows.into_iter().map(MessageId::new).collect()
 }
 
@@ -91,7 +96,8 @@ async fn give_body(database: &Store, id: MessageId, text: Option<&str>, html: Op
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
-        .await.expect("store the body");
+        .await
+        .expect("store the body");
 }
 
 async fn hits(database: &Store, account: AccountId, query: &str) -> Vec<MessageId> {
@@ -108,7 +114,8 @@ async fn hits(database: &Store, account: AccountId, query: &str) -> Vec<MessageI
         },
         Utc::now(),
     )
-    .await.expect("the search runs")
+    .await
+    .expect("the search runs")
     .hits
     .into_iter()
     .map(|hit| hit.message_id)
@@ -144,7 +151,8 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
             plain,
             Some("The turbines held at ninety-one percent all quarter."),
             None,
-        ).await;
+        )
+        .await;
         give_body(
             &database,
             markup,
@@ -153,14 +161,19 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
                 "<div><p>The <a href=\"https://tracker.example/c?i=7\">turbines</a> \
                  held steady.</p></div>",
             ),
-        ).await;
+        )
+        .await;
         // `never_fetched` keeps its seeded `BodyState::NotFetched` and gets no
         // blob: its body is on the server, and the index must not claim to have
         // read it.
 
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         assert!(
-            hits(&database, report.account.id, "turbines").await.is_empty(),
+            hits(&database, report.account.id, "turbines")
+                .await
+                .is_empty(),
             "nothing has indexed a body yet, so this cannot be measuring the pass"
         );
 
@@ -189,7 +202,9 @@ pub fn a_store_that_predates_body_indexing_catches_up() {
         // tracking redirect a hit for whatever campaign shared that shortener.
         for markup_word in ["div", "href", "tracker.example"] {
             assert!(
-                hits(&database, report.account.id, markup_word).await.is_empty(),
+                hits(&database, report.account.id, markup_word)
+                    .await
+                    .is_empty(),
                 "{markup_word:?} matched, so a message is a hit for a word it \
                  never contained"
             );
@@ -246,10 +261,15 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
             target,
             Some("A word no header in the corpus carries: photogrammetry."),
             None,
-        ).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        )
+        .await;
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         assert!(
-            hits(&database, report.account.id, "photogrammetry").await.is_empty(),
+            hits(&database, report.account.id, "photogrammetry")
+                .await
+                .is_empty(),
             "the body is not indexed yet, so this cannot be measuring the wiring"
         );
 
@@ -268,14 +288,18 @@ pub fn opening_the_window_indexes_local_bodies_without_being_asked() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes, and nothing else ──────────────────────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
-        let deadline =
-            std::time::Instant::now() + postio_test_support::scaled(std::time::Duration::from_secs(10));
+        let deadline = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(10));
         let mut found = false;
         while std::time::Instant::now() < deadline && !found {
             while glib::MainContext::default().iteration(false) {}
-            found = hits(&database, report.account.id, "photogrammetry").await.contains(&target);
+            found = hits(&database, report.account.id, "photogrammetry")
+                .await
+                .contains(&target);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(
@@ -303,7 +327,8 @@ async fn give_header_block(database: &Store, id: MessageId, block: &str) {
     };
     MessageRepository::new(&connection)
         .set_body(id, &stored, BodyState::Full)
-        .await.expect("store the block");
+        .await
+        .expect("store the block");
 }
 
 /// `header:` answers over mail that was already on this machine — without
@@ -346,14 +371,18 @@ pub fn opening_the_window_indexes_local_headers_without_being_asked() {
             &database,
             target,
             "X-Mailer: Photogrammetry 4.2\r\nContent-Type: text/plain; charset=utf-8",
-        ).await;
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        )
+        .await;
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         assert!(
             hits(
                 &database,
                 report.account.id,
                 "header:x-mailer=photogrammetry"
-            ).await
+            )
+            .await
             .is_empty(),
             "the block is stored and unindexed, so this cannot be measuring the wiring"
         );
@@ -373,7 +402,9 @@ pub fn opening_the_window_indexes_local_headers_without_being_asked() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes, and nothing else ──────────────────────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         postio_test_support::settle_until_async(
             "a stored header block to become findable with header:",
@@ -385,16 +416,20 @@ pub fn opening_the_window_indexes_local_headers_without_being_asked() {
                     &database,
                     report.account.id,
                     "header:x-mailer=photogrammetry",
-                ).await
+                )
+                .await
                 .contains(&target)
             },
-        ).await;
+        )
+        .await;
 
         // Presence and value are two different questions, and both have to reach
         // the running application -- `header:x-mailer` alone is the half a
         // half-typed query asks.
         assert!(
-            hits(&database, report.account.id, "header:x-mailer").await.contains(&target),
+            hits(&database, report.account.id, "header:x-mailer")
+                .await
+                .contains(&target),
             "presence is answerable too, not only a value match"
         );
 

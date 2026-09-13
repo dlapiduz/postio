@@ -42,7 +42,8 @@ async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
                 },
                 postio_model::message::BodyState::Full,
             )
-            .await.expect("the body is stored");
+            .await
+            .expect("the body is stored");
         id
     };
 
@@ -144,13 +145,16 @@ async fn a_message_with_no_body_gets_a_state_plate_not_a_blank_page() {
         let mut message = Message::new(account.id, inbox, Utc::now());
         MessageRepository::new(&connection)
             .create(&mut message)
-            .await.expect("a message")
+            .await
+            .expect("a message")
     };
     let session =
         Session::open(SessionOptions::in_memory_with(database).with_blobs_for_test(blobs, scratch))
             .expect("a session");
 
-    let document = session.reader_document(id.into(), RemoteImagesFfi::Blocked).await;
+    let document = session
+        .reader_document(id.into(), RemoteImagesFfi::Blocked)
+        .await;
     assert!(
         document.len() > 200,
         "a body-less message produced an empty document rather than a state plate"
@@ -209,7 +213,8 @@ async fn two_messages_with_inline_parts() -> (std::sync::Arc<Session>, i64, i64)
 async fn an_inline_part_resolves_for_the_message_that_declared_it() {
     let (session, first, _second) = two_messages_with_inline_parts().await;
     let part = session
-        .resolve_cid(first, "first@example.com".to_string()).await
+        .resolve_cid(first, "first@example.com".to_string())
+        .await
         .expect("the part its own message declared");
     assert_eq!(part.bytes, b"first-bytes");
     assert_eq!(part.mime_type, "image/png");
@@ -225,14 +230,16 @@ async fn a_content_id_from_another_message_does_not_resolve() {
     let (session, first, second) = two_messages_with_inline_parts().await;
     assert!(
         session
-            .resolve_cid(first, "second@example.com".to_string()).await
+            .resolve_cid(first, "second@example.com".to_string())
+            .await
             .is_none(),
         "one message resolved another message's part"
     );
     // ...and the other way round, so the test cannot pass by resolving nothing.
     assert!(
         session
-            .resolve_cid(second, "second@example.com".to_string()).await
+            .resolve_cid(second, "second@example.com".to_string())
+            .await
             .is_some(),
         "the part does exist -- the scoping check above proved nothing"
     );
@@ -247,7 +254,8 @@ async fn a_content_id_nothing_declared_does_not_resolve() {
     let (session, first, _second) = two_messages_with_inline_parts().await;
     assert!(
         session
-            .resolve_cid(first, "nobody@example.com".to_string()).await
+            .resolve_cid(first, "nobody@example.com".to_string())
+            .await
             .is_none()
     );
     session.shutdown();

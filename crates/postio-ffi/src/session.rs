@@ -892,12 +892,12 @@ impl Session {
                             message: error.to_string(),
                         })?;
                     let store = blocking(postio_storage::Store::open(
-                            scratch.path().join("postio.db"),
-                            &key,
-                        ))
-                        .map_err(|error| SessionError::StoreUnavailable {
-                            message: error.to_string(),
-                        })?;
+                        scratch.path().join("postio.db"),
+                        &key,
+                    ))
+                    .map_err(|error| SessionError::StoreUnavailable {
+                        message: error.to_string(),
+                    })?;
                     // The directory has to outlive every connection onto it.
                     std::mem::forget(scratch);
                     store
@@ -1274,7 +1274,10 @@ impl Session {
     /// resolve is `Unified`, which is the conservative answer: it withholds
     /// the commands that need a single account rather than offering one that
     /// would have nowhere to act.
-    async fn resolve_account_scope(&self, scope: postio_runtime::store::ListScope) -> postio_core::Scope {
+    async fn resolve_account_scope(
+        &self,
+        scope: postio_runtime::store::ListScope,
+    ) -> postio_core::Scope {
         use postio_runtime::store::ListScope;
         match scope {
             // The Outbox names its account as plainly as these two do: every
@@ -2029,7 +2032,9 @@ impl Session {
             );
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline).await {
+        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
+            .await
+        {
             // `encoding_problems` is bound and not used here, and that is a
             // gap rather than a decision: this frontend renders a document
             // and has no native strip to put a caveat in, the way the GTK
@@ -2106,8 +2111,9 @@ impl Session {
         let Ok(connection) = database.connect().await else {
             return folders;
         };
-        let Ok(accounts) =
-            postio_storage::repository::AccountRepository::new(&connection).list_enabled().await
+        let Ok(accounts) = postio_storage::repository::AccountRepository::new(&connection)
+            .list_enabled()
+            .await
         else {
             return folders;
         };
@@ -2244,20 +2250,19 @@ impl Session {
             });
         };
 
-        let accounts =
-            {
-                let connection = wiring.database.connect().await.map_err(|error| {
-                    SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    }
-                })?;
-                postio_storage::repository::AccountRepository::new(&connection)
-                    .list_enabled()
-                    .await
-                    .map_err(|error| SessionError::StoreUnavailable {
-                        message: error.to_string(),
-                    })?
-            };
+        let accounts = {
+            let connection = wiring.database.connect().await.map_err(|error| {
+                SessionError::StoreUnavailable {
+                    message: error.to_string(),
+                }
+            })?;
+            postio_storage::repository::AccountRepository::new(&connection)
+                .list_enabled()
+                .await
+                .map_err(|error| SessionError::StoreUnavailable {
+                    message: error.to_string(),
+                })?
+        };
         if accounts.is_empty() {
             return Ok(0);
         }

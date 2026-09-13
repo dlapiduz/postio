@@ -110,9 +110,12 @@ pub fn a_real_account_answers_a_real_query() {
             eprintln!("skipping: the store key is not readable (is the keyring unlocked?)");
             return;
         };
-        let (database, blobs) =
-            postio_session::open_store_at(&path, &store_key).await.expect("the store opens");
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        let (database, blobs) = postio_session::open_store_at(&path, &store_key)
+            .await
+            .expect("the store opens");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
         let (sink, _events) = event_channel();
@@ -125,7 +128,8 @@ pub fn a_real_account_answers_a_real_query() {
         // Through the composition root, so this drives one install rather than a
         // second `View` racing the one `feed_the_window` already made.
         let view = postio_app::feed_the_window(&window, &wiring)
-            .await.expect("the store has an account")
+            .await
+            .expect("the store has an account")
             .search
             .expect("search installed");
 

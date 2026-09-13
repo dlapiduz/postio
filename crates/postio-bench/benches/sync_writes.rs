@@ -102,11 +102,11 @@ use postio_core::perf_budget::{SYNC_WRITE_BUDGET, check_budget};
 use postio_model::{
     Account, EmailAddress, Mailbox, MailboxRole, Message, RfcMessageId, Uid, UidValidity,
 };
+use postio_storage::Connection;
 use postio_storage::repository::{ContactRepository, MessageRepository, ThreadingRepository};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support::{self, TempStore};
 use postio_sync::{DEFAULT_BATCH_SIZE, commit_batch};
-use postio_storage::Connection;
 
 /// The runtime every async call in this bench is driven on.
 ///
@@ -127,7 +127,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         })
         .block_on(future)
 }
-
 
 /// Store sizes to sweep, in messages already stored before the batch lands.
 ///
@@ -233,8 +232,8 @@ async fn write_one(
         Some(account),
         &BTreeSet::new(),
         &mut messages,
-    )
-    ).expect("the batch commits");
+    ))
+    .expect("the batch commits");
     started.elapsed()
 }
 
@@ -314,9 +313,10 @@ async fn measure(stored: usize) -> Measured {
         let mut messages = batch(&account, &inbox, run);
         let started = Instant::now();
         let unit = connection.clone();
-            on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         MessageRepository::new(&unit)
-            .upsert_batch(&mut messages).await
+            .upsert_batch(&mut messages)
+            .await
             .expect("upsert");
         on_runtime(unit.execute("COMMIT", ())).expect("commit");
         upsert += started.elapsed();
@@ -328,7 +328,7 @@ async fn measure(stored: usize) -> Measured {
         let written = upserted(&connection, &account, &inbox, run);
         let started = Instant::now();
         let unit = connection.clone();
-            on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         let threads = ThreadingRepository::new(&unit, account.id);
         for message in &written {
             threads.thread(message).await.expect("thread");
@@ -343,7 +343,7 @@ async fn measure(stored: usize) -> Measured {
         let written = upserted(&connection, &account, &inbox, run);
         let started = Instant::now();
         let unit = connection.clone();
-            on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
+        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
         let recorder = ContactRepository::new(&unit);
         for message in &written {
             on_runtime(recorder.record_message(message)).expect("record");
@@ -386,9 +386,8 @@ fn upserted(
 ) -> Vec<Message> {
     let mut messages = batch(account, mailbox, run);
     let unit = connection.clone();
-        on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
-    on_runtime(MessageRepository::new(&unit).upsert_batch(&mut messages))
-        .expect("upsert");
+    on_runtime(unit.execute("BEGIN IMMEDIATE", ())).expect("a transaction");
+    on_runtime(MessageRepository::new(&unit).upsert_batch(&mut messages)).expect("upsert");
     on_runtime(unit.execute("COMMIT", ())).expect("commit");
     messages
 }

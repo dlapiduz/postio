@@ -83,7 +83,9 @@ pub fn escape_leaves_search_even_after_the_box_has_closed() {
             report.message_count > 0,
             "the fixture seeded no mail, so this test could not fail"
         );
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         let blobs = BlobStore::open(
             directory.path().to_path_buf(),
@@ -105,7 +107,9 @@ pub fn escape_leaves_search_even_after_the_box_has_closed() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         let feeds = wired.feeds.clone();
 
         let notifier = postio_app::notifications::Notifier::new(

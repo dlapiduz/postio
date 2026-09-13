@@ -60,7 +60,8 @@ pub fn account_rows_persist_enable_and_mark_removal() {
         );
         let second_id = AccountRepository::new(&connection)
             .create(&mut second)
-            .await.expect("insert a second account");
+            .await
+            .expect("insert a second account");
         drop(connection);
 
         let (bridge, _replies) =
@@ -79,7 +80,9 @@ pub fn account_rows_persist_enable_and_mark_removal() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let panel = window.settings();
 
         // ── both accounts show up, without anyone telling the panel to look ──
@@ -135,7 +138,8 @@ pub fn account_rows_persist_enable_and_mark_removal() {
             let connection = database.connect().await.expect("a connection");
             AccountRepository::new(&connection)
                 .list()
-                .await.expect("list")
+                .await
+                .expect("list")
                 .first()
                 .expect("the seeded account")
                 .id
@@ -148,7 +152,9 @@ pub fn account_rows_persist_enable_and_mark_removal() {
         );
         panel.test_close_account_menu();
         assert!(
-            settle_until(async || read_default(&database, first_id).await && !read_default(&database, second_id).await).await,
+            settle_until(async || read_default(&database, first_id).await
+                && !read_default(&database, second_id).await)
+            .await,
             "at most one account is the default: marking a second has to move \
              the marker rather than leave two rows claiming it"
         );
@@ -180,7 +186,8 @@ async fn read_enabled(database: &postio_storage::Store, id: postio_model::ids::A
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .enabled
 }
@@ -189,7 +196,8 @@ async fn read_default(database: &postio_storage::Store, id: postio_model::ids::A
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .is_default
 }
@@ -198,7 +206,8 @@ async fn read_pending(database: &postio_storage::Store, id: postio_model::ids::A
     let connection = database.connect().await.expect("a connection");
     AccountRepository::new(&connection)
         .get(id)
-        .await.expect("get")
+        .await
+        .expect("get")
         .expect("still there")
         .pending_deletion
 }

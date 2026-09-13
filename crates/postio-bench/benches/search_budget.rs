@@ -75,7 +75,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
@@ -163,14 +162,21 @@ async fn build_corpus() -> Corpus {
         )];
         message.subject = Some(format!("Weekly update {i}"));
         message.size = 1024 + rng.below(4096);
-        repository.create(&mut message).await.expect("create message");
+        repository
+            .create(&mut message)
+            .await
+            .expect("create message");
 
         let mut body = format!("{COMMON_WORD} the status as of message {i}");
         if i % 100 == 0 {
             body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
         }
-        on_runtime(postio_index::index::index_body(&connection, message.id.get(), Some(&body))
-            ).expect("index body");
+        on_runtime(postio_index::index::index_body(
+            &connection,
+            message.id.get(),
+            Some(&body),
+        ))
+        .expect("index body");
     }
     // #746: a contacts table at real-mailbox scale. Sender affinity's cost
     // scales with `candidates × contacts`, and an empty table multiplies the
@@ -179,30 +185,26 @@ async fn build_corpus() -> Corpus {
     // The corpus' own senders get affinity to exercise the probe's hit path;
     // the rest is the long tail every real address book carries.
     {
-        let mut insert = on_runtime(connection
-            .prepare(
-                "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
+        let mut insert = on_runtime(connection.prepare(
+            "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
                  VALUES (?1, ?2, ?2, ?3)",
-            )
-            ).expect("prepare contact insert");
+        ))
+        .expect("prepare contact insert");
         for i in 0..CONTACT_COUNT {
             let address = if i < SENDER_COUNT {
                 format!("sender{i}@example.com")
             } else {
                 format!("correspondent{i}@example.com")
             };
-            on_runtime(insert
-                .execute(postio_storage::bind![
-                    account.id.get(),
-                    address,
-                    rng.below(100) as i64
-                ])
-                ).expect("seed contact");
+            on_runtime(insert.execute(postio_storage::bind![
+                account.id.get(),
+                address,
+                rng.below(100) as i64
+            ]))
+            .expect("seed contact");
         }
     }
-    on_runtime(connection
-        .execute_batch("COMMIT")
-        ).expect("commit bulk load transaction");
+    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load transaction");
 
     drop(connection);
     Corpus {
@@ -266,13 +268,17 @@ fn assert_budget(name: &str, elapsed: Duration) {
 }
 
 fn bench_simple_term(c: &mut Criterion) {
-    c.bench_function("search_simple_term", |b| b.iter(|| on_runtime(run(UNCOMMON_WORD, 50))));
+    c.bench_function("search_simple_term", |b| {
+        b.iter(|| on_runtime(run(UNCOMMON_WORD, 50)))
+    });
     assert_budget("simple term", on_runtime(run(UNCOMMON_WORD, 50)));
 }
 
 fn bench_operator_only(c: &mut Criterion) {
     let query = "from:sender42";
-    c.bench_function("search_operator_only", |b| b.iter(|| on_runtime(run(query, 50))));
+    c.bench_function("search_operator_only", |b| {
+        b.iter(|| on_runtime(run(query, 50)))
+    });
     assert_budget("operator-only", on_runtime(run(query, 50)));
 }
 
@@ -283,7 +289,9 @@ fn bench_composed(c: &mut Criterion) {
 }
 
 fn bench_common_word_worst_case(c: &mut Criterion) {
-    c.bench_function("search_common_word", |b| b.iter(|| on_runtime(run(COMMON_WORD, 50))));
+    c.bench_function("search_common_word", |b| {
+        b.iter(|| on_runtime(run(COMMON_WORD, 50)))
+    });
     assert_budget("common-word worst case", on_runtime(run(COMMON_WORD, 50)));
 }
 
@@ -343,19 +351,24 @@ async fn build_multi_account_corpus() -> MultiAccount {
             )];
             message.subject = Some(format!("Weekly update {i}"));
             message.size = 1024 + rng.below(4096);
-            repository.create(&mut message).await.expect("create message");
+            repository
+                .create(&mut message)
+                .await
+                .expect("create message");
 
             let mut body = format!("{COMMON_WORD} the status as of message {i}");
             if i % 100 == 0 {
                 body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
             }
-            on_runtime(postio_index::index::index_body(&connection, message.id.get(), Some(&body))
-                ).expect("index body");
+            on_runtime(postio_index::index::index_body(
+                &connection,
+                message.id.get(),
+                Some(&body),
+            ))
+            .expect("index body");
         }
     }
-    on_runtime(connection
-        .execute_batch("COMMIT")
-        ).expect("commit bulk load");
+    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load");
 
     drop(connection);
     MultiAccount {
@@ -425,7 +438,10 @@ fn bench_facets_worst_case(c: &mut Criterion) {
     c.bench_function("search_facets_common_word", |b| {
         b.iter(|| on_runtime(run_facets(COMMON_WORD)))
     });
-    assert_budget("facets, common-word worst case", on_runtime(run_facets(COMMON_WORD)));
+    assert_budget(
+        "facets, common-word worst case",
+        on_runtime(run_facets(COMMON_WORD)),
+    );
 }
 
 criterion_group!(

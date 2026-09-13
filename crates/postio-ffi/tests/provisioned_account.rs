@@ -71,8 +71,9 @@ async fn a_session_finds_the_account_the_provisioning_helper_wrote() {
     // per machine. The path itself is the same value on both sides.
     let key = postio_session::store_key_blocking(secrets.as_ref())
         .expect("the key the first session minted");
-    let (database, _blobs) =
-        postio_session::open_store_at(&path, &key).await.expect("the store the session just made");
+    let (database, _blobs) = postio_session::open_store_at(&path, &key)
+        .await
+        .expect("the store the session just made");
     let outcome = provision(
         &database,
         secrets.as_ref(),

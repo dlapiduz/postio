@@ -78,7 +78,8 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
             draft.body.text = Some("Half a sentence, still being had.".to_owned());
             DraftRepository::new(&connection)
                 .save(&mut draft)
-                .await.expect("save the draft")
+                .await
+                .expect("save the draft")
         };
 
         let state = SharedState::default();
@@ -103,7 +104,8 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
         while glib::MainContext::default().iteration(false) {}
 
         let feeds = feed_the_window(&window, &wiring)
-            .await.expect("the seeded store has an account")
+            .await
+            .expect("the seeded store has an account")
             .feeds;
         commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
         // The wiring under test. `recover` runs inside it and reopens the draft,
@@ -123,7 +125,8 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
                 let feeds = feeds.clone();
                 std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
             },
-        ).await;
+        )
+        .await;
         window.composer().close();
         while glib::MainContext::default().iteration(false) {}
         assert!(
@@ -139,7 +142,10 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
             &window,
             // Among only itself: the seed has one folder per role, so the
             // Drafts folder is trivially its role's primary (#501).
-            &postio_gtk::sidebar::display_name(&drafts_folder, std::slice::from_ref(&drafts_folder)),
+            &postio_gtk::sidebar::display_name(
+                &drafts_folder,
+                std::slice::from_ref(&drafts_folder),
+            ),
         );
         let list = window.list();
         let expected = {
@@ -150,7 +156,8 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
                     limit: 50,
                     after: None,
                 })
-                .await.expect("a count")
+                .await
+                .expect("a count")
         };
         assert!(expected > 0, "the draft never got a row to be listed by");
         assert!(
@@ -170,7 +177,8 @@ pub fn return_on_a_draft_row_opens_the_composer_on_that_draft() {
             let connection = database.connect().await.expect("a connection");
             DraftRepository::new(&connection)
                 .by_message(id)
-                .await.ok()
+                .await
+                .ok()
                 .flatten()
                 .is_some_and(|draft| draft.id == draft_id)
         };

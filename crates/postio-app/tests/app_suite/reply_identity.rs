@@ -59,7 +59,8 @@ async fn account_with_identity(database: &Store, display_name: &str, address: &s
     }];
     AccountRepository::new(&connection)
         .create(&mut account)
-        .await.expect("create the account");
+        .await
+        .expect("create the account");
     account
 }
 
@@ -101,7 +102,8 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
             message.subject = Some("Quarterly numbers".to_owned());
             MessageRepository::new(&connection)
                 .create(&mut message)
-                .await.expect("create the message in account B")
+                .await
+                .expect("create the message in account B")
         };
 
         let directory = tempfile::tempdir().expect("a blob directory");
@@ -129,7 +131,9 @@ pub fn a_reply_to_a_message_in_a_second_account_uses_that_accounts_identity() {
 
         // The same call `run` makes -- account A is what this wires the window
         // to, exactly as it would with one account configured.
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
 
         let composer = window.composer();
 

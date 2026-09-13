@@ -125,7 +125,8 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
                 .collect();
             MessageRepository::new(&connection)
                 .create(&mut message)
-                .await.expect("a message");
+                .await
+                .expect("a message");
         }
 
         let (bridge, _replies) = Bridge::new(handler_fn(|_, _| async {})).expect("a runtime");
@@ -137,7 +138,9 @@ pub fn opening_and_open_with_ing_a_part_reach_the_desktop() {
         while glib::MainContext::default().iteration(false) {}
 
         // ── the same call `run` makes ───────────────────────────────────────
-        let _wired = feed_the_window(&window, &wiring).await.expect("the store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
         while glib::MainContext::default().iteration(false) {}
 
         // ── open the message, exactly as a double click or `Enter` does ─────

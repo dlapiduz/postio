@@ -79,7 +79,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// The thread column's width in canvas 3a.
 const WIDTH: i32 = 404;
 

@@ -106,7 +106,9 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
             report.message_count > 0,
             "the fixture seeded no mail, so this test could not fail"
         );
-        ensure_search_index(&database).await.expect("the index is part of opening the store");
+        ensure_search_index(&database)
+            .await
+            .expect("the index is part of opening the store");
         let directory = tempfile::tempdir().expect("a blob directory");
         // `directory.path()`, not `directory.keep()`: `keep` consumes the guard
         // and leaks the directory, which is one way to stop the store's files
@@ -126,7 +128,9 @@ pub fn return_and_tab_move_the_keyboard_to_the_message_list() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        feed_the_window(&window, &wiring).await.expect("the store has an account");
+        feed_the_window(&window, &wiring)
+            .await
+            .expect("the store has an account");
 
         let finder = window.finder();
 

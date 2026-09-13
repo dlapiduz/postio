@@ -47,7 +47,8 @@ async fn is_read(database: &Store, message: MessageId) -> bool {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
         .get(message)
-        .await.expect("a read")
+        .await
+        .expect("a read")
         .expect("the message is still there")
         .flags
         .contains(&Flag::Seen)
@@ -74,10 +75,12 @@ async fn threaded_message(
     message.subject = Some(subject.to_owned());
     let id = MessageRepository::new(&connection)
         .create(&mut message)
-        .await.expect("create the threaded message");
+        .await
+        .expect("create the threaded message");
     ThreadRepository::new(&connection)
         .add_message(thread, id)
-        .await.expect("join the message to the thread");
+        .await
+        .expect("join the message to the thread");
     id
 }
 
@@ -110,7 +113,8 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
             let mut thread = Thread::new(account.id);
             ThreadRepository::new(&connection)
                 .create(&mut thread)
-                .await.expect("create the thread")
+                .await
+                .expect("create the thread")
         };
         let members_of = async |thread: ThreadId, from_minute: i64| -> Vec<MessageId> {
             let mut members = Vec::with_capacity(3);
@@ -123,8 +127,8 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
                         thread,
                         from_minute + n,
                         &format!("interlock, message {n}"),
-                    ).await
-                    ,
+                    )
+                    .await,
                 );
             }
             members
@@ -170,8 +174,9 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
         window.present();
         while glib::MainContext::default().iteration(false) {}
 
-        let Wired { feeds, .. } =
-            feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let Wired { feeds, .. } = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         commands::install(
             &window,
             &feeds,
@@ -223,7 +228,10 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
         // ── `j` onto the other conversation: a row a person chose ────────────
         window.handle_key(gdk::Key::j, gdk::ModifierType::empty());
         assert!(
-            settle_until(async || window.conversation().rows().first().map(|row| row.id) == Some(members[0])).await,
+            settle_until(
+                async || window.conversation().rows().first().map(|row| row.id) == Some(members[0])
+            )
+            .await,
             "`j` did not open the other conversation, so nothing below is about it"
         );
         // FR-015 (#1385): the newest, whatever the read state of the rest.
@@ -267,7 +275,8 @@ pub fn resting_inside_a_conversation_reads_each_message_as_focus_reaches_it() {
             let connection = database.connect().await.expect("a connection");
             OperationQueueRepository::new(&connection)
                 .pending(account.id, chrono::Utc::now())
-                .await.expect("a read")
+                .await
+                .expect("a read")
         };
         assert_eq!(
             queued.len(),

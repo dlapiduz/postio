@@ -92,7 +92,6 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
-
 /// A source that never answers.
 ///
 /// Nothing here reads a page back — the bench is about what applying the
@@ -157,7 +156,8 @@ impl World {
         let connection = self.database.connect().await.expect("a connection");
         let mut message = Message::new(self.account_id, self.inbox, Utc::now());
         MessageRepository::new(&connection)
-            .create(&mut message).await
+            .create(&mut message)
+            .await
             .expect("a message")
     }
 
@@ -248,15 +248,13 @@ fn bench_archive_round_trip(c: &mut Criterion) {
         for _ in 0..RUNS {
             on_runtime(world.seeded(n));
             let worker_start = Instant::now();
-            on_runtime(world
-                .actions
-                .run(
-                    &Command::Archive {
-                        target: MessageTarget::Selection,
-                    },
-                    &world.sink,
-                )
-                ).expect("archive");
+            on_runtime(world.actions.run(
+                &Command::Archive {
+                    target: MessageTarget::Selection,
+                },
+                &world.sink,
+            ))
+            .expect("archive");
             let worker_elapsed = worker_start.elapsed();
 
             let events = world.drain();

@@ -271,7 +271,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
         None,
         Arc::new(DeadTransport),
         Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-    ).await;
+    )
+    .await;
     let screen = window
         .content()
         .and_downcast::<Onboarding>()
@@ -288,7 +289,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("the-api-token");
     screen.submit();
     assert!(
-        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the add never settled: {:?}",
         screen.status()
     );
@@ -310,7 +312,8 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     screen.test_set_password("imap-only-password");
     screen.submit();
     assert!(
-        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_))).await,
+        settle_until(async || matches!(screen.status(), Status::SyncWindow | Status::Failed(_)))
+            .await,
         "the fallback add never settled: {:?}",
         screen.status()
     );
@@ -322,7 +325,10 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
 
     // ── what the rows say ───────────────────────────────────────────────
     let connection = database.connect().await.expect("a connection");
-    let accounts = AccountRepository::new(&connection).list().await.expect("list");
+    let accounts = AccountRepository::new(&connection)
+        .list()
+        .await
+        .expect("list");
     let native = accounts
         .iter()
         .find(|account| account.address.address == "ada@example.test")

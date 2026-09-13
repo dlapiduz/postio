@@ -74,7 +74,9 @@ pub fn the_window_warms_its_editing_surface_without_being_asked() {
         );
 
         // The same call `run` makes, and then nothing but time passing.
-        let wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         let warmed = settle_until(async || window.composer().is_warm()).await;
 
         assert!(

@@ -41,7 +41,6 @@
 //! Flags have exactly one canonical representation, keywords compare
 //! case-insensitively, and `\Recent` is never persisted. See [`Flag`].
 
-pub mod fold;
 pub mod account;
 pub mod address;
 pub mod attachment;
@@ -50,6 +49,7 @@ pub mod contact_group;
 pub mod draft;
 pub mod egress;
 pub mod flag;
+pub mod fold;
 pub mod headers;
 pub mod ids;
 pub mod label;

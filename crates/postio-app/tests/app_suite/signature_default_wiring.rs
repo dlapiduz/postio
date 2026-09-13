@@ -62,22 +62,26 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
         let connection = database.connect().await.expect("a connection");
         let mut account = AccountRepository::new(&connection)
             .get(report.account.id)
-            .await.expect("read the seeded account")
+            .await
+            .expect("read the seeded account")
             .expect("the seeded account exists");
 
         let mut support = Signature::new("Support", "Support team");
         let support_id = SignatureRepository::new(&connection)
             .create(account.id, &mut support)
-            .await.expect("insert the mailbox's signature");
+            .await
+            .expect("insert the mailbox's signature");
         let mut sales = Signature::new("Sales", "Sales team");
         let sales_id = SignatureRepository::new(&connection)
             .create(account.id, &mut sales)
-            .await.expect("insert the account's default signature");
+            .await
+            .expect("insert the account's default signature");
 
         account.default_signature_id = Some(sales_id);
         AccountRepository::new(&connection)
             .update(&mut account)
-            .await.expect("save the account default");
+            .await
+            .expect("save the account default");
 
         // `test_support::account` (which `seed_small` builds on) creates no
         // identity of its own -- nothing composes without one, so this test
@@ -90,7 +94,8 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
         identity.is_default = true;
         IdentityRepository::new(&connection)
             .create(&mut identity)
-            .await.expect("insert a sending identity");
+            .await
+            .expect("insert a sending identity");
 
         let overridden = report
             .mailbox(MailboxRole::Sent)
@@ -100,7 +105,8 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
         overridden.signature_id = Some(support_id);
         MailboxRepository::new(&connection)
             .update(&overridden)
-            .await.expect("save the mailbox override");
+            .await
+            .expect("save the mailbox override");
 
         let plain = report
             .mailbox(MailboxRole::Inbox)
@@ -124,7 +130,9 @@ pub fn compose_signs_with_the_selected_mailbox_or_account_default() {
         window.present();
         settle();
 
-        let _wired = feed_the_window(&window, &wiring).await.expect("the seeded store has an account");
+        let _wired = feed_the_window(&window, &wiring)
+            .await
+            .expect("the seeded store has an account");
         assert!(
             settle_until(async || window.list().model().n_items() > 0).await,
             "the list is empty, so selecting a mailbox proves nothing"
