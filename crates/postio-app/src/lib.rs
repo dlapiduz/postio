@@ -1288,7 +1288,15 @@ fn open_the_store_on_a_thread(
         // A runtime of its own on this thread: opening the store is async
         // now, and this thread exists precisely so the main loop is free to
         // draw while it happens.
-        let runtime = match tokio::runtime::Builder::new_current_thread()
+        //
+        // Multi-threaded with one worker rather than `current_thread`, which
+        // is the shape this wants: a `current_thread` runtime refuses
+        // `block_in_place`, so any synchronous store read reached from inside
+        // it aborts the process. One worker keeps the cost to a thread and
+        // the invariant to one sentence -- every runtime here is
+        // multi-threaded.
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()
         {

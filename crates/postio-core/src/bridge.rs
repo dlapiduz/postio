@@ -806,10 +806,20 @@ impl Bridge {
 /// is the tests' shape rather than the application's, but a shutdown that can
 /// only be called from one kind of thread is a trap either way.
 ///
-/// `block_in_place` is the answer and it needs a multi-threaded runtime, which
-/// is what both the bridge's own runtime and every caller's are.
+/// `block_in_place` is the answer and it needs a multi-threaded runtime -- so
+/// every runtime in this workspace is one, including the single-worker ones
+/// that exist only to drive a dedicated thread. `postio_session::blocking`
+/// carries the same guard and the story behind it: a `current_thread` runtime
+/// here aborts the process without unwinding.
 fn blocking<T>(work: impl FnOnce() -> T) -> T {
-    if tokio::runtime::Handle::try_current().is_ok() {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        assert!(
+            handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::CurrentThread,
+            "a bridge shutdown was reached from inside a current-thread \
+             runtime, which cannot stand aside for `block_in_place`. Whichever \
+             runtime drives this has to be built \
+             `new_multi_thread().worker_threads(1)`."
+        );
         return tokio::task::block_in_place(work);
     }
     work()

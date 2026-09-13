@@ -55,10 +55,13 @@ impl EgressRecorder {
             .spawn(move || {
                 // A runtime of its own, on this thread, because the store is
                 // async now and this is a dedicated writer thread rather than
-                // a tokio task. `current_thread` is the whole of it: one
-                // thread, no work stealing, exactly the shape this loop
-                // already had.
-                let runtime = match tokio::runtime::Builder::new_current_thread()
+                // a tokio task. One worker, no work stealing, exactly the
+                // shape this loop already had -- but multi-threaded, because
+                // a `current_thread` runtime refuses `block_in_place` and a
+                // synchronous store read reached from inside one aborts the
+                // process (`postio_session::blocking`).
+                let runtime = match tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
                     .enable_all()
                     .build()
                 {

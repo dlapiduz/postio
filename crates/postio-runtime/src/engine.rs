@@ -706,9 +706,15 @@ impl Engine {
 /// the common case does not wait for a tick at all.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
-/// The engine's thread: a current-thread runtime and a connection of its own.
+/// The engine's thread: a runtime and a connection of its own.
+///
+/// One worker, because this thread is the whole of it -- but multi-threaded,
+/// because a `current_thread` runtime refuses `block_in_place`, and anything
+/// reached from in here that needs a synchronous store read would abort the
+/// process rather than block (`postio_session::blocking`).
 fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, busy: Busy) {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
         .enable_all()
         .build()
     {
