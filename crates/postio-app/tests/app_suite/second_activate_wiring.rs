@@ -66,14 +66,14 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
         app::install_icons(&display);
 
         // ── a loopback server: the only way `start_syncing` may dial anything ──
-        let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-        let server = server_runtime.block_on(
-            TestServer::builder()
-                .account(ADDRESS)
-                .password(PASSWORD)
-                .mailbox(TestMailbox::new("INBOX"))
-                .start(),
-        );
+        // On the case's own runtime: a `Runtime::new().block_on()` here would
+        // be a runtime started from inside one, which tokio refuses.
+        let server = TestServer::builder()
+            .account(ADDRESS)
+            .password(PASSWORD)
+            .mailbox(TestMailbox::new("INBOX"))
+            .start()
+            .await;
 
         let database = test_support::memory().await;
         let (account_id, mailbox_id, message_id) = {
@@ -100,9 +100,9 @@ pub fn a_second_activate_does_not_double_wire_the_window() {
         };
 
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-        server_runtime
-            .block_on(secrets.store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD)))
-            .expect("the memory store accepts a password");
+        secrets.store(&AccountKey::new(ADDRESS), &Password::new(PASSWORD))
+.await
+.expect("the memory store accepts a password");
 
         // The real bus, over the real store -- the same composition `run()` uses,
         // so a doubled `connect_action` is the same bug it would be in the app.

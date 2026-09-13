@@ -88,9 +88,8 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
             None,
             None,
         );
-        let runtime = tokio::runtime::Runtime::new().expect("a runtime for the seed call");
-        runtime
-            .block_on(source.seed(
+        source
+            .seed(
                 &AccountKey::new(address),
                 TokenResponse {
                     access_token: Password::new("an-access-token"),
@@ -99,7 +98,8 @@ pub fn an_oauth_accounts_row_shows_its_real_persisted_expiry() {
                     token_type: "Bearer".to_string(),
                     scope: None,
                 },
-            ))
+            )
+            .await
             .expect("seeding the token succeeds");
 
         let (bridge, _replies) =

@@ -104,16 +104,18 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
 
         // ── the server the joining account will be pointed at ────────────────
         //
-        // Its own runtime, kept for the life of the case: the accept loop and
-        // the sessions live on it, while the engine brings a runtime of its own.
-        let server_runtime = tokio::runtime::Runtime::new().expect("a server runtime");
-        let server = server_runtime.block_on(
-            TestServer::builder()
-                .account(JOINING_ADDRESS)
-                .password(JOINING_PASSWORD)
-                .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
-                .start(),
-        );
+        // On the case's own runtime rather than a third one. It used to build
+        // its own -- "the accept loop and the sessions live on it, while the
+        // engine brings a runtime of its own" -- and that is still true of the
+        // engine's, which is the bridge's. What changed is that the *case* has
+        // a runtime now, so a `Runtime::new().block_on()` here is a runtime
+        // started from inside a runtime, which tokio refuses outright.
+        let server = TestServer::builder()
+            .account(JOINING_ADDRESS)
+            .password(JOINING_PASSWORD)
+            .mailbox(TestMailbox::new("INBOX").corpus(SEEDED))
+            .start()
+            .await;
 
         // ── an application already running over somebody else's mail ─────────
         let database = test_support::memory().await;
@@ -167,11 +169,12 @@ pub fn an_account_added_to_a_running_application_syncs_without_a_restart() {
                 .await.expect("the joining account's row");
             account
         };
-        server_runtime
-            .block_on(secrets.store(
+        secrets
+            .store(
                 &AccountKey::new(JOINING_ADDRESS),
                 &Password::new(JOINING_PASSWORD),
-            ))
+            )
+            .await
             .expect("the memory store accepts a password");
 
         // ── the whole of what "join a running application" means ─────────────

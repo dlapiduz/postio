@@ -247,7 +247,7 @@ pub fn closing_the_dialog_stops_the_probe_it_started() {
         let (window, wiring, bridge, _directory) = running_application().await;
 
         let transport = Arc::new(HangingTransport::default());
-        let dialog = postio_app::add_account::open(&window, &wiring, transport.clone());
+        let dialog = postio_app::add_account::open(&window, &wiring, transport.clone()).await;
 
         let screen = find_onboarding(&window).expect("the dialog's onboarding screen");
         screen.set_address("ada@example.com");
@@ -270,7 +270,7 @@ pub fn closing_the_dialog_stops_the_probe_it_started() {
         // Walking away from the dialog is the cancellation ADR 0012 Q3 names:
         // there is no Cancel button, because `Esc` and the close gesture are
         // what a dialog already offers.
-        dialog.await.close();
+        dialog.close();
         settle();
 
         assert!(
