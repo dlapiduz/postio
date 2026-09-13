@@ -7,7 +7,7 @@
 //! difference was everything the idle benches never see: the body catch-up
 //! pass writing continuously against the same store, on a real filesystem,
 //! competing for the same page cache. `search_budget.rs` builds its corpus
-//! with `test_support::memory()`, which lives on `/dev/shm` — WAL exists but
+//! with `test_support::memory().await`, which lives on `/dev/shm` — WAL exists but
 //! disk I/O does not, so no amount of write pressure there can slow a read.
 //!
 //! This bench is the missing condition: a **file-backed** corpus under
@@ -44,7 +44,28 @@ use postio_model::{AccountId, EmailAddress, Message};
 use postio_search::facets::Scope;
 use postio_search::parse;
 use postio_storage::repository::MessageRepository;
-use postio_storage::{Database, WritePriority, test_support};
+use postio_storage::{Store, WritePriority, test_support};
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
+
 
 /// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this —
 /// and "while the index is catching up" is not an exemption.
@@ -70,13 +91,13 @@ const WRITER_BREATHER: Duration = Duration::from_millis(25);
 const DRAWS: usize = 15;
 
 struct Corpus {
-    database: Database,
+    database: Store,
     account_id: AccountId,
 }
 
 fn corpus() -> &'static Corpus {
     static CORPUS: OnceLock<Corpus> = OnceLock::new();
-    CORPUS.get_or_init(build_corpus)
+    CORPUS.get_or_init(|| on_runtime(build_corpus()))
 }
 
 struct Xorshift64(u64);
@@ -101,24 +122,25 @@ impl Xorshift64 {
 /// reference platform is tmpfs and would quietly turn this back into the
 /// bench that cannot see I/O. The directory is disposable with the rest of
 /// `target/`, so nothing cleans it up.
-fn build_corpus() -> Corpus {
+async fn build_corpus() -> Corpus {
     let directory = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("search-under-load-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a bench scratch directory");
     // The fixed test key, so the bench measures the encrypted store the
     // application actually runs (ADR 0014): every page read here costs a
     // decrypt, which is precisely what the budget has to survive.
-    let database =
-        Database::open(directory.join("postio.db"), &test_support::key()).expect("a bench store");
-    let connection = database.connection().expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
-    let (account, mailbox) = test_support::account_with_inbox(&connection);
+    let database = Store::open(directory.join("postio.db"), &test_support::key())
+        .await
+        .expect("a bench store");
+    let connection = database.connect().await.expect("checkout");
+    on_runtime(postio_index::index::ensure_schema(&connection)).expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
     let mut rng = Xorshift64(0x5eed_1234_5678_9abc);
     let repository = MessageRepository::new(&connection);
 
-    connection.execute_batch("BEGIN").expect("begin bulk load");
+    on_runtime(connection.execute_batch("BEGIN")).expect("begin bulk load");
     for i in 0..MESSAGE_COUNT {
         let mut message = Message::new(
             account.id,
@@ -131,13 +153,13 @@ fn build_corpus() -> Corpus {
         )];
         message.subject = Some(format!("Weekly update {i}"));
         message.size = 1024 + rng.below(4096);
-        repository.create(&mut message).expect("create message");
-        postio_index::index::index_body(&connection, message.id.get(), Some(&body_text(i)))
-            .expect("index body");
+        repository.create(&mut message).await.expect("create message");
+        on_runtime(postio_index::index::index_body(&connection, message.id.get(), Some(&body_text(i)))
+            ).expect("index body");
     }
-    connection
+    on_runtime(connection
         .execute_batch("COMMIT")
-        .expect("commit bulk load");
+        ).expect("commit bulk load");
     drop(connection);
 
     Corpus {
@@ -163,21 +185,21 @@ fn body_text(i: u64) -> String {
 
 /// Runs the catch-up's write pattern against `database` until told to stop:
 /// re-index a batch of bodies in one gated transaction, breathe, repeat.
-fn churn(database: Database, stop: &AtomicBool) {
+async fn churn(database: Store, stop: &AtomicBool) {
     let mut rng = Xorshift64(0xc0ff_ee00_dead_beef);
     while !stop.load(Ordering::Relaxed) {
-        let connection = database.connection().expect("writer checkout");
+        let connection = database.connect().await.expect("writer checkout");
         {
             let _permit = connection.write_gate().acquire(WritePriority::Background).await;
-            connection
+            on_runtime(connection
                 .execute_batch("BEGIN IMMEDIATE")
-                .expect("writer begin");
+                ).expect("writer begin");
             for _ in 0..WRITER_BATCH {
                 let id = rng.below(MESSAGE_COUNT) as i64 + 1;
-                postio_index::index::index_body(&connection, id, Some(&body_text(id as u64)))
-                    .expect("writer index");
+                on_runtime(postio_index::index::index_body(&connection, id, Some(&body_text(id as u64)))
+                    ).expect("writer index");
             }
-            connection.execute_batch("COMMIT").expect("writer commit");
+            on_runtime(connection.execute_batch("COMMIT")).expect("writer commit");
         }
         drop(connection);
         std::thread::sleep(WRITER_BREATHER);
@@ -189,9 +211,9 @@ fn now() -> DateTime<Utc> {
 }
 
 /// One timed search, on a fresh page-cache-warm connection from the pool.
-fn one_search(query: &str) -> Duration {
+async fn one_search(query: &str) -> Duration {
     let corpus = corpus();
-    let connection = corpus.database.connection().expect("checkout");
+    let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
         account: AccountScope::Account(corpus.account_id),
@@ -201,7 +223,7 @@ fn one_search(query: &str) -> Duration {
         order: postio_search::ResultOrder::Relevance,
     };
     let start = Instant::now();
-    let results = search(&connection, &request, now()).expect("search");
+    let results = on_runtime(search(&connection, &request, now())).expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
     elapsed
@@ -213,12 +235,12 @@ fn median_under_load(query: &str) -> Duration {
     let stop = AtomicBool::new(false);
     let mut draws = Vec::with_capacity(DRAWS);
     std::thread::scope(|scope| {
-        let database: &Database = &corpus.database;
-        scope.spawn(|| churn(database.clone(), &stop));
+        let database: &Store = &corpus.database;
+        scope.spawn(|| on_runtime(churn(database.clone(), &stop)));
         // Let the writer actually get going before the first draw.
         std::thread::sleep(Duration::from_millis(50));
         for _ in 0..DRAWS {
-            draws.push(one_search(query));
+            draws.push(on_runtime(one_search(query)));
             std::thread::sleep(Duration::from_millis(20));
         }
         stop.store(true, Ordering::Relaxed);
@@ -236,14 +258,14 @@ fn assert_budget(name: &str, elapsed: Duration) {
 
 fn bench_simple_term_under_load(c: &mut Criterion) {
     c.bench_function("search_simple_term_under_load", |b| {
-        b.iter(|| one_search(UNCOMMON_WORD))
+        b.iter(|| on_runtime(one_search(UNCOMMON_WORD)))
     });
     assert_budget("simple term", median_under_load(UNCOMMON_WORD));
 }
 
 fn bench_common_word_under_load(c: &mut Criterion) {
     c.bench_function("search_common_word_under_load", |b| {
-        b.iter(|| one_search(COMMON_WORD))
+        b.iter(|| on_runtime(one_search(COMMON_WORD)))
     });
     assert_budget("common-word worst case", median_under_load(COMMON_WORD));
 }

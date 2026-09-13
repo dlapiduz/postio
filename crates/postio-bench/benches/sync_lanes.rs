@@ -112,8 +112,29 @@ use futures_util::stream::FuturesUnordered;
 use postio_account::backend::{MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_account::cancel::CancelToken;
 use postio_model::{Account, Mailbox};
-use postio_storage::{Database, Checkout, test_support};
+use postio_storage::{Store, Checkout, test_support};
 use postio_sync::sync_mailbox;
+
+/// The runtime every async call in this bench is driven on.
+///
+/// Criterion's `iter` takes a synchronous closure and calls it on this thread,
+/// where there is no ambient runtime -- so `block_on` here is the plain thing
+/// rather than the trap it is everywhere else in this workspace. Multi-threaded
+/// because a store read may reach `block_in_place`.
+fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::sync::OnceLock;
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("a runtime for the benches")
+        })
+        .block_on(future)
+}
+
 
 /// Total messages synced per run, however many lanes share them.
 ///
@@ -137,7 +158,7 @@ const LANES: &[usize] = &[1, 2, 3];
 /// p90, so the crossover, wherever it is, should be bracketed by these.
 const LATENCIES_MS: &[u64] = &[0, 5, 20, 50, 120];
 
-/// Database connections available. Never the binding constraint here.
+/// Store connections available. Never the binding constraint here.
 const POOL: usize = 8;
 
 /// A server holding `TOTAL_MESSAGES` split evenly across `mailboxes` folders.
@@ -174,24 +195,25 @@ fn path(n: usize) -> String {
 }
 
 /// One measurement: `lanes` concurrent passes over `TOTAL_MESSAGES`.
-fn run(lanes: usize, latency: Duration) -> Duration {
+async fn run(lanes: usize, latency: Duration) -> Duration {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let database = Database::open_with(
-        directory.path().join("postio.db"),
-        &test_support::key(),
-        POOL,
-    )
-    .expect("a database");
+    // `Store::open`, not the old `open_with`: the engine pools connections
+    // itself, so there is no pool size to hand it. `POOL` survives below as
+    // what this bench asks for concurrently, which is what it measures.
+    let database = Store::open(directory.path().join("postio.db"), &test_support::key())
+        .await
+        .expect("a database");
 
     let backend = server(lanes, latency);
 
     // One local mailbox row per folder the server holds.
     let (account, mailboxes): (Account, Vec<Mailbox>) = {
-        let connection = database.connection().expect("a connection");
-        let account = test_support::account(&connection);
-        let mailboxes = (0..lanes)
-            .map(|n| test_support::mailbox(&connection, &account, &path(n)))
-            .collect();
+        let connection = database.connect().await.expect("a connection");
+        let account = test_support::account(&connection).await;
+        let mut mailboxes = Vec::with_capacity(lanes);
+        for n in 0..lanes {
+            mailboxes.push(test_support::mailbox(&connection, &account, &path(n)).await);
+        }
         (account, mailboxes)
     };
     let _ = &account;
@@ -209,9 +231,10 @@ fn run(lanes: usize, latency: Duration) -> Duration {
         // blocks the OS thread when exhausted and the engine is single
         // threaded, so two passes both waiting would deadlock. Same shape
         // here, so the measurement is of the same arrangement.
-        let connections: Vec<Checkout> = (0..lanes)
-            .map(|_| database.connection().expect("a connection"))
-            .collect();
+        let mut connections: Vec<Checkout> = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            connections.push(database.connect().await.expect("a connection"));
+        }
 
         let cancel = CancelToken::new();
         let started = Instant::now();
@@ -240,7 +263,7 @@ fn main() {
 
         let mut timings = Vec::new();
         for &lanes in LANES {
-            let elapsed = run(lanes, latency);
+            let elapsed = on_runtime(run(lanes, latency));
             print!(
                 "{:>14}",
                 format!("{:.0} ms", elapsed.as_secs_f64() * 1000.0)

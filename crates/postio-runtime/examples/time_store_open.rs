@@ -6,7 +6,7 @@
 //! has a 676 MB write-ahead log beside an 868 MB database. This measures
 //! whether those two facts are the same fact.
 //!
-//! It opens the database the way the application does — `Database::open`,
+//! It opens the database the way the application does — `Store::open`,
 //! read-write, the same pragmas — because a read-only open does not recover
 //! a WAL and so cannot answer the question.
 //!
@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use postio_account::secret::{AccountKey, KeyringSecretStore, SecretStore};
-use postio_storage::Database;
+use postio_storage::Store;
 use postio_storage::key::{STORE_KEY_ENTRY, StoreKey};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── take the WAL out of the picture ──────────────────────────────────
     {
-        let database = Database::open(&path, &key.derive(postio_storage::key::Purpose::Database))?;
+        let database = Store::open(&path, &key.derive(postio_storage::key::Purpose::Database))?;
         let connection = database.connection()?;
         connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     }
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn time_open(path: &Path, key: &StoreKey) -> Result<f64, Box<dyn std::error::Error>> {
     let subkey = key.derive(postio_storage::key::Purpose::Database);
     let started = Instant::now();
-    let database = Database::open(path, &subkey)?;
+    let database = Store::open(path, &subkey)?;
     // One real read, because an open that has not touched a page has not
     // paid for the WAL index the way the application's first query does.
     let connection = database.connection()?;
