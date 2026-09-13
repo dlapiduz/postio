@@ -94,7 +94,7 @@ async fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone
 
     let plan = plan(&connection, SEARCH).await;
     assert!(
-        !plan.contains("TEMP B-TREE"),
+        !postio_storage::test_support::sorts(&plan),
         "contact autocomplete sorts the whole address book on every \
          keystroke. `LIMIT 20` cannot help: the sort has to see every row \
          before it knows which twenty come first.\n  plan: {plan}\n  index: {}",

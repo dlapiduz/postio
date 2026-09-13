@@ -369,13 +369,18 @@ fn suggestion_for(
 /// figure would be alarming about something that needs no action and will be
 /// zero on its own. What the surface needs is the boolean.
 ///
-/// Which is also the only version that fits the `<100 ms` budget.
-/// `idx_messages_body_state` is a **partial** index over exactly
-/// `body_state IN ('not_fetched', 'headers_only')`, so this is a seek into an
-/// index that holds only the outstanding messages: it stops at the first row
-/// when the corpus is incomplete, and when it is complete the index is empty
-/// for this scope and there is nothing to scan. Both answers cost the same
-/// nothing, which is what lets it run per query rather than per session.
+/// Which is also the only version that fits the `<100 ms` budget. It is a
+/// seek into `idx_messages_list` on `mailbox_id` with a `LIMIT 1`, so it stops
+/// at the first outstanding row rather than counting them.
+///
+/// This used to lean on `idx_messages_body_state`, a partial index over
+/// exactly `body_state IN ('not_fetched', 'headers_only')` — which held only
+/// the outstanding messages, so the complete case had an empty index and
+/// nothing at all to look at. This engine will not read through a partial
+/// index (`docs/notes/2026-09-12-a-partial-index-the-planner-will-not-read.md`),
+/// so that index is gone and the complete case now walks the mailbox's
+/// newest rows until it runs out. The `LIMIT 1` bounds the incomplete case,
+/// which is the common one; the complete case is the one that got worse.
 ///
 /// Scoped, deliberately: the claim on screen is about the search that was
 /// just run, so "complete" has to mean complete *here* — a fully backfilled

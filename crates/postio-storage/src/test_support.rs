@@ -550,3 +550,16 @@ fn placeholders(sql: &str) -> usize {
     }
     highest
 }
+
+/// Whether a query plan says the engine had to sort.
+///
+/// The spelling is the engine's and it changed: SQLite writes
+/// `USE TEMP B-TREE FOR ORDER BY`, this one writes `USE SORTER FOR ORDER BY`.
+/// Four suites were asserting `!plan.contains("TEMP B-TREE")`, which on this
+/// engine is an assertion that cannot fail — a sort went unnoticed in the
+/// thread list for exactly that reason. Both spellings live here so the next
+/// one is a single edit.
+pub fn sorts(plan: &str) -> bool {
+    let plan = plan.to_ascii_uppercase();
+    plan.contains("TEMP B-TREE") || plan.contains("USE SORTER")
+}
