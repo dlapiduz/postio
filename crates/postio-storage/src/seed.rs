@@ -388,8 +388,12 @@ pub async fn thread_seeded_messages(
     assert!(per_thread > 0, "a conversation holds at least one message");
     let connection = database.connect().await.expect("a checked-out connection");
 
+    // `all_unbounded`: a seeder threading the whole corpus is the shape that
+    // exception exists for, and a limit here would leave a fixture partly
+    // threaded -- which is worse than slow, because every assertion above it
+    // would still pass.
     let rows: Vec<(i64, Option<String>)> = {
-        sql::all(
+        sql::all_unbounded(
             &connection,
             "SELECT id, subject FROM messages WHERE account_id = ?1
               ORDER BY received_at DESC, id DESC",

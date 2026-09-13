@@ -1349,8 +1349,14 @@ impl<'a> MessageRepository<'a> {
     /// Every UID known locally for a mailbox under `uid_validity`, ascending.
     ///
     /// What a resync diffs the server's UID list against.
+    ///
+    /// `all_unbounded`, and it is one of the few that should be: a resync
+    /// compares the *whole* local set against the server's, so a limit here
+    /// would be a resync that silently stopped diffing partway. A UID is four
+    /// bytes; the set is a `Vec<u32>` the length of the mailbox, not its
+    /// contents.
     pub async fn uids_in(&self, mailbox_id: MailboxId, generation: Generation) -> Result<Vec<Uid>> {
-        sql::all(
+        sql::all_unbounded(
             self.connection,
             "SELECT uid FROM messages
               WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IS NOT NULL
