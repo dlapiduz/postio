@@ -162,7 +162,10 @@ pub fn slash_opens_the_box_and_escape_puts_it_away() {
     window.present();
     settle_until(|| false_once());
 
-    window.handle_key(gdk::Key::from_name("slash").unwrap(), gdk::ModifierType::empty());
+    window.handle_key(
+        gdk::Key::from_name("slash").unwrap(),
+        gdk::ModifierType::empty(),
+    );
     settle_until(|| window.finder().is_open());
     assert!(
         window.finder().is_open(),
@@ -190,4 +193,69 @@ fn false_once() -> bool {
         seen.set(n);
         n > 3
     })
+}
+
+/// `Escape` out of the box puts the keyboard back on the row it left.
+///
+/// The maintainer's own words: Escape "should not only close the search but
+/// focus back to the message list wherever it was before starting
+/// searching". Closing the box already restored the *pane* -- `close_finder`
+/// remembers which one was focused -- but its own comment concedes that
+/// memory "has no shape to record which row on it had the keyboard", so the
+/// keyboard came back to the `GtkListView` itself and the next key had no row
+/// to act on. Identical in shape to the launch bug above, and fixed with the
+/// same call.
+///
+/// The cursor is put on a middle row first, so a fix that merely went back to
+/// the top would still fail this.
+pub fn escape_out_of_the_box_returns_the_keyboard_to_the_row_it_left() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let display = gdk::Display::default().unwrap();
+    fonts::install().expect("the embedded fonts should install");
+    style::install(&display);
+
+    let window = Window::default();
+    window.present();
+    window.list().model().set_source(Rc::new(Pages));
+    window
+        .list()
+        .model()
+        .deliver(0, (0..ROWS).map(row).collect());
+    settle_until(|| cursor_message(&window).is_some());
+
+    // Down to the third row, by the key a person would use.
+    for _ in 0..2 {
+        window.handle_key(
+            gdk::Key::from_name("j").unwrap(),
+            gdk::ModifierType::empty(),
+        );
+    }
+    settle_until(|| cursor_message(&window) == Some(MessageId::new(3)));
+    let left_from = cursor_message(&window).expect("the cursor is on a row");
+    assert_eq!(left_from, MessageId::new(3), "j moved the cursor twice");
+
+    window.handle_key(
+        gdk::Key::from_name("slash").unwrap(),
+        gdk::ModifierType::empty(),
+    );
+    settle_until(|| window.finder().is_open());
+    assert!(window.finder().is_open(), "`/` opens the box");
+
+    window.handle_key(
+        gdk::Key::from_name("Escape").unwrap(),
+        gdk::ModifierType::empty(),
+    );
+    settle_until(|| cursor_message(&window) == Some(left_from));
+
+    assert!(!window.finder().is_open(), "`Escape` closes the box");
+    assert_eq!(
+        cursor_message(&window),
+        Some(left_from),
+        "the keyboard comes back to the row it left, not to the pane that \
+         holds it -- focus was on {:?}",
+        GtkWindowExt::focus(&window).map(|w| w.widget_name())
+    );
 }
