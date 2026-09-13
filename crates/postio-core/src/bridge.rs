@@ -750,8 +750,8 @@ impl Bridge {
     /// timeout. Detached background work does not extend it: a wedged socket
     /// must not keep the window on screen.
     ///
-    /// Do not call this from inside the runtime; tokio forbids dropping a
-    /// runtime from an async context.
+    /// Safe to call from inside another runtime — see [`Bridge::stop`], which
+    /// is where that is arranged.
     pub fn shutdown(mut self) {
         self.stop();
     }
@@ -762,8 +762,9 @@ impl Bridge {
 
         if let (Some(runtime), Some(pump)) = (self.runtime.as_ref(), self.pump.take()) {
             let timeout = self.shutdown_timeout;
-            let drained =
-                runtime.block_on(async move { tokio::time::timeout(timeout, pump).await.is_ok() });
+            let drained = blocking(|| {
+                runtime.block_on(async move { tokio::time::timeout(timeout, pump).await.is_ok() })
+            });
             // A miss here is not proof of a hang: dropping the timed-out
             // await does not abort the pump task (a dropped JoinHandle
             // detaches; it does not cancel -- see the sync engine's own
@@ -783,9 +784,35 @@ impl Bridge {
         if let Some(runtime) = self.runtime.take() {
             // Detached tasks get dropped rather than waited for; the timeout
             // only covers threads that are mid-blocking-call.
-            runtime.shutdown_timeout(self.shutdown_timeout);
+            let timeout = self.shutdown_timeout;
+            blocking(move || runtime.shutdown_timeout(timeout));
         }
     }
+}
+
+/// Run `work`, which blocks this thread, from wherever the caller happens to
+/// be.
+///
+/// # Why this is not just calling it
+///
+/// `Runtime::block_on` and dropping a runtime both panic outright when the
+/// calling thread is already driving a runtime — *"Cannot start a runtime from
+/// within a runtime"*. In production the caller is the UI thread at quit,
+/// which is not a runtime thread, and calling them directly was right.
+///
+/// It stopped being right when the storage layer went async: every test that
+/// stands up a window now drives its body with `block_on`, so `shutdown()` is
+/// reached from inside a runtime and a correct shutdown became a panic. That
+/// is the tests' shape rather than the application's, but a shutdown that can
+/// only be called from one kind of thread is a trap either way.
+///
+/// `block_in_place` is the answer and it needs a multi-threaded runtime, which
+/// is what both the bridge's own runtime and every caller's are.
+fn blocking<T>(work: impl FnOnce() -> T) -> T {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return tokio::task::block_in_place(work);
+    }
+    work()
 }
 
 impl Drop for Bridge {
