@@ -324,18 +324,7 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
 
     for order in [ThreadOrder::Oldest, ThreadOrder::Newest] {
         let sql = threads.explain_messages(order);
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .await
-            .expect("prepare");
-        let arguments = vec![1i64; statement.parameter_count()];
-        let plan = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
-                postio_storage::sql::RowExt::col::<String>(row, 3)
-            })
-            .expect("plan")
-            .collect::<Result<Vec<String>, _>>()
-            .expect("collect")
-            .join("\n");
+        let plan = test_support::plan(&connection, &sql).await;
 
         assert!(
             !plan.contains("TEMP B-TREE"),
@@ -517,18 +506,7 @@ async fn the_thread_list_plan_never_sorts() {
                 });
             }
             let sql = threads.explain(&query);
-            let mut statement = connection
-                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-                .await
-                .expect("prepare");
-            let arguments = vec![1i64; statement.parameter_count()];
-            let plan = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
-                    postio_storage::sql::RowExt::col::<String>(row, 3)
-                })
-                .expect("plan")
-                .collect::<Result<Vec<String>, _>>()
-                .expect("collect")
-                .join("\n");
+            let plan = test_support::plan(&connection, &sql).await;
 
             assert!(
                 !plan.contains("TEMP B-TREE"),
@@ -794,7 +772,7 @@ async fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
     // A loop rather than `map().collect()`: the body awaits, and a
     // closure cannot.
     let mut threads: Vec<Thread> = Vec::new();
-    for _ in (0..5) {
+    for _ in 0..5 {
         threads.push(a_thread(&connection, account.id).await);
     }
     for (index, thread) in threads.iter().enumerate() {
@@ -884,7 +862,7 @@ async fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
         .mailbox(postio_model::mailbox::MailboxRole::Inbox)
         .expect("an inbox")
         .id;
-    postio_storage::seed::thread_seeded_messages(&database, report.account.id, 4);
+    postio_storage::seed::thread_seeded_messages(&database, report.account.id, 4).await;
 
     let connection = database.connect().await.expect("checkout");
     let threads = ThreadRepository::new(&connection);
@@ -900,14 +878,14 @@ async fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
         (counts, page)
     };
 
-    let (first, first_page) = read(&query);
+    let (first, first_page) = read(&query).await;
     assert_eq!(first_page.len(), 50, "a page is a window, never the folder");
 
     // Ten pages in, which for messages is the same cost as the first.
     let mut cursor = first_page.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
-        let (counts, page) = read(&query.clone().after(cursor));
+        let (counts, page) = read(&query.clone().after(cursor)).await;
         assert_eq!(page.len(), 50);
         cursor = page.last().expect("a last row").cursor();
         deep = counts;
@@ -979,7 +957,7 @@ async fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
     // A loop rather than `map().collect()`: the body awaits, and a
     // closure cannot.
     let mut threads: Vec<Thread> = Vec::new();
-    for _ in (0..6) {
+    for _ in 0..6 {
         threads.push(a_thread(&connection, account.id).await);
     }
     for (index, thread) in threads.iter().enumerate() {

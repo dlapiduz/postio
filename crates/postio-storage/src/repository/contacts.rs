@@ -116,13 +116,7 @@ impl<'a> ContactRepository<'a> {
         )).await?;
         let mut arguments = account_argument(account_id);
         arguments.push(turso::Value::Text(address.to_lowercase()));
-        let mut rows = statement.query(arguments).await?;
-        let found = match rows.next().await? {
-            Some(row) => Some(read_contact(&row)?),
-            None => None,
-        };
-        drop(rows);
-        Ok(found)
+        crate::sql::first_of(&mut statement, arguments, |row| read_contact(row)).await
     }
 
     /// Every contact, most familiar first.
@@ -186,13 +180,7 @@ impl<'a> ContactRepository<'a> {
         let mut arguments = account_argument(account_id);
         arguments.push(turso::Value::Text(prefix));
         arguments.push(turso::Value::Integer(i64::from(limit)));
-        let mut rows = statement.query(arguments).await?;
-        let mut contacts = Vec::new();
-        while let Some(row) = rows.next().await? {
-            contacts.push(read_contact(&row)?);
-        }
-        drop(rows);
-        Ok(contacts)
+        crate::sql::mapped(&mut statement, arguments, |row| read_contact(row)).await
     }
 
     /// Creates a contact directly, with no sighting required.

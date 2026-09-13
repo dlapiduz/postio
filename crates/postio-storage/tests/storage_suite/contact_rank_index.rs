@@ -37,6 +37,7 @@
 //! scanning, so neither the shape nor the results alone can fail usefully.
 
 use postio_storage::Connection;
+use postio_storage::bind;
 
 
 /// Enough contacts that a sort over all of them is a real cost, and enough
@@ -49,27 +50,15 @@ async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     (store, connection)
 }
 
-fn definition(connection: &Connection, index: &str) -> String {
-    connection
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
-            [index],
-            |row| postio_storage::sql::RowExt::col::<String>(row, 0),
-        )
+async fn definition(connection: &Connection, index: &str) -> String {
+    postio_storage::sql::one(&*connection, 
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",bind![index],
+            |row| postio_storage::sql::RowExt::col::<String>(row, 0)).await
         .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
 
 async fn plan(connection: &Connection, query: &str) -> String {
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
-        .await
-        .expect("a query plan");
-    let rows = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col::<String>(row, 3))
-        .await
-        .expect("plan rows")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("plan rows");
-    rows.join("\n")
+    postio_storage::test_support::plan(connection, query).await
 }
 
 /// An address book the size of a real one.
@@ -109,7 +98,7 @@ async fn autocomplete_is_answered_from_the_index_rather_than_by_sorting_everyone
         "contact autocomplete sorts the whole address book on every \
          keystroke. `LIMIT 20` cannot help: the sort has to see every row \
          before it knows which twenty come first.\n  plan: {plan}\n  index: {}",
-        definition(&connection, "idx_contacts_rank")
+        definition(&connection, "idx_contacts_rank").await
     );
     assert!(
         plan.contains("idx_contacts_rank"),
@@ -125,7 +114,7 @@ async fn the_index_leads_with_the_band_that_the_ordering_leads_with() {
     // materialises differently, a table small enough to scan -- and because
     // this is the sentence that says *why* the index looks unusual.
     let (_store, connection) = migrated().await;
-    let sql = definition(&connection, "idx_contacts_rank");
+    let sql = definition(&connection, "idx_contacts_rank").await;
     assert!(
         sql.contains("source") && sql.contains("last_seen_at") && sql.contains("times_seen"),
         "the index has to name every term of the ordering it serves: {sql}"
@@ -155,34 +144,41 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     let mut statement = connection.prepare(SEARCH).await.expect("prepare");
     let ids: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col(row, 0))
         .await
-        .expect("query")
-        .collect::<Result<_, _>>()
-        .expect("rows");
+        .expect("query");
 
     assert_eq!(ids.len(), 20);
-    let source_of = |id: i64| -> String {
-        connection
-            .query_row("SELECT source FROM contacts WHERE id = ?1", [id], |row| {
-                postio_storage::sql::RowExt::col(row, 0)
-            })
-            .expect("a contact")
+    let source_of = async |id: i64| -> String {
+        postio_storage::sql::one(
+            &*connection,
+            "SELECT source FROM contacts WHERE id = ?1",
+            bind![id],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a contact")
     };
-    let last_seen_of = |id: i64| -> i64 {
-        connection
-            .query_row(
-                "SELECT last_seen_at FROM contacts WHERE id = ?1",
-                [id],
-                |row| postio_storage::sql::RowExt::col(row, 0),
-            )
-            .expect("a contact")
+    let last_seen_of = async |id: i64| -> i64 {
+        postio_storage::sql::one(
+            &*connection,
+            "SELECT last_seen_at FROM contacts WHERE id = ?1",
+            bind![id],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a contact")
     };
 
+    let mut sources = Vec::new();
+    let mut times: Vec<i64> = Vec::new();
+    for id in &ids {
+        sources.push(source_of(*id).await);
+        times.push(last_seen_of(*id).await);
+    }
     assert!(
-        ids.iter().all(|id| source_of(*id) == "user"),
+        sources.iter().all(|source| source == "user"),
         "every one of the first twenty should be a contact the user created: \
          the harvested band sorts after it however recent it is"
     );
-    let times: Vec<i64> = ids.iter().map(|id| last_seen_of(*id)).collect();
     let mut descending = times.clone();
     descending.sort_by(|a, b| b.cmp(a));
     assert_eq!(

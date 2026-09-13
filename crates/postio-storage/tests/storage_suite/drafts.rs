@@ -14,6 +14,7 @@ use postio_storage::repository::{
     CancelSendOutcome, DraftRepository, MessageRepository, OperationQueueRepository,
 };
 use postio_storage::test_support;
+use postio_storage::bind;
 
 fn at(minutes: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap() + chrono::Duration::minutes(minutes)
@@ -82,12 +83,9 @@ async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
     draft.body.html = Some("<p>Half a sentence</p>".to_owned());
     let id = drafts.save(&mut draft).await.expect("save");
 
-    let (text, html): (Option<String>, Option<String>) = connection
-        .query_row(
-            "SELECT body_text, body_html FROM drafts WHERE id = ?1",
-            [id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
-        )
+    let (text, html): (Option<String>, Option<String>) = postio_storage::sql::one(&*connection, 
+            "SELECT body_text, body_html FROM drafts WHERE id = ?1",bind![id.get()],
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
         .expect("read the raw row");
 
     assert_eq!(text.as_deref(), Some("Half a sentence"));
@@ -370,12 +368,9 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
     let id = drafts.save(&mut draft).await.expect("save");
     drafts.set_state(id, DraftState::Failed).await.expect("fail it");
 
-    let (kind, state): (String, String) = connection
-        .query_row(
-            "SELECT kind, state FROM drafts WHERE id = ?1",
-            [id.get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
-        )
+    let (kind, state): (String, String) = postio_storage::sql::one(&*connection, 
+            "SELECT kind, state FROM drafts WHERE id = ?1",bind![id.get()],
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
         .expect("read the raw row");
 
     assert_eq!(kind, DraftKind::Forward.as_str());
@@ -1779,16 +1774,13 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
 // ── The mirror row carries the send state (spec 003, T049) ──────────────────
 
 /// What `messages.send_state` says for the row standing for `draft`.
-fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
-    connection
-        .query_row(
+async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
+    postio_storage::sql::one(&*connection, 
             "SELECT messages.send_state
                FROM messages
                JOIN drafts ON drafts.message_id = messages.id
-              WHERE drafts.id = ?1",
-            [draft.get()],
-            |row| row.col::<Option<String>>(0),
-        )
+              WHERE drafts.id = ?1",bind![draft.get()],
+            |row| postio_storage::sql::RowExt::col::<Option<String>>(row, 0)).await
         .expect("the draft has a mirror row")
 }
 
@@ -1808,14 +1800,14 @@ async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
     let mut draft = a_draft(account.id);
     drafts.save(&mut draft).await.expect("save");
     assert_eq!(
-        mirrored_state(&connection, draft.id).as_deref(),
+        mirrored_state(&connection, draft.id).await.as_deref(),
         Some("editing"),
         "a draft being written is `editing` on both rows"
     );
 
     drafts.queue_send(&mut draft, at(0)).await.expect("send it");
     assert_eq!(
-        mirrored_state(&connection, draft.id).as_deref(),
+        mirrored_state(&connection, draft.id).await.as_deref(),
         Some("queued"),
         "pressing Send has to move the row the list draws, not only the draft"
     );
@@ -1830,7 +1822,7 @@ async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
             .await
             .expect("the drainer moves it");
         assert_eq!(
-            mirrored_state(&connection, draft.id).as_deref(),
+            mirrored_state(&connection, draft.id).await.as_deref(),
             Some(state.as_str()),
             "the drainer moved the draft to {state:?} and the mirror row did not follow"
         );
@@ -1884,12 +1876,9 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
     let mut draft = a_draft(account.id);
     drafts.save(&mut draft).await.expect("save");
     // The mirror row #166 wrote, found the way the composer finds it.
-    let mirror: MessageId = connection
-        .query_row(
-            "SELECT message_id FROM drafts WHERE id = ?1",
-            [draft.id.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
-        )
+    let mirror: MessageId = postio_storage::sql::one(&*connection, 
+            "SELECT message_id FROM drafts WHERE id = ?1",bind![draft.id.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
         .map(MessageId::new)
         .expect("the draft has a mirror row");
 
@@ -1916,8 +1905,12 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
     ] {
         drafts.set_state(draft.id, state).await.expect("move it");
 
-        let in_drafts = listed(ListScope::Mailbox(drafts_folder.id)).contains(&mirror);
-        let in_outbox = listed(ListScope::Outbox(account.id)).contains(&mirror);
+        let in_drafts = listed(ListScope::Mailbox(drafts_folder.id))
+            .await
+            .contains(&mirror);
+        let in_outbox = listed(ListScope::Outbox(account.id))
+            .await
+            .contains(&mirror);
 
         assert!(
             in_drafts ^ in_outbox,
@@ -1964,23 +1957,24 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
     test_support::mailbox(&connection, &account, "Drafts").await;
     let drafts = DraftRepository::new(&connection);
 
-    let due_at = |draft: DraftId| -> Option<i64> {
-        connection
-            .query_row(
-                "SELECT messages.send_at FROM messages
-                   JOIN drafts ON drafts.message_id = messages.id
-                  WHERE drafts.id = ?1",
-                [draft.get()],
-                |row| postio_storage::sql::RowExt::col(row, 0),
-            )
-            .expect("the mirror row")
+    let due_at = async |draft: DraftId| -> Option<i64> {
+        postio_storage::sql::one(
+            &*connection,
+            "SELECT messages.send_at FROM messages
+               JOIN drafts ON drafts.message_id = messages.id
+              WHERE drafts.id = ?1",
+            bind![draft.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("the mirror row")
     };
 
     let mut now = a_draft(account.id);
     drafts.save(&mut now).await.expect("save");
     drafts.queue_send(&mut now, at(0)).await.expect("send now");
     assert_eq!(
-        due_at(now.id),
+        due_at(now.id).await,
         None,
         "an immediate send has no time anybody chose"
     );
@@ -1992,7 +1986,7 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
         .await
         .expect("send later");
     assert!(
-        due_at(later.id).is_some(),
+        due_at(later.id).await.is_some(),
         "a scheduled send has to carry the time, or the row cannot say it"
     );
 
@@ -2002,7 +1996,7 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
         .await
         .expect("the drainer takes it");
     assert_eq!(
-        due_at(later.id),
+        due_at(later.id).await,
         None,
         "a send in flight has no future time to show"
     );

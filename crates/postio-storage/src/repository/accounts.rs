@@ -753,7 +753,7 @@ fn read_identity(row: &Row) -> Result<Identity> {
 }
 
 fn parse_security(value: &str, column: &'static str) -> Result<TransportSecurity> {
-    TransportSecurity::from_name(value).ok_or_else(|| (unknown_enum(column, value)))
+    TransportSecurity::from_name(value).ok_or_else(|| unknown_enum(column, value))
 }
 
 fn optional_signature_id(id: Option<SignatureId>) -> Option<i64> {

@@ -11,7 +11,6 @@ use postio_model::ids::{AccountId, CrossAccountMoveId, MailboxId, MessageId, Rem
 
 
 use crate::sql::{self, RowExt as _, bind};
-use turso::Row;
 use crate::store::Connection;
 use crate::error::{Error, Result};
 

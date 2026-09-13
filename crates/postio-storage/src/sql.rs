@@ -323,6 +323,32 @@ where
     Ok(out)
 }
 
+/// The first row of an already-prepared statement, mapped, or `None`.
+///
+/// [`first`] is the one to reach for; this is for a statement the caller
+/// prepared separately — a `prepare_cached` on a hot path, or SQL built at
+/// runtime. Counted like the rest of the seam, which is the other reason to
+/// use it: a raw `statement.query(...).next()` reads a row that
+/// `test_support::counting` cannot see, and a cost assertion that cannot see
+/// a statement passes by not looking.
+pub async fn first_of<T, F>(
+    statement: &mut turso::Statement,
+    params: impl IntoParams,
+    map: F,
+) -> Result<Option<T>>
+where
+    F: FnOnce(&Row) -> Result<T>,
+{
+    let mut rows = statement.query(params).await?;
+    let mapped = match rows.next().await? {
+        Some(row) => Some(map(&row)?),
+        None => None,
+    };
+    drop(rows);
+    count(usize::from(mapped.is_some()));
+    Ok(mapped)
+}
+
 /// The first row, mapped, where there must be one.
 ///
 /// What `query_row` meant: an aggregate, or a lookup by a key the caller has

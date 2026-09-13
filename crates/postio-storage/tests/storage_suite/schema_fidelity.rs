@@ -257,12 +257,9 @@ async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
         )
         .await
         .expect("insert address");
-    connection
-        .query_row(
-            "SELECT id FROM addresses WHERE address_normalized = ?1",
-            [address.normalized()],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+    postio_storage::sql::one(&*connection, 
+            "SELECT id FROM addresses WHERE address_normalized = ?1",bind![address.normalized()],
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("the address row")
 }
 
@@ -310,12 +307,10 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
     let message_id = insert_message(&connection, &message).await;
     insert_recipients(&connection, message_id, &message).await;
 
-    let stored = connection
-        .query_row(
+    let stored = postio_storage::sql::one(&*connection, 
             "SELECT subject, date, received_at, size, preview, flags, body_state,
                     remote_id, raw_blob_id
-             FROM messages WHERE id = ?1",
-            [message_id],
+             FROM messages WHERE id = ?1",bind![message_id],
             |row| {
                 Ok(StoredMessage {
                     subject: postio_storage::sql::RowExt::col(row, 0)?,
@@ -328,8 +323,7 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
                     remote_id: postio_storage::sql::RowExt::col(row, 7)?,
                     raw_blob_id: postio_storage::sql::RowExt::col(row, 8)?,
                 })
-            },
-        )
+            }).await
         .expect("read message back");
 
     assert_eq!(stored.subject, message.subject);
@@ -477,10 +471,8 @@ async fn attachment_metadata_round_trips_without_the_bytes() {
         i64,
         Option<String>,
         Option<String>,
-    ) = connection
-        .query_row(
-            "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",
-            [],
+    ) = postio_storage::sql::one(&*connection, 
+            "SELECT filename, mime_type, size, part_id, blob_id FROM attachments",(),
             |row| {
                 Ok((
                     postio_storage::sql::RowExt::col(row, 0)?,
@@ -489,8 +481,7 @@ async fn attachment_metadata_round_trips_without_the_bytes() {
                     postio_storage::sql::RowExt::col(row, 3)?,
                     postio_storage::sql::RowExt::col(row, 4)?,
                 ))
-            },
-        )
+            }).await
         .expect("read attachment");
 
     assert_eq!(filename, attachment.filename);
@@ -506,7 +497,7 @@ async fn an_attachment_belongs_to_a_message_or_a_draft_but_never_both() {
     let error = connection
         .execute(
             "INSERT INTO attachments (mime_type, size) VALUES ('text/plain', 1)",
-            [],
+            (),
         )
         .await
         .expect_err("an attachment must have an owner");
@@ -584,7 +575,7 @@ async fn a_recipient_belongs_to_a_message_or_a_draft_but_never_both() {
         .execute(
             "INSERT INTO recipients (kind, position, address_id)
              VALUES ('to', 0, 1)",
-            [],
+            (),
         )
         .await
         .expect_err("a recipient must have an owner");
@@ -738,12 +729,9 @@ async fn a_contact_accumulates_sightings() {
         .await
         .expect("insert contact");
 
-    let (normalized, times_seen): (String, i64) = connection
-        .query_row(
-            "SELECT address_normalized, times_seen FROM contacts",
-            [],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
-        )
+    let (normalized, times_seen): (String, i64) = postio_storage::sql::one(&*connection, 
+            "SELECT address_normalized, times_seen FROM contacts",(),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))).await
         .expect("read contact");
     assert_eq!(normalized, "alice@example.com");
     assert_eq!(times_seen, 1);

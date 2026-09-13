@@ -45,13 +45,10 @@ async fn fill(connection: &Connection, mailbox: MailboxId, count: usize) -> Vec<
     collected
 }
 
-fn mailbox_of(connection: &Connection, message: MessageId) -> MailboxId {
-    connection
-        .query_row(
-            "SELECT mailbox_id FROM messages WHERE id = ?1",
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(MailboxId::new),
-        )
+async fn mailbox_of(connection: &Connection, message: MessageId) -> MailboxId {
+    postio_storage::sql::one(&*connection, 
+            "SELECT mailbox_id FROM messages WHERE id = ?1",bind![message.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(MailboxId::new)).await
         .expect("the message is still there")
 }
 
@@ -94,7 +91,7 @@ async fn moving_a_whole_mailbox_is_one_statement_over_the_index() {
 
     assert_eq!(moved, 40);
     for message in &messages {
-        assert_eq!(mailbox_of(&connection, *message), world.archive);
+        assert_eq!(mailbox_of(&connection, *message).await, world.archive);
     }
 }
 
@@ -122,7 +119,7 @@ async fn the_rows_taken_back_out_of_the_selection_stay_put() {
     assert_eq!(moved, 8);
     for message in &kept {
         assert_eq!(
-            mailbox_of(&connection, *message),
+            mailbox_of(&connection, *message).await,
             world.inbox,
             "a deselected row is not part of the selection"
         );
@@ -198,7 +195,7 @@ async fn deselecting_a_thread_row_excepts_the_whole_conversation() {
     );
     for message in &kept {
         assert_eq!(
-            mailbox_of(&connection, *message),
+            mailbox_of(&connection, *message).await,
             world.inbox,
             "a message of the deselected conversation was archived anyway: \
              the exception named the row, and the row is the conversation"
@@ -206,7 +203,7 @@ async fn deselecting_a_thread_row_excepts_the_whole_conversation() {
     }
     for message in &swept {
         assert_eq!(
-            mailbox_of(&connection, *message),
+            mailbox_of(&connection, *message).await,
             world.archive,
             "excepting one conversation must not spare another"
         );
@@ -239,7 +236,7 @@ async fn an_unthreaded_message_is_still_excepted_by_its_own_id() {
         moved, 4,
         "the other four are unthreaded and still in the set"
     );
-    assert_eq!(mailbox_of(&connection, messages[2]), world.inbox);
+    assert_eq!(mailbox_of(&connection, messages[2]).await, world.inbox);
 }
 
 #[tokio::test]
@@ -261,7 +258,7 @@ async fn a_row_hidden_pending_a_remote_delete_is_not_part_of_everything() {
         .expect("a bulk move");
 
     assert_eq!(moved, 4);
-    assert_eq!(mailbox_of(&connection, messages[0]), world.inbox);
+    assert_eq!(mailbox_of(&connection, messages[0]).await, world.inbox);
 }
 
 #[tokio::test]
@@ -275,7 +272,7 @@ async fn a_bulk_move_clears_the_server_identity_the_way_a_single_one_does() {
     connection
         .execute(
             "UPDATE messages SET uid = id, uid_validity = 7, mod_seq = 9",
-            [],
+            (),
         )
         .await
         .expect("give them a server identity");
@@ -285,12 +282,9 @@ async fn a_bulk_move_clears_the_server_identity_the_way_a_single_one_does() {
         .await
         .expect("a bulk move");
 
-    let (uid, validity, mod_seq): (Option<i64>, Option<i64>, Option<i64>) = connection
-        .query_row(
-            "SELECT uid, uid_validity, mod_seq FROM messages WHERE id = ?1",
-            [messages[0].get()],
-            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?)),
-        )
+    let (uid, validity, mod_seq): (Option<i64>, Option<i64>, Option<i64>) = postio_storage::sql::one(&*connection, 
+            "SELECT uid, uid_validity, mod_seq FROM messages WHERE id = ?1",bind![messages[0].get()],
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))).await
         .expect("a read");
     assert_eq!((uid, validity, mod_seq), (None, None, None));
 }
@@ -523,11 +517,11 @@ async fn a_queued_run_names_the_messages_a_bulk_action_moved_and_nothing_else() 
 
     assert_eq!(returned, 5);
     for message in &messages {
-        assert_eq!(mailbox_of(&connection, *message), world.inbox);
+        assert_eq!(mailbox_of(&connection, *message).await, world.inbox);
     }
     for message in &untouched {
         assert_eq!(
-            mailbox_of(&connection, *message),
+            mailbox_of(&connection, *message).await,
             world.archive,
             "undo puts back what the action moved, not everything in the folder \
              it moved things into"
@@ -566,23 +560,17 @@ async fn an_empty_run_names_nothing() {
 // than a scan.
 
 /// The `flags` text a row is holding, straight out of the column.
-fn flag_text(connection: &Connection, message: MessageId) -> String {
-    connection
-        .query_row(
-            "SELECT flags FROM messages WHERE id = ?1",
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col(row, 0),
-        )
+async fn flag_text(connection: &Connection, message: MessageId) -> String {
+    postio_storage::sql::one(&*connection, 
+            "SELECT flags FROM messages WHERE id = ?1",bind![message.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0)).await
         .expect("the message is still there")
 }
 
-fn boolean(connection: &Connection, message: MessageId, column: &str) -> bool {
-    connection
-        .query_row(
-            &format!("SELECT {column} FROM messages WHERE id = ?1"),
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(|value| value != 0),
-        )
+async fn boolean(connection: &Connection, message: MessageId, column: &str) -> bool {
+    postio_storage::sql::one(&*connection, 
+            &format!("SELECT {column} FROM messages WHERE id = ?1"),bind![message.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(|value| value != 0)).await
         .expect("the message is still there")
 }
 
@@ -624,12 +612,12 @@ async fn marking_a_whole_mailbox_read_is_one_statement_over_the_index() {
 
     assert_eq!(changed, 20);
     for message in &messages {
-        assert!(boolean(&connection, *message, "seen"));
-        assert_eq!(flag_text(&connection, *message), "\\Seen");
+        assert!(boolean(&connection, *message, "seen").await);
+        assert_eq!(flag_text(&connection, *message).await, "\\Seen");
     }
     for message in &elsewhere {
         assert!(
-            !boolean(&connection, *message, "seen"),
+            !boolean(&connection, *message, "seen").await,
             "the predicate is the mailbox, not the account"
         );
     }
@@ -655,9 +643,9 @@ async fn a_bulk_flag_write_keeps_the_text_and_its_booleans_agreeing() {
         .await
         .expect("a bulk flag write");
 
-    assert!(boolean(&connection, message, "flagged"));
+    assert!(boolean(&connection, message, "flagged").await);
     assert_eq!(
-        flag_text(&connection, message),
+        flag_text(&connection, message).await,
         "\\Answered \\Flagged $Work",
         "canonical spellings in FlagSet order, which is what the schema promises"
     );
@@ -680,13 +668,13 @@ async fn clearing_a_flag_in_bulk_leaves_every_other_flag_alone() {
         .await
         .expect("a bulk flag write");
 
-    assert!(!boolean(&connection, message, "seen"));
+    assert!(!boolean(&connection, message, "seen").await);
     assert_eq!(
-        flag_text(&connection, message),
+        flag_text(&connection, message).await,
         "\\Answered \\Flagged $Work"
     );
     assert!(
-        boolean(&connection, message, "answered"),
+        boolean(&connection, message, "answered").await,
         "marking unread is not a reset"
     );
 }
@@ -704,7 +692,7 @@ async fn a_bulk_flag_write_marks_its_rows_as_ahead_of_the_server() {
         .expect("a bulk flag write");
 
     assert!(
-        boolean(&connection, message, "flags_dirty"),
+        boolean(&connection, message, "flags_dirty").await,
         "a local flag change has to be pushed, exactly as `set_flags` records"
     );
 }
@@ -764,7 +752,7 @@ async fn a_flag_set_still_honours_the_rows_taken_back_out_of_the_selection() {
             .expect("a bulk flag write"),
         4
     );
-    assert!(!boolean(&connection, messages[1], "seen"));
+    assert!(!boolean(&connection, messages[1], "seen").await);
 }
 
 #[tokio::test]
@@ -818,11 +806,11 @@ async fn a_flag_set_composes_with_the_queued_run_undo_names() {
 
     assert_eq!(taken_back, 4);
     for message in &messages {
-        assert!(!boolean(&connection, *message, "flagged"));
+        assert!(!boolean(&connection, *message, "flagged").await);
     }
     for message in &untouched {
         assert!(
-            boolean(&connection, *message, "flagged"),
+            boolean(&connection, *message, "flagged").await,
             "undo takes back what the action flagged, not what was flagged already"
         );
     }
@@ -1066,11 +1054,11 @@ async fn a_cross_account_set_touches_only_the_accounts_it_names() {
 
     assert_eq!(moved, 5, "only the named account's mail is in the set");
     for message in &mine {
-        assert_eq!(mailbox_of(&connection, *message), here.archive);
+        assert_eq!(mailbox_of(&connection, *message).await, here.archive);
     }
     for message in &theirs {
         assert_eq!(
-            mailbox_of(&connection, *message),
+            mailbox_of(&connection, *message).await,
             away.inbox,
             "an account the selection was never scoped to must not move"
         );
@@ -1117,5 +1105,5 @@ async fn a_row_taken_back_out_of_a_cross_account_selection_stays_put() {
         .expect("a bulk move");
 
     assert_eq!(moved, 5);
-    assert_eq!(mailbox_of(&connection, kept[0]), here.inbox);
+    assert_eq!(mailbox_of(&connection, kept[0]).await, here.inbox);
 }

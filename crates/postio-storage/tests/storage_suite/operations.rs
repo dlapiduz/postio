@@ -10,6 +10,7 @@ use postio_model::{
 };
 use postio_storage::repository::OperationQueueRepository;
 use postio_storage::test_support;
+use postio_storage::bind;
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 1, hour, 0, 0).unwrap()
@@ -43,24 +44,18 @@ async fn set_seen(connection: &Connection, message: MessageId) {
         .expect("flag the message locally");
 }
 
-fn is_seen(connection: &Connection, message: MessageId) -> bool {
-    connection
-        .query_row(
-            "SELECT seen FROM messages WHERE id = ?1",
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
-        )
+async fn is_seen(connection: &Connection, message: MessageId) -> bool {
+    postio_storage::sql::one(&*connection, 
+            "SELECT seen FROM messages WHERE id = ?1",bind![message.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
         .expect("read the message")
         == 1
 }
 
-fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
-    connection
-        .query_row(
-            "SELECT has_pending_operations FROM messages WHERE id = ?1",
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
-        )
+async fn has_pending_column(connection: &Connection, message: MessageId) -> bool {
+    postio_storage::sql::one(&*connection, 
+            "SELECT has_pending_operations FROM messages WHERE id = ?1",bind![message.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0)).await
         .expect("read the message")
         == 1
 }
@@ -305,7 +300,7 @@ async fn the_local_write_and_the_enqueue_commit_together() {
         .expect("enqueue");
     transaction.commit().await.expect("commit");
 
-    assert!(is_seen(&connection, message));
+    assert!(is_seen(&connection, message).await);
     assert_eq!(
         OperationQueueRepository::new(&connection)
             .pending(fixture.account.id, at(9))
@@ -338,7 +333,7 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
         .expect("enqueue");
     drop(transaction);
 
-    assert!(!is_seen(&connection, message), "the local write is gone");
+    assert!(!is_seen(&connection, message).await, "the local write is gone");
     assert!(
         OperationQueueRepository::new(&connection)
             .pending(fixture.account.id, at(9))
@@ -347,7 +342,7 @@ async fn a_rolled_back_local_write_takes_its_operation_with_it() {
             .is_empty(),
         "so the server must never be told about it"
     );
-    assert!(!has_pending_column(&connection, message));
+    assert!(!has_pending_column(&connection, message).await);
 }
 
 #[tokio::test]
@@ -358,7 +353,7 @@ async fn enqueueing_marks_the_message_as_having_work_outstanding() {
     let message = insert_message(&connection, fixture.inbox).await;
     let queue = OperationQueueRepository::new(&connection);
 
-    assert!(!has_pending_column(&connection, message));
+    assert!(!has_pending_column(&connection, message).await);
 
     let queued = queue
         .enqueue(
@@ -373,14 +368,14 @@ async fn enqueueing_marks_the_message_as_having_work_outstanding() {
         .expect("enqueue");
 
     assert!(
-        has_pending_column(&connection, message),
+        has_pending_column(&connection, message).await,
         "the list reads this column rather than joining the queue"
     );
     assert!(queue.has_pending(queued.target).await.expect("has_pending"));
 
     queue.delete(queued.id).await.expect("delete");
 
-    assert!(!has_pending_column(&connection, message));
+    assert!(!has_pending_column(&connection, message).await);
     assert!(!queue.has_pending(queued.target).await.expect("has_pending"));
 }
 
@@ -398,7 +393,7 @@ async fn enqueueing_many_writes_one_row_per_message_naming_each_one() {
     let connection = database.connect().await.expect("checkout");
     let fixture = fixture(&connection).await;
     let mut messages: Vec<MessageId> = Vec::new();
-    for _ in (0..5) {
+    for _ in 0..5 {
         messages.push(insert_message(&connection, fixture.inbox).await);
     }
     let queue = OperationQueueRepository::new(&connection);
@@ -439,13 +434,13 @@ async fn enqueueing_many_marks_every_message_as_having_work_outstanding() {
     let connection = database.connect().await.expect("checkout");
     let fixture = fixture(&connection).await;
     let mut messages: Vec<MessageId> = Vec::new();
-    for _ in (0..3) {
+    for _ in 0..3 {
         messages.push(insert_message(&connection, fixture.inbox).await);
     }
     let queue = OperationQueueRepository::new(&connection);
 
     for message in &messages {
-        assert!(!has_pending_column(&connection, *message));
+        assert!(!has_pending_column(&connection, *message).await);
     }
 
     queue
@@ -462,7 +457,7 @@ async fn enqueueing_many_marks_every_message_as_having_work_outstanding() {
 
     for message in &messages {
         assert!(
-            has_pending_column(&connection, *message),
+            has_pending_column(&connection, *message).await,
             "the list reads this column rather than joining the queue"
         );
     }
@@ -771,7 +766,7 @@ async fn a_settled_operation_stops_appearing_in_the_queue() {
             .is_empty()
     );
     assert!(
-        !has_pending_column(&connection, message),
+        !has_pending_column(&connection, message).await,
         "and the message stops advertising outstanding work"
     );
     assert_eq!(

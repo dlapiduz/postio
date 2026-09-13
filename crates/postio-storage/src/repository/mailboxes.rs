@@ -281,18 +281,17 @@ impl<'a> MailboxRepository<'a> {
             "SELECT total_count, unread_count, flagged_count, snoozed_count
                FROM mailboxes WHERE id = ?1",
         ).await?;
-        let mut rows = statement.query([id.get()]).await?;
-        let Some(row) = rows.next().await? else {
-            return Ok(None);
-        };
-        Ok(Some(MailboxCounts {
-            total: row.col(0)?,
-            unread: row.col(1)?,
-            flagged: row.col(2)?,
-            snoozed: row.col(3)?,
-            // Not a message count: filled by the sidebar's feed.
-            attention: 0,
-        }))
+        crate::sql::first_of(&mut statement, [id.get()], |row| {
+            Ok(MailboxCounts {
+                total: row.col(0)?,
+                unread: row.col(1)?,
+                flagged: row.col(2)?,
+                snoozed: row.col(3)?,
+                // Not a message count: filled by the sidebar's feed.
+                attention: 0,
+            })
+        })
+        .await
     }
 
     /// Overwrites a mailbox's cached counts.

@@ -55,11 +55,8 @@ async fn a_store_with_a_secret(directory: &std::path::Path, key: &Subkey) -> std
 
     // Fold the WAL back into the file, or the assertions below would be
     // reading a database whose newest pages are still in `postio.db-wal`.
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .await
-        .expect("checkpoint");
     drop(connection);
+    database.truncate_log().await.expect("checkpoint");
     drop(database);
     path
 }
@@ -100,10 +97,9 @@ async fn the_same_key_reopens_the_store_and_the_mail_is_there() {
 
     let database = Store::open(&path, &key(2)).await.expect("reopen with the same key");
     let connection = database.connect().await.expect("checkout");
-    let (id, subject): (i64, Option<String>) = connection
-        .query_row("SELECT id, subject FROM messages", [], |row| {
+    let (id, subject): (i64, Option<String>) = postio_storage::sql::one(&*connection, "SELECT id, subject FROM messages",(), |row| {
             Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))
-        })
+        }).await
         .expect("the message written before the store was closed");
     assert_eq!(subject.as_deref(), Some(SECRET_SUBJECT));
     assert_eq!(
@@ -201,11 +197,8 @@ async fn the_whole_test_suite_runs_against_an_encrypted_store() {
         .create(&mut message)
         .await
         .expect("create");
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .await
-        .expect("checkpoint");
     drop(connection);
+    database.truncate_log().await.expect("checkpoint");
 
     let bytes = std::fs::read(database.directory().join("postio.db")).expect("read");
     assert!(

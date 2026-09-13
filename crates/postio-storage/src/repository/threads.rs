@@ -337,12 +337,10 @@ impl<'a> ThreadRepository<'a> {
         let mut statement = self.connection.prepare(&format!(
             "SELECT {THREAD_COLUMNS} FROM threads WHERE id = ?1"
         )).await?;
-        let mut rows = statement.query([id.get()]).await?;
-        let Some(row) = rows.next().await? else {
+        let found = crate::sql::first_of(&mut statement, [id.get()], read_thread).await?;
+        let Some(mut thread) = found else {
             return Ok(None);
         };
-        let mut thread = read_thread(&row)?;
-        drop(rows);
         drop(statement);
 
         thread.message_ids = self.member_ids(id).await?;
@@ -1192,11 +1190,12 @@ impl<'a> ThreadRepository<'a> {
 /// The thread a message is currently in.
 async fn thread_of(connection: &Connection, message_id: MessageId) -> Result<Option<ThreadId>> {
     let mut statement = connection.prepare("SELECT thread_id FROM messages WHERE id = ?1").await?;
-    let mut rows = statement.query([message_id.get()]).await?;
-    let Some(row) = rows.next().await? else {
-        return Ok(None);
-    };
-    Ok(row.col::<Option<i64>>(0)?.map(ThreadId::new))
+    Ok(crate::sql::first_of(&mut statement, [message_id.get()], |row| {
+        row.col::<Option<i64>>(0)
+    })
+    .await?
+    .flatten()
+    .map(ThreadId::new))
 }
 
 /// Recomputes one thread's aggregates from its members, in whatever
