@@ -1065,7 +1065,7 @@ impl<'a> MessageRepository<'a> {
         let sql = format!(
             "UPDATE messages
                 SET mailbox_id = ?1, uid = NULL, uid_validity = NULL, mod_seq = NULL,
-                    has_pending_operations = 1
+                    remote_id = NULL, has_pending_operations = 1
               WHERE id IN ({})",
             placeholders(ids.len(), 2)
         );
