@@ -48,6 +48,7 @@ mod reading;
 mod reading_offline;
 mod reclaim_pages;
 mod reclaim_wiring;
+mod recover_empty_draft;
 mod render_dedup;
 mod reply_identity;
 mod reply_source;
@@ -299,6 +300,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor",
         reply_source::reply_forward_and_reply_all_act_on_the_message_under_the_cursor as fn(),
+    ),
+    (
+        "recover_empty_draft::an_untouched_draft_is_not_recovered_into_the_composer",
+        recover_empty_draft::an_untouched_draft_is_not_recovered_into_the_composer as fn(),
     ),
     (
         "resume_draft::return_on_a_draft_row_opens_the_composer_on_that_draft",
