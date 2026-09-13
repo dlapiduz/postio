@@ -55,6 +55,7 @@ mod resume_queued_draft;
 mod search_close_without_escape;
 mod search_index;
 mod search_live;
+mod search_no_matches;
 mod search_open;
 mod search_results;
 mod search_return_and_tab;
@@ -344,6 +345,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt",
         read_receipt_wiring::opening_settings_shows_how_many_messages_asked_for_a_receipt as fn(),
+    ),
+    (
+        "search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox",
+        search_no_matches::a_search_with_no_hits_says_so_rather_than_naming_the_inbox as fn(),
     ),
     (
         "search_open::opening_a_previewed_result_shows_it_in_the_reading_pane",

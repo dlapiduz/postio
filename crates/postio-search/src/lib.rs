@@ -67,6 +67,7 @@ mod parser;
 pub mod query;
 pub mod results;
 mod size;
+pub mod suggest;
 
 pub use facets::{Facets, Refinement, Scope};
 pub use highlight::Highlighted;
