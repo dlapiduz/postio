@@ -19,10 +19,44 @@ Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion` is
 always honored. A mailbox is never loaded into memory in full — the message
 list is windowed over paged SQLite.
 
-**These numbers are from an encrypted store.** Since ADR 0014 the database is
-SQLCipher and there is no unencrypted configuration to compare against in
+**These numbers are from an encrypted store.** Since ADR 0014 the database
+encrypts itself and there is no unencrypted configuration to compare against in
 normal use, so every figure here already carries the cost of decrypting each
-page on the way in. Where that cost is separable it is stated.
+page on the way in. Where that cost is separable it is stated. The *cipher*
+changed with ADR 0037 — read the next section before trusting any wall-clock
+figure below it.
+
+## The engine changed underneath every number below
+
+`specs/004-turso-store` replaced SQLCipher and `rusqlite` with Turso, whose
+page cipher is AES-256-GCM. **Every wall-clock figure in this document was
+measured against the old engine and none has been re-measured on a real
+store** — that needs a live mailbox and a live run, which is the one
+measurement a test cannot give.
+
+What *has* been measured, on this branch and on fixtures rather than on a
+mailbox:
+
+| | old engine | this engine |
+|---|---|---|
+| a page 95,000 rows deep | — | **1.4 ms → 107 ms → 1.4 ms** |
+| paging over 100,000 messages (the whole case) | — | 240 s timeout → **42 s** |
+| the header index, per message | 3,809 B | **4,218 B** |
+| statements to open a window, 1k vs 10k messages | flat | **flat** (31 and 31) |
+
+The 107 ms is the one to read: a keyset cursor spelled as a row value is a
+*filter* on this engine rather than a seek, so every list in the application
+was a skip as soon as somebody scrolled. It is a seek again
+(`docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md`), and
+the deep page is back inside the budget.
+
+Two figures are expected to move against the old engine and have not been
+taken: **startup**, where the cipher change should help — 45.9% of sampled CPU
+on a real mailbox was in SHA-512 for SQLCipher's per-page MAC, and GCM
+authenticates as part of the cipher — and **store size**, which is expected to
+grow, because sixteen partial indexes lost their predicates
+(`2026-09-12-a-partial-index-the-planner-will-not-read.md`) and message text is
+no longer compressed. Both want the reference mailbox.
 
 ## How to read these numbers
 
@@ -36,7 +70,7 @@ spread is reported where it is wide enough to matter.
 Reproduce them:
 
 ```sh
-cargo run -p postio-runtime --example seed_store -- /tmp/postio.db 20000
+cargo run --release -p postio-runtime --example seed_store -- /tmp/postio.db 20000
 POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
   cargo run --release -p postio-app
 
