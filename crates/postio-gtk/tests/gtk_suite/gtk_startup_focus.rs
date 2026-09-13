@@ -112,7 +112,10 @@ pub fn a_presented_window_puts_the_keyboard_on_the_first_message() {
     // unfixed code.
     window.present();
     window.list().model().set_source(Rc::new(Pages));
-    window.list().model().deliver(0, (0..ROWS).map(row).collect());
+    window
+        .list()
+        .model()
+        .deliver(0, (0..ROWS).map(row).collect());
 
     let first = MessageId::new(1);
     settle_until(|| cursor_message(&window) == Some(first));

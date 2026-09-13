@@ -72,7 +72,7 @@ command from inside a text field.
 | `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `L` | Add label… | List, conversation, reader | Undoable | `add_label` |
-| `/` | Search | List, conversation, reader |  | `search` |
+| `/` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
 | `c` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` | Send | Composer | Undo briefly | `send` |
