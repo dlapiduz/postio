@@ -43,6 +43,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
+    crate::gtk_case(async {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -56,8 +57,8 @@ pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 9);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 9).await;
     let account = report.account.id;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
@@ -70,16 +71,17 @@ pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
     // is what a recovered-then-killed composer leaves behind, and what every
     // launch after the first one was finding.
     {
-        let connection = database.connection().expect("a connection");
+        let connection = database.connect().await.expect("a connection");
         let mut draft = Draft::new(account);
         DraftRepository::new(&connection)
             .save(&mut draft)
+            .await
             .expect("save the draft");
     }
 
     // The crash. After this the marker says `open`, so the `begin_session`
     // inside `compose::install` reports one.
-    postio_session::begin_session(&database);
+    postio_session::begin_session(&database).await;
 
     let state = SharedState::default();
     let bus = actions::wire(
@@ -103,6 +105,7 @@ pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
     while glib::MainContext::default().iteration(false) {}
 
     let feeds = feed_the_window(&window, &wiring)
+        .await
         .expect("the seeded store has an account")
         .feeds;
     commands::install(&window, &feeds, state, wiring.commands.clone(), wired);
@@ -117,7 +120,8 @@ pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
             let feeds = feeds.clone();
             std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
         },
-    );
+    )
+    .await;
     while glib::MainContext::default().iteration(false) {}
 
     assert!(
@@ -125,4 +129,5 @@ pub fn an_untouched_draft_is_not_recovered_into_the_composer() {
         "an untouched compose buffer is not work worth restoring, and \
          reopening it takes the keyboard from the inbox at every launch"
     );
+    })
 }
