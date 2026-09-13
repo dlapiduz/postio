@@ -134,12 +134,12 @@ async fn main() {
     // "this mailbox is small" and "this mailbox is unfinished".
     println!("\nper folder:");
     println!(
-        "{:>5}  {:>9}  {:>9}  {:>8}  path",
-        "id", "local", "uid_next", "full?"
+        "{:>5}  {:>9}  {:>9}  {:>8}  {:>14}  path",
+        "id", "local", "uid_next", "full?", "last attempt"
     );
     let rows = postio_storage::sql::all(
         &connection,
-        "SELECT m.id, m.path, count(x.id), coalesce(s.uid_next, 0), \
+        "SELECT m.id, m.path, count(x.id), coalesce(s.uid_next, 0), coalesce(s.last_seen_at, 0), \
                 CASE WHEN s.last_full_sync_at IS NULL THEN 0 ELSE 1 END \
            FROM mailboxes m \
            LEFT JOIN sync_state s ON s.mailbox_id = m.id \
@@ -153,12 +153,13 @@ async fn main() {
                 row.col::<i64>(2)?,
                 row.col::<i64>(3)?,
                 row.col::<i64>(4)?,
+                row.col::<i64>(5)?,
             ))
         },
     )
     .await
     .unwrap_or_default();
-    for (id, path, local, uid_next, full) in rows {
+    for (id, path, local, uid_next, seen, full) in rows {
         // `uid_next` is shown but deliberately not subtracted from: UIDs are
         // sparse, not dense. A folder that has had mail deleted out of it for
         // a decade has a high `uid_next` and few messages, and treating the
@@ -167,9 +168,17 @@ async fn main() {
         // `full?` column -- no `last_full_sync_at` means the header sync has
         // never walked it to the end. Compare `local` against the server's
         // own `EXISTS`, which the sync logs at INFO.
+        // `last_seen_at` is the attempt, `last_full_sync_at` the completion.
+        // A folder that is being tried and failing has a fresh `seen` and no
+        // `full`; one nothing is scheduling has neither moving.
         println!(
-            "{id:>5}  {local:>9}  {uid_next:>9}  {:>8}  {path}",
-            if full == 1 { "yes" } else { "NO" }
+            "{id:>5}  {local:>9}  {uid_next:>9}  {:>8}  {:>14}  {path}",
+            if full == 1 { "yes" } else { "NO" },
+            if seen == 0 {
+                "never".to_owned()
+            } else {
+                format!("{seen}")
+            }
         );
     }
 
