@@ -215,9 +215,10 @@ const OTHERS: &str = "warn";
 /// everyone learns to skip, which is the level real problems arrive at.
 ///
 /// This is a *directive*, not a change in `postio-account`, so
-/// `POSTIO_LOG=imap_codec=trace` still reaches it: a directive naming targets
-/// is passed through untouched by [`scope`], and asking for a target by name
-/// is the one unambiguous way to say you want it.
+/// `POSTIO_LOG=imap_codec=trace` still reaches it: [`scope`] puts these
+/// defaults in front of whatever was asked for and the later directive wins,
+/// and asking for a target by name is the one unambiguous way to say you want
+/// it.
 ///
 /// `io_imap` is deliberately **not** here even though it is the noisier
 /// crate. It is in [`OURS`], and `postio-account`'s skip counter reads its
@@ -225,7 +226,14 @@ const OTHERS: &str = "warn";
 /// the counter (that runs in the `log` layer, before tracing sees anything,
 /// and counts `io_imap` at `debug`), but it would take away the output
 /// somebody debugging a resync needs.
-const QUIET: &[(&str, &str)] = &[("imap_codec", "error")];
+/// `html5ever` is the second. It logs *"foster parenting not implemented"* at
+/// `warn` every time it repairs a mis-nested table, which is most real HTML
+/// mail: a live run produced hundreds of lines inside two seconds and buried
+/// the three that mattered. Nothing is wrong, nobody can act on it, and the
+/// reader is not even parsing for the user's benefit at that point -- it is
+/// building a search excerpt. `off` rather than `error`, because unlike
+/// `imap_codec` there is no level of it worth keeping by default.
+const QUIET: &[(&str, &str)] = &[("imap_codec", "error"), ("html5ever", "off")];
 
 /// Turn a bare level into a directive that turns *Postio* up, not the world.
 ///
@@ -235,13 +243,34 @@ const QUIET: &[(&str, &str)] = &[("imap_codec", "error")];
 /// the first line about mail — the same drowning that made
 /// `G_MESSAGES_DEBUG=all` useless for diagnosing a sync.
 ///
-/// A directive naming targets is passed through untouched: someone who wrote
+/// A directive naming targets gets exactly what it named: someone who wrote
 /// `rustls=trace` wants rustls, and second-guessing that would take away the
-/// only way to ask.
+/// only way to ask. It is not passed through *untouched*, though -- the
+/// [`QUIET`] defaults go in front of it, where the last directive for a target
+/// wins, so naming one target no longer re-admits every warning the others
+/// were quieted for.
 fn scope(directive: &str) -> String {
     let bare = directive.trim();
     if bare.contains('=') || bare.contains(',') {
-        return bare.to_owned();
+        // Named targets are still honoured -- they are simply appended after
+        // the [`QUIET`] defaults rather than replacing them, so the last
+        // directive for a target wins and `html5ever=trace` still reaches
+        // `html5ever`.
+        //
+        // Passing these through untouched was the older behaviour and it had
+        // the failure mode exactly backwards: `POSTIO_LOG=postio_account=debug`
+        // is what someone types when they are reading a log *closely*, and it
+        // was the one spelling that re-admitted every drowning warning a
+        // dependency had been quieted for.
+        let mut scoped = String::new();
+        for (target, level) in QUIET {
+            scoped.push_str(target);
+            scoped.push('=');
+            scoped.push_str(level);
+            scoped.push(',');
+        }
+        scoped.push_str(bare);
+        return scoped;
     }
     // `off` means off. Scoping it would raise everything else to `warn`,
     // which is louder than what was asked for.
@@ -308,6 +337,43 @@ mod tests {
     }
 
     #[test]
+    fn a_dependency_that_warns_constantly_is_quiet_even_when_a_target_was_named() {
+        // `html5ever` logs "foster parenting not implemented" at `warn` for
+        // every mis-nested table it repairs, which is most real HTML mail. A
+        // live run produced hundreds of them in a two-second window and buried
+        // the three lines that mattered -- the same drowning `imap_codec` was
+        // quieted for.
+        assert!(
+            scope("info").contains("html5ever=off"),
+            "a bare level must still quiet the dependency"
+        );
+        // And the case that actually bit: asking for one of *our* targets by
+        // name used to pass the directive through untouched, which dropped
+        // every QUIET default on the floor at exactly the moment someone was
+        // reading the log closely.
+        let named = scope("postio_account=debug");
+        assert!(
+            named.contains("html5ever=off"),
+            "naming a target must not re-admit the noise: {named}"
+        );
+        assert!(
+            named.contains("postio_account=debug"),
+            "and it must still say what was asked for: {named}"
+        );
+    }
+
+    /// Asking for a quieted target by name still reaches it.
+    #[test]
+    fn a_quieted_target_can_still_be_asked_for_by_name() {
+        let asked = scope("html5ever=trace");
+        assert_eq!(
+            effective(&asked, "html5ever"),
+            Some("html5ever=trace"),
+            "the default must come first so an explicit ask overrides it: {asked}"
+        );
+    }
+
+    #[test]
     fn every_crate_in_the_workspace_is_in_the_scoped_list() {
         // `OURS` is hand-maintained, and the failure mode of forgetting an
         // entry is silence: the new crate is held at `warn` and nobody finds
@@ -330,15 +396,32 @@ mod tests {
         );
     }
 
+    /// The last directive naming a target is the one that applies.
+    fn effective<'a>(scoped: &'a str, target: &str) -> Option<&'a str> {
+        scoped.split(',').rfind(|directive| {
+            directive
+                .split_once('=')
+                .is_some_and(|(named, _)| named == target)
+        })
+    }
+
     #[test]
-    fn a_directive_naming_targets_is_passed_through_untouched() {
+    fn a_directive_naming_targets_gets_exactly_what_it_asked_for() {
         // Someone who wrote `rustls=trace` wants rustls, and second-guessing
         // that would take away the only way to ask.
-        assert_eq!(
-            scope("rustls=trace,postio_sync=debug"),
-            "rustls=trace,postio_sync=debug"
-        );
-        assert_eq!(scope("io_imap=trace"), "io_imap=trace");
+        //
+        // This used to be spelled as "passed through untouched", asserting the
+        // string came back byte for byte. That was a stronger promise than the
+        // sentence above needs, and it had a cost: it also handed back every
+        // drowning `warn` the [`QUIET`] defaults exist to suppress, at exactly
+        // the moment someone was reading a log closely enough to name a
+        // target. The defaults go in front now and the ask still wins.
+        let scoped = scope("rustls=trace,postio_sync=debug");
+        assert_eq!(effective(&scoped, "rustls"), Some("rustls=trace"));
+        assert_eq!(effective(&scoped, "postio_sync"), Some("postio_sync=debug"));
+
+        let one = scope("io_imap=trace");
+        assert_eq!(effective(&one, "io_imap"), Some("io_imap=trace"));
     }
 
     #[test]
@@ -375,7 +458,13 @@ mod tests {
 
         let filter = parse(&config.directive(), &config);
 
-        assert_eq!(filter.to_string(), "postio_sync=debug");
+        // The QUIET defaults ride in front of it; what was written is what
+        // applies to the target it names.
+        let rendered = filter.to_string();
+        assert!(
+            rendered.contains("postio_sync=debug"),
+            "the configured filter must survive: {rendered}"
+        );
     }
 
     #[test]
@@ -396,11 +485,12 @@ mod tests {
     fn asking_for_the_codec_by_name_still_reaches_it() {
         // The fix is a directive rather than a change in postio-account
         // precisely so this keeps working for whoever is debugging the codec.
-        assert_eq!(scope("imap_codec=trace"), "imap_codec=trace");
-        assert_eq!(
-            scope("imap_codec=debug,postio_sync=trace"),
-            "imap_codec=debug,postio_sync=trace"
-        );
+        let asked = scope("imap_codec=trace");
+        assert_eq!(effective(&asked, "imap_codec"), Some("imap_codec=trace"));
+
+        let both = scope("imap_codec=debug,postio_sync=trace");
+        assert_eq!(effective(&both, "imap_codec"), Some("imap_codec=debug"));
+        assert_eq!(effective(&both, "postio_sync"), Some("postio_sync=trace"));
     }
 
     #[test]
