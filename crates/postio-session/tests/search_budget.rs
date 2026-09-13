@@ -24,7 +24,7 @@ use postio_model::{BodyState, Message};
 use postio_search::facets::Scope;
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
-use postio_storage::test_support::counting::{counted, install};
+use postio_storage::test_support::counting::{counted_async, install};
 
 /// The word every seeded message contains, so a query matches all of them.
 const COMMON: &str = "quarterly";
@@ -35,11 +35,13 @@ const COMMON: &str = "quarterly";
 /// Indexed explicitly: `seed_large` writes messages but not the body index —
 /// the indexer is a separate pass — and a search over an unindexed store
 /// would measure an empty result set and call it cheap.
-fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId) {
+async fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
-    postio_index::index::ensure_schema(&connection).expect("the index schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("the index schema");
 
     let repository = MessageRepository::new(&connection);
     for n in 0..count {
@@ -47,7 +49,7 @@ fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId
         let mut message = Message::new(account.id, inbox, Utc::now());
         message.subject = Some(format!("Report {n}"));
         message.sync.body_state = BodyState::Full;
-        repository.create(&mut message).expect("a message");
+        repository.create(&mut message).await.expect("a message");
         repository
             .set_body(
                 message.id,
@@ -60,8 +62,10 @@ fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId
                 },
                 BodyState::Full,
             )
+            .await
             .expect("a body");
         postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+            .await
             .expect("an indexed body");
     }
     let id = account.id;
@@ -70,14 +74,14 @@ fn indexed(count: usize) -> (postio_storage::Store, postio_model::ids::AccountId
 }
 
 /// One search of [`COMMON`], and what SQLite did for it.
-fn cost_of_searching(
+async fn cost_of_searching(
     store: &(postio_storage::Store, postio_model::ids::AccountId),
 ) -> (usize, usize) {
     let (database, account) = store;
     let connection = database.connect().await.expect("a connection");
     let query = postio_search::parse(COMMON, Utc::now().date_naive());
 
-    let run = |connection: &postio_storage::Checkout| {
+    let run = async |connection: &postio_storage::Checkout| {
         postio_session::search::execute(
             connection,
             postio_model::AccountScope::Account(*account),
@@ -85,23 +89,24 @@ fn cost_of_searching(
             Scope::AllMail,
             postio_search::ResultOrder::Relevance,
         )
+        .await
         .expect("the search runs")
     };
 
     // Warm first: the first `prepare` of a statement pulls schema pages in,
     // and this is about the query's shape rather than a cold cache.
-    let warm = run(&connection);
+    let warm = run(&connection).await;
     let hits = warm.hits.len();
 
     install(&connection);
-    let counts = counted(|| {
-        let _ = run(&connection);
+    let counts = counted_async(async || {
+        let _ = run(&connection).await;
     });
-    (counts.statements, hits)
+    (counts.await.statements, hits)
 }
 
-#[test]
-fn a_search_costs_the_same_statements_however_large_the_store() {
+#[tokio::test]
+async fn a_search_costs_the_same_statements_however_large_the_store() {
     // The property, and the only one that means anything: a search over ten
     // times the mail must not be ten times the work. A cost that grew with
     // the store is the shape that stops meeting 100ms as a mailbox fills, and
@@ -116,11 +121,11 @@ fn a_search_costs_the_same_statements_however_large_the_store() {
     // number goes flat. Comparing a small store against a large one would
     // measure that ramp and call it a regression, which is what the first
     // version of this test did.
-    let smaller = indexed(120);
-    let larger = indexed(400);
+    let smaller = indexed(120).await;
+    let larger = indexed(400).await;
 
-    let (smaller_statements, smaller_hits) = cost_of_searching(&smaller);
-    let (larger_statements, larger_hits) = cost_of_searching(&larger);
+    let (smaller_statements, smaller_hits) = cost_of_searching(&smaller).await;
+    let (larger_statements, larger_hits) = cost_of_searching(&larger).await;
 
     assert!(
         smaller_hits > 50 && larger_hits > 50,
@@ -141,8 +146,8 @@ fn a_search_costs_the_same_statements_however_large_the_store() {
     );
 }
 
-#[test]
-fn excerpts_are_cut_for_a_bounded_number_of_hits() {
+#[tokio::test]
+async fn excerpts_are_cut_for_a_bounded_number_of_hits() {
     // `SNIPPET_HITS` is 50 out of `HIT_LIMIT`'s 200, and each excerpt costs a
     // body read. A regression that cut one per *hit* would be four times the
     // reads, invisible in a small fixture and invisible in the results —
@@ -151,11 +156,11 @@ fn excerpts_are_cut_for_a_bounded_number_of_hits() {
     // Counted as the difference between a store with fewer matches than the
     // cap and one with more: past the cap the statement count must stop
     // rising, because the excerpts stop being cut.
-    let under = indexed(20);
-    let over = indexed(200);
+    let under = indexed(20).await;
+    let over = indexed(200).await;
 
-    let (under_statements, under_hits) = cost_of_searching(&under);
-    let (over_statements, over_hits) = cost_of_searching(&over);
+    let (under_statements, under_hits) = cost_of_searching(&under).await;
+    let (over_statements, over_hits) = cost_of_searching(&over).await;
 
     assert!(
         under_hits < 50 && over_hits > 50,

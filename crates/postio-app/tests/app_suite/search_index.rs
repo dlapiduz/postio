@@ -70,8 +70,10 @@ fn all_messages(database: &Database) -> Vec<MessageId> {
     let mut statement = connection
         .prepare("SELECT id FROM messages ORDER BY received_at DESC")
         .expect("a statement");
-    let rows = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col::<i64>(row, 0))
-        .expect("query");
+    let rows = postio_storage::sql::mapped(&mut statement, (), |row| {
+        postio_storage::sql::RowExt::col::<i64>(row, 0)
+    })
+    .expect("query");
     rows.map(|id| MessageId::new(id.expect("an id"))).collect()
 }
 

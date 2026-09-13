@@ -124,7 +124,8 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
                 (),
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         connection
             .query_row(

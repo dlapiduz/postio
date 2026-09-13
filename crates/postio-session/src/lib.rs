@@ -41,6 +41,7 @@
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
+pub mod blocking;
 pub mod egress;
 pub mod engine;
 pub mod logging;

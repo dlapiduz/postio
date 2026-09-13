@@ -75,7 +75,8 @@ pub fn one_gesture_renders_once_and_reselecting_renders_nothing() {
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
                 (),
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         connection
             .query_row(

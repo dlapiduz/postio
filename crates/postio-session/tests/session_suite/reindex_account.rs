@@ -13,7 +13,7 @@ use postio_storage::Connection;
 use postio_storage::repository::{AccountRepository, MessageRepository};
 use postio_storage::test_support;
 
-fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
+async fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
     let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
     postio_index::search(
         connection,
@@ -26,11 +26,12 @@ fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) 
         },
         chrono::Utc::now(),
     )
+    .await
     .expect("search runs")
     .total_hits as usize
 }
 
-fn second_account(
+async fn second_account(
     connection: &Connection,
 ) -> (postio_model::Account, postio_model::ids::MailboxId) {
     let mut account = postio_model::Account::new(
@@ -39,22 +40,25 @@ fn second_account(
     );
     AccountRepository::new(connection)
         .create(&mut account)
+        .await
         .expect("second account");
     let mailbox = test_support::mailbox(connection, &account, "INBOX").await;
     (account, mailbox.id)
 }
 
-#[test]
-fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
+#[tokio::test]
+async fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     message.subject = Some("Quarterly engine notes".to_string());
-    messages.create(&mut message).expect("create");
+    messages.create(&mut message).await.expect("create");
     // A real stored body -- not just a role played by `index_body_of` --
     // because `reindex_account`'s own body pass reads it back the ordinary
     // way (`MessageRepository::body`) to write it again, and a message
@@ -71,6 +75,7 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
             },
             BodyState::Full,
         )
+        .await
         .expect("store a real body");
     postio_index::index::index_body_of(
         &connection,
@@ -80,10 +85,11 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
             html: None,
         },
     )
+    .await
     .expect("index the body the ordinary way");
 
     assert_eq!(
-        hits(&connection, account.id, "analytical"),
+        hits(&connection, account.id, "analytical").await,
         1,
         "findable before the rebuild, or this proves nothing about it"
     );
@@ -93,6 +99,7 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
     let reindexed = postio_session::reindex_account(&database, account.id, |done, total| {
         progress.push((done, total));
     })
+    .await
     .expect("the rebuild runs");
 
     assert_eq!(reindexed, 1, "the one message with local mail to rebuild");
@@ -109,19 +116,21 @@ fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
 
     let connection = database.connect().await.expect("checkout");
     assert_eq!(
-        hits(&connection, account.id, "analytical"),
+        hits(&connection, account.id, "analytical").await,
         1,
         "still findable after the rebuild rewrote the row it was found through"
     );
 }
 
-#[test]
-fn a_rebuild_touches_only_the_account_it_was_asked_for() {
+#[tokio::test]
+async fn a_rebuild_touches_only_the_account_it_was_asked_for() {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (first, first_inbox) = test_support::account_with_inbox(&connection).await;
-    let (second, second_inbox) = second_account(&connection);
+    let (second, second_inbox) = second_account(&connection).await;
 
     let messages = MessageRepository::new(&connection);
     for (account, inbox, word) in [
@@ -129,7 +138,7 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
         (second.id, second_inbox, "beta"),
     ] {
         let mut message = Message::new(account, inbox, chrono::Utc::now());
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
         messages
             .set_body(
                 message.id,
@@ -142,6 +151,7 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
                 },
                 BodyState::Full,
             )
+            .await
             .expect("store a real body");
         postio_index::index::index_body_of(
             &connection,
@@ -151,22 +161,24 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
                 html: None,
             },
         )
+        .await
         .expect("index the body");
     }
     drop(connection);
 
-    let reindexed =
-        postio_session::reindex_account(&database, first.id, |_, _| {}).expect("the rebuild runs");
+    let reindexed = postio_session::reindex_account(&database, first.id, |_, _| {})
+        .await
+        .expect("the rebuild runs");
     assert_eq!(reindexed, 1, "only the first account's one message");
 
     let connection = database.connect().await.expect("checkout");
     assert_eq!(
-        hits(&connection, first.id, "alpha"),
+        hits(&connection, first.id, "alpha").await,
         1,
         "the account that was rebuilt is still findable"
     );
     assert_eq!(
-        hits(&connection, second.id, "beta"),
+        hits(&connection, second.id, "beta").await,
         1,
         "the other account's mail was never touched, so it was never at risk"
     );
@@ -176,17 +188,20 @@ fn a_rebuild_touches_only_the_account_it_was_asked_for() {
             second.id.get(),
             10
         )
+        .await
         .expect("candidates")
         .is_empty(),
         "the second account's index was never cleared, so it has nothing to catch up on"
     );
 }
 
-#[test]
-fn a_store_with_nothing_local_for_this_account_costs_one_query_and_no_writes() {
+#[tokio::test]
+async fn a_store_with_nothing_local_for_this_account_costs_one_query_and_no_writes() {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, _inbox) = test_support::account_with_inbox(&connection).await;
     drop(connection);
 
@@ -194,6 +209,7 @@ fn a_store_with_nothing_local_for_this_account_costs_one_query_and_no_writes() {
     let reindexed = postio_session::reindex_account(&database, account.id, |done, total| {
         progress.push((done, total));
     })
+    .await
     .expect("the rebuild runs");
 
     assert_eq!(reindexed, 0);

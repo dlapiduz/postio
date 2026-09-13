@@ -94,7 +94,8 @@ pub fn opening_a_message_fills_the_pane_and_its_chips_open_the_parts_tree() {
                 "UPDATE messages SET flagged = 1 WHERE id NOT IN \
                  (SELECT id FROM messages ORDER BY received_at DESC LIMIT 1)",
                 (),
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         connection
             .query_row(

@@ -60,7 +60,7 @@ use postio_search::{ParsedQuery, SearchResults};
 // merely called through.
 use postio_session::search::{HIT_LIMIT, execute as run};
 use postio_storage::repository::{ContactRepository, LabelRepository};
-use postio_storage::{Store, Checkout};
+use postio_storage::{Checkout, Store};
 
 use crate::Wiring;
 use crate::settings_accounts::Reindexing;
@@ -115,7 +115,8 @@ pub async fn install(
         held.clone(),
         order.clone(),
         reindexing,
-    ).await;
+    )
+    .await;
     install_scope_rerun(window, &finder);
     install_results(window, feeds, &view, held, wiring, order.clone()).await;
     install_order_toggle(window, &finder, feeds, order);
@@ -521,7 +522,6 @@ async fn facets(
             .await
             .map_err(|error| tracing::warn!(%error, "the facet counts did not run"))
             .ok()
-    
         }
     });
     glib::spawn_future_local({
@@ -713,7 +713,7 @@ async fn install_results(
         let database = wiring.database.clone();
         let runtime = wiring.runtime.clone();
         move |_| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if !feeds.messages.showing_results() {
                     return;
                 }
@@ -729,7 +729,6 @@ async fn install_results(
                 };
                 view.set_focused(Some(hit));
                 preview(&view, hit, &database, &runtime).await;
-        
             })
         }
     });
@@ -830,14 +829,17 @@ async fn install_open(preview: &postio_gtk::search::Preview, window: &Window) {
 /// mailbox rather than by the query, and a window that paused at startup to
 /// count someone's correspondents would be paying the whole cost up front.
 async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(&wiring.database, &wiring.runtime, move |connection| async move {
-        ContactRepository::new(&connection)
-            .search(Some(account), "", CONTACT_LIMIT)
-            .await
-            .map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
-            .ok()
-
-    });
+    let answer = ask(
+        &wiring.database,
+        &wiring.runtime,
+        move |connection| async move {
+            ContactRepository::new(&connection)
+                .search(Some(account), "", CONTACT_LIMIT)
+                .await
+                .map_err(|error| tracing::warn!(%error, "could not read the correspondents"))
+                .ok()
+        },
+    );
     glib::spawn_future_local({
         let finder = finder.clone();
         async move {
@@ -863,14 +865,17 @@ async fn load_contacts(finder: &Finder, account: AccountId, wiring: &Wiring) {
 /// correspondents list has, and worth stating rather than discovering: there
 /// is no label-creation surface yet, so nothing can create one mid-session.
 async fn load_labels(finder: &Finder, account: AccountId, wiring: &Wiring) {
-    let answer = ask(&wiring.database, &wiring.runtime, move |connection| async move {
-        LabelRepository::new(&connection)
-            .list(account)
-            .await
-            .map_err(|error| tracing::warn!(%error, "could not read the labels"))
-            .ok()
-
-    });
+    let answer = ask(
+        &wiring.database,
+        &wiring.runtime,
+        move |connection| async move {
+            LabelRepository::new(&connection)
+                .list(account)
+                .await
+                .map_err(|error| tracing::warn!(%error, "could not read the labels"))
+                .ok()
+        },
+    );
     glib::spawn_future_local({
         let finder = finder.clone();
         async move {
@@ -911,7 +916,9 @@ mod tests {
     ) -> (postio_storage::test_support::TempStore, AccountId) {
         let database = test_support::temp().await;
         let connection = database.connect().await.expect("checkout");
-        postio_index::index::ensure_schema(&connection).await.expect("schema");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
         let mut message = postio_model::Message::new(account.id, mailbox, chrono::Utc::now());
@@ -1031,7 +1038,9 @@ mod tests {
         // looks like a body with no match in it.
         let database = test_support::temp().await;
         let connection = database.connect().await.expect("checkout");
-        postio_index::index::ensure_schema(&connection).await.expect("schema");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("schema");
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         let mut message = postio_model::Message::new(account.id, mailbox, chrono::Utc::now());
         message.subject = Some("The printer is fixed".to_owned());
@@ -1219,7 +1228,10 @@ mod interactive_read {
         let Some(account) = accounts.into_iter().next() else {
             return 0;
         };
-        let Ok(mailboxes) = MailboxRepository::new(&connection).list_for_account(account.id).await else {
+        let Ok(mailboxes) = MailboxRepository::new(&connection)
+            .list_for_account(account.id)
+            .await
+        else {
             return 0;
         };
         let Some(mailbox) = mailboxes.into_iter().find(|mailbox| mailbox.path == path) else {

@@ -41,9 +41,16 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
     // its four inputs in any order rather than assuming this one is first.
     // `ask` spawns onto the runtime, so the closure must own everything it
     // touches rather than borrowing `wiring`.
-    let answer = crate::search::ask(&wiring.database, &wiring.runtime, move |connection| async move {
-        SettingsRepository::new(&connection).get(SEEN_KEY).await.ok()
-    });
+    let answer = crate::search::ask(
+        &wiring.database,
+        &wiring.runtime,
+        move |connection| async move {
+            SettingsRepository::new(&connection)
+                .get(SEEN_KEY)
+                .await
+                .ok()
+        },
+    );
     // Cloned, not borrowed: `act` awaits now, so the block holds this across
     // an await point and a `'static` task cannot carry a borrow.
     let wiring = wiring.clone();
@@ -76,12 +83,11 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move |status| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if status.last_sync.is_some() {
                     let effect = state.borrow_mut().synced();
                     act(&window, &wiring, effect).await;
                 }
-        
             })
         }
     ));
@@ -99,10 +105,9 @@ pub async fn install(window: &Window, wiring: &Wiring, feeds: &Feeds) {
         #[strong]
         state,
         move || {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 let effect = state.borrow_mut().retire();
                 act(&window, &wiring, effect).await;
-        
             })
         }
     ));
@@ -133,8 +138,9 @@ async fn remember(wiring: &Wiring) {
         let Ok(connection) = database.connect().await else {
             return;
         };
-        if let Err(error) =
-            SettingsRepository::new(&connection).set(SEEN_KEY, &Utc::now().to_rfc3339()).await
+        if let Err(error) = SettingsRepository::new(&connection)
+            .set(SEEN_KEY, &Utc::now().to_rfc3339())
+            .await
         {
             tracing::warn!(%error, "could not remember that the orientation was seen");
         }

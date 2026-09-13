@@ -185,7 +185,6 @@ fn role_may_notify(config: &SyncConfig, role: MailboxRole) -> bool {
 async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRole, AccountId)> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| tracing::warn!(%error, "could not read the mailbox to notify about"))
         .ok()?;
@@ -203,7 +202,6 @@ async fn mailbox_info(database: &Store, mailbox: MailboxId) -> Option<(MailboxRo
 async fn account_label(database: &Store, account: AccountId) -> Option<String> {
     let connection = database
         .connect()
-
         .await
         .map_err(|error| tracing::warn!(%error, "could not read the accounts to notify about"))
         .ok()?;
@@ -591,7 +589,10 @@ mod tests {
                 .expect("create the second account");
             (first, second)
         };
-        assert_eq!(account_label(&database, second.id).await, Some("Work".to_owned()));
+        assert_eq!(
+            account_label(&database, second.id).await,
+            Some("Work".to_owned())
+        );
         assert_eq!(
             account_label(&database, first.id).await,
             Some(first.display_name.clone()),

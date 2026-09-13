@@ -32,7 +32,7 @@ pub async fn install(window: &Window, wiring: &Wiring) {
     let weak = glib::object::ObjectExt::downgrade(window);
     window.sidebar().connect_backfill_exclusion_changed({
         move |id, excluded| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 let Some(window) = weak.upgrade() else {
                     return;
                 };
@@ -45,7 +45,6 @@ pub async fn install(window: &Window, wiring: &Wiring) {
                     return;
                 }
                 refresh(&window, &database, id).await;
-        
             })
         }
     });

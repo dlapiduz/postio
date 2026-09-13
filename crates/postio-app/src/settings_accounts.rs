@@ -93,14 +93,13 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let wiring = wiring.clone();
         let panel = window.settings();
         gtk::prelude::WidgetExt::connect_visible_notify(&panel, move |panel| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if !gtk::prelude::WidgetExt::is_visible(panel) {
                     return;
                 }
                 if let Some(window) = weak.upgrade() {
                     refresh(&window, &wiring).await;
                 }
-        
             })
         });
     }
@@ -115,16 +114,17 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, enabled| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Ok(connection) = wiring.database.connect().await
-                    && let Err(error) = AccountRepository::new(&connection).set_enabled(id, enabled).await
+                    && let Err(error) = AccountRepository::new(&connection)
+                        .set_enabled(id, enabled)
+                        .await
                 {
                     tracing::warn!(%error, "could not change whether an account is enabled");
                 }
                 if let Some(window) = weak.upgrade() {
                     refresh(&window, &wiring).await;
                 }
-        
             })
         }
     });
@@ -137,15 +137,13 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
             let Some(window) = weak.upgrade() else {
                 return;
             };
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 match action {
                     AccountAction::Remove => remove(&window, &wiring, id).await,
                     AccountAction::UpdateCredential => {
                         crate::settings_credential::install(&window, &wiring, id).await
                     }
-                    AccountAction::RebuildIndex => {
-                        rebuild_index(&window, &wiring, &reindexing, id)
-                    }
+                    AccountAction::RebuildIndex => rebuild_index(&window, &wiring, &reindexing, id),
                     AccountAction::SetDefault => set_default(&window, &wiring, id).await,
                 }
             })
@@ -159,14 +157,13 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let window = window.downgrade();
         let wiring = wiring.clone();
         move |event| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if !matches!(event, postio_core::Event::MailboxesChanged { .. }) {
                     return;
                 }
                 if let Some(window) = window.upgrade() {
                     refresh(&window, &wiring).await;
                 }
-        
             })
         }
     });
@@ -175,33 +172,33 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, edit| {
-            crate::blocking::now(async {
-            match edit {
-                // A role mapping is not an account column: it re-roles the
-                // account's folders, is undoable, and has to announce itself
-                // so the sidebar relabels -- all of which the command owns
-                // (ADR 0035). Everything else here is a field on the row.
-                AccountEdit::MailboxRole(role, path) => {
-                    if let Some(window) = weak.upgrade() {
-                        window.act(postio_core::Command::MapMailboxRole {
-                            account: Some(id),
-                            role: Some(role),
-                            path,
-                        });
+            postio_session::blocking::now(async {
+                match edit {
+                    // A role mapping is not an account column: it re-roles the
+                    // account's folders, is undoable, and has to announce itself
+                    // so the sidebar relabels -- all of which the command owns
+                    // (ADR 0035). Everything else here is a field on the row.
+                    AccountEdit::MailboxRole(role, path) => {
+                        if let Some(window) = weak.upgrade() {
+                            window.act(postio_core::Command::MapMailboxRole {
+                                account: Some(id),
+                                role: Some(role),
+                                path,
+                            });
+                        }
+                        // No refresh here, deliberately. The command announces
+                        // `MailboxesChanged` and the subscription below redraws
+                        // from that -- which is both the local-first order (write,
+                        // emit, repaint) and the only safe one: redrawing now
+                        // would tear down the very dropdown whose signal is still
+                        // being emitted.
+                        return;
                     }
-                    // No refresh here, deliberately. The command announces
-                    // `MailboxesChanged` and the subscription below redraws
-                    // from that -- which is both the local-first order (write,
-                    // emit, repaint) and the only safe one: redrawing now
-                    // would tear down the very dropdown whose signal is still
-                    // being emitted.
-                    return;
+                    edit => edit_account(&wiring, id, edit).await,
                 }
-                edit => edit_account(&wiring, id, edit).await,
-            }
-            if let Some(window) = weak.upgrade() {
-                refresh(&window, &wiring).await;
-            }
+                if let Some(window) = weak.upgrade() {
+                    refresh(&window, &wiring).await;
+                }
             })
         }
     });
@@ -210,11 +207,10 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
                     test_connection(&window, &wiring, id).await;
                 }
-        
             })
         }
     });
@@ -223,11 +219,10 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, draft| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
                     save_signature(&window, &wiring, id, draft).await;
                 }
-        
             })
         }
     });
@@ -236,11 +231,10 @@ pub async fn install(window: &Window, wiring: &Wiring, reindexing: Reindexing, f
         let weak = weak.clone();
         let wiring = wiring.clone();
         move |id, signature| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
                     delete_signature(&window, &wiring, id, signature).await;
                 }
-        
             })
         }
     });
@@ -538,7 +532,7 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
                 .iter()
                 .filter(|_| showing)
                 .filter_map(|account| {
-                    crate::blocking::now(async {
+                    postio_session::blocking::now(async {
                         let footprint = messages
                             .footprint(account.id)
                             .await
@@ -605,10 +599,7 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
             // closure cannot.
             let mut mailboxes = Vec::with_capacity(accounts.len());
             for account in accounts.iter() {
-                mailboxes.push((
-                    account.id,
-                    account_mailboxes(&connection, account.id).await,
-                ));
+                mailboxes.push((account.id, account_mailboxes(&connection, account.id).await));
             }
             panel.set_accounts(accounts);
             panel.set_account_mailboxes(mailboxes);
@@ -656,14 +647,13 @@ async fn account_mailboxes(
     ]
     .into_iter()
     .filter_map(|role| {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             mailboxes
                 .by_role(account, role)
                 .await
                 .ok()
                 .flatten()
                 .map(|mailbox| (role, mailbox.path))
-    
         })
     })
     .collect();
@@ -687,7 +677,10 @@ async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::Account
     let Ok(connection) = database.connect().await else {
         return;
     };
-    match AccountRepository::new(&connection).mark_pending_deletion(id).await {
+    match AccountRepository::new(&connection)
+        .mark_pending_deletion(id)
+        .await
+    {
         Ok(true) => {}
         Ok(false) => return,
         Err(error) => {
@@ -701,14 +694,13 @@ async fn remove(window: &Window, wiring: &Wiring, id: postio_model::ids::Account
     let restore_window = window.clone();
     let restore_wiring = wiring.clone();
     window.show_removable_toast("Account removed", move || {
-        crate::blocking::now(async {
+        postio_session::blocking::now(async {
             if let Ok(connection) = restore_wiring.database.connect().await
                 && let Err(error) = AccountRepository::new(&connection).restore(id).await
             {
                 tracing::warn!(%error, "could not undo removing an account");
             }
             refresh(&restore_window, &restore_wiring).await;
-    
         })
     });
 }

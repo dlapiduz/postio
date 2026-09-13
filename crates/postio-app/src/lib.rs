@@ -38,7 +38,6 @@ pub mod reading;
 pub mod search;
 pub mod settings_accounts;
 pub mod settings_credential;
-mod blocking;
 mod settings_egress;
 mod settings_privacy;
 pub mod sidebar_backfill;
@@ -206,7 +205,7 @@ pub fn run() -> glib::ExitCode {
         let opening = Rc::clone(&opening);
         let timeline = timeline.clone();
         move |application| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 let Some(window) = application.active_window().and_downcast::<Window>() else {
                     return;
                 };
@@ -223,7 +222,6 @@ pub fn run() -> glib::ExitCode {
                     return;
                 }
                 open_the_store(&window, &opened, &context, &fed, &timeline);
-        
             })
         }
     });
@@ -250,7 +248,7 @@ pub fn run() -> glib::ExitCode {
         // Blocked on, because the GTK main loop has already returned and
         // there is nothing left to keep responsive -- this is the last write
         // of the process.
-        crate::blocking::now(postio_session::end_session(&ready.wiring.database));
+        postio_session::blocking::now(postio_session::end_session(&ready.wiring.database));
         ready.bridge.shutdown();
     }
     code
@@ -333,20 +331,23 @@ pub async fn open_or_onboard(
                 // The real transport is built here, in the composition root,
                 // rather than inside the probe: that is what lets a test
                 // drive the same `install` over a mock (#282).
-                Startup::Onboard(repairing) => onboarding::install(
-                    &window,
-                    &wiring,
-                    state,
-                    wired,
-                    events,
-                    notifier,
-                    repairing.map(|account| *account),
-                    std::sync::Arc::new(
-                        postio_account::discovery::PimalayaTransport::new()
-                            .with_egress(wiring.egress.clone()),
-                    ),
-                    std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
-                ).await,
+                Startup::Onboard(repairing) => {
+                    onboarding::install(
+                        &window,
+                        &wiring,
+                        state,
+                        wired,
+                        events,
+                        notifier,
+                        repairing.map(|account| *account),
+                        std::sync::Arc::new(
+                            postio_account::discovery::PimalayaTransport::new()
+                                .with_egress(wiring.egress.clone()),
+                        ),
+                        std::sync::Arc::new(postio_account::oauth::browser::SystemBrowserOpener),
+                    )
+                    .await
+                }
             }
             // Both branches, because both are a usable UI: mail to read, or
             // the screen that asks for the account there is none of. The
@@ -407,7 +408,7 @@ async fn open_account(
     postio_gtk::startup::on_first_frame(window, {
         let window = window.clone();
         let wiring = wiring.clone();
-        move || crate::blocking::now(start_syncing(&window, &wiring))
+        move || postio_session::blocking::now(start_syncing(&window, &wiring))
     });
     // Every gesture the window produces from here on reaches a real handler.
     // Before this line the keymap, the palette and the selection model all
@@ -644,7 +645,8 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
             let feeds = feeds.clone();
             std::rc::Rc::new(move |event: &postio_core::Event| feeds.apply(event))
         },
-    ).await;
+    )
+    .await;
 
     // The reading pane. After `compose::install`, because the two share the
     // pane and the window wires their swap when the composer is installed.
@@ -688,8 +690,9 @@ pub async fn feed_the_window(window: &Window, wiring: &Wiring) -> Option<Wired> 
     // Leaked for the same reason the engine is: the search surfaces live as
     // long as the window, and dropping the `View` here would unhook the
     // handlers that answer the box a moment after they were connected.
-    let search =
-        search::install(window, wiring, &feeds, reindexing).await.map(|view| &*Box::leak(Box::new(view)));
+    let search = search::install(window, wiring, &feeds, reindexing)
+        .await
+        .map(|view| &*Box::leak(Box::new(view)));
 
     catch_up_the_body_index(wiring).await;
     repair_the_header_blocks(wiring).await;
@@ -855,7 +858,9 @@ async fn reclaim_disk(wiring: &Wiring) {
             &database,
             &blobs,
             postio_session::BLOB_GRACE_PERIOD,
-        ).await {
+        )
+        .await
+        {
             // Recoverable, and the same judgement the body index makes: a mail
             // client that could not tidy up still reads mail, and the next
             // start tries again.
@@ -863,7 +868,9 @@ async fn reclaim_disk(wiring: &Wiring) {
         }
         // Last, and only when somebody has set a ceiling: this is the sweep
         // that costs a refetch, so it takes what the free sweeps left.
-        if let Err(error) = postio_session::enforce_storage_ceiling(&database, &blobs, ceiling).await {
+        if let Err(error) =
+            postio_session::enforce_storage_ceiling(&database, &blobs, ceiling).await
+        {
             tracing::warn!(%error, "could not bring the store under its ceiling");
         }
         // The database's own pages are not reclaimed here any more, and that
@@ -954,7 +961,9 @@ pub async fn start_syncing(window: &Window, wiring: &Wiring) {
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
-    ).await {
+    )
+    .await
+    {
         Ok(engines) => engines,
         Err(refusal) => {
             // A sentence, not a hang. Starting some of the engines would
@@ -1005,7 +1014,8 @@ pub async fn attach_account(
         wiring.backfill,
         wiring.watch,
         &wiring.egress,
-    ).await?;
+    )
+    .await?;
     if let Some(sync) = started {
         adopt_engine(window, wiring, account.id, sync).await;
     }
@@ -1102,7 +1112,8 @@ async fn seed_the_backfill(
         return;
     };
     let mailboxes = match postio_storage::repository::MailboxRepository::new(&connection)
-        .list_for_account(account).await
+        .list_for_account(account)
+        .await
     {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
@@ -1452,7 +1463,8 @@ pub async fn present(
             Rc::clone(&ready.events),
             notifier,
             Rc::clone(fed),
-        ).await;
+        )
+        .await;
         return;
     }
 
@@ -1572,8 +1584,9 @@ async fn reap_pending_accounts(database: &Store) {
     let Ok(connection) = database.connect().await else {
         return;
     };
-    if let Err(error) =
-        postio_storage::repository::AccountRepository::new(&connection).reap_pending_deletions().await
+    if let Err(error) = postio_storage::repository::AccountRepository::new(&connection)
+        .reap_pending_deletions()
+        .await
     {
         tracing::error!(%error, "could not reap an account marked for removal: {error}");
     }

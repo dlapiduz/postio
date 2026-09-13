@@ -106,7 +106,8 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
     let (inbox, flagged_total) = {
         let connection = database.connect().await.expect("a connection");
         connection
-            .execute("UPDATE messages SET flagged = 1", ()).await
+            .execute("UPDATE messages SET flagged = 1", ())
+            .await
             .expect("the fixture writes");
         let flagged_total: u32 = postio_storage::sql::one(
             &connection,
@@ -124,7 +125,8 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
         // would satisfy the resting assertion without the dwell doing
         // anything.
         connection
-            .execute("UPDATE messages SET seen = 0, flags = ''", ()).await
+            .execute("UPDATE messages SET seen = 0, flags = ''", ())
+            .await
             .expect("the fixture writes");
         (inbox.id, flagged_total)
     };

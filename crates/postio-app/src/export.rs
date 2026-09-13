@@ -136,12 +136,11 @@ pub async fn export_messages(
     let subjects: Vec<Option<String>> = messages
         .iter()
         .map(|message| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 crate::reading::read_message(database, *message)
                     .await
                     .map(|row| row.subject)
                     .unwrap_or_default()
-        
             })
         })
         .collect();
@@ -330,7 +329,9 @@ Half past twelve?\r\n";
         let message = world.message(Some("Lunch on Thursday"), Some(RAW)).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[message]).await.expect("it exports");
+        let files = exported(&world, into.path(), &[message])
+            .await
+            .expect("it exports");
 
         assert_eq!(files.len(), 1);
         assert_eq!(
@@ -349,7 +350,9 @@ Half past twelve?\r\n";
         }
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &messages).await.expect("it exports");
+        let files = exported(&world, into.path(), &messages)
+            .await
+            .expect("it exports");
 
         assert_eq!(files.len(), 3);
         let names: Vec<String> = files
@@ -379,7 +382,9 @@ Half past twelve?\r\n";
         let second = world.message(Some("Two"), Some(b"two")).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[second, first]).await.expect("it exports");
+        let files = exported(&world, into.path(), &[second, first])
+            .await
+            .expect("it exports");
 
         let names: Vec<&str> = files
             .iter()
@@ -396,7 +401,9 @@ Half past twelve?\r\n";
         let message = world.message(Some("../../escaped"), Some(RAW)).await;
         let into = tempfile::tempdir().expect("a directory");
 
-        let files = exported(&world, into.path(), &[message]).await.expect("it exports");
+        let files = exported(&world, into.path(), &[message])
+            .await
+            .expect("it exports");
 
         assert_eq!(files[0].parent(), Some(into.path()));
         assert!(files[0].exists());
@@ -457,7 +464,9 @@ one,two\r\n\
                 .expect("a message")
         };
 
-        let row = crate::reading::read_message(&world.database, message).await.expect("the row");
+        let row = crate::reading::read_message(&world.database, message)
+            .await
+            .expect("the row");
         let attachment = row
             .attachments
             .iter()

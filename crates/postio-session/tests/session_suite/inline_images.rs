@@ -81,7 +81,7 @@ fn message_with_an_inline_logo() -> MockMessage {
     .with_part("2", LOGO.as_bytes())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
@@ -109,11 +109,13 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     let messages = MessageRepository::new(&connection);
     let uid = *messages
         .uids_in(inbox.id, postio_model::Generation::new(VALIDITY))
+        .await
         .expect("uids")
         .first()
         .expect("the message synced");
     let stored = messages
         .by_uid(inbox.id, postio_model::Generation::new(VALIDITY), uid)
+        .await
         .expect("look up")
         .expect("stored");
 
@@ -141,7 +143,11 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
     .expect("backfill the text axis");
 
     // ── the body is the HTML, not the alternative ────────────────────────
-    let body = messages.body(stored.id).expect("body").expect("the row");
+    let body = messages
+        .body(stored.id)
+        .await
+        .expect("body")
+        .expect("the row");
     let html = body
         .html
         .expect("a text/html part disposed `inline` is still the message");
@@ -150,7 +156,7 @@ async fn an_inline_image_synced_from_a_server_resolves_to_its_bytes() {
         "the pane has no <img> to draw at all: {html}"
     );
 
-    let settled = messages.get(stored.id).expect("get").expect("row");
+    let settled = messages.get(stored.id).await.expect("get").expect("row");
     assert_eq!(
         settled.sync.body_state,
         BodyState::Full,

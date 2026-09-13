@@ -34,11 +34,10 @@ pub async fn install(window: &Window, wiring: &Wiring) {
     window.settings().connect_map({
         let database = wiring.database.clone();
         move |_| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if let Some(window) = weak.upgrade() {
                     refresh(&window, &database).await;
                 }
-        
             })
         }
     });
@@ -80,12 +79,11 @@ async fn refresh(window: &Window, database: &Store) {
     let mut activations: Vec<_> = accounts
         .iter()
         .flat_map(|account| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 log.for_account(account.id).await.unwrap_or_else(|error| {
                     tracing::warn!(%error, "could not read the unsubscribe-activation log");
                     Vec::new()
                 })
-        
             })
         })
         .collect();
@@ -98,7 +96,7 @@ async fn refresh(window: &Window, database: &Store) {
     let read_receipt_count: u64 = accounts
         .iter()
         .map(|account| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 messages
                     .read_receipt_requested_count(account.id)
                     .await
@@ -106,7 +104,6 @@ async fn refresh(window: &Window, database: &Store) {
                         tracing::warn!(%error, "could not count read-receipt requests");
                         0
                     })
-        
             })
         })
         .sum();

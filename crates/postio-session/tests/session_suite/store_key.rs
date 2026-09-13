@@ -243,114 +243,80 @@ async fn no_key_material_reaches_the_log_at_any_level() {
 }
 
 // ---------------------------------------------------------------------------
-// The pre-release migration, at the seam that runs it
+// What opening a store the old engine wrote does instead
 // ---------------------------------------------------------------------------
 
-/// A plaintext store: an unencrypted database with one message pointing at a
-/// bare-bytes blob, which is what a checkout from before ADR 0014 has on disk.
+/// The two tests that stood here proved a **pre-release migration**: an
+/// unencrypted store from before ADR 0014 was rewritten encrypted on the way
+/// in, and a store with undrained work refused rather than being migrated
+/// under it. Both are gone with their subject.
 ///
-/// Written out here rather than reached for, because the point of these two
-/// tests is the *wiring*: `postio_storage::encrypt` is proven in its own crate,
-/// and what nothing there can show is whether `open_store_at` calls it. That is
-/// this project's characteristic bug — a layer that is built, tested, and never
-/// mounted — so the test has to come in through the door the app comes in
-/// through.
-fn a_plaintext_store(directory: &std::path::Path) -> (std::path::PathBuf, String) {
+/// There is no migration path at all now (`specs/004-turso-store`). The engine
+/// changed underneath the file, so a store the old one wrote cannot be *read*,
+/// let alone rewritten — and the maintainer's instruction was explicit that it
+/// is rebuilt by resyncing rather than converted. `open_store_at` says so in a
+/// comment where the migration call used to be.
+///
+/// What survives of them is the question they were really asking, which is the
+/// one below: does a store that cannot be opened produce a sentence a person
+/// can act on, rather than a failure the app absorbs?
+#[tokio::test]
+async fn a_store_this_build_cannot_read_refuses_with_a_sentence() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("postio.db");
+    // Not a database at all -- the cheapest possible "this file is not a store
+    // this build can read", and the same arm every unreadable store takes.
+    std::fs::write(&path, b"this is not a database").expect("write the file");
+
+    let key = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
+    let said = postio_session::open_store_at(&path, &key)
+        .await
+        .expect_err("a file that is not a store must not open");
+
+    // The sentence goes on a screen (#404), so it has to name the problem
+    // rather than a state a person cannot act on.
+    assert!(
+        !said.is_empty() && said.chars().any(char::is_alphabetic),
+        "the refusal must say something: {said:?}"
+    );
+}
+
+/// A store this build wrote opens again, with the same key, carrying its mail.
+///
+/// The other half of the pair above, and the one that would catch a refusal
+/// that had become unconditional.
+#[tokio::test]
+async fn a_store_this_build_wrote_opens_again_with_its_mail() {
     use postio_model::Message;
     use postio_storage::repository::MessageRepository;
 
-    let path = directory.join("postio.db");
-    let mut connection = Connection::open(&path).expect("a plaintext database");
-    postio_storage::migrate(&mut connection).expect("migrate");
-
-    let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
-    let mut message = Message::new(account.id, inbox, chrono::Utc::now());
-    message.subject = Some("Zarquon".to_owned());
-    let id = MessageRepository::new(&connection)
-        .create(&mut message)
-        .expect("create");
-
-    let raw = b"From: ada@example.com\r\nSubject: Zarquon\r\n\r\nThursday.\r\n";
-    let digest = blake3::hash(raw).to_hex().to_string();
-    let shard = directory
-        .join("blobs")
-        .join(&digest[0..2])
-        .join(&digest[2..4]);
-    std::fs::create_dir_all(&shard).expect("shard directories");
-    std::fs::write(shard.join(&digest[4..]), raw).expect("write the blob");
-
-    connection
-        .execute(
-            "UPDATE messages SET raw_blob_id = ?1 WHERE id = ?2",
-            bind![digest, id.get()],
-        )
-        .await
-        .expect("point the message at its source");
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .await
-        .expect("checkpoint");
-    drop(connection);
-    (path, digest)
-}
-
-#[test]
-fn opening_a_plaintext_store_encrypts_it_first() {
     let directory = tempfile::tempdir().expect("a directory");
-    let (path, old_id) = a_plaintext_store(directory.path());
+    let path = directory.path().join("postio.db");
     let key = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
 
-    let (database, blobs) =
-        postio_session::open_store_at(&path, &key).expect("the store opens after migrating");
+    {
+        let (database, _blobs) = postio_session::open_store_at(&path, &key)
+            .await
+            .expect("a fresh store opens");
+        let connection = database.connect().await.expect("checkout");
+        let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+        let mut message = Message::new(account.id, inbox, chrono::Utc::now());
+        message.subject = Some("Zarquon".to_owned());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("create");
+    }
 
-    let connection = database.connect().await.expect("checkout");
-    let (subject, raw): (String, String) = connection
-        .query_row("SELECT subject, raw_blob_id FROM messages", [], |row| {
-            Ok((
-                postio_storage::sql::RowExt::col(row, 0)?,
-                postio_storage::sql::RowExt::col(row, 1)?,
-            ))
-        })
-        .expect("the message survived");
-    assert_eq!(subject, "Zarquon");
-    assert_ne!(raw, old_id, "the row still carries the unkeyed digest");
-    assert_eq!(
-        blobs
-            .get(&postio_model::BlobId::new(raw))
-            .expect("the raw source reads through the encrypted store"),
-        b"From: ada@example.com\r\nSubject: Zarquon\r\n\r\nThursday.\r\n"
-    );
-
-    // And it is a store the *next* open can read, which is the only version of
-    // this that matters.
-    drop(connection);
-    drop(database);
-    postio_session::open_store_at(&path, &key).expect("and it opens again");
-}
-
-#[test]
-fn a_store_with_work_still_queued_refuses_and_says_what_to_do() {
-    let directory = tempfile::tempdir().expect("a directory");
-    let (path, _) = a_plaintext_store(directory.path());
-    let connection = Connection::open(&path).expect("open");
-    connection
-        .execute(
-            "INSERT INTO operation_queue (account_id, op_type, created_at, updated_at)
-             VALUES ((SELECT id FROM accounts LIMIT 1), 'flag', 0, 0)",
-            (),
-        )
+    let (database, _blobs) = postio_session::open_store_at(&path, &key)
         .await
-        .expect("enqueue");
-    drop(connection);
-
-    let key = postio_storage::key::StoreKey::from_bytes([0x2b; 32]);
-    let said = postio_session::open_store_at(&path, &key)
-        .expect_err("a store with undrained work must not be migrated");
-
-    // The sentence goes on a screen (#404), so it has to name the problem and
-    // the way out rather than a state a person cannot act on.
-    assert!(
-        said.contains("server") && said.to_lowercase().contains("syncing"),
-        "the message must say what to do next: {said}"
-    );
+        .expect("and it opens again");
+    let connection = database.connect().await.expect("checkout");
+    let subject: String =
+        postio_storage::sql::one(&connection, "SELECT subject FROM messages", (), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("the message survived the reopen");
+    assert_eq!(subject, "Zarquon");
 }

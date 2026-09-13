@@ -62,7 +62,7 @@ pub async fn install(window: &Window, wiring: &Wiring) {
     window.connect_command({
         let wiring = wiring.clone();
         move |id| {
-            crate::blocking::now(async {
+            postio_session::blocking::now(async {
                 if id == CommandId::AddAccount {
                     let Some(window) = weak.upgrade() else {
                         return;
@@ -75,9 +75,9 @@ pub async fn install(window: &Window, wiring: &Wiring) {
                         &wiring,
                         // Discovery probes are outbound connections too (#151).
                         Arc::new(PimalayaTransport::new().with_egress(wiring.egress.clone())),
-                    ).await;
+                    )
+                    .await;
                 }
-        
             })
         }
     });
@@ -140,10 +140,9 @@ pub async fn open(
             let wiring = wiring.clone();
             let dialog = dialog.clone();
             move |address: &str| {
-                crate::blocking::now(async {
+                postio_session::blocking::now(async {
                     dialog.close();
                     join(&window, &wiring, address).await;
-            
                 })
             }
         };

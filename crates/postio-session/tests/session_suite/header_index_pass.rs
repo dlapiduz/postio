@@ -32,7 +32,7 @@ fn a_block(nth: usize) -> String {
     )
 }
 
-fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
+async fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) -> usize {
     let parsed = postio_search::parse(query, chrono::Utc::now().date_naive());
     postio_index::search(
         connection,
@@ -45,15 +45,18 @@ fn hits(connection: &Connection, account: postio_model::AccountId, query: &str) 
         },
         chrono::Utc::now(),
     )
+    .await
     .expect("search runs")
     .total_hits as usize
 }
 
-#[test]
-fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
+#[tokio::test]
+async fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
@@ -64,7 +67,7 @@ fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
             chrono::Utc::now() - chrono::Duration::minutes(nth as i64),
         );
         message.subject = Some(format!("Engine notes {nth}"));
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
         messages
             .set_body(
                 message.id,
@@ -77,51 +80,59 @@ fn mail_that_was_already_here_becomes_findable_by_header_and_stays_swept() {
                 },
                 BodyState::Full,
             )
+            .await
             .expect("store a block");
     }
 
     // Before the pass: the blocks are on disk and `header:` cannot see them.
     assert_eq!(
-        hits(&connection, account.id, "header:x-mailer=mutt"),
+        hits(&connection, account.id, "header:x-mailer=mutt").await,
         0,
         "a stored block nothing has indexed is not yet a hit"
     );
     drop(connection);
 
-    let indexed = postio_session::index_local_headers(&database).expect("the pass runs");
+    let indexed = postio_session::index_local_headers(&database)
+        .await
+        .expect("the pass runs");
     assert_eq!(indexed, MESSAGES, "every block was visited exactly once");
 
     let connection = database.connect().await.expect("checkout");
     assert_eq!(
-        hits(&connection, account.id, "header:x-mailer=mutt"),
+        hits(&connection, account.id, "header:x-mailer=mutt").await,
         MESSAGES,
         "and now every one of them answers the operator the pass exists for"
     );
     assert_eq!(
-        hits(&connection, account.id, "header:received=hop-7.example.com"),
+        hits(&connection, account.id, "header:received=hop-7.example.com").await,
         1,
         "including a value that is unique to one message"
     );
     assert!(
         postio_index::index::messages_missing_header_rows(&connection, 10)
+            .await
             .expect("candidates")
             .is_empty(),
         "a swept store leaves no candidates, or the next start sweeps it again"
     );
 
     drop(connection);
-    let second = postio_session::index_local_headers(&database).expect("the second pass");
+    let second = postio_session::index_local_headers(&database)
+        .await
+        .expect("the second pass");
     assert_eq!(second, 0, "a caught-up store costs one query and no writes");
 }
 
-#[test]
-fn a_store_whose_blocks_were_never_written_gives_the_pass_nothing_to_do() {
+#[tokio::test]
+async fn a_store_whose_blocks_were_never_written_gives_the_pass_nothing_to_do() {
     // ADR 0025 Q5's other two populations. `body_headers` NULL is
     // `repair_header_blocks`'s work or the backfill lane's, and offering it
     // here would be a batch this pass can make no progress on.
     let database = test_support::temp().await;
     let connection = database.connect().await.expect("checkout");
-    postio_index::index::ensure_schema(&connection).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
     let messages = MessageRepository::new(&connection);
@@ -132,12 +143,14 @@ fn a_store_whose_blocks_were_never_written_gives_the_pass_nothing_to_do() {
             chrono::Utc::now() - chrono::Duration::minutes(nth),
         );
         message.sync.body_state = BodyState::Full;
-        messages.create(&mut message).expect("create");
+        messages.create(&mut message).await.expect("create");
     }
     drop(connection);
 
     assert_eq!(
-        postio_session::index_local_headers(&database).expect("the pass runs"),
+        postio_session::index_local_headers(&database)
+            .await
+            .expect("the pass runs"),
         0,
         "no stored block, nothing this pass can do without a network"
     );
