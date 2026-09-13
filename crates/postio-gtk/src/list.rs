@@ -778,6 +778,11 @@ impl MessageList {
         };
         drop(window);
         for page in wanted {
+            // Which *position* provoked the request, which the reply-side log
+            // in `postio_app::feed` cannot say. A viewport asks for positions
+            // near each other; anything asking across a whole folder is the
+            // loop #1534 is about, and this is the line that names who.
+            tracing::debug!(position, page, "list page wanted");
             self.request(page);
         }
 
