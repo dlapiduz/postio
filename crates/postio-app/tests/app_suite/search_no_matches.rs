@@ -38,6 +38,7 @@ use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
 pub fn a_search_with_no_hits_says_so_rather_than_naming_the_inbox() {
+    crate::gtk_case(async {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statement of a single-threaded test.
     unsafe { std::env::set_var("XDG_STATE_HOME", state_dir.path()) };
@@ -51,10 +52,12 @@ pub fn a_search_with_no_hits_says_so_rather_than_naming_the_inbox() {
     style::install(&display);
     app::install_icons(&display);
 
-    let database = test_support::memory();
-    let report = seed_small(&database, 11);
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 11).await;
     assert!(report.message_count > 0, "the fixture seeded no mail");
-    ensure_search_index(&database).expect("the index is part of opening the store");
+    ensure_search_index(&database)
+        .await
+        .expect("the index is part of opening the store");
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -91,8 +94,9 @@ pub fn a_search_with_no_hits_says_so_rather_than_naming_the_inbox() {
     // The same call `run` makes, and the `View` it returns rather than a
     // second `search::install` — two installs answer into a view the test
     // cannot see.
-    let Wired { feeds, search } =
-        feed_the_window(&window, &wiring).expect("the store has an account");
+    let Wired { feeds, search } = feed_the_window(&window, &wiring)
+        .await
+        .expect("the store has an account");
     // The view is installed the way `run` installs it; this case reads the
     // list's state rather than the column, so it is not held.
     let _view = search.expect("search installed");
@@ -122,16 +126,18 @@ pub fn a_search_with_no_hits_says_so_rather_than_naming_the_inbox() {
         .expect("the box has a live readout while searching")
         .flush();
 
-    let said = settle_until(|| {
+    let said = settle_until(async || {
         matches!(
             window.list_state().state(),
             Some(postio_gtk::list_state::State::NoMatches { .. })
         )
-    });
+    })
+    .await;
     assert!(
         said,
         "a search that found nothing is showing {:?} -- a statement about the \
          mailbox, where the question was about the query",
         window.list_state().state()
     );
+    })
 }

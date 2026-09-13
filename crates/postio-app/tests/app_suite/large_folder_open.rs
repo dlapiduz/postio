@@ -43,13 +43,14 @@ use postio_storage::{BlobStore, test_support};
 const MESSAGES: usize = 12_000;
 
 pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
+    crate::gtk_case(async {
     if adw::init().is_err() || gtk::gdk::Display::default().is_none() {
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
 
-    let database = test_support::memory();
-    seed_large(&database, 11, MESSAGES);
+    let database = test_support::memory().await;
+    seed_large(&database, 11, MESSAGES).await;
     let directory = tempfile::tempdir().expect("a blob directory");
     let blobs = BlobStore::open(
         directory.path().to_path_buf(),
@@ -60,15 +61,19 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
     // The folder the seed weights most of its messages into, which is the one
     // that outgrows the cache.
     let (biggest, rows) = {
-        let connection = database.connection().expect("a connection");
-        connection
-            .query_row(
-                "SELECT mailbox_id, count(*) FROM messages
-                  GROUP BY mailbox_id ORDER BY count(*) DESC LIMIT 1",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
-            .expect("the seed put messages somewhere")
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::one(
+            &connection,
+            "SELECT mailbox_id, count(*) FROM messages
+              GROUP BY mailbox_id ORDER BY count(*) DESC LIMIT 1",
+            (),
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                Ok((row.col::<i64>(0)?, row.col::<i64>(1)?))
+            },
+        )
+        .await
+        .expect("the seed put messages somewhere")
     };
     assert!(
         rows > 2_000,
@@ -89,11 +94,13 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
     let window = Window::default();
     window.present();
     while glib::MainContext::default().iteration(false) {}
-    let wired = feed_the_window(&window, &wiring).expect("the seeded store has an account");
+    let wired = feed_the_window(&window, &wiring)
+        .await
+        .expect("the seeded store has an account");
 
     let list = window.list();
     assert!(
-        settle_until(|| list.model().n_items() > 0),
+        settle_until(async || list.model().n_items() > 0).await,
         "the opening folder never filled"
     );
 
@@ -103,7 +110,7 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
         postio_model::ids::MailboxId::new(biggest),
     ));
     assert!(
-        settle_until(|| list.model().n_items() as i64 > 0),
+        settle_until(async || list.model().n_items() as i64 > 0).await,
         "the large folder never filled"
     );
 
@@ -113,7 +120,7 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
     // are still arriving after this, they were never going to stop.
     for _ in 0..200 {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     let asked = postio_ui::test_support::pages_requested() - before;
@@ -142,15 +149,18 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
     // window that has moved on. What must not happen is that the list ends up
     // asking for pages without ever settling.
     let folders: Vec<i64> = {
-        let connection = database.connection().expect("a connection");
-        let mut statement = connection
-            .prepare("SELECT mailbox_id, count(*) FROM messages GROUP BY mailbox_id ORDER BY count(*) DESC")
-            .expect("prepare");
-        statement
-            .query_map([], |row| row.get::<_, i64>(0))
-            .expect("query")
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::all(
+            &connection,
+            "SELECT mailbox_id, count(*) FROM messages GROUP BY mailbox_id ORDER BY count(*) DESC",
+            (),
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                row.col::<i64>(0)
+            },
+        )
+        .await
+        .expect("query")
     };
     assert!(folders.len() >= 2, "need two folders to switch between");
 
@@ -168,7 +178,7 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
     // stops asking.
     for _ in 0..200 {
         while glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let churned = postio_ui::test_support::pages_requested() - before;
 
@@ -186,4 +196,5 @@ pub fn opening_a_large_folder_asks_for_a_bounded_number_of_pages() {
         "after switching, the list shows nothing at all: the app lost track \
          of which folder it is on (#1534)"
     );
+    })
 }
