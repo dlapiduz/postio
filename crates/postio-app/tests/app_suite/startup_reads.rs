@@ -230,6 +230,26 @@ pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
             "an aggregate is one statement and one row however much it reads, \
              which is what makes it invisible to the two counts above"
         );
+        // And the control, which says what this case can no longer prove.
+        //
+        // `read_receipt_requested_count` is #1479's own query: the privacy
+        // pane's figure, run unconditionally from `feed_the_window` for a
+        // number drawn in a panel that is not on screen, and 1044 ms of a
+        // 1250 ms startup on a real store. It is one statement returning one
+        // row, so the two counts above cannot see it -- that part is unchanged
+        // and is why the step count existed.
+        //
+        // **`scans` cannot see it either**, and that is the honest limit of
+        // the replacement. Measured, it plans as
+        // `SEARCH messages USING INDEX idx_messages_send_state (account_id=?)`
+        // -- a seek to the account and then a walk of every message the
+        // account has. The planner calls that a SEARCH, because it is one; it
+        // is O(mailbox) all the same.
+        //
+        // So: the instrument sees a scan of a *table* and is blind to a walk
+        // of an *index prefix*, which is the shape of the bug it replaced.
+        // Asserted rather than merely written down, so that an engine which
+        // starts reporting this honestly fails here and says so.
         let control = postio_storage::test_support::counting::scans(
             &connection,
             "SELECT count(*) FROM messages
@@ -238,12 +258,11 @@ pub fn opening_a_window_reads_a_bounded_amount_however_big_the_mailbox_is() {
         )
         .await;
         assert!(
-            !control.is_empty(),
-            "the privacy pane's own figure has stopped being a scan, so this \
-             case no longer demonstrates that a statement count cannot see one \
-             -- and the assertion above is guarding nothing it can prove. \
-             Either an index arrived for `read_receipt_requested` (good: say so \
-             here and pick a new control) or the query changed."
+            control.is_empty(),
+            "#1479's aggregate now reports as a scan ({control:?}), which means \
+             `counting::scans` has grown the reach the step count had. Point \
+             the assertion above at every statement the window issues rather \
+             than at the one query this case can name, and delete this comment."
         );
     });
 }

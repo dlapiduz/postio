@@ -230,18 +230,11 @@ where
     done().await
 }
 
-#[tokio::test]
+/// `multi_thread`, and the flavour is load-bearing: see `backend_choice`'s
+/// own case, and `app_suite`'s `gtk_case`.
+#[tokio::test(flavor = "multi_thread")]
 async fn a_preset_oauth_provider_signs_in_with_the_browser_end_to_end() {
-    // On a `multi_thread` runtime driven by `block_on`: the body runs on this
-    // thread, where GTK lives, and a synchronous callback reaching
-    // `postio_session::blocking::now` finds a runtime it can `block_in_place`
-    // on. `app_suite`'s `gtk_case` is the same shape and says why.
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .expect("a runtime")
-        .block_on(sign_in());
+    sign_in().await;
 }
 
 async fn sign_in() {
@@ -266,18 +259,19 @@ async fn sign_in() {
     app::install_icons(&display);
 
     // ── the servers ─────────────────────────────────────────────────────
-    // An auxiliary runtime carries the test server; the app's own work runs
-    // on the bridge's runtime as in production.
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the servers");
-    let imap = runtime.block_on(async {
-        TestServer::builder()
-            .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=XOAUTH2"])
-            .access_token(ACCESS_TOKEN)
-            .account(ADDRESS)
-            .mailbox(TestMailbox::new("INBOX"))
-            .start()
-            .await
-    });
+    // On this test's own runtime rather than an auxiliary one. It used to
+    // build its own -- "an auxiliary runtime carries the test server; the
+    // app's own work runs on the bridge's runtime as in production" -- and
+    // the second half is still true. What changed is that *this* function is
+    // async now, driven by a runtime, so a `Runtime::new().block_on()` here
+    // would be a runtime started from inside one, which tokio refuses.
+    let imap = TestServer::builder()
+        .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=XOAUTH2"])
+        .access_token(ACCESS_TOKEN)
+        .account(ADDRESS)
+        .mailbox(TestMailbox::new("INBOX"))
+        .start()
+        .await;
     let idp = MockIdp::start();
 
     // ── the provider, as a user-overlay preset row ──────────────────────
@@ -413,13 +407,15 @@ sources = ["own-client"]
     assert_eq!(oauth.client_id, "the-client-id");
     assert_eq!(oauth.token_url, idp.url);
 
-    let refresh = runtime
-        .block_on(secrets.retrieve(&AccountKey::new(format!("{ADDRESS}#oauth-refresh"))))
+    let refresh = secrets
+        .retrieve(&AccountKey::new(format!("{ADDRESS}#oauth-refresh")))
+        .await
         .expect("the refresh token is in the keyring");
     assert_eq!(refresh.expose(), REFRESH_TOKEN);
     assert!(
-        runtime
-            .block_on(secrets.retrieve(&AccountKey::new(ADDRESS)))
+        secrets
+            .retrieve(&AccountKey::new(ADDRESS))
+            .await
             .is_err(),
         "no password entry exists: this account never had one"
     );

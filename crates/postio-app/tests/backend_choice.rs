@@ -167,23 +167,20 @@ where
 
 /// The whole scenario, async because the store is.
 ///
-/// On a `multi_thread` runtime driven by `block_on`, so the body runs on
-/// **this** thread where GTK lives, and so a synchronous callback reaching
-/// `postio_session::blocking::now` finds a runtime it can `block_in_place`
-/// on — see `app_suite`'s `gtk_case`, which is the same shape.
 async fn drive() {
     // ── servers ─────────────────────────────────────────────────────────
-    // An auxiliary runtime carries the test server; the app's own work runs
-    // on the bridge's runtime as in production.
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the servers");
-    let imap = runtime.block_on(async {
-        TestServer::builder()
-            .account("grace@fallback.test")
-            .password("imap-only-password")
-            .mailbox(TestMailbox::new("INBOX"))
-            .start()
-            .await
-    });
+    // On this test's own runtime rather than an auxiliary one. It used to
+    // build its own -- "an auxiliary runtime carries the test server; the
+    // app's own work runs on the bridge's runtime as in production" -- and
+    // the second half is still true. What changed is that *this* function is
+    // async now, driven by a runtime, so a `Runtime::new().block_on()` here
+    // would be a runtime started from inside one, which tokio refuses.
+    let imap = TestServer::builder()
+        .account("grace@fallback.test")
+        .password("imap-only-password")
+        .mailbox(TestMailbox::new("INBOX"))
+        .start()
+        .await;
     let jmap_ok = session_server("the-api-token");
     // The refusing endpoint: every bearer is 401, so the fallback row's
     // JMAP proof always fails.
@@ -350,7 +347,11 @@ session_url = "http://127.0.0.1:{jmap_refusing}/jmap/session/"
     bridge.shutdown();
 }
 
-#[tokio::test]
+/// `multi_thread`, and the flavour is load-bearing:
+/// `postio_session::blocking::now` is how a synchronous GTK callback reads the
+/// store, and it reaches for `block_in_place`, which panics outright on a
+/// current_thread runtime. `app_suite`'s `gtk_case` is the same shape.
+#[tokio::test(flavor = "multi_thread")]
 async fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     let state_dir = tempfile::tempdir().expect("a state directory");
     // SAFETY: first statements of a single-threaded test binary.
@@ -365,12 +366,7 @@ async fn the_add_stores_the_first_backend_whose_proof_succeeds() {
     style::install(&display);
     app::install_icons(&display);
 
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .expect("a runtime")
-        .block_on(drive());
+    drive().await;
 
     // The window this test built joins GTK's toplevel list at
     // construction and stays there, holding a WebProcess, until it is
