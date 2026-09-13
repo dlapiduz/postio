@@ -56,6 +56,10 @@ add_account	ctrl+shift+n
 edit_config	ctrl+e
 toggle_sidebar	ctrl+b
 focus_sidebar	g f
+go_to_inbox	g i
+go_to_drafts	g d
+go_to_sent	g t
+go_to_flagged	g s
 cycle_pane	tab
 cycle_pane_back	shift+tab
 next_folder	j | Down

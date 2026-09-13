@@ -87,6 +87,7 @@ mod gtk_flagged;
 mod gtk_focus_visible;
 mod gtk_folder_reload_scope;
 mod gtk_folder_sections;
+mod gtk_go_to;
 mod gtk_identity;
 mod gtk_keymap_lazy;
 mod gtk_layout_intent;
@@ -448,6 +449,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders",
         gtk_finder::one_box_searches_mail_runs_commands_and_jumps_to_folders as fn(),
+    ),
+    (
+        "gtk_go_to::a_destination_this_account_does_not_have_is_reported",
+        gtk_go_to::a_destination_this_account_does_not_have_is_reported as fn(),
     ),
     (
         "gtk_finder::at_finds_a_correspondent_and_searches_their_mail",
