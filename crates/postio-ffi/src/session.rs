@@ -774,6 +774,16 @@ impl Session {
         blocking(self.mailboxes())
     }
 
+    /// Every configured account, in the order the pane lists them.
+    ///
+    /// Synchronous at the boundary like `mailboxes`: the settings pane reads
+    /// it from a computed property, and an async crossing for a handful of
+    /// rows would push a `Task` into every caller. See [`Session::accounts`].
+    #[uniffi::method(name = "accounts")]
+    pub fn accounts_ffi(&self) -> Vec<crate::AccountFfi> {
+        blocking(self.accounts())
+    }
+
     /// The binding in force for a command, for drawing a native accelerator.
     #[uniffi::method(name = "bindingFor")]
     pub fn binding_for_ffi(&self, command: String) -> Option<String> {
@@ -821,6 +831,13 @@ impl Session {
             })
             .collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// The Rust surface. Nothing here crosses to Swift; the block above wraps what
+// should. Test-only methods belong here.
+// ---------------------------------------------------------------------------
+impl Session {
     /// Every configured account, in the order the pane lists them.
     ///
     /// Disabled ones included: a list that hid them would make "where did my
@@ -839,13 +856,7 @@ impl Session {
             .map(|accounts| accounts.iter().map(crate::AccountFfi::of).collect())
             .unwrap_or_default()
     }
-}
 
-// ---------------------------------------------------------------------------
-// The Rust surface. Nothing here crosses to Swift; the block above wraps what
-// should. Test-only methods belong here.
-// ---------------------------------------------------------------------------
-impl Session {
     /// Opens a session, or says why it could not.
     ///
     /// # This blocks
