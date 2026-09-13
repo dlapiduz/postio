@@ -1,3 +1,14 @@
+//! A store this build cannot read is refused, and left exactly as it was.
+//!
+//! There is no migration from the SQLCipher format -- a store in it is rebuilt
+//! by resyncing (ADR 0037). "Rebuilt" has to mean the old file is still there
+//! to be moved aside, so the failure path may not truncate, may not create,
+//! and may not half-write a header over somebody's mailbox.
+//!
+//! Its own test rather than a `storage_suite` module because it is about
+//! `Store::open` refusing, which is the one thing the suite's shared fixtures
+//! cannot set up: they all open successfully.
+
 use postio_storage::{
     Store,
     key::{Purpose, StoreKey},
@@ -15,11 +26,9 @@ async fn a_store_this_build_cannot_read_is_left_byte_for_byte() {
     let before = std::fs::read(&path).unwrap();
 
     let key = StoreKey::from_bytes([0x2a; 32]).derive(Purpose::Database);
-    let outcome = Store::open(&path, &key).await;
-    let error = outcome
-        .err()
-        .expect("a file this build cannot read must not open");
-    println!("refused with: {error}");
+    let Err(error) = Store::open(&path, &key).await else {
+        panic!("a file this build cannot read must not open");
+    };
     assert!(
         matches!(error, postio_storage::Error::WrongStoreKey),
         "the refusal reached a screen as the engine's own words. Postio writes \

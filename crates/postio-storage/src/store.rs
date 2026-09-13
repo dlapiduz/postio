@@ -321,6 +321,35 @@ PRAGMA cache_size = -65536;
 PRAGMA synchronous = 1;
 ";
 
+/// The least the holes must come to before a reclaim is worth blocking a
+/// writer for. See [`worth_reclaiming`].
+const RECLAIM_FLOOR: u64 = 64 * 1024 * 1024;
+
+/// And the least share of the file they must be. See [`worth_reclaiming`].
+const RECLAIM_FRACTION: f64 = 0.25;
+
+/// Whether a database of `total_pages` with `free_pages` of holes is worth
+/// rewriting.
+///
+/// A function of three numbers rather than a method on a store, so the policy
+/// can be argued with at the magnitudes that matter — a ten-gigabyte archive,
+/// a wiped folder — without seeding one. [`Store::is_worth_reclaiming`] reads
+/// the three pragmas and asks this.
+///
+/// Both conditions have to hold, and they guard different mistakes. The
+/// **floor** stops a rewrite that recovers a few megabytes: the reclaim blocks
+/// every writer for its whole duration, and nothing should pay that for a
+/// rounding error. The **fraction** stops a rewrite whose cost is the entire
+/// file and whose gain is one per cent of it — the cost scales with
+/// `total_pages` and the gain only with `free_pages`.
+pub fn worth_reclaiming(free_pages: u64, total_pages: u64, page_size: u64) -> bool {
+    if total_pages == 0 {
+        return false;
+    }
+    let free_bytes = free_pages.saturating_mul(page_size);
+    free_bytes >= RECLAIM_FLOOR && free_pages as f64 / total_pages as f64 >= RECLAIM_FRACTION
+}
+
 /// The store: a database handle and the path it came from.
 ///
 /// Cheap to clone — the engine's handle is an `Arc` inside — so it is passed
@@ -387,6 +416,11 @@ impl Store {
             .experimental_triggers(true)
             .experimental_index_method(true)
             .experimental_generated_columns(true)
+            // `VACUUM` is the only page reclaim this engine offers -- there
+            // is no `auto_vacuum` toggle on this builder -- and the flag only
+            // lets the statement parse. What decides whether one ever runs is
+            // [`Store::is_worth_reclaiming`].
+            .experimental_vacuum(true)
             .build()
             .await;
         drop(hexkey);
@@ -418,6 +452,104 @@ impl Store {
         connection.execute("PRAGMA foreign_keys = OFF", ()).await?;
         connection.execute_batch(schema::HEAD).await?;
         Ok(())
+    }
+
+    /// How many bytes the file is holding that nothing is using.
+    ///
+    /// `freelist_count * page_size`: pages inside the database that a delete
+    /// freed and that the filesystem has not been given back.
+    pub async fn free_bytes(&self) -> Result<u64> {
+        let connection = self.connect().await?;
+        let free = crate::sql::scalar(&connection, "PRAGMA freelist_count", ()).await?;
+        let page = crate::sql::scalar(&connection, "PRAGMA page_size", ()).await?;
+        Ok((free.max(0) as u64).saturating_mul(page.max(0) as u64))
+    }
+
+    /// Whether reclaiming those pages would be worth what it costs.
+    ///
+    /// Two conditions, and both have to hold.
+    ///
+    /// **At least [`RECLAIM_FLOOR`] of holes**, because the reclaim is a full
+    /// rewrite and a rewrite that recovers a few megabytes is not worth
+    /// blocking a writer for.
+    ///
+    /// **And at least [`RECLAIM_FRACTION`] of the file**, because the cost
+    /// scales with the *whole* database and the gain only with the holes. A
+    /// ten-gigabyte store with a hundred megabytes free would spend minutes to
+    /// recover one per cent.
+    ///
+    /// # Why this is not simply "every start"
+    ///
+    /// Freed pages are **reused**. Measured: a 20,000-message store at
+    /// 12.9 MiB, with 18,000 messages deleted and 18,000 put back, came to
+    /// 12.9 MiB -- no growth at all. So a store does not creep upward; it
+    /// plateaus at the largest it ever had to be, and a reclaim is worth
+    /// something only after a large one-off deletion. A `UIDVALIDITY` reset
+    /// wiping a folder is the case #381 was written for.
+    pub async fn is_worth_reclaiming(&self) -> Result<bool> {
+        let connection = self.connect().await?;
+        let free = crate::sql::scalar(&connection, "PRAGMA freelist_count", ()).await?;
+        let pages = crate::sql::scalar(&connection, "PRAGMA page_count", ()).await?;
+        let page = crate::sql::scalar(&connection, "PRAGMA page_size", ()).await?;
+        Ok(worth_reclaiming(
+            free.max(0) as u64,
+            pages.max(0) as u64,
+            page.max(0) as u64,
+        ))
+    }
+
+    /// Rewrite the database without its holes, and answer how many bytes that
+    /// gave back.
+    ///
+    /// # What this costs, measured
+    ///
+    /// A full `VACUUM`, because this engine offers no incremental one. On this
+    /// workstation it rewrites at roughly 25 MiB/s, and **it blocks every
+    /// other writer for its whole duration** -- a keystroke's write issued
+    /// during a 2.80 s reclaim waited 2,831 ms for it. On a store the size of
+    /// ADR 0017's reference mailbox that is most of a minute of frozen writes,
+    /// which is why [`is_worth_reclaiming`](Self::is_worth_reclaiming) gates
+    /// it and why the caller is the housekeeping worker rather than anything
+    /// a person is waiting on.
+    ///
+    /// Peak disk is about 1.1x the file, not the 2x a copy-and-swap would
+    /// need.
+    ///
+    /// # Being interrupted is safe
+    ///
+    /// Measured by killing the process at six points across a 1.2 s reclaim of
+    /// a 27 MB store: at 0.3, 0.6, 0.9, 1.0 and 1.1 seconds the file came back
+    /// **byte for byte identical** to the original and every row read; at 1.2
+    /// it had completed and reclaimed 88%. There is no half-written state to
+    /// recover from, which is what makes this safe to start without a window
+    /// asking permission first.
+    ///
+    /// # The permit
+    ///
+    /// Taken at [`WritePriority::Background`], so this cannot *begin* while an
+    /// interactive writer is queued. It cannot yield once begun -- a rewrite
+    /// is not interruptible -- and that is the whole reason for the gate.
+    pub async fn reclaim_free_pages(&self) -> Result<u64> {
+        let before = self.file_bytes();
+        let connection = self.connect().await?;
+        let _permit = self.gate.acquire(WritePriority::Background).await;
+        connection.execute("VACUUM", ()).await?;
+        drop(_permit);
+        drop(connection);
+        // The rewrite lands in the log; the file on disk only shrinks once
+        // that is folded back in, and reporting the number before then would
+        // report nothing.
+        self.truncate_log().await?;
+        Ok(before.saturating_sub(self.file_bytes()))
+    }
+
+    /// The database file's size, or 0 for a store with no path.
+    fn file_bytes(&self) -> u64 {
+        self.path
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map(|meta| meta.len())
+            .unwrap_or(0)
     }
 
     /// A connection onto the store, with foreign keys on.
@@ -602,5 +734,61 @@ fn as_key_failure(error: Error) -> Error {
         Error::WrongStoreKey
     } else {
         error
+    }
+}
+
+#[cfg(test)]
+mod reclaim_policy {
+    use super::{RECLAIM_FLOOR, worth_reclaiming};
+
+    /// 4 KiB, which is what this engine reports on a store it created.
+    const PAGE: u64 = 4096;
+
+    /// Pages in one mebibyte, to keep the cases below readable as sizes.
+    const PER_MIB: u64 = 1024 * 1024 / PAGE;
+
+    #[test]
+    fn a_freshly_filled_store_is_left_alone() {
+        // 800 MiB with 4 MiB of holes: the shape of ordinary use, where a
+        // delete's pages are reused by the next message rather than
+        // accumulating.
+        assert!(!worth_reclaiming(4 * PER_MIB, 800 * PER_MIB, PAGE));
+    }
+
+    #[test]
+    fn a_wiped_folder_is_worth_it() {
+        // A `UIDVALIDITY` reset on a large folder: 400 MiB of a 900 MiB store
+        // freed at once, which is the case #381 was written for.
+        assert!(worth_reclaiming(400 * PER_MIB, 900 * PER_MIB, PAGE));
+    }
+
+    #[test]
+    fn a_small_store_that_is_mostly_holes_is_still_left_alone() {
+        // 90% free, and 45 MiB. The proportion is alarming and the quantity is
+        // not: rewriting to recover this would cost every writer the length of
+        // the rewrite to save less than a photograph.
+        assert!(!worth_reclaiming(45 * PER_MIB, 50 * PER_MIB, PAGE));
+    }
+
+    #[test]
+    fn a_huge_store_with_a_thin_slice_free_is_left_alone() {
+        // 10 GiB with 200 MiB free: over the floor, and 2% of the file. The
+        // rewrite's cost is the whole ten gigabytes.
+        assert!(!worth_reclaiming(200 * PER_MIB, 10 * 1024 * PER_MIB, PAGE));
+    }
+
+    #[test]
+    fn the_floor_is_a_size_rather_than_a_page_count() {
+        // The same number of free pages, at two page sizes. A store with
+        // larger pages reaches the floor sooner, which is the point of
+        // measuring the holes in bytes: what is being recovered is disk.
+        let pages = RECLAIM_FLOOR / 8192;
+        assert!(worth_reclaiming(pages, pages * 2, 8192));
+        assert!(!worth_reclaiming(pages, pages * 2, 4096));
+    }
+
+    #[test]
+    fn an_empty_store_divides_by_nothing() {
+        assert!(!worth_reclaiming(0, 0, PAGE));
     }
 }

@@ -549,7 +549,7 @@ pub(crate) async fn refresh(window: &Window, wiring: &Wiring) {
                                 complete: footprint.complete,
                             },
                         ))
-                
+
                     })
                 })
                 .collect();
