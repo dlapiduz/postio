@@ -302,7 +302,7 @@ pub async fn search(
         // second-guess, and this is the one moment the cost is free: there
         // are no rows to draw.
         suggestion: match total_hits {
-            0 => suggestion_for(connection, request.query)?,
+            0 => suggestion_for(connection, request.query).await?,
             _ => None,
         },
         hits,
@@ -322,24 +322,33 @@ pub async fn search(
 /// filter in the query — `from:ada hanah` — the filter is the likelier reason
 /// nothing matched. Both cases are left alone rather than answered badly.
 ///
-/// # Why the vocabulary is a temp table
+/// # Where the vocabulary comes from on this engine
 ///
-/// `fts5vocab` exposes the index's terms with no schema change, and that
-/// matters: `index.rs` versions the metadata half and rebuilds *all* of it
-/// when the schema moves, so a permanent vocabulary table would cost every
-/// user a full reindex to add a suggestion they may never see. In `temp` it
-/// is per-connection, costs nothing to declare, and disappears.
+/// SQLite's `fts5vocab` — a virtual table over the index's own term
+/// dictionary — has no equivalent here: the engine's full-text index keeps
+/// its terms to itself. But `search_documents` is an ordinary table holding
+/// the already-folded text the index was built from, so the vocabulary is
+/// rebuilt from its newest [`VOCABULARY_DOCUMENTS`] rows instead. A sample,
+/// deliberately: the intended word is overwhelmingly a name that recurs, and
+/// a term that appears nowhere in the last few thousand messages is a weak
+/// offer anyway. Term counts count documents, not occurrences, which is what
+/// `fts5vocab('row')` reported and what the ranking expects.
+///
+/// This runs only on a search that found nothing, so the scan never sits on
+/// the typing path.
 ///
 /// # What it does not read
 ///
-/// Body terms. `messages_fts` holds senders, recipients, subjects, filenames
-/// and list ids, which is where the names people mistype live; the body index
-/// is a separate table and a much larger vocabulary. Consulting it too is a
-/// later question, and one for measurement rather than taste.
-fn suggestion_for(
+/// Body terms. `search_documents` holds senders, recipients, subjects,
+/// filenames and list ids, which is where the names people mistype live; the
+/// body index is a separate table and a much larger vocabulary. Consulting
+/// it too is a later question, and one for measurement rather than taste.
+async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
+    use std::collections::{HashMap, HashSet};
+
     let mut terms = query.text_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
@@ -348,38 +357,51 @@ fn suggestion_for(
         return Ok(None);
     }
 
-    connection.execute_batch(
-        // `main` named explicitly. `fts5vocab` resolves its target in the
-        // schema the vocabulary itself is declared in, so the two-argument
-        // form here looks for `temp.messages_fts` and finds nothing.
-        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.messages_fts_vocab
-             USING fts5vocab('main', 'messages_fts', 'row');",
-    )?;
-
-    // A wider net than the rule needs: `postio-search` owns how far a word may
-    // be mistyped, and this only has to avoid carrying the whole vocabulary
-    // across the boundary to find out. Commonest first, so the cap keeps the
-    // terms most likely to be the intended word.
-    let typed = term.value.chars().count() as i64;
-    let mut statement = connection.prepare(
-        "SELECT term, doc FROM temp.messages_fts_vocab
-          WHERE length(term) BETWEEN ? AND ?
-          ORDER BY doc DESC LIMIT ?",
-    )?;
-    let rows = statement.query_map(
-        rusqlite::params![
-            typed - MOST_EDITS_CONSIDERED,
-            typed + MOST_EDITS_CONSIDERED,
-            VOCABULARY_CAP
-        ],
+    let documents = sql::all(
+        connection,
+        "SELECT sender, recipients, subject, filenames, list_id
+           FROM search_documents
+          ORDER BY message_id DESC
+          LIMIT ?1",
+        [VOCABULARY_DOCUMENTS],
         |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?.max(0) as u64,
-            ))
+            Ok([
+                row.opt_text(0)?,
+                row.opt_text(1)?,
+                row.opt_text(2)?,
+                row.opt_text(3)?,
+                row.opt_text(4)?,
+            ])
         },
-    )?;
-    let vocabulary: Vec<(String, u64)> = rows.collect::<rusqlite::Result<_>>()?;
+    )
+    .await?;
+
+    // A wider net than the rule needs: `postio-search` owns how far a word
+    // may be mistyped, and this only has to avoid carrying every term across
+    // the boundary to find out.
+    let typed = term.value.chars().count() as i64;
+    let band = (typed - MOST_EDITS_CONSIDERED)..=(typed + MOST_EDITS_CONSIDERED);
+    let mut counts: HashMap<String, u64> = HashMap::new();
+    for document in &documents {
+        // Each document counts a term once, however often it repeats it.
+        let mut seen: HashSet<&str> = HashSet::new();
+        for text in document.iter().flatten() {
+            for word in text
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+            {
+                if band.contains(&(word.chars().count() as i64)) && seen.insert(word) {
+                    *counts.entry(word.to_owned()).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    // Commonest first, so the cap keeps the terms most likely to be the
+    // intended word.
+    let mut vocabulary: Vec<(String, u64)> = counts.into_iter().collect();
+    vocabulary.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    vocabulary.truncate(VOCABULARY_CAP as usize);
 
     Ok(postio_search::suggest::suggest(
         &term.value,
@@ -492,6 +514,14 @@ const MOST_EDITS_CONSIDERED: i64 = 2;
 /// in hundreds of messages rather than a token that appeared once. This runs
 /// only on a search that found nothing, so it never sits on the typing path.
 const VOCABULARY_CAP: i64 = 4_096;
+
+/// How many of the newest documents the vocabulary is rebuilt from.
+///
+/// The bound on the scan [`suggestion_for`] pays, since this engine keeps no
+/// term dictionary to read instead. Five thousand rows of short metadata
+/// columns read and tokenize in a few milliseconds, and only on a search
+/// that already found nothing.
+const VOCABULARY_DOCUMENTS: i64 = 5_000;
 
 /// Measures what the query's result set is made of: how it splits across the
 /// scopes, and which narrowings are worth offering.
