@@ -1537,3 +1537,101 @@ async fn a_reply_joins_its_conversation_locally_before_the_server_is_told() {
          nothing arrive"
     );
 }
+
+/// A drain pass heals a send that has nothing left to carry it.
+///
+/// The repository knows how (`DraftRepository::fail_orphaned_sends`) and the
+/// drainer calls it, but those are two facts and this is the one that matters:
+/// a real store held a draft `queued` with no operation for 25 hours, and what
+/// has to be true is that *running the client* gets it out of that state.
+///
+/// Driven through `Drainer::drain` rather than the repository, because the
+/// wiring is the part that was missing — and because the call sits above the
+/// empty-batch early return, which is the arrangement a unit test of either
+/// piece cannot see.
+#[tokio::test]
+async fn a_drain_pass_heals_a_send_with_no_operation_behind_it() {
+    let database = test_support::memory();
+    let connection = database.connection().expect("checkout");
+    let (account, _) = account_with_sent(&connection);
+    // A Drafts folder, because #166's mirror row is only written when there is
+    // one -- and the mirror is what the Outbox and the Drafts list read, so a
+    // fixture without it would assert the healing on the half nothing draws.
+    test_support::mailbox(&connection, &account, "Drafts");
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    let draft_id = drafts.save(&mut draft).expect("save draft");
+    drafts
+        .queue_send(&mut draft, at(9))
+        .expect("queue the send");
+
+    // What the drainer's failure path used to leave behind, once
+    // `prune_settled` has removed the settled row: the state says it is on its
+    // way and there is nothing to carry it.
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(10))
+        .expect("the queue")
+        .into_iter()
+        .find(|op| op.target == OperationTarget::Draft(draft_id))
+        .expect("the send is queued");
+    OperationQueueRepository::new(&connection)
+        .delete(queued.id)
+        .expect("delete the operation");
+    assert_eq!(
+        drafts.get(draft_id).expect("get").expect("there").state,
+        postio_model::DraftState::Queued,
+        "the fixture has to start in the state the real store was found in"
+    );
+
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(&account).await;
+    // A transport that would succeed, so nothing below can be attributed to
+    // the send failing: there is no send left to attempt.
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(
+        report.applied, 0,
+        "there was nothing to drain; the healing is not an operation: {report:?}"
+    );
+
+    assert_eq!(
+        drafts.get(draft_id).expect("get").expect("there").state,
+        postio_model::DraftState::Failed,
+        "running the client left the draft claiming to be on its way, which is \
+         the state it cannot get out of by itself"
+    );
+
+    // And the mirror row #166 keeps in Drafts, which is what the Outbox and
+    // the Drafts list actually read. A heal that stopped at the `drafts` table
+    // would leave the row on screen saying it is sending.
+    let mirror: Option<String> = connection
+        .query_row(
+            "SELECT m.send_state FROM messages m
+               JOIN drafts d ON d.message_id = m.id
+              WHERE d.id = ?1",
+            [draft_id.get()],
+            |row| row.get(0),
+        )
+        .expect("the mirror row");
+    assert_eq!(
+        mirror.as_deref(),
+        Some("failed"),
+        "the lists read the mirror row, and it still says the send is on its way"
+    );
+}
