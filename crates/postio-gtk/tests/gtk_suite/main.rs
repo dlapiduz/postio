@@ -464,6 +464,10 @@ const CASES: &[(&str, fn())] = &[
         gtk_startup_focus::escape_out_of_the_box_returns_the_keyboard_to_the_row_it_left as fn(),
     ),
     (
+        "gtk_startup_focus::return_on_a_mode_hint_enters_that_mode",
+        gtk_startup_focus::return_on_a_mode_hint_enters_that_mode as fn(),
+    ),
+    (
         "gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate",
         gtk_go_to::an_empty_box_at_startup_is_not_a_blank_plate as fn(),
     ),
