@@ -893,7 +893,7 @@ async fn a_hidden_message_is_not_what_a_folder_row_shows() {
 }
 
 #[tokio::test]
-async fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
+async fn thread_paging_stays_flat_over_a_large_folder() {
     // The claim ADR 0015 rests on: page k of *threads* costs what page k of
     // messages costs. If the folder scoping had turned the window into
     // something linear in the size of the mailbox, this is where it shows —
@@ -906,8 +906,19 @@ async fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     // that it would not have caught much short of the linear case it names.
     // Rows produced is the same number on any machine, so it can be held to
     // the actual claim: a page of fifty costs a page of fifty, ten pages in.
+    //
+    // **Twenty thousand, and it was a hundred.** The assertion is a row count
+    // and a row count does not move with the corpus: what a hundred thousand
+    // bought was seeding time. On this engine that was 227 s alone and a
+    // 240 s timeout under a full-workspace run -- a test already failing the
+    // project's own rule that a case must survive a loaded runner. Five
+    // thousand conversations is still two orders of magnitude past a page of
+    // fifty and still ten pages deep, which is the whole of what the claim
+    // needs. `messages::paging_stays_flat_over_a_hundred_thousand_messages`
+    // keeps the larger corpus for the simpler query, so the scale is still
+    // covered somewhere on the merge path.
     let database = postio_storage::test_support::temp().await;
-    let report = postio_storage::seed::seed_large(&database, 7, 100_000).await;
+    let report = postio_storage::seed::seed_large(&database, 7, 20_000).await;
     let inbox = report
         .mailbox(postio_model::mailbox::MailboxRole::Inbox)
         .expect("an inbox")

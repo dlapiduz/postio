@@ -307,12 +307,105 @@ fn count_statements(n: usize) {
     let _ = n;
 }
 
+/// How many rows one read may return before it counts as unbounded.
+///
+/// FR-017 asks that an unbounded read be *prevented or detectable, rather than
+/// discouraged by convention*, and §18's "never load a whole mailbox into
+/// memory" is the property it protects. `ListQuery` already makes the common
+/// case unrepresentable — its `limit` is not an `Option` — but ad-hoc SQL can
+/// still ask for everything, and that is what this catches.
+///
+/// Three thousand because it is far above every legitimate bounded read here
+/// (a page is 50, a search pool 400, a folder tree a few hundred) and far
+/// below a mailbox. A read that genuinely wants every row says so by calling
+/// [`all_unbounded`], which is the whole point: the exception is named at the
+/// call site rather than indistinguishable from an oversight.
+///
+/// **A query carrying its own `LIMIT` is exempt**, however many rows it comes
+/// back with. That is the literal reading of FR-017 and the right one: such a
+/// query is bounded *by construction* and the caller has said by how much. A
+/// `LIMIT` of a hundred thousand is a caller asking for a hundred thousand,
+/// which is a different problem and a visible one -- `list_statement_count`
+/// asks for exactly that on purpose, as the control that gives its ceiling
+/// teeth.
+///
+/// Debug builds only. This is a development guard, not a runtime limit — a
+/// release build must not start refusing reads it has always served.
+pub const UNBOUNDED_READ: usize = 3_000;
+
 /// Every row the query returns, mapped.
 ///
 /// Collects before returning, so the `Rows` is dropped and the connection is
 /// free for whatever the caller does next. That is not an optimisation to
 /// undo: see the module documentation.
+///
+/// # Panics
+///
+/// In debug builds, if the query returns more than [`UNBOUNDED_READ`] rows.
+/// See there; [`all_unbounded`] is the way to mean it.
 pub async fn all<T, F>(
+    connection: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+    mut map: F,
+) -> Result<Vec<T>>
+where
+    F: FnMut(&Row) -> Result<T>,
+{
+    let mut rows = connection.query(sql, params).await?;
+    let mut mapped = Vec::new();
+    while let Some(row) = rows.next().await? {
+        mapped.push(map(&row)?);
+    }
+    drop(rows);
+    count(mapped.len());
+    debug_assert!(
+        mapped.len() <= UNBOUNDED_READ || states_a_limit(sql),
+        "an unbounded read: {} rows from a single query, over the \
+         {UNBOUNDED_READ}-row guard. §18's claim is that a whole mailbox is \
+         never loaded into memory, and this is what that looks like when it \
+         stops being true. Add a LIMIT, or call `all_unbounded` if every row \
+         is genuinely what the caller needs:\n  {sql}",
+        mapped.len(),
+    );
+    Ok(mapped)
+}
+
+/// Whether `sql` bounds itself with a `LIMIT`.
+///
+/// Textual, and that is enough for what it is asked: every statement in this
+/// workspace is a literal or a `format!` over one, so a `LIMIT` in the text is
+/// a `LIMIT` in the query. It is looked for outside string literals, because
+/// `WHERE subject LIKE '%limit%'` is not a bound.
+fn states_a_limit(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+            }
+            b'l' | b'L' if sql[i..].len() >= 5 && sql[i..i + 5].eq_ignore_ascii_case("limit") => {
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// [`all`], for a read that genuinely wants every row.
+///
+/// The named exception to [`UNBOUNDED_READ`]. There are few of these and each
+/// one should be able to say why in a line: a resync comparing every UID it
+/// holds against the server's set is the shape, and a list a person scrolls is
+/// not.
+pub async fn all_unbounded<T, F>(
     connection: &Connection,
     sql: &str,
     params: impl IntoParams,

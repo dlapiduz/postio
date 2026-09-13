@@ -86,10 +86,38 @@ const RECENCY_POOL_MULTIPLIER: u32 = 2;
 /// [`CANDIDATE_POOL_MIN`], for a recency-ordered fetch.
 const RECENCY_POOL_MIN: u32 = 50;
 
-/// Recency's weight in [`rank_score`], relative to `bm25`'s native scale.
+/// Recency's weight in [`rank_score`], relative to the match term's native
+/// scale.
 ///
 /// Raised with the half-life below, and the two go together: a heavier weight
 /// on a term that is zero for every candidate changes nothing.
+///
+/// # Re-measured against `fts_score`, and deliberately unchanged
+///
+/// This number was calibrated against `bm25()`, which is gone. Measured on
+/// `index_suite::ranking_weights`' corpus — 2,000 messages, term frequency
+/// crossed with document length, which is what BM25 is a function of:
+///
+/// ```text
+///                        bm25 (a real store)   fts_score (the fixture)
+/// spread                 0.80 over the top 40  0.20 over the whole match set
+/// the best forty         separated             all one value
+/// ```
+///
+/// About a quarter of the range, and the top of a result set is routinely
+/// tied outright — the score is a function of frequency and length, and mail
+/// is full of near-identical subjects. So the blend is **more recency-led
+/// than it was**, and no weight avoids that: 0.20 is the entire relevance
+/// range, and a recency term small enough to fit under it cannot separate
+/// last week from last year.
+///
+/// Unchanged, then, as a decision rather than a carry-over. #1216's complaint
+/// was search surfacing very old mail, and recency leading is what that asked
+/// for. What still has to hold is the narrow case — a *clearly* better match
+/// beats a *small* recency difference — which
+/// `newest_order_answers_in_date_order_however_the_ranking_disagrees` pins
+/// with a 5x-density contrast five hours apart, and `ranking_weights` pins in
+/// the units it measures.
 const RECENCY_WEIGHT: f64 = 3.0;
 /// The age, in days, at which the recency boost has halved.
 ///
@@ -143,6 +171,10 @@ const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 /// Milliseconds in a year, for the pool ordering's age term.
 const MILLIS_PER_YEAR: f64 = 31_557_600_000.0;
 /// Sender affinity's weight in [`rank_score`].
+///
+/// Unchanged for the reason [`RECENCY_WEIGHT`] gives, and it is the smaller
+/// risk of the two: affinity is bounded in `[0, 1)` before weighting and only
+/// separates correspondents, so at worst it orders a tie by who writes most.
 const SENDER_WEIGHT: f64 = 1.0;
 
 /// A search over one account's mail.
