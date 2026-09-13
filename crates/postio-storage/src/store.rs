@@ -581,7 +581,24 @@ impl std::ops::DerefMut for Checkout {
 /// and a directory that is not writable are all still themselves.
 fn as_key_failure(error: Error) -> Error {
     let said = error.to_string().to_lowercase();
-    if said.contains("decryption failed") || said.contains("not a database") {
+    // Four spellings of the same thing, and the fourth is why this list grew.
+    // The engine reports a page it cannot authenticate as corruption, because
+    // from inside it that is indistinguishable -- and a *file this build has
+    // never been able to read*, like a store the old engine wrote, surfaces
+    // instead as a header it cannot parse: "invalid page size in database
+    // header: 30639", which is ciphertext being read as a page size.
+    //
+    // Postio can tell what the engine cannot: it writes one key per store and
+    // one format, so a store that will not open is the key or the format, and
+    // never a disk that has rotted. Both have the same remedy and
+    // `Error::WrongStoreKey` says it.
+    let unreadable = [
+        "decryption failed",
+        "not a database",
+        "invalid page size",
+        "database header",
+    ];
+    if unreadable.iter().any(|hint| said.contains(hint)) {
         Error::WrongStoreKey
     } else {
         error

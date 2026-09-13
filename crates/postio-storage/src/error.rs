@@ -151,9 +151,13 @@ pub enum Error {
     /// sentence reaches a screen (#404), and it would be a lie: the file is
     /// intact, and the key is what does not fit it.
     #[error(
-        "the local store will not open with this key: it belongs to another \
-         installation, or the keyring entry has been replaced. The database \
-         itself is intact"
+        "the local store will not open: it belongs to another installation, \
+         the keyring entry has been replaced, or it was written by a Postio \
+         from before the storage engine changed. The file is intact and \
+         untouched either way -- nothing here rewrites a store it cannot \
+         read. A store that cannot be opened is rebuilt by syncing again, \
+         which costs the mail's download and loses nothing the server still \
+         has"
     )]
     WrongStoreKey,
     /// A stored message body could not be read back.
