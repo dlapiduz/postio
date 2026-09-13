@@ -23,6 +23,7 @@
 
 use postio_storage::Store;
 use postio_storage::key::StoreKey;
+use postio_storage::sql::RowExt;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -126,6 +127,51 @@ async fn main() {
         count("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND sql LIKE '%WHERE%'")
             .await;
     println!("\nindexes         {indexes:>12}  ({partial} still partial)");
+
+    // Per folder: what is local, and whether a full sync ever finished for
+    // it. A folder with rows but no `last_full_sync_at` is one the header
+    // sync has not walked to the end of -- which is the difference between
+    // "this mailbox is small" and "this mailbox is unfinished".
+    println!("\nper folder:");
+    println!(
+        "{:>5}  {:>9}  {:>9}  {:>8}  path",
+        "id", "local", "uid_next", "full?"
+    );
+    let rows = postio_storage::sql::all(
+        &connection,
+        "SELECT m.id, m.path, count(x.id), coalesce(s.uid_next, 0), \
+                CASE WHEN s.last_full_sync_at IS NULL THEN 0 ELSE 1 END \
+           FROM mailboxes m \
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id \
+           LEFT JOIN messages x ON x.mailbox_id = m.id \
+          GROUP BY m.id ORDER BY count(x.id) DESC",
+        (),
+        |row| {
+            Ok((
+                row.col::<i64>(0)?,
+                row.col::<String>(1)?,
+                row.col::<i64>(2)?,
+                row.col::<i64>(3)?,
+                row.col::<i64>(4)?,
+            ))
+        },
+    )
+    .await
+    .unwrap_or_default();
+    for (id, path, local, uid_next, full) in rows {
+        // `uid_next` is shown but deliberately not subtracted from: UIDs are
+        // sparse, not dense. A folder that has had mail deleted out of it for
+        // a decade has a high `uid_next` and few messages, and treating the
+        // difference as "missing" reads a healthy mailbox as catastrophically
+        // incomplete. What actually says a folder is unfinished is the
+        // `full?` column -- no `last_full_sync_at` means the header sync has
+        // never walked it to the end. Compare `local` against the server's
+        // own `EXISTS`, which the sync logs at INFO.
+        println!(
+            "{id:>5}  {local:>9}  {uid_next:>9}  {:>8}  {path}",
+            if full == 1 { "yes" } else { "NO" }
+        );
+    }
 
     if messages > 0 {
         println!(
