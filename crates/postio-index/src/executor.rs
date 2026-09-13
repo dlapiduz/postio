@@ -581,24 +581,79 @@ const BODY_SCORE_WEIGHT: f64 = 0.5;
 /// version took 2.9. Driving from the matches is a point lookup per hit into
 /// `messages`' own primary key.
 ///
-/// # `-fts_score`, and the minus sign is load-bearing
+/// # `fts_score` is projected bare, and negated outside
 ///
 /// This was `bm25()`, where a *more negative* number is a better match, and
 /// [`rank_score`] and the sort after it both take that convention: candidates
 /// are sorted ascending and the best one is first. `fts_score` is the other
 /// way round -- higher is better, which is why the engine's own examples say
-/// `ORDER BY score DESC`. Negating here keeps the one convention that the
-/// ranker, the sort, and every comment about them already assume.
+/// `ORDER BY score DESC`. So the value has to be negated somewhere.
+///
+/// **Not here.** `fts_score` answers with a score only when the call is the
+/// whole select-list expression; put it inside *any* arithmetic and it
+/// answers `0.0`:
+///
+/// ```text
+/// SELECT id, fts_score(subject, ?1)        3.82, 1.87
+/// SELECT id, fts_score(subject, ?1) AS s   3.82, 1.87
+/// SELECT id, -fts_score(subject, ?1)       0.00, 0.00
+/// SELECT id, 0 - fts_score(subject, ?1)    0.00, 0.00
+/// ```
+///
+/// Which is the worst kind of trap: every row still comes back, in the right
+/// set, and only the *ranking* is silently gone. With `-fts_score(...)` here,
+/// every candidate scored `0.0`, `rank_score` reduced to recency and affinity,
+/// and search answered every query in date order. One test noticed
+/// (`newest_order_answers_in_date_order_however_the_ranking_disagrees`);
+/// nothing else could have.
+///
+/// So the projection is bare and the outer `SELECT` negates the alias, which
+/// is an ordinary column by then. `the_score_is_lost_to_any_arithmetic_around_it`
+/// in `postio-storage`'s capability suite is what will notice if a later
+/// release makes the wrapped form work.
+///
+/// # `?1` and `?2`, not four bare `?`s
+///
+/// `fts_score` also answers `0.0` unless its query term is the *same
+/// parameter* as the `fts_match` that selected the row -- not the same value,
+/// the same expression. So the term is written once per index and reused. A
+/// bare `?` after an explicit `?N` continues from `N + 1` here exactly as it
+/// does in SQLite, so the conditions that follow still number themselves.
+/// # `?1` and `?2`, not four bare `?`s
+///
+/// **`fts_score` answers `0.0` unless its query term is the *same parameter*
+/// as the `fts_match` that selected the row.** Not the same value — the same
+/// expression. Measured:
+///
+/// ```text
+/// fts_match(body, 'report')  fts_score(body, 'report')   3.82, 1.87
+/// fts_match(body, ?1)        fts_score(body, ?1)         3.82, 1.87
+/// fts_match(body, ?2)        fts_score(body, ?1)         0.00, 0.00
+/// fts_match(body, ?1)        fts_score(body, 'report')   0.00, 0.00
+/// ```
+///
+/// Which is a trap rather than an inconvenience: every row still comes back,
+/// in the right set, and only the *ranking* is silently gone. With four bare
+/// `?`s this statement bound four parameters of equal value and scored every
+/// candidate `0.0`, so `rank_score` reduced to recency and affinity and
+/// search answered every query in date order. One test noticed
+/// (`newest_order_answers_in_date_order_however_the_ranking_disagrees`);
+/// nothing else could have.
+///
+/// So the term is written once per index and reused. A bare `?` after an
+/// explicit `?N` continues from `N + 1` here exactly as it does in SQLite, so
+/// the conditions that follow still number themselves — and `match_params`
+/// binds two values rather than four, in the same order.
 const HITS_JOIN: &str = "FROM (
              SELECT message_id AS rid,
-                    -fts_score(sender, recipients, subject, filenames, list_id, ?) AS meta,
+                    fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
                     NULL AS body
                FROM search_documents
-              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
              UNION ALL
-             SELECT id, NULL, -fts_score(body_search, ?)
+             SELECT id, NULL, fts_score(body_search, ?2)
                FROM messages
-              WHERE fts_match(body_search, ?)
+              WHERE fts_match(body_search, ?2)
           ) hits CROSS JOIN messages m ON m.id = hits.rid";
 
 /// The same match, asked one message at a time.
@@ -876,13 +931,13 @@ impl Plan {
             }
             other => other.clone(),
         };
-        match form {
-            // `-fts_score(.., ?)` in the SELECT list and `fts_match(.., ?)` in
-            // the WHERE, per arm: four in the order the `?`s are written.
-            Form::Driven => vec![expr.clone(), expr.clone(), folded.clone(), folded],
-            // One `fts_match` per arm, and no score to compute.
-            Form::Probed => vec![expr.clone(), folded],
-        }
+        // Two, either way. The driven form writes the term as `?1`/`?2` and
+        // uses each twice -- once to score, once to match -- because
+        // `fts_score` returns `0.0` when the two are different parameters;
+        // see [`HITS_JOIN`]. The probed form has no score and one `fts_match`
+        // per arm, and its `?`s are bare because its match sits in the
+        // `WHERE`, after the conditions.
+        vec![expr.clone(), folded]
     }
 
     /// [`Plan::source_sql`], but for `fetch` specifically, where the join order
@@ -954,18 +1009,21 @@ impl Plan {
                  coalesce(sum(seen = 0), 0),
                  coalesce(sum(flagged), 0),
                  coalesce(sum(has_attachments), 0),
-                 coalesce(sum(size >= ?), 0)
+                 coalesce(sum(size >= {LARGE_BYTES}), 0)
              FROM (SELECT DISTINCT m.id, m.seen, m.flagged, m.has_attachments, m.size
                      {from} WHERE {where_sql} LIMIT ?)",
             from = self.source_sql(Form::Driven),
             where_sql = self.where_sql(Form::Driven),
         );
 
-        // The `size >= ?` bind sits before every condition's parameter,
-        // because the aggregate is in the outer SELECT and the conditions are
-        // in the subquery.
-        let mut params = vec![turso::Value::Integer(LARGE_BYTES as i64)];
-        params.extend(self.params_for(Form::Driven));
+        // `LARGE_BYTES` is written into the SQL rather than bound, and that
+        // is not a shortcut: it is a compile-time constant, and a bound `?`
+        // for it would sit in the outer `SELECT` -- textually *before* the
+        // `{from}` that [`HITS_JOIN`] numbers `?1` and `?2`. Mixing a bare `?`
+        // in front of explicit ones is how this statement came to bind five
+        // parameters into three slots. Nothing user-supplied is interpolated
+        // here; every value the caller controls is still a parameter.
+        let mut params = self.params_for(Form::Driven);
         params.push(turso::Value::Integer(TOTAL_HITS_CAP as i64));
 
         let counts: [i64; 4] = sql::one(
@@ -1086,7 +1144,7 @@ impl Plan {
         // `POOL_AGE_WEIGHT_PER_YEAR`. `?` is bound to now, in milliseconds.
         let order_by = if rank_by_relevance {
             &format!(
-                "coalesce(hits.meta, 0.0) + coalesce(hits.body, 0.0) \
+                "-coalesce(hits.meta, 0.0) - coalesce(hits.body, 0.0) \
                  + {POOL_AGE_WEIGHT_PER_YEAR} * (? - m.received_at) / {MILLIS_PER_YEAR}"
             )
         } else {
@@ -1102,7 +1160,9 @@ impl Plan {
         // the hydrate columns), and correlated subqueries in the select list
         // are no exception.
         let scores = match (self.has_match, form) {
-            (true, Form::Driven) => "hits.meta, hits.body",
+            // Negated here rather than in the projection inside the union:
+            // see [`HITS_JOIN`]. By this point they are ordinary columns.
+            (true, Form::Driven) => "-hits.meta, -hits.body",
             _ => "NULL, NULL",
         };
         let mut params: Vec<turso::Value> = Vec::new();

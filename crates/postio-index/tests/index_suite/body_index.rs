@@ -1,20 +1,26 @@
-//! The body index gets a table of its own — #407, the schema half of #379.
+//! The body index is a column of `messages` — #407, the schema half of #379.
 //!
-//! `search_documents` is an ordinary SQLite table that exists only to feed the
+//! `search_documents` is an ordinary table that existed only to feed an
 //! external-content `messages_fts`, and it held a **full copy of every
 //! message's body text**. That was free while nothing was indexed (#327) and
 //! is the entire text corpus duplicated inside the database now that
-//! everything is (ADR 0016). It also breaks migration 0001's own rule, which
-//! `PRODUCT.md` §6 repeats: SQLite holds the blob key and the metadata needed
-//! to list and search, not the bodies.
+//! everything is (ADR 0016). It also breaks the schema's own rule, which
+//! `PRODUCT.md` §6 repeats: the database holds the blob key and the metadata
+//! needed to list and search, not the bodies.
 //!
-//! So bodies move to `message_bodies_fts` — `content=''`,
-//! `contentless_delete=1`, rowid = `message_id`, no content table underneath
-//! and nothing to keep in step with one.
+//! #407 moved bodies to `message_bodies_fts`, a contentless FTS5 table keyed
+//! by `message_id`. This engine has no virtual tables: its FTS is an *index
+//! method* over a real column (`CREATE INDEX … USING fts`), so the body text
+//! is `messages.body_search` and `messages_body_fts` is the index over it.
+//! Same property, one fewer table — the body lives in exactly one place, and
+//! there is nothing beside it to keep in step.
 //!
-//! `search_documents.body` and `messages_fts.body` are gone as of #408, which
-//! moved the executor onto this table. The tests below are what says the two
-//! halves add up: the body is searchable here, and nowhere else.
+//! Two consequences the tests below turn on. Re-indexing is an `UPDATE` rather
+//! than a delete and an insert, so "the old text is still matchable" is now a
+//! bug that would take a bad `WHERE` to write. And `body_search` is **the
+//! empty string, not `NULL`**, for a message with no text: the column is also
+//! the record that a message was indexed, and "tried, nothing there" spelled
+//! as `NULL` is what #500's infinite loop was made of.
 
 use postio_index::index::{ensure_schema, index_body, messages_missing_body_text};
 use postio_model::{BodyState, Message};
@@ -34,24 +40,36 @@ async fn a_message(connection: &Connection, subject: &str) -> i64 {
     message.id.get()
 }
 
+/// The messages whose indexed body text matches `query`.
+///
+/// Folded on the way in, because the engine's tokenizer does not fold
+/// diacritics and `index_body` folded the text it stored. A query that skips
+/// the fold matches nothing an accented body contains, which is the whole
+/// reason `postio_model::fold` exists.
 async fn body_hits(connection: &Connection, query: &str) -> Vec<i64> {
-    let mut statement = connection
-        .prepare(
-            "SELECT rowid FROM message_bodies_fts
-              WHERE message_bodies_fts MATCH ?1 ORDER BY rowid",
-        )
-        .await
-        .expect("prepare");
-    postio_storage::sql::mapped(&mut statement, [query], |row| postio_storage::sql::RowExt::col(row, 0))
-        .await
-        .expect("query")
+    postio_storage::sql::all(
+        connection,
+        "SELECT id FROM messages WHERE fts_match(body_search, ?1) ORDER BY id",
+        [postio_model::fold::fold(query)],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("query")
 }
 
-async fn rows_in(connection: &Connection, table: &str) -> i64 {
-    postio_storage::sql::one(&*connection, &format!("SELECT count(*) FROM {table}"),(), |row| {
-            postio_storage::sql::RowExt::col(row, 0)
-        }).await
-        .expect("count")
+/// How many messages carry indexed body text.
+///
+/// The count `message_bodies_fts` used to answer with a row count. A message
+/// that has been through `index_body` has a non-`NULL` `body_search` whether
+/// or not it had any words; one that has not been through it has `NULL`.
+async fn indexed_bodies(connection: &Connection) -> i64 {
+    postio_storage::sql::scalar(
+        connection,
+        "SELECT count(*) FROM messages WHERE body_search IS NOT NULL",
+        (),
+    )
+    .await
+    .expect("count")
 }
 
 #[tokio::test]
@@ -69,10 +87,12 @@ async fn a_body_is_searchable_in_a_table_of_its_own() {
 
 #[tokio::test]
 async fn re_indexing_replaces_the_body_rather_than_adding_a_second_row() {
-    // A body is re-indexed whenever it is refetched, and a contentless table
-    // has no `UPDATE`: a row is deleted and written again. Getting that wrong
-    // leaves the old text matchable for ever, which reads as search returning
-    // a message for words it no longer contains.
+    // A body is re-indexed whenever it is refetched. Under a contentless FTS5
+    // table that meant a delete and an insert, and getting it wrong left the
+    // old text matchable for ever -- search returning a message for words it
+    // no longer contains. It is one `UPDATE` of one column now, so the failure
+    // this guards is much harder to write; it stays because the assertion is
+    // about the search result and not about how the write is spelled.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -86,7 +106,7 @@ async fn re_indexing_replaces_the_body_rather_than_adding_a_second_row() {
         body_hits(&connection, "first").await.is_empty(),
         "the previous text is still matchable"
     );
-    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 1);
+    assert_eq!(indexed_bodies(&connection).await, 1);
 }
 
 #[tokio::test]
@@ -105,16 +125,18 @@ async fn clearing_a_body_removes_it_from_the_index() {
     // made of: with no row, the maintenance pass cannot tell "tried, empty"
     // from "never tried" and asks about the message on every pass for ever.
     // The row *is* the record that indexing happened.
-    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 1);
+    assert_eq!(indexed_bodies(&connection).await, 1);
 }
 
 #[tokio::test]
 async fn deleting_a_message_takes_its_body_with_it() {
-    // `search_documents` cascades from `messages`, and its delete trigger
-    // takes `messages_fts` with it. A contentless table has no content row to
-    // cascade, so without a trigger of its own the text of every deleted
-    // message stays in the index for ever — matchable, and growing exactly
-    // the way this issue exists to stop.
+    // Under the contentless table this needed a trigger of its own: there was
+    // no content row to cascade from, so without one the text of every deleted
+    // message stayed in the index for ever, matchable and growing exactly the
+    // way this issue exists to stop. The text is a column of the message now,
+    // so it goes when the row goes -- which is the better answer, and worth an
+    // assertion precisely because it is the kind of thing a later schema change
+    // could quietly undo.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     ensure_schema(&connection).await.expect("schema");
@@ -127,7 +149,7 @@ async fn deleting_a_message_takes_its_body_with_it() {
         .expect("delete");
 
     assert!(body_hits(&connection, "difference").await.is_empty());
-    assert_eq!(rows_in(&connection, "message_bodies_fts").await, 0);
+    assert_eq!(indexed_bodies(&connection).await, 0);
 }
 
 #[tokio::test]

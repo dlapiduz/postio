@@ -434,3 +434,170 @@ async fn a_partial_unique_index_is_still_enforced() {
         .await
         .expect("...twice, which is the whole point of the predicate");
 }
+
+/// A corpus that scores unambiguously: one document saturated with the term,
+/// one that mentions it once, and enough noise that the term is worth
+/// something at all.
+///
+/// Twenty noise rows because BM25's IDF goes to zero when every document in
+/// the corpus matches, and a two-document corpus would leave every score
+/// equal for reasons that have nothing to do with what is being measured.
+async fn a_scored_corpus() -> (tempfile::TempDir, postio_storage::Checkout) {
+    let (dir, path) = temp("scores.db");
+    let store = Store::open(&path, &a_key()).await.expect("open");
+    let connection = store.connect().await.expect("connect");
+    connection
+        .execute_batch(
+            "CREATE TABLE d (id INTEGER PRIMARY KEY, subject TEXT NOT NULL DEFAULT '');
+             CREATE INDEX d_fts ON d USING fts (subject);",
+        )
+        .await
+        .expect("create");
+    for index in 0..20 {
+        connection
+            .execute(
+                "INSERT INTO d (subject) VALUES (?1)",
+                (format!("entirely unrelated subject {index}"),),
+            )
+            .await
+            .expect("noise");
+    }
+    connection
+        .execute(
+            "INSERT INTO d (id, subject) VALUES (100, 'report report report report report')",
+            (),
+        )
+        .await
+        .expect("the dense match");
+    connection
+        .execute(
+            "INSERT INTO d (id, subject) VALUES (101, 'one report among other things entirely')",
+            (),
+        )
+        .await
+        .expect("the glancing match");
+    // The store is kept alive by the directory the caller holds; the
+    // connection outlives it only in the sense that the file does.
+    std::mem::forget(store);
+    (dir, connection)
+}
+
+/// Every score the corpus produces for `term`, by id, in id order.
+async fn scores(connection: &postio_storage::Connection, sql: &str) -> Vec<(i64, f64)> {
+    let mut rows = connection
+        .query(sql, (turso::Value::Text("report".to_owned()),))
+        .await
+        .unwrap_or_else(|error| panic!("{sql}: {error}"));
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.expect("row") {
+        out.push((
+            *row.get_value(0).expect("id").as_integer().expect("integer"),
+            *row.get_value(1).expect("score").as_real().expect("real"),
+        ));
+    }
+    drop(rows);
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+/// `fts_score` answers `0.0` unless the call is the whole select expression.
+///
+/// The trap this pins is that nothing fails: the same rows come back, in the
+/// same set, and only the ranking silently flattens. Postio's search executor
+/// wrote `-fts_score(...)` to put the score on `bm25`'s negative-is-better
+/// scale, and every candidate scored zero — so relevance order was recency
+/// order for every query, and only one test in the workspace could see it.
+///
+/// If this ever starts passing with the wrapped form, `HITS_JOIN` can project
+/// the negation again and drop the one in its outer `SELECT`.
+#[tokio::test]
+async fn the_score_is_lost_to_any_arithmetic_around_it() {
+    let (_dir, connection) = a_scored_corpus().await;
+
+    let bare = scores(
+        &connection,
+        "SELECT id, fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?1)",
+    )
+    .await;
+    assert_eq!(bare.len(), 2, "both documents match");
+    assert!(
+        bare[0].1 > bare[1].1 && bare[1].1 > 0.0,
+        "bare, the dense match outscores the glancing one: {bare:?}"
+    );
+
+    for wrapped in [
+        "SELECT id, -fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?1)",
+        "SELECT id, 0 - fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?1)",
+        "SELECT id, 1.0 * fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?1)",
+    ] {
+        let got = scores(&connection, wrapped).await;
+        assert!(
+            got.iter().all(|(_, score)| *score == 0.0),
+            "arithmetic around `fts_score` has started working, which is good \
+             news and means `HITS_JOIN` can stop negating in its outer SELECT: \
+             {wrapped} gave {got:?}"
+        );
+    }
+
+    // And the shape Postio actually uses: bare inside a subquery, negated
+    // outside, where the alias is an ordinary column.
+    let outside = scores(
+        &connection,
+        "SELECT h.id, -h.s FROM (SELECT id, fts_score(subject, ?1) AS s
+                                   FROM d WHERE fts_match(subject, ?1)) h",
+    )
+    .await;
+    assert!(
+        outside.iter().all(|(_, score)| *score < 0.0),
+        "negating the alias outside the subquery is what keeps the score: {outside:?}"
+    );
+}
+
+/// `fts_score` answers `0.0` unless its term is the *same expression* as the
+/// `fts_match` that selected the row.
+///
+/// Not the same value — two parameters bound to the same string are two
+/// expressions, and the score is lost. This is why [`HITS_JOIN`] writes `?1`
+/// and `?2` explicitly and uses each twice, rather than four bare `?`s.
+///
+/// [`HITS_JOIN`]: postio_index::executor
+#[tokio::test]
+async fn the_score_needs_the_same_parameter_as_the_match() {
+    let (_dir, connection) = a_scored_corpus().await;
+
+    let same = scores(
+        &connection,
+        "SELECT id, fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?1)",
+    )
+    .await;
+    assert!(
+        same.iter().all(|(_, score)| *score > 0.0),
+        "one parameter, used twice: {same:?}"
+    );
+
+    let mut rows = connection
+        .query(
+            "SELECT id, fts_score(subject, ?1) FROM d WHERE fts_match(subject, ?2)",
+            (
+                turso::Value::Text("report".to_owned()),
+                turso::Value::Text("report".to_owned()),
+            ),
+        )
+        .await
+        .expect("two parameters");
+    let mut different = Vec::new();
+    while let Some(row) = rows.next().await.expect("row") {
+        different.push(*row.get_value(1).expect("score").as_real().expect("real"));
+    }
+    drop(rows);
+    assert_eq!(
+        different.len(),
+        2,
+        "the match itself is unaffected — which is what makes this quiet"
+    );
+    assert!(
+        different.iter().all(|score| *score == 0.0),
+        "two parameters of equal value have started scoring, which means \
+         `HITS_JOIN` no longer needs its explicit `?1`/`?2`: {different:?}"
+    );
+}
