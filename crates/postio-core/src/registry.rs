@@ -719,7 +719,10 @@ static SPECS: &[CommandSpec] = &[
         title: "Search",
         default_binding: "/",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        // The go-to surfaces, for the go-to reason: the folder list is one
+        // pane over, and nobody checks which pane has the keyboard before
+        // reaching for search.
+        contexts: ctx(GO_SURFACES),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,

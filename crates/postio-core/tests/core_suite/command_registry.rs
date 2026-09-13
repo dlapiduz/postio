@@ -157,6 +157,25 @@ fn the_places_people_go_most_answer_to_two_keys() {
     }
 }
 
+/// Search is reachable from the folder list, like the go-to family.
+///
+/// `/` was on the message surfaces only, so pressing it while the keyboard
+/// was in the sidebar did nothing at all -- and "I was in the folder list"
+/// is not a state anyone tracks while reaching for search. Same reasoning as
+/// the go-to family above, and the same fix.
+#[test]
+fn search_is_reachable_from_the_folder_list() {
+    let spec = registry::get(CommandId::Search);
+    assert!(
+        spec.contexts.contains(Context::Sidebar),
+        "`/` has to open the box from the folder list too -- it is one pane          over from the list, and a key that works there and not here reads as          broken"
+    );
+    assert!(
+        !spec.contexts.contains(Context::Composer),
+        "`/` must not fire in the composer, where it is a character someone          is typing"
+    );
+}
+
 #[test]
 fn ids_round_trip_through_strings() {
     for id in CommandId::ALL {
