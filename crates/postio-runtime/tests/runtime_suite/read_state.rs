@@ -134,6 +134,7 @@ async fn a_flag_changed_on_the_server_is_announced_and_not_only_stored() {
         let connection = database.connect().await.expect("a connection");
         MessageRepository::new(&connection)
             .page(&ListQuery::mailbox(inbox.id))
+            .await
             .expect("list the mailbox")
     };
     let seen: Vec<bool> = stored.iter().map(|row| row.seen).collect();

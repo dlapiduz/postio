@@ -10,15 +10,15 @@ use postio_storage::seed::seed_small;
 use postio_storage::test_support;
 
 /// The seeded database, and a store over it.
-fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
+async fn seeded() -> (postio_storage::Store, postio_storage::seed::SeedReport) {
     let database = test_support::memory().await;
-    let report = seed_small(&database, 7);
+    let report = seed_small(&database, 7).await;
     (database, report)
 }
 
 #[tokio::test]
 async fn a_page_carries_the_count_it_was_read_against() {
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
@@ -49,21 +49,18 @@ async fn a_page_carries_the_count_it_was_read_against() {
 
 #[tokio::test]
 async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let page = async |offset, limit| {
-        let store = store.clone();
-        async move {
-            store
-                .message_page(PageRequest {
-                    scope: ListScope::Mailbox(inbox),
-                    offset,
-                    limit,
-                })
-                .await
-                .expect("the inbox reads")
-        }
+        store
+            .message_page(PageRequest {
+                scope: ListScope::Mailbox(inbox),
+                offset,
+                limit,
+            })
+            .await
+            .expect("the inbox reads")
     };
 
     let whole = page(0, 100).await;
@@ -96,7 +93,7 @@ async fn rows_come_newest_first_and_paging_walks_them_without_repeating() {
 async fn every_row_knows_how_long_its_thread_is() {
     // The badge on the canvas' row is a count of the thread, and a source
     // that left it at one would silently remove the badge from every row.
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
@@ -121,7 +118,7 @@ async fn every_row_knows_how_long_its_thread_is() {
 
 #[tokio::test]
 async fn a_page_past_the_end_is_empty_rather_than_an_error() {
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
@@ -140,7 +137,7 @@ async fn a_page_past_the_end_is_empty_rather_than_an_error() {
 
 #[tokio::test]
 async fn the_account_reads_its_folders_with_their_counts() {
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
 
     let mailboxes = store
@@ -165,20 +162,17 @@ async fn several_reads_at_once_do_not_wedge_a_single_threaded_runtime() {
     // A read that ran *on* that worker rather than on a blocking thread would
     // hold it for the length of the query, and this is the shape that shows
     // it — several in flight, all expected back.
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
     let page = async |offset| {
-        let store = store.clone();
-        async move {
-            store
-                .message_page(PageRequest {
-                    scope: ListScope::Mailbox(inbox),
-                    offset,
-                    limit: 5,
-                })
-                .await
-        }
+        store
+            .message_page(PageRequest {
+                scope: ListScope::Mailbox(inbox),
+                offset,
+                limit: 5,
+            })
+            .await
     };
 
     let (first, second, third, fourth) = tokio::join!(page(0), page(5), page(10), page(15));
@@ -196,7 +190,11 @@ async fn seeking_to_a_page_finds_the_same_rows_as_walking_to_it() {
     // counts.
     let database = test_support::memory().await;
     let report = seed_small(&database, 3);
-    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let inbox = report
+        .await
+        .mailbox(MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
 
     // A fresh store has no marks: every read walks.
     let walked = SqliteStore::new(&database);
@@ -233,7 +231,11 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
     // fix it would mean a cache that has to be told about every write.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5);
-    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let inbox = report
+        .await
+        .mailbox(MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
     let store = SqliteStore::new(&database);
 
     // Read two pages, so there is a boundary to be wrong about.
@@ -249,10 +251,12 @@ async fn a_list_that_changed_length_throws_the_remembered_boundaries_away() {
                    WHERE id = (SELECT id FROM messages WHERE mailbox_id = ?1
                                ORDER BY received_at DESC, id DESC LIMIT 1)",
                 [inbox.get()],
-            ).await
+            )
+            .await
             .expect("the fixture writes");
         postio_storage::repository::MailboxRepository::new(&connection)
             .recount(inbox)
+            .await
             .expect("the count is kept up to date");
     }
 
@@ -276,7 +280,11 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
     // stops: the read has to degrade to slow, not to invisible.
     let database = test_support::memory().await;
     let report = seed_small(&database, 5);
-    let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
+    let inbox = report
+        .await
+        .mailbox(MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
 
     {
         let connection = database.connect().await.expect("a connection");
@@ -286,7 +294,8 @@ async fn a_cached_count_of_zero_is_checked_rather_than_believed() {
             .execute(
                 "UPDATE mailboxes SET total_count = 0 WHERE id = ?1",
                 [inbox.get()],
-            ).await
+            )
+            .await
             .expect("the fixture writes");
     }
 
@@ -330,7 +339,7 @@ async fn page_ids(
 
 #[tokio::test]
 async fn a_ranked_set_of_ids_reads_back_in_that_order() {
-    let (database, report) = seeded();
+    let (database, report) = seeded().await;
     let store = SqliteStore::new(&database);
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
 
@@ -406,7 +415,8 @@ async fn a_thread_reads_across_every_folder_it_touches() {
         .execute(
             "INSERT INTO threads (id, account_id) VALUES (1, ?1)",
             [account.id.get()],
-        ).await
+        )
+        .await
         .expect("a thread");
 
     let messages = MessageRepository::new(&connection);
@@ -421,9 +431,10 @@ async fn a_thread_reads_across_every_folder_it_touches() {
             chrono::Utc::now() - chrono::Duration::minutes(index as i64),
         );
         message.subject = Some("the whole conversation".into());
-        let id = messages.create(&mut message).expect("create");
+        let id = messages.create(&mut message).await.expect("create");
         messages
             .set_thread(id, Some(ThreadId::new(1)))
+            .await
             .expect("assign");
         filed.push((id, mailbox));
     }

@@ -12,19 +12,14 @@ use postio_runtime::store::{ListScope, MailStore, PageRequest, SqliteStore};
 use postio_storage::seed::{seed_large, thread_seeded_messages};
 use postio_storage::test_support;
 
-fn store(
+async fn store(
     messages: usize,
     per_thread: usize,
-) -> (
-    SqliteStore,
-    AccountId,
-    MailboxId,
-    test_support::TempStore,
-) {
+) -> (SqliteStore, AccountId, MailboxId, test_support::TempStore) {
     let database = test_support::temp().await;
-    let report = seed_large(&database, 7, messages);
+    let report = seed_large(&database, 7, messages).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
-    thread_seeded_messages(&database, report.account.id, per_thread);
+    thread_seeded_messages(&database, report.account.id, per_thread).await;
     let store = SqliteStore::new(&database);
     (store, report.account.id, inbox, database)
 }
@@ -39,7 +34,7 @@ fn request(scope: ListScope, offset: u32, limit: u32) -> PageRequest {
 
 #[tokio::test]
 async fn a_folder_answers_conversations_rather_than_messages() {
-    let (store, _account, inbox, _database) = store(200, 4);
+    let (store, _account, inbox, _database) = store(200, 4).await;
 
     let page = store
         .thread_page(request(ListScope::Mailbox(inbox), 0, 20))
@@ -66,7 +61,7 @@ async fn a_folder_answers_conversations_rather_than_messages() {
 
 #[tokio::test]
 async fn the_thread_count_matches_the_rows_the_window_would_produce() {
-    let (store, _account, inbox, _database) = store(100, 4);
+    let (store, _account, inbox, _database) = store(100, 4).await;
 
     let total = store
         .thread_count(ListScope::Mailbox(inbox))
@@ -86,7 +81,7 @@ async fn a_query_view_says_it_lists_messages_rather_than_answering_wrongly() {
     // Folders thread; query views list messages (ADR 0015). Answering Flagged
     // with conversations would be the wrong answer rather than a missing one,
     // so it is refused where a caller can see it.
-    let (store, account, _inbox, _database) = store(20, 4);
+    let (store, account, _inbox, _database) = store(20, 4).await;
 
     let error = store
         .thread_page(request(ListScope::Flagged(account), 0, 10))
@@ -106,7 +101,7 @@ async fn paging_conversations_never_repeats_or_skips_a_row() {
     // by seeking to a remembered boundary and skipping the remainder, so an
     // off-by-one in the marks shows up as a duplicated or missing row rather
     // than as an error.
-    let (store, _account, inbox, _database) = store(400, 4);
+    let (store, _account, inbox, _database) = store(400, 4).await;
 
     let mut seen: Vec<postio_model::ids::MessageId> = Vec::new();
     for page in 0..5 {
@@ -135,7 +130,7 @@ async fn the_two_windows_over_one_folder_do_not_confuse_each_others_marks() {
     // row counts. One set of seek marks would have each read clearing the
     // other's, which would show up as paging that silently walks from the top
     // every time — slow rather than wrong, and so easy to miss.
-    let (store, _account, inbox, _database) = store(400, 4);
+    let (store, _account, inbox, _database) = store(400, 4).await;
 
     for page in 0..4 {
         let messages = store

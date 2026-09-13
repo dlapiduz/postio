@@ -677,8 +677,8 @@ impl Engine {
             .await
             .map_err(|_| EngineError::new("the sync engine has stopped"))?;
         answer
-        .await
-        .map_err(|_| EngineError::new("the sync engine dropped the work"))
+            .await
+            .map_err(|_| EngineError::new("the sync engine dropped the work"))
     }
 
     async fn ask<T>(
@@ -996,7 +996,10 @@ async fn wake_due_snoozes(parts: &EngineParts, store: &Store) {
     let Ok(connection) = store.connect().await else {
         return;
     };
-    let Ok(woken) = MessageRepository::new(&connection).wake_due(parts.account, Utc::now()).await else {
+    let Ok(woken) = MessageRepository::new(&connection)
+        .wake_due(parts.account, Utc::now())
+        .await
+    else {
         return;
     };
     for mailbox in woken {
@@ -1134,7 +1137,10 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
         tracing::warn!("no connection to read folders with; not watching");
         return;
     };
-    let mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account).await {
+    let mailboxes = match MailboxRepository::new(&connection)
+        .list_for_account(parts.account)
+        .await
+    {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
             tracing::error!(%error, "cannot read the account's folders; not watching: {error}");
@@ -1160,11 +1166,7 @@ async fn start_watching(parts: &EngineParts, store: &Store, state: &mut State) {
 ///
 /// What lets [`keep_watch`] end a held `IDLE` early without being dropped
 /// mid-command. Both halves only ever observe.
-async fn interruption(
-    parts: &EngineParts,
-    store: &Store,
-    inbox: &async_channel::Receiver<Job>,
-) {
+async fn interruption(parts: &EngineParts, store: &Store, inbox: &async_channel::Receiver<Job>) {
     tokio::select! {
         _ = wait_for_job(inbox) => {}
         // A local mutation is not a job — nobody tells this thread that a
@@ -1330,8 +1332,8 @@ async fn discover(parts: &EngineParts, store: &Store) {
         parts.backend.as_ref(),
         parts.account,
         &parts.mailbox_roles,
-    ).await
-    
+    )
+    .await
     {
         Ok(report) => {
             if report.changed() {
@@ -1394,7 +1396,10 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
         // life of the process over one busy moment.
         return 0;
     };
-    let mut mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account).await {
+    let mut mailboxes = match MailboxRepository::new(&connection)
+        .list_for_account(parts.account)
+        .await
+    {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
             tracing::warn!(%error, "cannot read the account's folders to top up the backfill");
@@ -1409,8 +1414,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             &mut state.backfill,
             mailbox.id,
             parts.backfill.seed_batch,
-        ).await
-        
+        )
+        .await
         {
             Ok(queued) => queued,
             Err(error) => {
@@ -1438,8 +1443,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
             &mut state.backfill,
             mailbox.id,
             parts.backfill.seed_batch,
-        ).await
-        
+        )
+        .await
         {
             Ok(queued) => queued,
             Err(error) => {
@@ -1470,8 +1475,8 @@ async fn top_up_backfill(parts: &EngineParts, store: &Store, state: &mut State) 
                 &mut state.backfill,
                 mailbox.id,
                 parts.backfill.seed_batch,
-            ).await
-            
+            )
+            .await
             {
                 Ok(queued) => queued,
                 Err(error) => {
@@ -1508,7 +1513,10 @@ async fn queue_every_mailbox(parts: &EngineParts, store: &Store, state: &mut Sta
         tracing::warn!("no connection to read folders with; syncing nothing this pass");
         return;
     };
-    let mut mailboxes = match MailboxRepository::new(&connection).list_for_account(parts.account).await {
+    let mut mailboxes = match MailboxRepository::new(&connection)
+        .list_for_account(parts.account)
+        .await
+    {
         Ok(mailboxes) => mailboxes,
         Err(error) => {
             tracing::error!(%error, "cannot read the account's folders; syncing nothing: {error}");
@@ -1909,11 +1917,9 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
             reply,
         } => {
             let outcome = match store.connect().await {
-                Ok(connection) => {
-                    backfill::seed(&connection, &mut state.backfill, mailbox, limit)
-                        .await
-                        .map_err(|error| EngineError::new(error.to_string()))
-                }
+                Ok(connection) => backfill::seed(&connection, &mut state.backfill, mailbox, limit)
+                    .await
+                    .map_err(|error| EngineError::new(error.to_string())),
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
             // Say it now, not after the first body lands. Seeding is when the
@@ -1925,11 +1931,9 @@ async fn serve(job: Job, parts: &EngineParts, store: &Store, state: &mut State) 
         }
         Job::RequestBody { message, reply } => {
             let outcome = match store.connect().await {
-                Ok(connection) => {
-                    backfill::request_body(&connection, &mut state.backfill, message)
-                        .await
-                        .map_err(|error| EngineError::new(error.to_string()))
-                }
+                Ok(connection) => backfill::request_body(&connection, &mut state.backfill, message)
+                    .await
+                    .map_err(|error| EngineError::new(error.to_string())),
                 Err(error) => Err(EngineError::new(error.to_string())),
             };
             // Unconditional, not the throttled `announce_backfill` above:
@@ -2539,8 +2543,8 @@ async fn settle_pass(
                     &mut state.backfill,
                     mailbox,
                     parts.backfill.seed_batch,
-                ).await
-                
+                )
+                .await
                 {
                     parts.events.emit(Event::Error {
                         message: error.to_string(),
@@ -3079,20 +3083,39 @@ mod tests {
 
         // Created deliberately out of role order, archive first, so a queue
         // built from creation or discovery order would fail this test.
-        let archive =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Archive").await;
-        let regular =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Projects").await;
+        let archive = postio_storage::test_support::mailbox(
+            &connection,
+            &account_of(&parts).await,
+            "Archive",
+        )
+        .await;
+        let regular = postio_storage::test_support::mailbox(
+            &connection,
+            &account_of(&parts).await,
+            "Projects",
+        )
+        .await;
         let trash =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Trash").await;
-        let sent = postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Sent").await;
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Trash")
+                .await;
+        let sent =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Sent")
+                .await;
         let inbox =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX").await;
-        let junk = postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Junk").await;
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX")
+                .await;
+        let junk =
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Junk")
+                .await;
         let drafts =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Drafts").await;
-        let flagged =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Flagged").await;
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "Drafts")
+                .await;
+        let flagged = postio_storage::test_support::mailbox(
+            &connection,
+            &account_of(&parts).await,
+            "Flagged",
+        )
+        .await;
         drop(connection);
 
         let mut state = empty_state();
@@ -3256,7 +3279,8 @@ mod tests {
         let (parts, events, _directory) = parts_over(database.clone()).await;
         let connection = database.connect().await.expect("checkout");
         let inbox =
-            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX").await;
+            postio_storage::test_support::mailbox(&connection, &account_of(&parts).await, "INBOX")
+                .await;
 
         let repository = MessageRepository::new(&connection);
         let mut message =

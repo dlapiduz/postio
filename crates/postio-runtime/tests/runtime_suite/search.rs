@@ -19,11 +19,11 @@ use postio_search::parse;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-#[test]
-fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
+#[tokio::test]
+async fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    index::ensure_schema(&connection).expect("schema");
+    index::ensure_schema(&connection).await.expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let mut message = Message::new(account.id, mailbox, Utc::now());
@@ -31,6 +31,7 @@ fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
     message.subject = Some("Quarterly report".to_string());
     MessageRepository::new(&connection)
         .create(&mut message)
+        .await
         .expect("create message");
 
     let query = parse("quarterly", Utc::now().date_naive());
@@ -41,7 +42,9 @@ fn the_executor_is_reachable_from_postio_runtimes_own_dependency_graph() {
         limit: 10,
         order: postio_search::ResultOrder::Relevance,
     };
-    let results = search(&connection, &request, Utc::now()).expect("search");
+    let results = search(&connection, &request, Utc::now())
+        .await
+        .expect("search");
 
     assert_eq!(results.hits.len(), 1);
     assert_eq!(results.hits[0].message_id, message.id);

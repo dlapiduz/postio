@@ -22,7 +22,7 @@ use postio_core::bridge::event_channel;
 use postio_model::AccountId;
 use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::repository::{AccountRepository, MailboxRepository, SyncStateRepository};
-use postio_storage::{BlobStore, Database, test_support};
+use postio_storage::{BlobStore, Store, test_support};
 
 use crate::harness;
 
@@ -60,7 +60,7 @@ fn server() -> MockBackend {
 }
 
 fn engine_for(
-    database: &Database,
+    database: &Store,
     account: AccountId,
     backend: Arc<MockBackend>,
 ) -> (Engine, BlobDir) {
@@ -114,9 +114,11 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
         );
         accounts
             .create(&mut slow_account)
+            .await
             .expect("the slow account");
         accounts
             .create(&mut fast_account)
+            .await
             .expect("the fast account");
 
         let slow_inbox = test_support::mailbox(&connection, &slow_account, "INBOX").await;
@@ -172,7 +174,11 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
     let mailboxes = MailboxRepository::new(&connection);
 
     for (account, inbox) in [slow, fast] {
-        for folder in mailboxes.list_for_account(account).expect("its folders") {
+        for folder in mailboxes
+            .list_for_account(account)
+            .await
+            .expect("its folders")
+        {
             assert_eq!(
                 folder.account_id, account,
                 "a folder was filed under an account that does not own it"
@@ -180,6 +186,7 @@ async fn a_slow_account_does_not_hold_up_a_fast_one() {
         }
         let state = sync_state
             .get(inbox)
+            .await
             .expect("its sync state")
             .expect("a pass was recorded for this account's own inbox");
         assert_eq!(
