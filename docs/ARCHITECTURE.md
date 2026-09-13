@@ -26,7 +26,7 @@ graph TD
         sync["<b>postio-sync</b><br/>operation queue · QRESYNC · IDLE · backoff"]
         imap["<b>postio-account</b><br/>io-imap behind MailBackend"]
         smtp["<b>postio-smtp</b><br/>io-smtp"]
-        storage["<b>postio-storage</b><br/>SQLite · migrations · blob store"]
+        storage["<b>postio-storage</b><br/>Turso · migrations · blob store"]
         index["<b>postio-index</b><br/>full-text index · executor"]
     end
 
@@ -85,7 +85,7 @@ engines, and the verb vocabulary that turns a `Command` into rows and events —
 is in `postio-session`, which a frontend that is not GTK can link. What is left
 in `postio-app` is a window and the presenters that join the two halves, each
 of which names a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why
-the alternative — a second binary opening SQLite directly — is not a second
+the alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
 
 Dashed borders mark the three crates whose dependency closure CI polices
@@ -100,7 +100,7 @@ Dashed borders mark the three crates whose dependency closure CI polices
 The frontend never mutates anything. It sends a `Command` and repaints from the
 `Event`s that come back. Every mutating action follows the same order:
 
-> **SQLite write → enqueue the remote operation → emit the event → repaint.**
+> **Store write → enqueue the remote operation → emit the event → repaint.**
 
 The network is not in that sequence. `postio-sync` drains the queue later and
 somewhere else, and reports back through its own events.
@@ -195,7 +195,7 @@ anything. This is why `Event::SelectionChanged` carries the selection rather
 than a list of ids: an event that flattened it would undo the reason it exists.
 
 Related: **the message list is never loaded into memory.** It is windowed over
-paged SQLite (`PRODUCT.md` §18).
+the paged store (`PRODUCT.md` §18).
 
 ### 5. Undo replays inverses through the same machinery
 
@@ -300,8 +300,8 @@ would.
 
 **This is also why `postio-runtime` and `postio-app` are separate crates rather
 than features of `postio-core`.** Cargo resolves features as a *union* across
-everything being built, so a `postio-core/runtime` feature would put SQLite in
-the graph of every crate depending on `postio-core` the moment anything turned
+everything being built, so a `postio-core/runtime` feature would put the
+database engine in the graph of every crate depending on `postio-core` the moment anything turned
 it on — the view layer included. `postio-core` therefore has **no optional
 dependencies at all.**
 

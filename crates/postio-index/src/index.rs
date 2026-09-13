@@ -1,45 +1,52 @@
-//! The FTS5 search index: schema, sync triggers, and the rebuild path.
+//! The full-text search index: schema, sync triggers, and the rebuild path.
 //!
-//! # Why an external-content table needs a shadow table
+//! # The shape: two `USING fts` indexes on ordinary tables
 //!
-//! FTS5's `content=` mode lets a virtual table borrow its rows from an
-//! ordinary table instead of duplicating them, which is exactly what a
-//! search index over `messages` wants — no second copy of every subject and
-//! body. But the columns this index covers (sender, recipients, subject,
-//! body text, attachment filenames) do not live on one row of `messages`:
-//! the sender and recipients are in `recipients`, the filenames are in
-//! `attachments`, and the body text is not in SQLite at all — it lives in
-//! the content-addressed blob store (CLAUDE.md, "No BLOB columns anywhere").
+//! The engine's full-text search is an *index method*, not a module:
+//! `CREATE INDEX ... USING fts` puts an inverted index on ordinary columns,
+//! and the engine maintains it the way it maintains any other index. So
+//! there is no virtual table here, no external-content shadow table, and no
+//! trigger whose job is keeping an index in step — all of which the FTS5
+//! version of this module needed. Two indexes:
 //!
-//! So `messages_fts` points at `search_documents`, a table this crate
-//! owns: one flattened row per message, kept current by triggers on
-//! `messages`, `recipients` and `attachments` for the metadata columns, and
-//! by [`index_body`] for the body text, since nothing in SQL can compute
-//! that column's value the way a trigger computes the others.
+//! * `search_documents_fts`, over the five metadata columns of
+//!   `search_documents`;
+//! * `messages_body_fts`, over `messages.body_search` — the body text
+//!   folded for search. The engine's tokenizer lowercases and does not
+//!   strip diacritics, so [`postio_model::fold`] folds the column on the
+//!   way in ([`index_body`]) and the query path applies the identical fold,
+//!   or the two stop meeting.
 //!
-//! # And why the bodies have a second table
+//! # Why `search_documents` is still a table of its own
 //!
-//! `search_documents` is an ordinary table, so a `body` column on it is the
-//! whole text corpus stored a second time — free while nothing was indexed
-//! (#327), and the entire mailbox now that everything is (ADR 0016).
-//! `message_bodies_fts` is `content = ''`: index, no text. It cannot be a
-//! seventh column on `messages_fts`, because a contentless table rewrites
-//! every column whenever one changes and the metadata columns are
-//! trigger-maintained from tables a trigger *can* read. So there are two
-//! tables, and each is the only shape its own maintainer can work with.
+//! An index covers columns, and the metadata this search covers (sender,
+//! recipients, subject, attachment filenames, list id) does not live on one
+//! row of `messages`: sender and recipients are rows of `recipients`,
+//! filenames are rows of `attachments`. `search_documents` is the flattened
+//! row — one per message — that gives the index something to sit on. It is
+//! kept current by triggers on `messages`, `recipients` and `attachments`,
+//! and backfilled by [`SCHEMA_FOR_TEST`]'s trailing `INSERT` for the mail
+//! that predates the triggers, because a retro-fitted index that only sees
+//! new arrivals answers nothing on every existing store.
+//!
+//! Bodies are not flattened into it: since ADR 0020 they are already one
+//! column of one row (`messages.body_text`), so their index sits directly
+//! on `messages` — on `body_search`, which [`index_body`] writes, since the
+//! fold cannot be computed by a trigger.
 //!
 //! `search_documents.message_id` cascades from `messages.id`, so deleting a
-//! message deletes its shadow row, which the standard external-content sync
-//! triggers below turn into the matching `messages_fts` deletion.
+//! message deletes its flattened row, and the indexes follow their tables
+//! without any help from this crate.
 //!
 //! # Applying this schema
 //!
-//! [`ensure_schema`] is idempotent — every statement is `IF NOT EXISTS` — so
-//! it is safe to call on every connection this crate is handed, the same way
-//! `postio_storage::migrate` is safe to call on every start. It is
-//! deliberately not a numbered `postio-storage` migration: this index is
-//! `postio-search`'s own concern, layered on top of tables `postio-storage`
-//! already created.
+//! [`ensure_schema`] runs on every start, versioned per half (metadata,
+//! bodies, headers): current halves are skipped cheaply, and a mismatched
+//! half is dropped and rebuilt, because the index is derived data and the
+//! tables it derives from are still there (#490 is why the versions exist).
+//! It is deliberately not a numbered `postio-storage` migration: this index
+//! is `postio-search`'s own concern, layered on top of tables
+//! `postio-storage` already created.
 
 use postio_model::MessageBody;
 
@@ -47,14 +54,14 @@ use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _, bind};
 
-/// Creates `search_documents`, `messages_fts` and every trigger that keeps
-/// them in sync, if they do not already exist.
+/// Creates `search_documents`, its two `USING fts` indexes and every
+/// trigger that keeps them in sync, if they do not already exist.
 ///
 /// Call this once per connection before indexing or searching — on every
-/// application start, the same way `postio_storage::migrate` runs on every
-/// start. Requires `PRAGMA foreign_keys = ON` (set by
-/// `postio_storage::db::configure`) so that deleting a message cascades into
-/// `search_documents`.
+/// application start, the same way the store's migrations run on every
+/// start. Requires `PRAGMA foreign_keys = ON` (per connection on this
+/// engine; the store's connect path sets it) so that deleting a message
+/// cascades into `search_documents`.
 ///
 /// # It indexes what is already there
 ///
@@ -62,8 +69,9 @@ use postio_storage::sql::{self, RowExt as _, bind};
 /// them, and this index is retro-fitted onto stores that already hold tens of
 /// thousands of messages — so the schema ends with a backfill over `messages`,
 /// and running it again is a no-op rather than a second copy. Everything
-/// except message *bodies*: those live in the blob store, no trigger and no
-/// `SELECT` can reach them, and [`index_body`] is how they arrive.
+/// except message *bodies*: `messages.body_search` is written only when the
+/// extracted text exists, no trigger can derive it from raw bytes, and
+/// [`index_body`] is how it arrives.
 pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     postio_storage::sql::batch(
         connection,
@@ -235,10 +243,11 @@ async fn set_half_version(connection: &Connection, half: &str, version: i64) -> 
 
 /// Sets (or clears) the indexed body text for a message.
 ///
-/// Body text lives in the blob store, not SQLite, so nothing here can derive
-/// it the way the metadata columns are derived by trigger. The caller reads
-/// the extracted plain-text body (E2.9's job, not this crate's — raw HTML
-/// must never reach this column) and passes it here once it has the bytes.
+/// The raw body bytes live in the blob store, so nothing here can derive
+/// this column the way the metadata columns are derived by trigger. The
+/// caller reads the extracted plain-text body (E2.9's job, not this
+/// crate's — raw HTML must never reach this column) and passes it here
+/// once it has the bytes.
 ///
 /// A message with no `search_documents` row yet (indexing raced ahead of the
 /// message insert) is not an error: the write is simply a no-op, since there

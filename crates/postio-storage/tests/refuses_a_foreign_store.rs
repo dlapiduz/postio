@@ -1,7 +1,7 @@
 //! A store this build cannot read is refused, and left exactly as it was.
 //!
 //! There is no migration from the SQLCipher format -- a store in it is rebuilt
-//! by resyncing (ADR 0037). "Rebuilt" has to mean the old file is still there
+//! by resyncing (ADR 0038). "Rebuilt" has to mean the old file is still there
 //! to be moved aside, so the failure path may not truncate, may not create,
 //! and may not half-write a header over somebody's mailbox.
 //!

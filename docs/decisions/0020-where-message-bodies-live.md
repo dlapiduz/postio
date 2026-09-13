@@ -1,6 +1,11 @@
 # ADR 0020 — Message bodies live in SQLite; the blob store keeps attachments
 
-- **Status:** Accepted (2026-08-27)
+- **Status:** Accepted (2026-08-27). **Compression half superseded** by
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): the
+  engine's full-text index is an index over the body column and cannot
+  tokenise compressed bytes, so bodies are plain `TEXT` and
+  `body_dictionaries` is gone. The rows-not-blobs half — bodies in the
+  database, attachments and raw `.eml` in the blob store — stands.
 - **Date:** 2026-08-27
 - **Decision by:** the maintainer, asking two questions in sequence — *"are all
   the bodies just out there in the open?"* and *"why not store the bodies

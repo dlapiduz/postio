@@ -12,8 +12,8 @@ around until you're confident in it.
 
 v1 targets GTK4/libadwaita on Linux because that's where the team could
 build something excellent fastest, not because other platforms are ruled
-out. The engine underneath the UI has no GTK in it and no SQLite in the
-view layer — that boundary is enforced automatically, specifically so a
+out. The engine underneath the UI has no GTK in it and no database code in
+the view layer — that boundary is enforced automatically, specifically so a
 macOS or Windows frontend over the same engine stays possible later.
 Neither is currently scheduled.
 

@@ -469,7 +469,9 @@ async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     let order = backend.fetch_order();
     let first_regular = order
         .iter()
-        .position(|event| matches!(event, FetchEvent::Header(mailbox) if mailbox.starts_with("Lists/")))
+        .position(
+            |event| matches!(event, FetchEvent::Header(mailbox) if mailbox.starts_with("Lists/")),
+        )
         .expect("the regular folders were fetched");
     let last_drafts = order
         .iter()

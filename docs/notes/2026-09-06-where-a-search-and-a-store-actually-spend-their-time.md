@@ -1,5 +1,10 @@
 # Where a search and a store actually spend their time (2026-09-06, #1216)
 
+Every timing below is the old engine's (SQLCipher; swapped for Turso by
+ADR 0038), so re-running the tooling now measures a different engine. The
+finding — the costs that matter live in query plans and widget lifecycles,
+where a CPU profile cannot see them — is engine-independent.
+
 A night of measurement against a real 82,057-message store, after a day of
 measuring synthetic ones. Every number here is from `scripts/` tooling that
 still exists, so it can be re-run rather than believed.

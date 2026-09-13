@@ -1,5 +1,11 @@
 # Encrypting the store, and the things it made visible (2026-08-28, #610/#300)
 
+The engine below is SQLCipher, which ADR 0038 replaced with Turso. What
+survives the swap is what the encryption *exposed*: the keyring seam and the
+`temp_store = MEMORY` rule are enforced on the new engine too, and the
+lifecycle lessons were never about the cipher. The SQLCipher mechanics
+themselves are history.
+
 Bodies moved out of the blob store into compressed `messages` columns
 (ADR 0020) and the database became SQLCipher (ADR 0014) in one pass. The
 encryption itself was uneventful. What it *exposed* was not, and most of it

@@ -25,7 +25,7 @@
 //!    compressed bytes.
 //! 2. **`body_search` is new**: the body folded for search. The engine's
 //!    tokenizer does not remove diacritics and offers no option to, so the
-//!    fold FTS5 did inside its index is done by `postio_index::fold` before
+//!    fold FTS5 did inside its index is done by `postio_model::fold` before
 //!    the write.
 //! 3. **No table is `WITHOUT ROWID`.** Four were. Turso puts that behind an
 //!    experimental flag and will not build a secondary index on such a table,
@@ -429,7 +429,7 @@ CREATE TABLE messages (
     -- `unicode61 remove_diacritics 2` and did it inside the index; the
     -- tantivy analyzer behind `USING fts` is SimpleTokenizer + LowerCaser
     -- with no equivalent option, so the fold moves into the application and
-    -- has to be written down somewhere. `postio_index::fold` is the one
+    -- has to be written down somewhere. `postio_model::fold` is the one
     -- writer, and it applies the identical fold to the query -- both paths or
     -- neither, or `café` and `cafe` stop meeting.
     --

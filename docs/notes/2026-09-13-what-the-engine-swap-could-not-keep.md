@@ -120,6 +120,41 @@ around the call answers `0.0`, and so does a query term bound as a *different
 parameter* than the `fts_match` that selected the row. See
 `2026-09-13-a-score-that-is-zero-and-says-nothing.md`.
 
+## Five more, found reconciling the documentation
+
+Smaller than the eight above, and found by reading the docs against the code
+rather than by a failing test.
+
+**ADR 0027's gate number moved, and so did its method.** The header index
+weighs **4,218 B** a message on this engine against 3,809 B under SQLCipher —
+same policy, same fixture, weighed as a file delta because there is no
+`dbstat` to attribute pages with (`index_suite/header_index_size.rs`). The
+5 KiB ceiling stands; the headroom under it is about a fifth now rather than
+a third.
+
+**`busy_timeout` defaults to 0.** A writer that finds the lock taken gets
+`Busy` immediately, with no retry at all — SQLCipher's configuration set
+5,000 ms and `WriteGate`'s documentation assumes it. The per-connection batch
+sets it back to 5,000; drop that line and
+`a_resync_batch_does_not_lock_out_an_interactive_write` fails as `database is
+locked`, which is the symptom a keystroke during a sync would show.
+
+**`cache_size` defaults differently too**: -2000 (2 MiB) where the old store
+ran at 64 MiB. The batch sets -65536 — a cap rather than a reservation, so a
+small store never allocates it.
+
+**The connection pool is gone entirely.** No `PooledConnection`, no checkout
+timeout, no `spawn_blocking` bridge: the engine keeps its own pool behind a
+cheap `connect`, and the async API removed the synchronous-repository shape
+that needed the thread pool. `store.rs`'s module doc has the full account.
+
+**`PRAGMA page_size` is read-only.** The store reads it in two places for
+freelist arithmetic and can set it nowhere, so the choice
+`2026-09-04-the-page-size-has-to-be-chosen-before-300-and-8192-is-the-an.md`
+recorded — 8192, decided before #300 because it could never be revisited — is
+unmakeable here in either direction: the page size is the engine's. That note
+went with the engine; #381's commits hold the reasoning if it is ever wanted.
+
 ## What it bought
 
 `openssl-src` left the dependency graph entirely — with it, a 28-second

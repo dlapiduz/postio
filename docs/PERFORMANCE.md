@@ -4,8 +4,9 @@ Performance is a functional requirement in Postio. What enforces it is
 **counted work rather than wall-clock**: `bench.yml` compiles the bench
 targets nightly and deliberately times nothing, because a shared runner
 cannot defend 16 ms, so what gates a pull request is the *cause* of each
-budget — statements, rows and SQLite steps, which are the same numbers on
-any machine. See `postio_storage::test_support::counting`.
+budget — statements and rows, plus the full scans `counting::scans` reads
+off the planner, which are the same numbers on any machine. See
+`postio_storage::test_support::counting`.
 
 | Budget | Target | Measured |
 |---|---|---|
@@ -17,13 +18,13 @@ any machine. See `postio_storage::test_support::counting`.
 
 Transitions are ≤ 100 ms or absent entirely, and `prefers-reduced-motion` is
 always honored. A mailbox is never loaded into memory in full — the message
-list is windowed over paged SQLite.
+list is windowed over the paged store.
 
 **These numbers are from an encrypted store.** Since ADR 0014 the database
 encrypts itself and there is no unencrypted configuration to compare against in
 normal use, so every figure here already carries the cost of decrypting each
 page on the way in. Where that cost is separable it is stated. The *cipher*
-changed with ADR 0037 — read the next section before trusting any wall-clock
+changed with ADR 0038 — read the next section before trusting any wall-clock
 figure below it.
 
 ## The engine changed underneath every number below
@@ -149,7 +150,9 @@ account's mail weighs, which measured 1.48 s in the pane next door.
 **Note which two rows did not move.** An aggregate is one statement and one
 row however much it reads, so the two counted budgets already in the
 workspace were blind to it by construction. `steps`
-(`SQLITE_STMTSTATUS_VM_STEP`) is the count that sees it, and
+(`SQLITE_STMTSTATUS_VM_STEP`) was the count that saw it; the step counter
+went with the engine (ADR 0038), and `counting::scans` — the planner asked
+whether a query *can* be cheap — is what sees an unindexed aggregate now.
 `docs/notes/2026-09-11-an-aggregate-hides-from-a-row-count.md` is why that
 matters beyond this one query.
 
@@ -172,17 +175,9 @@ With an account and six folders:
 | of which first frame | 106 ms | |
 | fonts and styles together | 9 ms | |
 
-Three things about this deserve saying plainly rather than being averaged away.
+Two things about this deserve saying plainly rather than being averaged away.
 
-**Encryption costs about 78 ms of it.** Measured by disabling `PRAGMA key` in
-`db::configure` and re-running the same binary against an equivalent
-plaintext store: floor 350 ms against 427 ms. That is the price ADR 0014 said
-would land on this budget, and it lands inside it. This paragraph used to add
-that the difference "sits almost entirely in window construction, which is
-where the first store reads happen"; #790 split that phase and found the
-store reads are not in it — see below.
-
-**Most of the rest is GTK's own first-realize cost, not a Postio widget.**
+**Most of it is GTK's own first-realize cost, not a Postio widget.**
 #636 bisected window construction by timing each pane's constructor in
 isolation (`Shell`, `Sidebar`, `MessageListView`, `Finder`, `CheatSheet`,
 `SettingsPanel`, the composer's `Editor` and its WebView) — none cost more
@@ -195,8 +190,8 @@ measured ~295 ms, and `ngl` measured ~1.9 s.
 
 **#790 decided to keep the GPU renderer** rather than trade runtime
 compositing for that startup time, and in measuring the alternative found an
-attribution error in each of the two claims above. Both were this document's,
-and both matter to anyone deciding what to optimise next.
+attribution error in two claims this document used to make. Both matter to
+anyone deciding what to optimise next.
 
 *The compile is not in the `window` phase.* `app::build_with` marks
 `Phase::Window` and calls `window.present()` on the next line, so the realize
@@ -270,8 +265,8 @@ starts. The split shows the two moving independently:
 | `first frame` | 99 ms | 74 – 81 ms |
 
 `window` is flat — widget construction does not read the store — while
-`store` grows by a factor of four with the data. So the 78 ms of encryption
-measured above sits in `store`, not in "window construction, which is where
+`store` grows by a factor of four with the data. So the cost of encryption
+sits in `store`, not in "window construction, which is where
 the first store reads happen". Those figures are a debug build under the
 headless compositor and are not comparable to the release numbers in the
 table; what they establish is which phase moves, which is a shape, not a
@@ -285,7 +280,7 @@ attack.
 This document previously recorded 147 ms for the whole figure; nothing in
 that measurement survives to compare against — different commit, different
 schema, and no record of what else the machine was doing — so the honest
-statement is 427 ms today, of which 78 ms is encryption. The worst of five
+statement is 427 ms today. The worst of five
 runs exceeded the 500 ms budget. The per-phase rows in the table above
 predate the `store` split and still fold it into `window`; they want
 re-running on the recipe below. See
@@ -372,16 +367,16 @@ passes have settled**:
 | Resident total | 160.8 MiB | 176.7 MiB | 176.9 MiB |
 
 **The anonymous figure is the claim**, and the shape of it is the answer: it
-steps up once between a thousand messages and a hundred thousand — the SQLite
-page cache filling, bounded by `cache_size` — and then does not move at all
+steps up once between a thousand messages and a hundred thousand — the
+database page cache filling, bounded by `cache_size` — and then does not move at all
 between a hundred thousand and four hundred thousand, against a store that
 tripled. Bounded, not proportional.
 
 **The file-backed half is now flat, and that is new.** It used to grow from
 83 MiB to 167 MiB with mailbox size, because `PRAGMA mmap_size` was 256 MiB
 and SQLite mapped as much of the store as it touched. That pragma is gone:
-memory-mapping is meaningless over encrypted pages, since SQLCipher has to
-decrypt each one into the page cache, so there is no version of "the file is
+memory-mapping is meaningless over encrypted pages, since an encrypting
+engine has to decrypt each one into the page cache, so there is no version of "the file is
 the buffer" (ADR 0014). What is left in this row is shared libraries.
 
 Net effect at 100,000 messages: resident total went from 215 MiB to 177 MiB.

@@ -1,6 +1,11 @@
 # ADR 0017 — What "download everything" costs, and the four axes that pay for it
 
-- **Status:** Accepted — **GO** (2026-08-26)
+- **Status:** Accepted — **GO** (2026-08-26). **One premise gone** with
+  [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (2026-09-13): Axis 3's
+  case against page compression leaned on SQLCipher sitting underneath, and
+  that engine is gone — as is ADR 0020's trained-dictionary row compression
+  (its status says why). The conclusion stands (pages are not compressed),
+  and blob-level zstd survives as shipped (`postio-storage/src/blob.rs`).
 - **Date:** 2026-08-26
 - **Amended:** 2026-08-27 — why blobs rather than compressed rows, and the
   dictionary deferred behind a measurement ([#399](https://github.com/dlapiduz/postio/issues/399))

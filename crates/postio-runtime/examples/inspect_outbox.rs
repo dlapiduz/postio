@@ -73,19 +73,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!(
         "messages.send_state: queued {}  sending {}  failed {}  unconfirmed {}  sent {}",
-        counted(&connection, "SELECT count(*) FROM messages WHERE send_state = 'queued'").await?,
-        counted(&connection, "SELECT count(*) FROM messages WHERE send_state = 'sending'").await?,
-        counted(&connection, "SELECT count(*) FROM messages WHERE send_state = 'failed'").await?,
-        counted(&connection, "SELECT count(*) FROM messages WHERE send_state = 'unconfirmed'").await?,
-        counted(&connection, "SELECT count(*) FROM messages WHERE send_state = 'sent'").await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'queued'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'sending'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'failed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'unconfirmed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM messages WHERE send_state = 'sent'"
+        )
+        .await?,
     );
     println!(
         "drafts.state:        queued {}  sending {}  failed {}  unconfirmed {}  editing {}\n",
-        counted(&connection, "SELECT count(*) FROM drafts WHERE state = 'queued'").await?,
-        counted(&connection, "SELECT count(*) FROM drafts WHERE state = 'sending'").await?,
-        counted(&connection, "SELECT count(*) FROM drafts WHERE state = 'failed'").await?,
-        counted(&connection, "SELECT count(*) FROM drafts WHERE state = 'unconfirmed'").await?,
-        counted(&connection, "SELECT count(*) FROM drafts WHERE state = 'editing'").await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'queued'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'sending'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'failed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'unconfirmed'"
+        )
+        .await?,
+        counted(
+            &connection,
+            "SELECT count(*) FROM drafts WHERE state = 'editing'"
+        )
+        .await?,
     );
 
     // ── every draft that is not merely being written ─────────────────────
