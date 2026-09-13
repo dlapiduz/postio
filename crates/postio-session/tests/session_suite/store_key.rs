@@ -304,7 +304,7 @@ fn opening_a_plaintext_store_encrypts_it_first() {
     let connection = database.connection().expect("checkout");
     let (subject, raw): (String, String) = connection
         .query_row("SELECT subject, raw_blob_id FROM messages", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?))
         })
         .expect("the message survived");
     assert_eq!(subject, "Zarquon");

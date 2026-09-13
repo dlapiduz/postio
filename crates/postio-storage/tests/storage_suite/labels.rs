@@ -8,6 +8,7 @@
 //! `Flag` is, and rewriting a whole message row to add one label would race
 //! every other write to it.
 
+use postio_storage::Connection;
 use postio_model::{AccountId, Label, LabelId};
 use postio_storage::repository::{LabelRepository, MessageRepository};
 use postio_storage::test_support;

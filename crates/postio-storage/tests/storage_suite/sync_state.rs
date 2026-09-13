@@ -32,7 +32,7 @@ fn message_count(connection: &Connection, mailbox: MailboxId) -> i64 {
         .query_row(
             "SELECT count(*) FROM messages WHERE mailbox_id = ?1",
             [mailbox.get()],
-            |row| row.get(0),
+            |row| postio_storage::sql::RowExt::col(row, 0),
         )
         .expect("count messages")
 }

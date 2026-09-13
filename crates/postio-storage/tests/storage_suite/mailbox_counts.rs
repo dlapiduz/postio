@@ -61,14 +61,14 @@ async fn write(
     flags: &[&[Flag]],
 ) -> Vec<MessageId> {
     let messages = MessageRepository::new(connection);
-    flags
-        .iter()
-        .enumerate()
-        .map(|(index, flags)| {
-            let mut message = a_message(account, mailbox, index as u32 + 1, flags).await;
-            messages.create(&mut message).await.expect("write a message")
-        })
-        .collect()
+    // A loop rather than `map().collect()`: the writes await, and a closure
+    // cannot.
+    let mut written = Vec::new();
+    for (index, flags) in flags.iter().enumerate() {
+        let mut message = a_message(account, mailbox, index as u32 + 1, flags).await;
+        written.push(messages.create(&mut message).await.expect("write a message"));
+    }
+    written
 }
 
 // ---------------------------------------------------------------------------
@@ -109,16 +109,18 @@ async fn a_batch_upsert_counts_each_row_once() {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     let messages = MessageRepository::new(&connection);
 
-    let mut batch: Vec<Message> = (1..=4)
-        .map(|uid| a_message(&account, inbox, uid, &[]).await)
-        .collect();
+    let mut batch: Vec<Message> = Vec::new();
+    for uid in (1..=4) {
+        batch.push(a_message(&account, inbox, uid, &[]).await);
+    }
     messages.upsert_batch(&mut batch).await.expect("first pass");
     assert_eq!(cached(&connection, inbox).await, (4, 4, 0));
 
     // The same UIDs again — an interrupted pass resuming, which is ordinary.
-    let mut again: Vec<Message> = (1..=4)
-        .map(|uid| a_message(&account, inbox, uid, &[Flag::Seen]).await)
-        .collect();
+    let mut again: Vec<Message> = Vec::new();
+    for uid in (1..=4) {
+        again.push(a_message(&account, inbox, uid, &[Flag::Seen]).await);
+    }
     messages.upsert_batch(&mut again).await.expect("second pass");
     assert_eq!(
         cached(&connection, inbox).await,
@@ -404,9 +406,10 @@ async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
 
     let mailboxes = MailboxRepository::new(&connection);
     let _ = mailboxes.draft_counts(account).await.expect("warm");
-    let small = counted(|| {
+    let small = counted_async(|| async {
         mailboxes.draft_counts(account).await.expect("counts");
-    });
+    })
+    .await;
 
     // A mailbox's worth of ordinary mail, none of it a draft.
     for _ in 0..400 {
@@ -417,9 +420,10 @@ async fn the_draft_counts_cost_the_same_however_much_mail_the_account_has() {
             .expect("file it");
     }
 
-    let large = counted(|| {
+    let large = counted_async(|| async {
         mailboxes.draft_counts(account).await.expect("counts");
-    });
+    })
+    .await;
 
     assert_eq!(
         small.statements, large.statements,

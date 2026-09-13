@@ -68,7 +68,7 @@ fn table_bytes(connection: &Connection, name: &str) -> i64 {
             "SELECT coalesce(sum(pgsize), 0) FROM dbstat
               WHERE name = ?1 OR name LIKE ?1 || '\\_%' ESCAPE '\\'",
             [name],
-            |row| row.get(0),
+            |row| postio_storage::sql::RowExt::col(row, 0),
         )
         .expect("dbstat")
 }

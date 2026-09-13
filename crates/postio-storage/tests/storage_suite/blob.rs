@@ -4,6 +4,7 @@
 //! same content written twice occupies one blob", "an interrupted write leaves
 //! no partial blob visible" and "orphan collection is tested".
 
+use postio_storage::Connection;
 use postio_storage::sql::bind;
 use std::io::{self, Read};
 
@@ -296,13 +297,14 @@ async fn database() -> postio_storage::test_support::TempStore {
 /// There is no body parameter: since ADR 0020 a body is a compressed column on
 /// this row, not a file, so it is not something the blob store can reference,
 /// collect or evict.
-fn insert_message(connection: &Connection, raw: Option<&BlobId>) -> i64 {
+async fn insert_message(connection: &Connection, raw: Option<&BlobId>) -> i64 {
     connection
         .execute(
             "INSERT INTO messages (account_id, mailbox_id, received_at, raw_blob_id)
              VALUES (1, 1, 0, ?1)",
             bind![raw.map(BlobId::as_str)],
         )
+        .await
         .expect("insert a message");
     connection.last_insert_rowid()
 }
@@ -322,7 +324,7 @@ async fn garbage_collection_keeps_referenced_blobs_and_removes_orphans() {
     // container header (ADR 0017), so the two differ.
     let orphan_bytes = store.len_of(&orphan).expect("the orphan's size on disk");
 
-    let message = insert_message(&connection, Some(&raw));
+    let message = insert_message(&connection, Some(&raw)).await;
     for blob in [&attached, &also_attached] {
         connection
             .execute(
@@ -356,8 +358,8 @@ async fn a_blob_becomes_collectable_once_its_last_reference_goes() {
     let connection = database.connect().await.expect("checkout");
 
     let shared = store.put(b"referenced twice").expect("put");
-    let first = insert_message(&connection, Some(&shared));
-    insert_message(&connection, Some(&shared));
+    let first = insert_message(&connection, Some(&shared)).await;
+    insert_message(&connection, Some(&shared)).await;
 
     connection
         .execute("DELETE FROM messages WHERE id = ?1", [first])
@@ -762,7 +764,7 @@ fn a_compressed_blob_streams_without_being_read_whole() {
 // ---------------------------------------------------------------------------
 
 /// A message received `received_at`, holding the raw `.eml` blob if it has one.
-fn insert_message_at(
+async fn insert_message_at(
     connection: &Connection,
     received_at: i64,
     raw: Option<&BlobId>,
@@ -773,17 +775,19 @@ fn insert_message_at(
              VALUES (1, 1, ?1, ?2, 'full')",
             bind![received_at, raw.map(BlobId::as_str)],
         )
+        .await
         .expect("insert a message");
     connection.last_insert_rowid()
 }
 
-fn attach(connection: &Connection, message: i64, blob: &BlobId, size: i64) {
+async fn attach(connection: &Connection, message: i64, blob: &BlobId, size: i64) {
     connection
         .execute(
             "INSERT INTO attachments (message_id, mime_type, size, blob_id, part_id)
              VALUES (?1, 'application/pdf', ?2, ?3, '2')",
             bind![message, size, blob.as_str()],
         )
+        .await
         .expect("insert an attachment");
 }
 
@@ -799,8 +803,8 @@ async fn eviction_takes_raw_source_before_it_takes_a_payload() {
 
     let raw = store.put(&vec![b'r'; 40_000]).expect("put");
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
-    let message = insert_message_at(&connection, 1_000, Some(&raw));
-    attach(&connection, message, &payload, 40_000);
+    let message = insert_message_at(&connection, 1_000, Some(&raw)).await;
+    attach(&connection, message, &payload, 40_000).await;
 
     // A budget that only one of the two big blobs can fit under.
     let budget = store.len_of(&payload).expect("len") + 16;
@@ -876,8 +880,8 @@ async fn eviction_takes_the_oldest_mail_first() {
 
     let old = store.put(&vec![b'o'; 40_000]).expect("put");
     let new = store.put(&vec![b'n'; 40_000]).expect("put");
-    insert_message_at(&connection, 1_000, Some(&old));
-    insert_message_at(&connection, 9_000, Some(&new));
+    insert_message_at(&connection, 1_000, Some(&old)).await;
+    insert_message_at(&connection, 9_000, Some(&new)).await;
 
     let budget = store.len_of(&new).expect("len") + 16;
     store.evict_to_fit(&connection, budget).await.expect("evict");
@@ -896,27 +900,29 @@ async fn an_evicted_payload_puts_its_message_back_to_partial() {
     let connection = database.connect().await.expect("checkout");
 
     let payload = store.put(&vec![b'p'; 40_000]).expect("put");
-    let message = insert_message_at(&connection, 1_000, None);
-    attach(&connection, message, &payload, 40_000);
+    let message = insert_message_at(&connection, 1_000, None).await;
+    attach(&connection, message, &payload, 40_000).await;
 
     store.evict_to_fit(&connection, 0).await.expect("evict");
 
     assert!(!store.contains(&payload));
-    let state: String = connection
-        .query_row(
-            "SELECT body_state FROM messages WHERE id = ?1",
-            [message],
-            |row| row.get(0),
-        )
-        .expect("the row");
+    let state: String = postio_storage::sql::one(
+        &connection,
+        "SELECT body_state FROM messages WHERE id = ?1",
+        [message],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the row");
     assert_eq!(state, "partial");
-    let blob: Option<String> = connection
-        .query_row(
-            "SELECT blob_id FROM attachments WHERE message_id = ?1",
-            [message],
-            |row| row.get(0),
-        )
-        .expect("the attachment");
+    let blob: Option<String> = postio_storage::sql::one(
+        &connection,
+        "SELECT blob_id FROM attachments WHERE message_id = ?1",
+        [message],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the attachment");
     assert_eq!(blob, None, "and the row stops claiming bytes it lost");
 }
 
@@ -927,7 +933,7 @@ async fn a_store_already_under_its_budget_evicts_nothing() {
     let connection = database.connect().await.expect("checkout");
 
     let raw = store.put(&vec![b'r'; 4_000]).expect("put");
-    insert_message_at(&connection, 1_000, Some(&raw));
+    insert_message_at(&connection, 1_000, Some(&raw)).await;
 
     let report = store
         .evict_to_fit(&connection, 100 * 1024 * 1024)

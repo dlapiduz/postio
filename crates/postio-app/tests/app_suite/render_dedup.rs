@@ -81,7 +81,7 @@ pub fn one_gesture_renders_once_and_reselecting_renders_nothing() {
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 [],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a count")
     };

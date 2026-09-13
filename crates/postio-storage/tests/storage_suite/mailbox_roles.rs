@@ -181,10 +181,13 @@ async fn a_refusal_goes_with_its_account() {
         .await
         .expect("remove the account");
 
-    let orphans: i64 = connection
-        .query_row("SELECT count(*) FROM mailbox_role_refusals", [], |row| {
-            row.get(0)
-        })
-        .expect("count");
+    let orphans: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM mailbox_role_refusals",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(orphans, 0, "the refusal outlived the account it was about");
 }

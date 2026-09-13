@@ -138,9 +138,14 @@ fn a_search_costs_the_same_queries_however_much_it_matches() {
             order: postio_search::ResultOrder::Relevance,
         };
         let _ = search(&connection, &request, now).expect("a page of results");
-        let _: i64 = connection
-            .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
-            .expect("one more query, standing in for a per-hit lookup");
+        let _: i64 = postio_storage::sql::one(
+            &connection,
+            "SELECT count(*) FROM messages",
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("one more query, standing in for a per-hit lookup");
     });
     assert_eq!(
         with_one_more.statements,

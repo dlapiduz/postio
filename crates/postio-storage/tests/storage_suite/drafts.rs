@@ -3,6 +3,7 @@
 //! The bead's acceptance criterion is "draft upsert is idempotent under rapid
 //! autosave".
 
+use postio_storage::Connection;
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{
@@ -85,7 +86,7 @@ async fn the_body_of_a_draft_is_stored_inline_and_not_in_the_blob_store() {
         .query_row(
             "SELECT body_text, body_html FROM drafts WHERE id = ?1",
             [id.get()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
         )
         .expect("read the raw row");
 
@@ -126,11 +127,14 @@ async fn saving_the_same_draft_repeatedly_writes_one_row() {
     }
 
     for (table, expected) in [("drafts", 1), ("recipients", 2), ("attachments", 0)] {
-        let count: i64 = connection
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .expect("count");
+        let count: i64 = postio_storage::sql::one(
+            &connection,
+            &format!("SELECT count(*) FROM {table}"),
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("count");
         assert_eq!(count, expected, "{table} must not accumulate");
     }
 
@@ -342,11 +346,14 @@ async fn deleting_a_draft_takes_its_recipients_and_attachments() {
     assert!(drafts.delete(id).await.expect("delete"));
 
     for table in ["drafts", "recipients", "attachments"] {
-        let count: i64 = connection
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .expect("count");
+        let count: i64 = postio_storage::sql::one(
+            &connection,
+            &format!("SELECT count(*) FROM {table}"),
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("count");
         assert_eq!(count, 0, "{table}");
     }
 }
@@ -367,7 +374,7 @@ async fn enumerations_are_stored_with_the_spelling_the_model_documents() {
         .query_row(
             "SELECT kind, state FROM drafts WHERE id = ?1",
             [id.get()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?)),
         )
         .expect("read the raw row");
 
@@ -1017,7 +1024,7 @@ async fn a_message_row_that_beat_the_draft_to_its_uid_is_taken_back_out() {
 // docs/PRODUCT.md §18's local-first rule forbids.
 
 /// What the message list would show for `mailbox`, subject first.
-fn folder(connection: &Connection, mailbox: postio_model::MailboxId) -> Vec<String> {
+async fn folder(connection: &Connection, mailbox: postio_model::MailboxId) -> Vec<String> {
     let query = postio_storage::repository::ListQuery {
         scope: postio_storage::repository::ListScope::Mailbox(mailbox),
         limit: 50,
@@ -1055,7 +1062,7 @@ async fn saving_a_draft_puts_it_in_the_drafts_folder_at_once() {
         .expect("save the draft");
 
     assert_eq!(
-        folder(&connection, drafts_mailbox),
+        folder(&connection, drafts_mailbox).await,
         vec!["Tide gate interlock".to_owned()],
         "no server round trip stands between typing and this"
     );
@@ -1106,7 +1113,7 @@ async fn autosave_keeps_one_row_and_keeps_it_current() {
     drafts.save(&mut draft).await.expect("save again");
 
     assert_eq!(
-        folder(&connection, drafts_mailbox),
+        folder(&connection, drafts_mailbox).await,
         vec!["Tide gate interlock, revised".to_owned()]
     );
     assert_eq!(badge(&connection, drafts_mailbox).await, 1);
@@ -1123,7 +1130,7 @@ async fn discarding_a_draft_takes_its_row_out_of_the_folder() {
     drafts.save(&mut draft).await.expect("save");
     drafts.discard(draft.id, at(5)).await.expect("discard");
 
-    assert!(folder(&connection, drafts_mailbox).is_empty());
+    assert!(folder(&connection, drafts_mailbox).await.is_empty());
     assert_eq!(badge(&connection, drafts_mailbox).await, 0);
 }
 
@@ -1140,7 +1147,7 @@ async fn sending_a_draft_takes_its_row_out_of_the_folder() {
     drafts.save(&mut draft).await.expect("save");
     assert!(drafts.delete(draft.id).await.expect("delete"));
 
-    assert!(folder(&connection, drafts_mailbox).is_empty());
+    assert!(folder(&connection, drafts_mailbox).await.is_empty());
     assert_eq!(badge(&connection, drafts_mailbox).await, 0);
 }
 
@@ -1185,7 +1192,7 @@ async fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
         .await
         .expect("record where the append landed");
 
-    assert_eq!(folder(&connection, drafts_mailbox).len(), 1);
+    assert_eq!(folder(&connection, drafts_mailbox).await.len(), 1);
 
     // And the sync pass that fetches the copy back still adds nothing: #51.
     let mut batch = vec![fetched(account.id, drafts_mailbox, 7, 1)];
@@ -1195,7 +1202,7 @@ async fn the_row_a_draft_owns_is_the_one_its_server_copy_attaches_to() {
         .expect("a sync pass over Drafts");
 
     assert_eq!(
-        folder(&connection, drafts_mailbox),
+        folder(&connection, drafts_mailbox).await,
         vec!["Tide gate interlock".to_owned()],
         "one draft, one row, whichever half wrote it"
     );
@@ -1575,12 +1582,14 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
     postio_storage::test_support::counting::install(&connection);
 
     let mut small = a_draft(account.id);
-    let saving = postio_storage::test_support::counting::counted(|| {
+    let saving = postio_storage::test_support::counting::counted_async(|| async {
         drafts.save(&mut small).await.expect("save");
-    });
-    let loading = postio_storage::test_support::counting::counted(|| {
+    })
+    .await;
+    let loading = postio_storage::test_support::counting::counted_async(|| async {
         drafts.get(small.id).await.expect("get").expect("still here");
-    });
+    })
+    .await;
 
     // Loading is pinned exactly, because 3 is a number with a meaning -- the
     // draft row, its recipients, its attachments -- and any fourth statement
@@ -1615,12 +1624,14 @@ async fn saving_and_loading_a_draft_costs_a_fixed_number_of_statements() {
         })
         .collect();
 
-    let saving_large = postio_storage::test_support::counting::counted(|| {
+    let saving_large = postio_storage::test_support::counting::counted_async(|| async {
         drafts.save(&mut large).await.expect("save");
-    });
-    let loading_large = postio_storage::test_support::counting::counted(|| {
+    })
+    .await;
+    let loading_large = postio_storage::test_support::counting::counted_async(|| async {
         drafts.get(large.id).await.expect("get").expect("still here");
-    });
+    })
+    .await;
 
     // Writing more rows is more statements and that is honest work. Reading
     // is where an N+1 hides, because one query per attachment looks exactly
@@ -1768,7 +1779,7 @@ async fn a_failed_send_leaves_the_draft_editable_and_the_reason_where_it_can_be_
 // ── The mirror row carries the send state (spec 003, T049) ──────────────────
 
 /// What `messages.send_state` says for the row standing for `draft`.
-async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
+fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<String> {
     connection
         .query_row(
             "SELECT messages.send_state
@@ -1776,7 +1787,7 @@ async fn mirrored_state(connection: &Connection, draft: DraftId) -> Option<Strin
                JOIN drafts ON drafts.message_id = messages.id
               WHERE drafts.id = ?1",
             [draft.get()],
-            |row| row.get::<_, Option<String>>(0),
+            |row| row.col::<Option<String>>(0),
         )
         .expect("the draft has a mirror row")
 }
@@ -1797,14 +1808,14 @@ async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
     let mut draft = a_draft(account.id);
     drafts.save(&mut draft).await.expect("save");
     assert_eq!(
-        mirrored_state(&connection, draft.id).await.as_deref(),
+        mirrored_state(&connection, draft.id).as_deref(),
         Some("editing"),
         "a draft being written is `editing` on both rows"
     );
 
     drafts.queue_send(&mut draft, at(0)).await.expect("send it");
     assert_eq!(
-        mirrored_state(&connection, draft.id).await.as_deref(),
+        mirrored_state(&connection, draft.id).as_deref(),
         Some("queued"),
         "pressing Send has to move the row the list draws, not only the draft"
     );
@@ -1819,7 +1830,7 @@ async fn the_mirror_row_carries_the_drafts_state_after_every_verb() {
             .await
             .expect("the drainer moves it");
         assert_eq!(
-            mirrored_state(&connection, draft.id).await.as_deref(),
+            mirrored_state(&connection, draft.id).as_deref(),
             Some(state.as_str()),
             "the drainer moved the draft to {state:?} and the mirror row did not follow"
         );
@@ -1842,13 +1853,14 @@ async fn an_ordinary_message_has_no_send_state_at_all() {
         .await
         .expect("file it");
 
-    let state: Option<String> = connection
-        .query_row(
-            "SELECT send_state FROM messages WHERE id = ?1",
-            [message.id.get()],
-            |row| row.get(0),
-        )
-        .expect("the row");
+    let state: Option<String> = postio_storage::sql::one(
+        &connection,
+        "SELECT send_state FROM messages WHERE id = ?1",
+        [message.id.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("the row");
     assert_eq!(state, None, "mail that arrived is not a draft being sent");
 }
 
@@ -1876,12 +1888,12 @@ async fn every_draft_state_puts_the_row_in_exactly_one_of_the_two_lists() {
         .query_row(
             "SELECT message_id FROM drafts WHERE id = ?1",
             [draft.id.get()],
-            |row| row.get::<_, i64>(0),
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
         )
         .map(MessageId::new)
         .expect("the draft has a mirror row");
 
-    let listed = |scope| {
+    let listed = async |scope| {
         messages
             .page(&ListQuery {
                 scope,
@@ -1959,7 +1971,7 @@ async fn a_scheduled_send_carries_its_due_time_and_an_immediate_one_does_not() {
                    JOIN drafts ON drafts.message_id = messages.id
                   WHERE drafts.id = ?1",
                 [draft.get()],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("the mirror row")
     };

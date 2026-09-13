@@ -30,21 +30,23 @@ async fn assert_counts_are_real(
 ) {
     let connection = database.connect().await.expect("a connection");
     for mailbox in mailboxes {
-        let total: u32 = connection
-            .query_row(
-                "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",
-                [mailbox.id.get()],
-                |row| row.get(0),
-            )
-            .expect("counting the rows");
-        let unread: u32 = connection
-            .query_row(
-                "SELECT count(*) FROM messages
+        let total: u32 = postio_storage::sql::one(
+            &connection,
+            "SELECT count(*) FROM messages WHERE mailbox_id = ?1 AND deleted_locally = 0",
+            [mailbox.id.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("counting the rows");
+        let unread: u32 = postio_storage::sql::one(
+            &connection,
+            "SELECT count(*) FROM messages
                   WHERE mailbox_id = ?1 AND deleted_locally = 0 AND seen = 0",
-                [mailbox.id.get()],
-                |row| row.get(0),
-            )
-            .expect("counting the unread rows");
+            [mailbox.id.get()],
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("counting the unread rows");
 
         assert_eq!(
             mailbox.counts.total, total,

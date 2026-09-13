@@ -13,6 +13,7 @@
 //! opened its own transaction would pass every outcome assertion in this file
 //! and still be unusable by the caller it exists for.
 
+use postio_storage::Connection;
 use postio_storage::sql::bind;
 use chrono::{DateTime, TimeZone, Utc};
 
@@ -21,7 +22,7 @@ use postio_storage::actions::{Relocation, relocate, set_flag};
 use postio_storage::repository::{MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
 
-async fn at(hour: u32) -> DateTime<Utc> {
+fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 4, hour, 0, 0).unwrap()
 }
 
@@ -49,7 +50,7 @@ async fn two_relocations_share_one_caller_owned_transaction() {
         &[(inbox, vec![first])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("the first relocation");
@@ -59,7 +60,7 @@ async fn two_relocations_share_one_caller_owned_transaction() {
         &[(inbox, vec![second])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(10).await,
+        at(10),
     )
     .await
     .expect("the second relocation, in the same transaction");
@@ -103,14 +104,14 @@ async fn the_queue_row_carries_the_messages_server_identity() {
         &[(inbox, vec![message])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("relocate");
     transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23).await)
+        .pending(account.id, at(23))
         .await
         .expect("read the queue");
     assert_eq!(queued.len(), 1, "one operation for one move");
@@ -153,14 +154,14 @@ async fn a_trash_relocation_enqueues_a_delete() {
         &[(inbox, vec![message])].into_iter().collect(),
         trash,
         Relocation::Trash,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("relocate");
     transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23).await)
+        .pending(account.id, at(23))
         .await
         .expect("read the queue");
     assert!(
@@ -193,7 +194,7 @@ async fn a_rolled_back_transaction_relocates_nothing() {
         &[(inbox, vec![message])].into_iter().collect(),
         archive,
         Relocation::Move,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("relocate");
@@ -210,7 +211,7 @@ async fn a_rolled_back_transaction_relocates_nothing() {
     );
     assert!(
         OperationQueueRepository::new(&connection)
-            .pending(account.id, at(23).await)
+            .pending(account.id, at(23))
             .await
             .expect("read the queue")
             .is_empty(),
@@ -230,6 +231,7 @@ async fn a_message(connection: &Connection, mailbox: MailboxId, remote: &str) ->
              SELECT account_id, id, 0, ?2 FROM mailboxes WHERE id = ?1",
             bind![mailbox.get(), remote],
         )
+        .await
         .expect("insert a message");
     MessageId::new(connection.last_insert_rowid())
 }
@@ -255,7 +257,7 @@ async fn two_flag_changes_share_one_caller_owned_transaction() {
         &[&rows[0]],
         &Flag::Seen,
         true,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("the first flag change");
@@ -265,7 +267,7 @@ async fn two_flag_changes_share_one_caller_owned_transaction() {
         &[&rows[1]],
         &Flag::Seen,
         true,
-        at(10).await,
+        at(10),
     )
     .await
     .expect("the second, in the same transaction");
@@ -300,7 +302,7 @@ async fn clearing_a_flag_enqueues_the_opposite_operation() {
         &[&rows[0]],
         &Flag::Seen,
         true,
-        at(9).await,
+        at(9),
     )
     .await
     .expect("set");
@@ -311,14 +313,14 @@ async fn clearing_a_flag_enqueues_the_opposite_operation() {
         &[&rows[0]],
         &Flag::Seen,
         false,
-        at(10).await,
+        at(10),
     )
     .await
     .expect("clear");
     transaction.commit().await.expect("commit");
 
     let queued = OperationQueueRepository::new(&connection)
-        .pending(account.id, at(23).await)
+        .pending(account.id, at(23))
         .await
         .expect("read the queue");
     assert_eq!(queued.len(), 2, "one operation per change");
@@ -338,13 +340,17 @@ async fn clearing_a_flag_enqueues_the_opposite_operation() {
 /// because it needs each one's current flags and thread.
 async fn read(connection: &Connection, ids: &[MessageId]) -> Vec<Message> {
     let messages = MessageRepository::new(connection);
-    ids.iter()
-        .map(|id| {
+    // A loop rather than `map().collect()`: the body awaits, and a
+    // closure cannot.
+    let mut collected = Vec::new();
+    for id in ids.iter() {
+        collected.push(
             messages
                 .get(*id)
                 .await
                 .expect("read a message")
-                .expect("the message exists")
-        })
-        .collect()
+                .expect("the message exists"),
+        );
+    }
+    collected
 }

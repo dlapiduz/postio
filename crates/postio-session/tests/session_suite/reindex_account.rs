@@ -7,6 +7,7 @@
 //! already hold the row-level ones (a cleared index is a candidate again,
 //! and only for the account that was cleared).
 
+use postio_storage::Connection;
 use postio_model::{BodyState, Message};
 use postio_search::facets::Scope;
 use postio_storage::repository::{AccountRepository, MessageRepository};

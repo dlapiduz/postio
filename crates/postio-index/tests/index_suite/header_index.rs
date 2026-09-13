@@ -48,9 +48,8 @@ fn rows(connection: &Connection, message_id: i64) -> Vec<(String, String, i64)> 
               WHERE message_id = ?1 ORDER BY ordinal",
         )
         .expect("prepare");
-    statement
-        .query_map([message_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    postio_storage::sql::mapped(&mut statement, [message_id], |row| {
+            Ok((postio_storage::sql::RowExt::col(row, 0)?, postio_storage::sql::RowExt::col(row, 1)?, postio_storage::sql::RowExt::col(row, 2)?))
         })
         .expect("query")
         .collect::<Result<_>>()
@@ -282,13 +281,14 @@ fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
         "and the message is offered to the pass again, which is the refill"
     );
 
-    let bodies: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
-            [message.id.get()],
-            |row| row.get(0),
-        )
-        .expect("count");
+    let bodies: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM message_bodies_fts WHERE rowid = ?1",
+        [message.id.get()],
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("count");
     assert_eq!(bodies, 1, "the body index survived the headers rebuild");
 }
 

@@ -13,6 +13,7 @@
 //! leaves nothing for a second run, and it makes mail that was already here
 //! findable.
 
+use postio_storage::Connection;
 use postio_model::{AccountScope, BodyState, Message};
 use postio_search::facets::Scope;
 use postio_storage::repository::{MessageRepository, StoredBody};

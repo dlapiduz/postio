@@ -44,9 +44,8 @@ fn thread_mailboxes(database: &Database, thread: ThreadId) -> Vec<(MessageId, i6
     let mut statement = connection
         .prepare("SELECT id, mailbox_id FROM messages WHERE thread_id = ?1 ORDER BY id")
         .expect("prepare");
-    let rows = statement
-        .query_map([thread.get()], |row| {
-            Ok((MessageId::new(row.get(0)?), row.get::<_, i64>(1)?))
+    let rows = postio_storage::sql::mapped(&mut statement, [thread.get()], |row| {
+            Ok((MessageId::new(postio_storage::sql::RowExt::col(row, 0)?), postio_storage::sql::RowExt::col::<i64>(row, 1)?))
         })
         .expect("read the conversation");
     rows.collect::<Result<Vec<_>, _>>().expect("collect")

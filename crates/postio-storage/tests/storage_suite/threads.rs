@@ -5,7 +5,6 @@
 //! both directions is tested" and "adding a message updates the denormalized
 //! fields".
 
-use std::cell::Cell;
 
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
@@ -25,7 +24,7 @@ fn at(seconds: i64) -> DateTime<Utc> {
 }
 
 /// One message in `mailbox`, from `sender`, received at `seconds`.
-fn message(
+async fn message(
     connection: &Connection,
     account: AccountId,
     mailbox: MailboxId,
@@ -71,8 +70,8 @@ async fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
     let thread = a_thread(&connection, account.id).await;
     assert!(thread.id.is_assigned());
 
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
     threads.add_message(thread.id, root.id).await.expect("add");
     threads.add_message(thread.id, reply.id).await.expect("add");
 
@@ -117,7 +116,7 @@ async fn deleting_a_thread_leaves_its_messages_alone() {
     let threads = ThreadRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let message = message(&connection, account.id, inbox, "ada", 10);
+    let message = message(&connection, account.id, inbox, "ada", 10).await;
     threads.add_message(thread.id, message.id).await.expect("add");
 
     assert!(threads.delete(thread.id).await.expect("delete"));
@@ -146,7 +145,7 @@ async fn adding_a_message_updates_the_threads_aggregates() {
     let messages = MessageRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let root = message(&connection, account.id, inbox, "ada", 100);
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
     threads.add_message(thread.id, root.id).await.expect("add");
 
     let after_root = threads.get(thread.id).await.expect("get").expect("the thread");
@@ -221,8 +220,8 @@ async fn removing_a_message_updates_the_aggregates_too() {
     let threads = ThreadRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
     threads.add_message(thread.id, root.id).await.expect("add");
     threads.add_message(thread.id, reply.id).await.expect("add");
 
@@ -251,8 +250,8 @@ async fn a_locally_deleted_message_leaves_the_threads_counts() {
     let messages = MessageRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let root = message(&connection, account.id, inbox, "ada", 100);
-    let reply = message(&connection, account.id, inbox, "quinn", 200);
+    let root = message(&connection, account.id, inbox, "ada", 100).await;
+    let reply = message(&connection, account.id, inbox, "quinn", 200).await;
     threads.add_message(thread.id, root.id).await.expect("add");
     threads.add_message(thread.id, reply.id).await.expect("add");
 
@@ -287,9 +286,9 @@ async fn a_threads_messages_can_be_read_oldest_or_newest_first() {
     let threads = ThreadRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let first = message(&connection, account.id, inbox, "ada", 100);
-    let second = message(&connection, account.id, inbox, "quinn", 200);
-    let third = message(&connection, account.id, inbox, "tove", 300);
+    let first = message(&connection, account.id, inbox, "ada", 100).await;
+    let second = message(&connection, account.id, inbox, "quinn", 200).await;
+    let third = message(&connection, account.id, inbox, "tove", 300).await;
     for id in [first.id, second.id, third.id] {
         threads.add_message(thread.id, id).await.expect("add");
     }
@@ -330,9 +329,8 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
             .await
             .expect("prepare");
         let arguments = vec![1i64; statement.parameter_count()];
-        let plan = statement
-            .query_map(rusqlite::params_from_iter(arguments), |row| {
-                row.get::<_, String>(3)
+        let plan = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
+                postio_storage::sql::RowExt::col::<String>(row, 3)
             })
             .expect("plan")
             .collect::<Result<Vec<String>, _>>()
@@ -354,20 +352,6 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
 // Acceptance: the list row, count and participants, without an N+1
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static STATEMENTS: Cell<usize> = const { Cell::new(0) };
-}
-
-/// Counts every statement SQLite starts running.
-///
-/// A plain `fn`, not a closure: that is what `trace_v2` takes, so the counter
-/// has to live outside it.
-async fn count_statement(event: rusqlite::trace::TraceEvent<'_>) {
-    if matches!(event, rusqlite::trace::TraceEvent::Stmt(..)) {
-        STATEMENTS.with(|count| count.set(count.get() + 1));
-    }
-}
-
 #[tokio::test]
 async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
     let database = test_support::memory().await;
@@ -385,7 +369,7 @@ async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
                 inbox,
                 sender,
                 index * 1_000 + reply * 10,
-            );
+            ).await;
             ThreadRepository::new(&connection)
                 .add_message(thread.id, message.id)
                 .await
@@ -393,17 +377,12 @@ async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
         }
     }
 
-    STATEMENTS.with(|count| count.set(0));
-    connection.trace_v2(
-        rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-        Some(count_statement),
-    );
+    postio_storage::test_support::counting::reset();
     let page = ThreadRepository::new(&connection)
         .page(&ThreadListQuery::account(account.id).limit(20))
         .await
         .expect("page");
-    connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
-    let statements = STATEMENTS.with(Cell::get);
+    let statements = postio_storage::test_support::counting::here().statements;
 
     assert_eq!(page.len(), 20);
     assert!(
@@ -444,7 +423,7 @@ async fn the_thread_list_is_newest_first_and_pages_by_cursor() {
 
     for index in 0..25 {
         let thread = a_thread(&connection, account.id).await;
-        let message = message(&connection, account.id, inbox, "ada", index * 100);
+        let message = message(&connection, account.id, inbox, "ada", index * 100).await;
         threads.add_message(thread.id, message.id).await.expect("add");
     }
 
@@ -485,7 +464,7 @@ async fn a_thread_whose_messages_are_all_hidden_drops_out_of_the_list() {
     let messages = MessageRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let only = message(&connection, account.id, inbox, "ada", 10);
+    let only = message(&connection, account.id, inbox, "ada", 10).await;
     threads.add_message(thread.id, only.id).await.expect("add");
     assert_eq!(
         threads
@@ -543,9 +522,8 @@ async fn the_thread_list_plan_never_sorts() {
                 .await
                 .expect("prepare");
             let arguments = vec![1i64; statement.parameter_count()];
-            let plan = statement
-                .query_map(rusqlite::params_from_iter(arguments), |row| {
-                    row.get::<_, String>(3)
+            let plan = postio_storage::sql::mapped(&mut statement, rusqlite::params_from_iter(arguments), |row| {
+                    postio_storage::sql::RowExt::col::<String>(row, 3)
                 })
                 .expect("plan")
                 .collect::<Result<Vec<String>, _>>()
@@ -603,8 +581,8 @@ async fn merging_moves_every_message_and_leaves_one_thread() {
 
     let keep = a_thread(&connection, account.id).await;
     let absorb = a_thread(&connection, account.id).await;
-    let older = message(&connection, account.id, inbox, "ada", 100);
-    let newer = message(&connection, account.id, inbox, "quinn", 500);
+    let older = message(&connection, account.id, inbox, "ada", 100).await;
+    let newer = message(&connection, account.id, inbox, "quinn", 500).await;
     threads.add_message(keep.id, older.id).await.expect("add");
     threads.add_message(absorb.id, newer.id).await.expect("add");
 
@@ -628,7 +606,7 @@ async fn merging_a_thread_into_itself_does_nothing() {
     let threads = ThreadRepository::new(&connection);
 
     let thread = a_thread(&connection, account.id).await;
-    let only = message(&connection, account.id, inbox, "ada", 10);
+    let only = message(&connection, account.id, inbox, "ada", 10).await;
     threads.add_message(thread.id, only.id).await.expect("add");
 
     threads.merge(thread.id, thread.id).await.expect("merge");
@@ -762,7 +740,7 @@ async fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
 
     let thread = a_thread(&connection, account.id).await;
     // `message` marks Seen; `unread_in` does not.
-    let read = message(&connection, account.id, inbox, "ada", 10);
+    let read = message(&connection, account.id, inbox, "ada", 10).await;
     ThreadRepository::new(&connection)
         .add_message(thread.id, read.id)
         .await
@@ -813,7 +791,12 @@ async fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threads: Vec<Thread> = (0..5).map(|_| a_thread(&connection, account.id).await).collect();
+    // A loop rather than `map().collect()`: the body awaits, and a
+    // closure cannot.
+    let mut threads: Vec<Thread> = Vec::new();
+    for _ in (0..5) {
+        threads.push(a_thread(&connection, account.id).await);
+    }
     for (index, thread) in threads.iter().enumerate() {
         unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10).await;
     }
@@ -908,11 +891,12 @@ async fn thread_paging_stays_flat_over_a_hundred_thousand_messages() {
     let query = ThreadListQuery::in_mailbox(report.account.id, inbox).limit(50);
 
     postio_storage::test_support::counting::install(&connection);
-    let read = |query: &ThreadListQuery| {
+    let read = async |query: &ThreadListQuery| {
         let mut page = Vec::new();
-        let counts = postio_storage::test_support::counting::counted(|| {
+        let counts = postio_storage::test_support::counting::counted_async(|| async {
             page = threads.page(query).await.expect("a page of threads");
-        });
+        })
+        .await;
         (counts, page)
     };
 
@@ -992,7 +976,12 @@ async fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    let threads: Vec<Thread> = (0..6).map(|_| a_thread(&connection, account.id).await).collect();
+    // A loop rather than `map().collect()`: the body awaits, and a
+    // closure cannot.
+    let mut threads: Vec<Thread> = Vec::new();
+    for _ in (0..6) {
+        threads.push(a_thread(&connection, account.id).await);
+    }
     for (index, thread) in threads.iter().enumerate() {
         unread_in(&connection, account.id, inbox, thread.id, index as i64 * 10).await;
     }

@@ -130,7 +130,7 @@ pub fn reply_forward_and_reply_all_act_on_the_message_under_the_cursor() {
             .query_row(
                 "SELECT COUNT(*) FROM messages WHERE flagged = 1",
                 [],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a count")
     };

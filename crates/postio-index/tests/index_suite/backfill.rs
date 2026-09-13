@@ -12,6 +12,7 @@
 //! migration. This is the same shape, so it gets the same answer and a test
 //! that says so.
 
+use postio_storage::Connection;
 use chrono::Utc;
 use postio_index::{SearchRequest, index, search};
 use postio_model::AccountScope;
@@ -103,11 +104,14 @@ fn running_it_twice_does_not_duplicate_what_it_indexed() {
         1,
         "the message is indexed more than once"
     );
-    let documents: i64 = connection
-        .query_row("SELECT count(*) FROM search_documents", [], |row| {
-            row.get(0)
-        })
-        .expect("counting documents");
+    let documents: i64 = postio_storage::sql::one(
+        &connection,
+        "SELECT count(*) FROM search_documents",
+        (),
+        |row| postio_storage::sql::RowExt::col(row, 0),
+    )
+    .await
+    .expect("counting documents");
     assert_eq!(
         documents, 1,
         "search_documents holds {documents} rows for one message"

@@ -43,7 +43,7 @@ use postio_storage::Connection;
 /// that SQLite would not simply scan a tiny table whatever the index says.
 const CONTACTS: usize = 20_000;
 
-async fn migrated() -> (postio_storage::Store, Connection) {
+async fn migrated() -> (postio_storage::Store, postio_storage::Checkout) {
     let store = postio_storage::test_support::memory().await;
     let connection = store.connect().await.expect("a connection");
     (store, connection)
@@ -54,7 +54,7 @@ fn definition(connection: &Connection, index: &str) -> String {
         .query_row(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
             [index],
-            |row| row.get::<_, String>(0),
+            |row| postio_storage::sql::RowExt::col::<String>(row, 0),
         )
         .unwrap_or_else(|error| panic!("no index named {index}: {error}"))
 }
@@ -64,8 +64,8 @@ async fn plan(connection: &Connection, query: &str) -> String {
         .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
         .await
         .expect("a query plan");
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(3))
+    let rows = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col::<String>(row, 3))
+        .await
         .expect("plan rows")
         .collect::<Result<Vec<_>, _>>()
         .expect("plan rows");
@@ -153,8 +153,8 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     fill(&connection).await;
 
     let mut statement = connection.prepare(SEARCH).await.expect("prepare");
-    let ids: Vec<i64> = statement
-        .query_map([], |row| row.get(0))
+    let ids: Vec<i64> = postio_storage::sql::mapped(&mut statement, (), |row| postio_storage::sql::RowExt::col(row, 0))
+        .await
         .expect("query")
         .collect::<Result<_, _>>()
         .expect("rows");
@@ -163,7 +163,7 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
     let source_of = |id: i64| -> String {
         connection
             .query_row("SELECT source FROM contacts WHERE id = ?1", [id], |row| {
-                row.get(0)
+                postio_storage::sql::RowExt::col(row, 0)
             })
             .expect("a contact")
     };
@@ -172,7 +172,7 @@ async fn the_rows_still_come_back_in_the_order_the_product_promises() {
             .query_row(
                 "SELECT last_seen_at FROM contacts WHERE id = ?1",
                 [id],
-                |row| row.get(0),
+                |row| postio_storage::sql::RowExt::col(row, 0),
             )
             .expect("a contact")
     };

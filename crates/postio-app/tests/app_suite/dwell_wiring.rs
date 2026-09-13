@@ -108,13 +108,14 @@ pub fn resting_on_a_message_marks_it_read_and_sweeping_past_does_not() {
         connection
             .execute("UPDATE messages SET flagged = 1", ())
             .expect("the fixture writes");
-        let flagged_total: u32 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM messages WHERE flagged = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("a count");
+        let flagged_total: u32 = postio_storage::sql::one(
+            &connection,
+            "SELECT COUNT(*) FROM messages WHERE flagged = 1",
+            (),
+            |row| postio_storage::sql::RowExt::col(row, 0),
+        )
+        .await
+        .expect("a count");
         let inbox = report
             .mailbox(postio_model::MailboxRole::Inbox)
             .expect("an inbox");
