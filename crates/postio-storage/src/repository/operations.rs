@@ -80,24 +80,29 @@ impl QueuedOperation {
 /// ```no_run
 /// # use postio_model::{AccountId, MailboxId, MessageId, Operation, OperationTarget};
 /// # use postio_storage::repository::OperationQueueRepository;
-/// # fn main() -> Result<(), postio_storage::Error> {
+/// # async fn demo() -> Result<(), postio_storage::Error> {
 /// # use postio_storage::key::{Purpose, StoreKey};
 /// # let key = StoreKey::generate().derive(Purpose::Database);
-/// # let database = postio_storage::Database::open("postio.db", &key)?;
-/// # let mut connection = database.connection()?;
+/// # let database = postio_storage::Store::open("postio.db", &key).await?;
+/// # let connection = database.connect().await?;
 /// # let (account, message) = (AccountId::new(1), MessageId::new(1));
 /// # let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));
-/// let transaction = connection.transaction()?;
-/// // Enqueue FIRST, then perform the local write: a Move or Delete nulls
-/// // the row's server coordinates, and the enqueue is what snapshots them
-/// // while they are still there (#289).
-/// OperationQueueRepository::new(&transaction).enqueue(
-///     account,
-///     OperationTarget::Message(message),
-///     &Operation::Move { from: inbox, to: archive },
-///     chrono::Utc::now(),
-/// )?;
-/// transaction.commit()?;
+/// postio_storage::transaction(&connection, |transaction| async move {
+///     // Enqueue FIRST, then perform the local write: a Move or Delete nulls
+///     // the row's server coordinates, and the enqueue is what snapshots them
+///     // while they are still there (#289).
+///     OperationQueueRepository::new(&transaction)
+///         .enqueue(
+///             account,
+///             OperationTarget::Message(message),
+///             &Operation::Move { from: inbox, to: archive },
+///             chrono::Utc::now(),
+///         )
+///         .await?;
+///     // ... perform the local write ...
+///     Ok::<_, postio_storage::Error>(())
+/// })
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```
